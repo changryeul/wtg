@@ -1,0 +1,7 @@
+build/
+*.test
+*.out
+.idea/
+.vscode/
+*.log
+.DS_Store

@@ -1,0 +1,4014 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WTG Control · mci-admin</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  // 핵심 색상 토큰은 CSS 변수로 추상화 — body[data-theme] 에 따라 light/dark 자동 전환.
+  // 직접 클래스 (bg-ink-950 등) 는 변수를 참조하도록 redefine.
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ink: {
+            950: "var(--bg-base)",
+            900: "var(--bg-base-2)",
+            850: "var(--bg-card)",
+            800: "var(--bg-elev)",
+            700: "var(--border)",
+            600: "var(--border-strong)",
+          },
+          accent: { 400: "#22d3ee", 500: "#06b6d4", 600: "#0891b2" },
+          good:   "var(--good)",
+          warn:   "var(--warn)",
+          bad:    "var(--bad)",
+        },
+        fontFamily: {
+          sans: ['"Inter"', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif'],
+          mono: ['"JetBrains Mono"', '"Fira Code"', 'ui-monospace', 'monospace'],
+        },
+      },
+    },
+  };
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  /* ───── 다크 테마 (기본) ───── */
+  :root, [data-theme="dark"] {
+    --bg-base:        #070a13;
+    --bg-base-2:      #0b101c;
+    --bg-card:        #101727;
+    --bg-elev:        #172033;
+    --border:         #1f2a40;
+    --border-strong:  #2a3654;
+    --text:           #e2e8f0;
+    --text-muted:     #94a3b8;
+    --text-faint:     #64748b;
+    --good:           #10b981;
+    --warn:           #f59e0b;
+    --bad:            #ef4444;
+    --grid-overlay:   rgba(255,255,255,0.025);
+    --glow-cyan:      rgba(34,211,238,0.08);
+    --glow-indigo:    rgba(99,102,241,0.07);
+    --glass-bg:       rgba(16,23,39,0.7);
+    --scroll-thumb:   #1f2a40;
+    --scroll-thumb-hover: #2a3654;
+  }
+
+  /* ───── 라이트 테마 ───── */
+  [data-theme="light"] {
+    --bg-base:        #f6f8fc;
+    --bg-base-2:      #eef2f7;
+    --bg-card:        #ffffff;
+    --bg-elev:        #f1f5f9;
+    --border:         #d6dfe8;
+    --border-strong:  #aebac8;
+    --text:           #0f172a;
+    --text-muted:     #475569;
+    --text-faint:     #94a3b8;
+    --good:           #047857;
+    --warn:           #b45309;
+    --bad:            #b91c1c;
+    --grid-overlay:   rgba(15,23,42,0.04);
+    --glow-cyan:      rgba(8,145,178,0.07);
+    --glow-indigo:    rgba(79,70,229,0.05);
+    --glass-bg:       rgba(255,255,255,0.85);
+    --scroll-thumb:   #cbd5e1;
+    --scroll-thumb-hover: #94a3b8;
+  }
+
+  html, body { height: 100%; }
+  body {
+    font-family: "Inter", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background: var(--bg-base);
+    color: var(--text);
+  }
+
+  .border-gradient {
+    background:
+      linear-gradient(var(--bg-card), var(--bg-card)) padding-box,
+      linear-gradient(135deg, rgba(34,211,238,.35), rgba(34,211,238,0) 40%, rgba(99,102,241,.25)) border-box;
+    border: 1px solid transparent;
+  }
+
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); }
+
+  .live-dot::before {
+    content:""; display:inline-block; width:8px; height:8px;
+    border-radius:50%; background:#10b981; margin-right:8px;
+    box-shadow:0 0 0 0 rgba(16,185,129,.6); animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow:0 0 0 0 rgba(16,185,129,.6); }
+    70%  { box-shadow:0 0 0 8px rgba(16,185,129,0); }
+    100% { box-shadow:0 0 0 0 rgba(16,185,129,0); }
+  }
+
+  .toast { animation: slideIn .25s ease-out; }
+  @keyframes slideIn { from { transform: translateY(-12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  .grid-fade {
+    background-image:
+      radial-gradient(900px 480px at 80% -10%, var(--glow-cyan), transparent 60%),
+      radial-gradient(700px 400px at 0% 100%, var(--glow-indigo), transparent 50%),
+      linear-gradient(var(--grid-overlay) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-overlay) 1px, transparent 1px);
+    background-size: auto, auto, 32px 32px, 32px 32px;
+  }
+
+  pre.codepanel { font-family: "JetBrains Mono", monospace; font-size: 12.5px; line-height: 1.55; }
+
+  .nav-btn[data-active="true"] {
+    background: linear-gradient(90deg, rgba(34,211,238,.15), transparent 80%);
+    color: #0891b2;
+    border-left: 2px solid #06b6d4;
+    padding-left: 10px;
+  }
+  [data-theme="dark"] .nav-btn[data-active="true"] { color: #67e8f9; }
+
+  /* 테마 토글 버튼 — 활성 상태. */
+  .theme-btn[data-active="true"] {
+    background: linear-gradient(135deg, rgba(34,211,238,0.18), rgba(99,102,241,0.18));
+    color: #67e8f9;
+    box-shadow: inset 0 0 0 1px rgba(34,211,238,0.4);
+  }
+  [data-theme="light"] .theme-btn[data-active="true"] {
+    color: #0e7490;
+    box-shadow: inset 0 0 0 1px rgba(8,145,178,0.5);
+  }
+
+  /* 라이트 모드 — Tailwind 의 다크-기반 slate 텍스트 클래스를 가독성 있게 보정. */
+  [data-theme="light"] .text-slate-200 { color: #1e293b !important; }
+  [data-theme="light"] .text-slate-300 { color: #334155 !important; }
+  [data-theme="light"] .text-slate-400 { color: #475569 !important; }
+  [data-theme="light"] .text-slate-500 { color: #64748b !important; }
+  [data-theme="light"] .text-slate-600 { color: #94a3b8 !important; }
+  [data-theme="light"] .text-accent-400 { color: #0891b2 !important; }
+  [data-theme="light"] .text-accent-500 { color: #0e7490 !important; }
+  [data-theme="light"] .text-ink-950 { color: #ffffff !important; }
+  [data-theme="light"] .bg-ink-950 { background-color: var(--bg-base) !important; }
+  /* 그라디언트 버튼 텍스트 — 라이트에서 흰색 유지. */
+  [data-theme="light"] .from-accent-500 { --tw-gradient-from: #06b6d4 var(--tw-gradient-from-position); }
+  .brk-btn { padding: .6rem .9rem; border-radius: .75rem; background: var(--bg-elev); border: 1px solid var(--border);
+             font-size: .8rem; transition: .15s; color: var(--text); }
+  .brk-btn:hover { background: var(--border); border-color: var(--border-strong); }
+</style>
+</head>
+<body class="bg-ink-950 text-slate-200">
+
+<!-- ───── Login screen ───── -->
+<div id="login-screen" class="hidden grid-fade min-h-screen flex items-center justify-center p-6">
+  <div class="w-full max-w-md border-gradient rounded-2xl shadow-xl">
+    <div class="p-8">
+      <div class="flex items-center gap-3 mb-8">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-accent-400 to-indigo-500 flex items-center justify-center text-ink-950 font-bold text-lg">W</div>
+        <div>
+          <div class="text-lg font-semibold">WTG Control</div>
+          <div class="text-xs text-slate-400">Winway Trading Gateway · mci-admin</div>
+        </div>
+      </div>
+      <h1 class="text-2xl font-semibold mb-2">로그인</h1>
+      <p class="text-sm text-slate-400 mb-6">관리자 계정으로 인증해주세요.</p>
+
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1">사용자 ID</label>
+          <input id="login-usid" type="text" autocomplete="username" required
+            class="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 focus:ring-1 focus:ring-accent-500 outline-none transition" />
+        </div>
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1">비밀번호</label>
+          <input id="login-pw" type="password" autocomplete="current-password" required
+            class="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 focus:ring-1 focus:ring-accent-500 outline-none transition" />
+        </div>
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1">TOTP (선택)</label>
+          <input id="login-totp" type="text" inputmode="numeric" maxlength="6" placeholder="6자리"
+            class="w-full px-3 py-2.5 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 focus:ring-1 focus:ring-accent-500 outline-none transition" />
+        </div>
+        <div id="login-err" class="hidden text-sm text-bad bg-bad/10 border border-bad/30 rounded-lg px-3 py-2"></div>
+        <button id="login-submit" type="submit"
+          class="w-full py-2.5 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 hover:from-accent-400 hover:to-indigo-400 text-ink-950 font-semibold transition shadow">
+          로그인
+        </button>
+
+        <div class="pt-3 border-t border-ink-700/60 mt-6">
+          <details class="text-xs text-slate-400">
+            <summary class="cursor-pointer hover:text-slate-200">개발 모드로 진입</summary>
+            <p class="mt-2 leading-relaxed">
+              운영팀 인증이 미구성된 dev 환경에서는 X-WTG-User 헤더만으로 진입할 수 있습니다.
+              아래 버튼은 사용자 ID 만 받아서 X-WTG-User 헤더 모드로 세션을 시작합니다.
+            </p>
+            <button id="dev-enter" type="button"
+              class="mt-3 w-full py-2 rounded-lg border border-ink-600 hover:bg-ink-800 transition text-slate-200 text-sm">
+              ID 만으로 입장 (DevMode)
+            </button>
+          </details>
+        </div>
+      </form>
+    </div>
+    <div class="px-8 py-3 text-xs text-slate-500 border-t border-ink-700/60 flex justify-between items-center rounded-b-2xl">
+      <span>© Winway Systems</span>
+      <span class="font-mono">v1.0</span>
+    </div>
+  </div>
+</div>
+
+<!-- ───── Application shell ───── -->
+<div id="app-shell" class="hidden min-h-screen grid-fade">
+  <div class="flex min-h-screen">
+
+    <!-- Sidebar -->
+    <aside class="w-64 shrink-0 border-r border-ink-700/60 glass relative">
+      <div class="px-5 py-5 flex items-center gap-3 border-b border-ink-700/40">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-accent-400 to-indigo-500 flex items-center justify-center text-ink-950 font-bold">W</div>
+        <div>
+          <div class="text-sm font-semibold">WTG Control</div>
+          <div class="text-[10px] uppercase tracking-widest text-slate-400">mci-admin</div>
+        </div>
+      </div>
+      <nav class="px-3 py-4 space-y-1 text-sm" id="nav">
+        <button data-page="dashboard"  class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">대시보드</button>
+        <button data-page="routes"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">라우팅 룰</button>
+        <button data-page="policy"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">정책 엔진</button>
+        <button data-page="broker"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">브로커 명령</button>
+        <button data-page="tester"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">API 테스터</button>
+        <button data-page="wsmon"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">WS 모니터</button>
+        <button data-page="quote"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">시세</button>
+        <button data-page="svcio"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">서비스 명세</button>
+        <button data-page="audit"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">감사 로그</button>
+      </nav>
+      <div class="absolute bottom-0 w-full px-3 pb-4 space-y-2">
+        <!-- 테마 토글 — 다크/라이트/시스템 -->
+        <div class="rounded-xl border border-ink-700/60 p-2 text-xs">
+          <div class="flex items-center justify-between mb-1.5 px-1">
+            <span class="text-slate-400 uppercase tracking-widest text-[10px]">테마</span>
+            <span id="theme-current" class="text-slate-300 font-mono text-[10px]">—</span>
+          </div>
+          <div class="grid grid-cols-3 gap-1" id="theme-toggle">
+            <button data-theme-set="dark"   class="theme-btn px-2 py-1.5 rounded-md text-[11px] hover:bg-ink-800 transition">다크</button>
+            <button data-theme-set="light"  class="theme-btn px-2 py-1.5 rounded-md text-[11px] hover:bg-ink-800 transition">라이트</button>
+            <button data-theme-set="system" class="theme-btn px-2 py-1.5 rounded-md text-[11px] hover:bg-ink-800 transition">시스템</button>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-ink-700/60 p-3 text-xs">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-slate-400 uppercase tracking-widest text-[10px]">로그인</div>
+              <div id="me-usid" class="font-medium text-slate-200">—</div>
+            </div>
+            <button id="logout-btn" class="px-2 py-1 rounded-md bg-ink-800 hover:bg-bad/20 hover:text-bad transition text-slate-300 text-xs">로그아웃</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="flex-1 min-w-0">
+      <!-- Topbar -->
+      <header class="h-14 px-6 flex items-center justify-between border-b border-ink-700/60 glass sticky top-0 z-20">
+        <div class="flex items-center gap-3">
+          <h2 id="page-title" class="text-base font-semibold">대시보드</h2>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-good/15 text-good live-dot">LIVE</span>
+          <span id="stream-state" class="text-xs px-2 py-0.5 rounded-full bg-ink-700 text-slate-400 font-mono">stream: —</span>
+        </div>
+        <div class="flex items-center gap-3 text-xs text-slate-400">
+          <span class="hidden md:inline">서버 시간</span>
+          <span id="now" class="font-mono text-slate-200">—</span>
+        </div>
+      </header>
+
+      <!-- Toast container -->
+      <div id="toasts" class="fixed top-4 right-4 z-30 space-y-2 w-80"></div>
+
+      <!-- Pages -->
+      <section class="p-6 space-y-6">
+        <!-- Dashboard -->
+        <div id="page-dashboard" class="page space-y-6">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- 활성 라우팅 룰 -->
+            <div class="border-gradient rounded-2xl p-5 relative overflow-hidden">
+              <div class="text-xs uppercase tracking-widest text-slate-400">활성 라우팅 룰</div>
+              <div class="mt-2 flex items-baseline gap-2">
+                <div id="kpi-routes" class="text-3xl font-semibold">—</div>
+                <div class="text-xs text-slate-500">aliases</div>
+                <div id="kpi-routes-delta" class="ml-auto text-xs font-mono text-slate-500">±0</div>
+              </div>
+              <svg id="spark-routes" viewBox="0 0 120 32" class="mt-3 w-full h-8 text-accent-400"></svg>
+              <div class="mt-2 text-[11px] text-slate-500" id="kpi-routes-sub">최근 24초 (2초 간격)</div>
+            </div>
+
+            <!-- API 응답 시간 -->
+            <div class="border-gradient rounded-2xl p-5 relative overflow-hidden">
+              <div class="text-xs uppercase tracking-widest text-slate-400">API 응답 시간</div>
+              <div class="mt-2 flex items-baseline gap-2">
+                <div id="kpi-rtt" class="text-3xl font-semibold">—</div>
+                <div class="text-xs text-slate-500">ms</div>
+                <div id="kpi-rtt-avg" class="ml-auto text-xs font-mono text-slate-500">avg —</div>
+              </div>
+              <svg id="spark-rtt" viewBox="0 0 120 32" class="mt-3 w-full h-8 text-good"></svg>
+              <div class="mt-2 text-[11px] text-slate-500">/v1/admin/routes 핑</div>
+            </div>
+
+            <!-- 브로커 상태 -->
+            <div class="border-gradient rounded-2xl p-5 relative overflow-hidden">
+              <div class="text-xs uppercase tracking-widest text-slate-400">브로커</div>
+              <div class="mt-2 flex items-baseline gap-2">
+                <div id="kpi-broker" class="text-3xl font-semibold text-good">CONNECTED</div>
+              </div>
+              <svg id="spark-broker" viewBox="0 0 120 32" class="mt-3 w-full h-8 text-accent-400"></svg>
+              <div class="mt-2 text-[11px] text-slate-500" id="kpi-broker-sub">healthy = ▂ / down = ▔</div>
+            </div>
+
+            <!-- 사용자 -->
+            <div class="border-gradient rounded-2xl p-5">
+              <div class="text-xs uppercase tracking-widest text-slate-400">현재 사용자</div>
+              <div class="mt-2 flex items-baseline gap-2">
+                <div id="kpi-user" class="text-3xl font-semibold">—</div>
+              </div>
+              <div class="mt-3 text-xs text-slate-400" id="kpi-channel">channel —</div>
+              <div class="mt-3 text-[11px] text-slate-500 break-all" id="kpi-mode">mode: —</div>
+            </div>
+          </div>
+
+          <!-- 풀 차트 — 최근 2분 -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">실시간 트래픽 (최근 2분)</h3>
+              <div class="flex items-center gap-3 text-xs">
+                <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-accent-400"></span> 활성 룰</span>
+                <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-good"></span> RTT (ms)</span>
+                <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full text-slate-300" style="background:#f59e0b"></span> Broker</span>
+              </div>
+            </div>
+            <div class="relative h-56">
+              <canvas id="dash-chart"></canvas>
+            </div>
+          </div>
+
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-semibold">최근 라우팅 룰 (top 5)</h3>
+              <button data-page="routes" class="nav-btn text-xs text-accent-400 hover:text-accent-500">전체 보기 →</button>
+            </div>
+            <div id="recent-routes" class="text-sm text-slate-400">로딩 중…</div>
+          </div>
+        </div>
+
+        <!-- Routes -->
+        <div id="page-routes" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">라우팅 룰</h3>
+              <p class="text-sm text-slate-400">alias → exchange / routing_key 매핑. 비활성 룰은 회색.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <!-- ▶ 테스트 클릭 시 적용될 형식 + 채널.
+                   API: 테스터로 deep link (실행 가능). WIRE: svcio 화면 spec 보기 (display only). -->
+              <label class="text-xs text-slate-500 mr-1">형식:</label>
+              <select id="routes-test-format" title="▶ 테스트 형식 — API 는 실행, 전문은 spec 보기"
+                class="px-2 py-1.5 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-xs font-mono">
+                <option value="API">API</option>
+                <option value="WIRE">전문</option>
+              </select>
+              <label class="text-xs text-slate-500 mx-1">채널:</label>
+              <select id="routes-test-channel" title="▶ 테스트 클릭 시 적용될 X-WTG-Channel"
+                class="px-2 py-1.5 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-xs font-mono">
+                <option value="">(자동)</option>
+                <option value="WEB">WEB</option>
+                <option value="MOB">MOB</option>
+                <option value="HTS">HTS</option>
+                <option value="ADM">ADM</option>
+                <option value="EMP">EMP</option>
+              </select>
+              <button id="routes-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 새로고침</button>
+              <button id="routes-add" class="px-3 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">+ 신규</button>
+            </div>
+          </div>
+
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                <tr class="border-b border-ink-700/60">
+                  <th class="text-left px-4 py-3 font-medium">Alias</th>
+                  <th class="text-left px-4 py-3 font-medium">Exchange</th>
+                  <th class="text-left px-4 py-3 font-medium">Routing Key</th>
+                  <th class="text-left px-4 py-3 font-medium">Active</th>
+                  <th class="text-left px-4 py-3 font-medium">Updated</th>
+                  <th class="text-right px-4 py-3 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody id="routes-tbody"></tbody>
+            </table>
+            <div id="routes-empty" class="hidden p-8 text-center text-slate-500">
+              아직 등록된 라우팅 룰이 없습니다. <button class="text-accent-400 hover:text-accent-500" id="routes-add2">신규 등록</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Policy engine -->
+        <div id="page-policy" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">정책 엔진</h3>
+              <p class="text-sm text-slate-400">운영 정책 — kill switch, 정비 창, 일시 차단 심볼·라우팅 키.<br/>비즈니스 룰(거래 권한·한도)은 매매 엔진이 처리합니다.</p>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-slate-500">
+              <span>마지막 변경 <span id="pol-updated" class="font-mono text-slate-300">—</span></span>
+              <span>by <span id="pol-by" class="font-mono text-slate-300">—</span></span>
+              <button id="pol-refresh" class="ml-2 px-3 py-1.5 rounded-lg bg-ink-800 hover:bg-ink-700 text-xs">↻</button>
+            </div>
+          </div>
+
+          <!-- Kill Switch — 채널 단위 적용 가능. 사고 시 고객 (WEB/MOB/HTS)
+               만 차단하고 직원 (ADM/EMP) 비상 거래 유지하는 시나리오 지원. -->
+          <div class="border-gradient rounded-2xl p-5 space-y-3">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">Kill Switch</div>
+                <div id="pol-kill-state" class="mt-1.5 text-2xl font-semibold">—</div>
+                <div class="mt-1 text-xs text-slate-400">활성 시 매매 transaction 차단. 적용 채널은 아래 범위에서 선택 (login/logout/admin 은 영향 없음).</div>
+              </div>
+              <button id="pol-kill-toggle"
+                class="shrink-0 px-5 py-3 rounded-xl text-sm font-semibold transition">
+                토글
+              </button>
+            </div>
+
+            <!-- 적용 범위 -->
+            <div class="border-t border-ink-800 pt-3">
+              <div class="text-xs uppercase tracking-widest text-slate-400 mb-2">적용 범위</div>
+              <div class="flex flex-wrap items-center gap-2 text-xs" id="pol-kill-scope-presets">
+                <button data-scope="all"        class="ks-preset px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700">전체</button>
+                <button data-scope="customer"   class="ks-preset px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700">고객만 (WEB/MOB/HTS)</button>
+                <button data-scope="employee"   class="ks-preset px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700">직원만 (ADM/EMP)</button>
+                <span class="text-slate-700 self-center">│</span>
+                <span class="text-slate-500">사용자 정의:</span>
+                <label class="flex items-center gap-1 select-none cursor-pointer"><input type="checkbox" class="ks-ch w-3.5 h-3.5 accent-accent-500" data-ch="WEB" /> WEB</label>
+                <label class="flex items-center gap-1 select-none cursor-pointer"><input type="checkbox" class="ks-ch w-3.5 h-3.5 accent-accent-500" data-ch="MOB" /> MOB</label>
+                <label class="flex items-center gap-1 select-none cursor-pointer"><input type="checkbox" class="ks-ch w-3.5 h-3.5 accent-accent-500" data-ch="HTS" /> HTS</label>
+                <label class="flex items-center gap-1 select-none cursor-pointer"><input type="checkbox" class="ks-ch w-3.5 h-3.5 accent-accent-500" data-ch="ADM" /> ADM</label>
+                <label class="flex items-center gap-1 select-none cursor-pointer"><input type="checkbox" class="ks-ch w-3.5 h-3.5 accent-accent-500" data-ch="EMP" /> EMP</label>
+              </div>
+              <div class="mt-1.5 text-xs text-slate-500">
+                현재 적용: <span id="pol-kill-scope-now" class="font-mono text-slate-300">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Maintenance window -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">정비 창</div>
+                <div class="text-sm text-slate-300">시작 ≤ 현재 &lt; 끝 인 동안 transaction 차단.</div>
+              </div>
+              <span id="pol-maint-state" class="text-xs font-mono px-2 py-1 rounded-full bg-ink-700">inactive</span>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <label class="text-xs">
+                <span class="block uppercase tracking-wider text-slate-400 mb-1">시작 (로컬)</span>
+                <input id="pol-maint-start" type="datetime-local"
+                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
+              </label>
+              <label class="text-xs">
+                <span class="block uppercase tracking-wider text-slate-400 mb-1">끝 (로컬)</span>
+                <input id="pol-maint-end" type="datetime-local"
+                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
+              </label>
+              <label class="text-xs">
+                <span class="block uppercase tracking-wider text-slate-400 mb-1">메시지</span>
+                <input id="pol-maint-msg" placeholder="예: 심야 정비"
+                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm" />
+              </label>
+            </div>
+            <div class="mt-3 flex items-center gap-2 justify-end">
+              <button id="pol-maint-clear" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">비우기</button>
+              <button id="pol-maint-save"  class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">저장</button>
+            </div>
+          </div>
+
+          <!-- Blocked symbols -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">차단 심볼</div>
+                <div class="text-sm text-slate-300">envelope.data.symbol 매칭 (대문자 무관).</div>
+              </div>
+              <span id="pol-syms-count" class="text-xs text-slate-500 font-mono">0개</span>
+            </div>
+            <div class="flex gap-2 mb-3">
+              <input id="pol-syms-input" placeholder="심볼 추가 (예: USDKRW)"
+                class="flex-1 px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm uppercase" />
+              <button id="pol-syms-add" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">+ 추가</button>
+            </div>
+            <div id="pol-syms-list" class="flex flex-wrap gap-2 min-h-[2rem]"></div>
+          </div>
+
+          <!-- Blocked routing keys -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">차단 Routing Key</div>
+                <div class="text-sm text-slate-300">특정 transaction 코드를 일시 차단 (예: CANCEL).</div>
+              </div>
+              <span id="pol-rks-count" class="text-xs text-slate-500 font-mono">0개</span>
+            </div>
+            <div class="flex gap-2 mb-3">
+              <input id="pol-rks-input" placeholder="routing_key 추가 (예: CANCEL)"
+                class="flex-1 px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm uppercase" />
+              <button id="pol-rks-add" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">+ 추가</button>
+            </div>
+            <div id="pol-rks-list" class="flex flex-wrap gap-2 min-h-[2rem]"></div>
+          </div>
+        </div>
+
+        <!-- Broker commands -->
+        <div id="page-broker" class="page hidden space-y-4">
+          <div>
+            <h3 class="text-lg font-semibold">브로커 명령</h3>
+            <p class="text-sm text-slate-400">mymqd 의 admin 명령을 호출합니다. 결과는 raw JSON 으로 표시.</p>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <button class="brk-btn" data-path="/v1/admin/status"    data-label="Status">Status</button>
+            <button class="brk-btn" data-path="/v1/admin/clients"   data-label="Clients">Clients</button>
+            <button class="brk-btn" data-path="/v1/admin/exchanges" data-label="Exchanges">Exchanges</button>
+            <button class="brk-btn" data-path="/v1/admin/users"     data-label="Users">Users</button>
+            <button class="brk-btn whois" data-path="/v1/admin/whois" data-label="Whois (usid)">Whois …</button>
+          </div>
+          <div class="border-gradient rounded-2xl">
+            <div class="px-4 py-3 border-b border-ink-700/60 flex items-center justify-between">
+              <div class="text-sm">
+                <span class="text-slate-400 uppercase tracking-widest text-[10px]">결과</span>
+                <span id="brk-label" class="ml-2 font-medium text-slate-200">—</span>
+              </div>
+              <span id="brk-status" class="text-xs text-slate-500"></span>
+            </div>
+            <pre id="brk-output" class="codepanel p-4 text-slate-200 overflow-auto max-h-[60vh]">버튼을 눌러 명령을 실행하세요.</pre>
+          </div>
+        </div>
+
+        <!-- API tester -->
+        <div id="page-tester" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">API 테스터</h3>
+              <p class="text-sm text-slate-400">mci-admin endpoint 에 임의 요청을 보내 응답을 확인합니다. 같은 origin 호출만 (CORS 영향 없음).</p>
+            </div>
+            <div class="flex gap-2 text-xs">
+              <button id="tester-history-clear" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700">히스토리 초기화</button>
+            </div>
+          </div>
+
+          <!-- Presets -->
+          <div class="border-gradient rounded-2xl p-4">
+            <div class="text-xs uppercase tracking-widest text-slate-400 mb-3">사전 설정</div>
+            <div id="tester-presets" class="flex flex-wrap gap-2"></div>
+          </div>
+
+          <!-- Request builder -->
+          <div class="border-gradient rounded-2xl p-5 space-y-4">
+            <div class="flex gap-3 items-center">
+              <select id="t-method" class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm font-mono">
+                <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option>
+              </select>
+              <input id="t-path" placeholder="/v1/admin/status"
+                class="flex-1 px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
+              <!-- 채널 spoof — DevMode 에서 X-WTG-Channel 헤더 자동 주입.
+                   채널별 정책 (kill switch scope 등) 검증 도구. -->
+              <select id="t-channel" title="X-WTG-Channel 헤더 — DevMode 채널 spoof"
+                class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-xs font-mono">
+                <option value="">(자동)</option>
+                <option value="WEB">WEB</option>
+                <option value="MOB">MOB</option>
+                <option value="HTS">HTS</option>
+                <option value="ADM">ADM</option>
+                <option value="EMP">EMP</option>
+              </select>
+              <button id="t-send" class="px-5 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">▶ 실행</button>
+            </div>
+
+            <details class="group">
+              <summary class="cursor-pointer text-xs uppercase tracking-widest text-slate-400 hover:text-slate-200 select-none">추가 헤더 <span class="text-[10px] text-slate-500">(인증/Content-Type 은 자동)</span></summary>
+              <div id="t-headers" class="mt-3 space-y-2"></div>
+              <button id="t-header-add" type="button" class="mt-2 text-xs text-accent-400 hover:text-accent-500">+ 헤더 추가</button>
+            </details>
+
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center gap-2">
+                  <label class="text-xs uppercase tracking-widest text-slate-400">Body (JSON)</label>
+                  <span id="t-body-memo" class="hidden text-[10px] px-1.5 py-0.5 rounded bg-accent-500/15 text-accent-400 font-mono" title="이 preset 의 직전 body 가 복원됐습니다">기억됨</span>
+                </div>
+                <div class="flex gap-2 text-xs">
+                  <button id="t-body-format" type="button" class="text-slate-400 hover:text-accent-400">정렬</button>
+                  <button id="t-body-clear"  type="button" class="text-slate-400 hover:text-bad">비우기</button>
+                </div>
+              </div>
+              <textarea id="t-body" rows="6" placeholder='{"key":"value"}'
+                class="w-full px-3 py-2 rounded-lg bg-ink-900 border border-ink-700 focus:border-accent-500 outline-none font-mono text-xs leading-relaxed"></textarea>
+              <div id="t-body-err" class="hidden mt-2 text-xs text-bad">JSON 형식 오류</div>
+            </div>
+          </div>
+
+          <!-- Response -->
+          <!-- Request panel — fetch 직전에 method/path/headers/body 를 dump 한다.
+               자동 주입 헤더 (X-WTG-User, Content-Type) 까지 모두 보이도록. -->
+          <div class="border-gradient rounded-2xl">
+            <div class="px-4 py-3 border-b border-ink-700/60 flex items-center justify-between">
+              <div class="flex items-center gap-3 text-sm">
+                <span class="text-slate-400 uppercase tracking-widest text-[10px]">요청</span>
+                <span id="t-req-line" class="font-mono text-slate-300">—</span>
+              </div>
+              <div class="flex gap-2 text-xs">
+                <button id="t-req-copy" class="text-slate-400 hover:text-accent-400">📋 복사</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-3">
+              <div class="lg:col-span-2 border-r border-ink-700/40">
+                <pre id="t-req-body" class="codepanel p-4 text-slate-200 overflow-auto max-h-[30vh] min-h-[6rem]">—</pre>
+              </div>
+              <div class="p-4 max-h-[30vh] overflow-auto">
+                <div class="text-xs uppercase tracking-widest text-slate-400 mb-2">요청 헤더</div>
+                <pre id="t-req-headers" class="codepanel text-xs text-slate-300 leading-relaxed">—</pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-gradient rounded-2xl">
+            <div class="px-4 py-3 border-b border-ink-700/60 flex items-center justify-between">
+              <div class="flex items-center gap-3 text-sm">
+                <span class="text-slate-400 uppercase tracking-widest text-[10px]">응답</span>
+                <span id="t-resp-status" class="font-mono text-slate-300">—</span>
+                <span id="t-resp-time" class="text-xs text-slate-500"></span>
+                <span id="t-resp-size" class="text-xs text-slate-500"></span>
+              </div>
+              <div class="flex gap-2 text-xs">
+                <button id="t-resp-copy" class="text-slate-400 hover:text-accent-400">📋 복사</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-3">
+              <div class="lg:col-span-2 border-r border-ink-700/40">
+                <pre id="t-resp-body" class="codepanel p-4 text-slate-200 overflow-auto max-h-[55vh] min-h-[10rem]">실행 버튼을 눌러 요청을 전송하세요.</pre>
+              </div>
+              <div class="p-4 max-h-[55vh] overflow-auto">
+                <div class="text-xs uppercase tracking-widest text-slate-400 mb-2">응답 헤더</div>
+                <pre id="t-resp-headers" class="codepanel text-xs text-slate-300 leading-relaxed">—</pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- History -->
+          <div class="border-gradient rounded-2xl p-4">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-xs uppercase tracking-widest text-slate-400">최근 요청 (20)</div>
+              <span id="t-history-count" class="text-xs text-slate-500">0</span>
+            </div>
+            <div id="t-history" class="space-y-1.5 text-xs"></div>
+          </div>
+        </div>
+
+        <!-- WS Live Monitor -->
+        <div id="page-wsmon" class="page hidden space-y-4">
+          <div>
+            <h3 class="text-lg font-semibold">WebSocket 모니터</h3>
+            <p class="text-sm text-slate-400">edge-push / edge-price 등 ws 엔드포인트에 연결해 실시간 메시지를 확인합니다.</p>
+          </div>
+
+          <!-- Connection bar -->
+          <div class="border-gradient rounded-2xl p-4 space-y-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <select id="ws-preset" class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 outline-none text-sm">
+                <option value="">— 프리셋 —</option>
+                <option value="ws://localhost:8081/v1/subscribe">mci-push (8081)</option>
+                <option value="ws://localhost:8083/v1/subscribe">edge-price (8083)</option>
+                <option value="ws://localhost:8084/v1/subscribe">edge-push (8084)</option>
+              </select>
+              <input id="ws-url" placeholder="ws://host:port/path" value="ws://localhost:8081/v1/subscribe"
+                class="flex-1 min-w-[260px] px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
+              <label class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer">
+                <input id="ws-auth" type="checkbox" class="w-4 h-4 accent-accent-500" />
+                토큰 첨부
+              </label>
+              <button id="ws-connect" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">▶ 연결</button>
+              <button id="ws-disconnect" class="px-4 py-2 rounded-lg bg-ink-800 border border-ink-700 hover:bg-bad/20 hover:text-bad text-sm hidden">■ 종료</button>
+            </div>
+            <div class="flex items-center gap-4 text-xs">
+              <span class="flex items-center gap-2">
+                상태:
+                <span id="ws-state-dot" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+                <span id="ws-state-text" class="font-mono text-slate-300">disconnected</span>
+              </span>
+              <span class="text-slate-500">메시지 <span id="ws-stat-total" class="text-slate-200 font-mono">0</span></span>
+              <span class="text-slate-500">B/sec <span id="ws-stat-rate" class="text-slate-200 font-mono">0</span></span>
+              <span class="text-slate-500">peak <span id="ws-stat-peak" class="text-slate-200 font-mono">0</span></span>
+              <span class="text-slate-500">drop <span id="ws-stat-dropped" class="text-slate-200 font-mono">0</span></span>
+              <span class="text-slate-500 ml-auto">uptime <span id="ws-stat-uptime" class="text-slate-200 font-mono">—</span></span>
+            </div>
+          </div>
+
+          <!-- Toolbar -->
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="ws-filter" placeholder="필터 (포함하는 텍스트)"
+              class="flex-1 min-w-[200px] px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm" />
+            <label class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer">
+              <input id="ws-pause" type="checkbox" class="w-4 h-4 accent-accent-500" />
+              일시정지
+            </label>
+            <label class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer">
+              <input id="ws-autoscroll" type="checkbox" class="w-4 h-4 accent-accent-500" checked />
+              자동 스크롤
+            </label>
+            <label class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer">
+              <input id="ws-jsononly" type="checkbox" class="w-4 h-4 accent-accent-500" />
+              JSON 정렬
+            </label>
+            <button id="ws-clear" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-xs">메시지 비우기</button>
+          </div>
+
+          <!-- Send -->
+          <div class="border-gradient rounded-2xl p-3">
+            <div class="text-xs uppercase tracking-widest text-slate-400 mb-2">메시지 전송</div>
+            <div class="flex gap-2">
+              <input id="ws-send-input" placeholder='{"type":"ping"}'
+                class="flex-1 px-3 py-2 rounded-lg bg-ink-900 border border-ink-700 focus:border-accent-500 outline-none font-mono text-xs" />
+              <button id="ws-send-btn" class="px-4 py-2 rounded-lg bg-ink-800 border border-ink-700 hover:bg-ink-700 text-xs">전송</button>
+            </div>
+          </div>
+
+          <!-- Message log -->
+          <div class="border-gradient rounded-2xl">
+            <div class="px-4 py-2 border-b border-ink-700/60 flex items-center justify-between text-xs">
+              <span class="text-slate-400 uppercase tracking-widest">스트림</span>
+              <span id="ws-msg-count" class="text-slate-500 font-mono">0 / 0</span>
+            </div>
+            <div id="ws-log" class="overflow-auto max-h-[55vh] divide-y divide-ink-700/30">
+              <div class="p-6 text-center text-slate-500 text-sm">아직 메시지가 없습니다. 위에서 연결을 시작하세요.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quote (시세) — mci-push ws 에 자동 connect, 통화쌍별 호가/체결 시각화 -->
+        <div id="page-quote" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">시세</h3>
+              <p class="text-sm text-slate-400">mci-push 가 broadcast 한 시세를 실시간으로 표시. quote-forwarder 가 broker 로 publish 한 envelope 을 통화쌍 별로 모아 호가창과 최근 체결을 갱신.</p>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-slate-400 uppercase tracking-widest text-[10px]">상태</span>
+              <span id="q-state" class="font-mono">●</span>
+              <button id="q-clear" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 transition">초기화</button>
+            </div>
+          </div>
+
+          <!-- ws connection 입력 -->
+          <div class="border-gradient rounded-2xl p-4 space-y-3">
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+              <input id="q-url" placeholder="ws://host:port/path"
+                value="ws://localhost:8081/v1/subscribe"
+                class="flex-1 min-w-[260px] px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-xs" />
+              <button id="q-connect" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">▶ 연결</button>
+              <button id="q-disconnect" class="px-4 py-2 rounded-lg bg-ink-800 border border-ink-700 hover:bg-bad/20 hover:text-bad text-sm hidden">■ 종료</button>
+            </div>
+            <div class="flex flex-wrap items-center gap-4 text-xs text-slate-400">
+              <span>총 메시지 <span id="q-stat-total" class="font-mono text-slate-200">0</span></span>
+              <span>tick/sec <span id="q-stat-rate" class="font-mono text-slate-200">0</span></span>
+              <span>통화쌍 <span id="q-stat-symbols" class="font-mono text-slate-200">0</span></span>
+              <span>체결 <span id="q-stat-trades" class="font-mono text-slate-200">0</span></span>
+            </div>
+          </div>
+
+          <!-- 통화쌍별 호가창 grid -->
+          <div class="border-gradient rounded-2xl p-4">
+            <div class="text-xs uppercase tracking-widest text-slate-400 mb-3">통화쌍별 호가창</div>
+            <div id="q-symbols-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              <div class="text-slate-500 text-center py-6 col-span-full text-sm">아직 시세 없음 — quote-forwarder 가 시세를 흘리면 여기에 표시됩니다.</div>
+            </div>
+          </div>
+
+          <!-- 최근 체결 -->
+          <div class="border-gradient rounded-2xl">
+            <div class="px-4 py-3 border-b border-ink-700/60 flex items-center justify-between">
+              <div class="text-xs uppercase tracking-widest text-slate-400">최근 체결 (최대 50)</div>
+              <span class="text-xs text-slate-500" id="q-trades-count">0</span>
+            </div>
+            <div id="q-trades-list" class="p-4 space-y-1 font-mono text-xs max-h-[40vh] overflow-auto">
+              <div class="text-slate-500 text-center py-2">체결 없음</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 서비스 명세 (svcio) -->
+        <div id="page-svcio" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">서비스 명세</h3>
+              <p class="text-sm text-slate-400">매매 svc 의 input/output 구조 — 헤더파일 (<code>~/win/src/inc/trn/*.h</code>) 자동 파싱. 모든 채널이 같은 metadata, 호출 코드만 채널별로 다르게 생성.</p>
+            </div>
+            <div class="flex items-center gap-3">
+              <!-- 공통 헤더 (named header) 보기 — COMHDR/BROADCAST_H/... -->
+              <button id="svcio-headers-btn"
+                class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">
+                📋 공통 헤더 (<span id="svcio-headers-count">—</span>)
+              </button>
+              <div class="text-xs text-slate-500 font-mono" id="svcio-stats">—</div>
+            </div>
+          </div>
+
+          <!-- 공통 헤더 모달 — 등록된 모든 named header (COMHDR / BROADCAST_H / 등) 을
+               한 화면에 펼쳐서 표시. 부팅 시 svc-common-header 파일에서 추출. -->
+          <div id="svcio-headers-modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+            <div class="bg-ink-900 border border-ink-700 rounded-2xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+              <div class="flex items-center justify-between px-4 py-3 border-b border-ink-800">
+                <div>
+                  <h4 class="text-base font-semibold">등록된 공통 헤더</h4>
+                  <p class="text-xs text-slate-400">부팅 시 <code>--svc-common-header</code> 에서 파싱됨. 운영 svc 의 wire frame 에 이 헤더가 prepend 됨.</p>
+                </div>
+                <button id="svcio-headers-close" class="text-slate-400 hover:text-slate-200 text-xl leading-none">×</button>
+              </div>
+              <div id="svcio-headers-body" class="overflow-y-auto p-4 space-y-3"></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-12 gap-4">
+            <!-- 좌: 검색 + 목록 -->
+            <div class="col-span-4 rounded-xl bg-ink-900 border border-ink-800 p-3 flex flex-col" style="max-height: 70vh">
+              <input id="svcio-q" placeholder="코드 / 한글 이름 검색"
+                class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm mb-2" />
+              <div id="svcio-list" class="flex-1 overflow-y-auto space-y-1"></div>
+            </div>
+            <!-- 우: 상세 -->
+            <div class="col-span-8 rounded-xl bg-ink-900 border border-ink-800 p-4 space-y-4" style="max-height: 70vh; overflow-y: auto">
+              <div id="svcio-detail-empty" class="text-sm text-slate-500 text-center py-12">
+                좌측에서 service 를 선택하세요.
+              </div>
+              <div id="svcio-detail" class="hidden space-y-4">
+                <div>
+                  <div class="flex items-baseline gap-3">
+                    <h4 id="svcio-code" class="text-xl font-mono font-semibold"></h4>
+                    <span id="svcio-name" class="text-base text-accent-400"></span>
+                  </div>
+                  <div id="svcio-aliases" class="text-xs text-slate-500 mt-1"></div>
+                </div>
+
+                <!-- 공통 헤더 — header_type 이 있을 때만 표시 (운영 svc) -->
+                <div id="svcio-header-section" class="hidden">
+                  <div class="flex items-baseline gap-2 mb-1">
+                    <div class="text-xs uppercase tracking-widest text-slate-400">공통 헤더</div>
+                    <span id="svcio-header-name" class="text-[10px] text-accent-400 font-mono"></span>
+                    <span id="svcio-header-size" class="text-[10px] text-slate-500"></span>
+                  </div>
+                  <div id="svcio-header" class="rounded-lg bg-ink-950 border border-ink-800 p-3 font-mono text-xs"></div>
+                </div>
+
+                <div>
+                  <div class="text-xs uppercase tracking-widest text-slate-400 mb-1">Input</div>
+                  <div id="svcio-input" class="rounded-lg bg-ink-950 border border-ink-800 p-3 font-mono text-xs"></div>
+                </div>
+
+                <div>
+                  <div class="text-xs uppercase tracking-widest text-slate-400 mb-1">Output</div>
+                  <div id="svcio-output" class="rounded-lg bg-ink-950 border border-ink-800 p-3 font-mono text-xs"></div>
+                </div>
+
+                <!-- 헤더 편집 — dev svc-headers 만 편집 가능, 운영은 read-only.
+                     저장 시 .bak 백업 + 자동 재파싱 → spec/form 즉시 갱신. -->
+                <details class="group rounded-lg bg-ink-900 border border-ink-800">
+                  <summary class="cursor-pointer px-3 py-2 text-xs uppercase tracking-widest text-slate-400 hover:text-slate-200 select-none flex items-center justify-between">
+                    <span>📝 헤더 source 편집 <span id="svcio-edit-mode" class="text-[10px] text-slate-500 ml-2"></span></span>
+                    <span class="text-[10px] text-slate-500" id="svcio-edit-path"></span>
+                  </summary>
+                  <div class="p-3 space-y-2">
+                    <textarea id="svcio-edit-text" rows="14" spellcheck="false"
+                      class="w-full font-mono text-xs px-2 py-1.5 rounded bg-ink-950 border border-ink-800 focus:border-accent-500 outline-none whitespace-pre"></textarea>
+                    <div id="svcio-edit-msg" class="text-[11px] hidden"></div>
+                    <div class="flex items-center justify-end gap-2">
+                      <button id="svcio-edit-reload" class="text-xs px-3 py-1 rounded-md bg-ink-800 hover:bg-ink-700">↻ 재로드</button>
+                      <button id="svcio-edit-save" class="text-xs px-3 py-1 rounded-md bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold disabled:opacity-50">💾 저장 + 재파싱</button>
+                    </div>
+                  </div>
+                </details>
+
+                <!-- 호출 형식 + 채널 선택 + 코드 출력 -->
+                <!-- 형식 axis (format): API (REST/JSON) | 전문 (wire frame) -->
+                <!-- 채널 axis: 외부(고객) WEB/MOB/HTS │ 내부(직원) ADM/EMP -->
+                <div class="space-y-2">
+                  <div class="flex items-center justify-between">
+                    <div class="text-xs uppercase tracking-widest text-slate-400">호출 코드</div>
+                    <!-- 호출 형식 라디오 — 전문 선택 시 wire frame 보기 전용. -->
+                    <div class="flex items-center gap-3 text-xs" id="svcio-format-row">
+                      <span class="text-slate-500">형식:</span>
+                      <label class="flex items-center gap-1 cursor-pointer select-none">
+                        <input type="radio" name="svcio-format" value="API" class="w-3.5 h-3.5 accent-accent-500" checked />
+                        <span>API <span class="text-slate-500">(REST/JSON)</span></span>
+                      </label>
+                      <label class="flex items-center gap-1 cursor-pointer select-none">
+                        <input type="radio" name="svcio-format" value="WIRE" class="w-3.5 h-3.5 accent-accent-500" />
+                        <span>전문 <span class="text-slate-500">(wire, legacy)</span></span>
+                      </label>
+                    </div>
+                  </div>
+                  <!-- 채널 탭 — API 형식일 때만 의미. WIRE 형식은 채널 무관해 자동 hide. -->
+                  <div class="flex items-center justify-between" id="svcio-channels-row">
+                    <div class="text-xs text-slate-500">채널 (송신자)</div>
+                    <div class="flex gap-1 text-xs" id="svcio-gen-tabs">
+                      <button class="gen-tab px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-gen="WEB" title="외부 고객 — 웹 브라우저 (DMZ edge 경유)">WEB</button>
+                      <button class="gen-tab px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-gen="MOB" title="외부 고객 — 모바일 앱 (DMZ edge 경유)">MOB</button>
+                      <button class="gen-tab px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-gen="HTS" title="외부 고객 — Home Trading System (cs native desktop, DMZ edge 경유)">HTS</button>
+                      <span class="text-slate-700 self-center px-0.5">│</span>
+                      <button class="gen-tab px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-gen="ADM" title="내부 직원 — 운영 콘솔 (mci-admin)">ADM</button>
+                      <button class="gen-tab px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-gen="EMP" title="내부 직원 — 딜러 desktop (HTS와 같은 cs framework, mci-api 직결)">EMP</button>
+                    </div>
+                  </div>
+                  <pre id="svcio-gen" class="rounded-lg bg-ink-950 border border-ink-800 p-3 font-mono text-xs overflow-x-auto whitespace-pre"></pre>
+
+                  <!-- WIRE 형식 — ▶ wire 테스트 buttons + input form + result panel.
+                       클라이언트는 REST 호출하지만 mci-admin 이 wire frame 으로
+                       직렬화해서 broker 에 전송 — legacy native client 와 동일한
+                       byte 가 broker 에 도달. mci 의 정책/감사 layer 는 통과. -->
+                  <div id="svcio-wire-test" class="hidden space-y-3 mt-2">
+                    <div class="flex items-center justify-between">
+                      <div class="text-xs uppercase tracking-widest text-slate-400">전문 호출 (input → wire → broker → byte 응답)</div>
+                      <div class="flex items-center gap-2 text-xs">
+                        <select id="svcio-wire-channel" title="X-WTG-Channel (정책 분기에 사용)"
+                          class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 outline-none font-mono">
+                          <option value="">(자동)</option>
+                          <option value="WEB">WEB</option>
+                          <option value="MOB">MOB</option>
+                          <option value="HTS">HTS</option>
+                          <option value="ADM">ADM</option>
+                          <option value="EMP">EMP</option>
+                        </select>
+                        <input id="svcio-wire-exchange" placeholder="exchange"
+                          class="w-20 px-2 py-1 rounded-md bg-ink-800 border border-ink-700 outline-none font-mono text-xs" />
+                        <span class="text-slate-700">·</span>
+                        <input id="svcio-wire-rkey" placeholder="rkey"
+                          class="w-16 px-2 py-1 rounded-md bg-ink-800 border border-ink-700 outline-none font-mono text-xs" />
+                        <button id="svcio-wire-send"
+                          class="px-3 py-1 rounded-md bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold">
+                          ▶ wire 테스트
+                        </button>
+                      </div>
+                    </div>
+                    <!-- exchange/rkey 매핑 hint — 라우팅 룰에서 자동 lookup 됐는지 표시.
+                         dev 환경에서 운영 spec 호출 시 자동 추정 (code 5+나머지 split) 이
+                         실제 broker binding 과 안 맞는 경우가 잦음 → 라우팅 룰에 alias 등록
+                         후 자동 채움이 더 정확. 본 hint 가 source 를 명시 (룰 vs 추정). -->
+                    <div id="svcio-wire-mapping-hint" class="text-[11px] text-slate-500"></div>
+                    <!-- 공통 헤더 입력 — header_type 있을 때만 표시 -->
+                    <details id="svcio-wire-header-section" class="hidden group rounded bg-ink-900 border border-ink-800">
+                      <summary class="cursor-pointer px-2 py-1 text-[11px] text-slate-400 hover:text-slate-200 select-none">공통 헤더 입력 <span id="svcio-wire-header-hint" class="text-slate-500"></span></summary>
+                      <div id="svcio-wire-header-form" class="grid grid-cols-3 gap-2 p-2 text-xs"></div>
+                    </details>
+                    <!-- 동적 input form — Input 필드별 char[N] 입력 -->
+                    <div id="svcio-wire-form" class="grid grid-cols-2 gap-2 text-xs"></div>
+                    <!-- 결과 panel -->
+                    <div id="svcio-wire-result" class="hidden rounded-lg bg-ink-950 border border-ink-800 p-3 space-y-2 text-xs">
+                      <div class="flex items-baseline gap-3 text-[11px] text-slate-400">
+                        <span>status: <span id="swr-status" class="font-mono"></span></span>
+                        <span>·</span>
+                        <span>send: <span id="swr-sent" class="font-mono"></span></span>
+                        <span>·</span>
+                        <span>recv: <span id="swr-recv" class="font-mono"></span></span>
+                        <span>·</span>
+                        <span>dur: <span id="swr-dur" class="font-mono"></span></span>
+                      </div>
+                      <details class="group">
+                        <summary class="cursor-pointer text-[11px] uppercase tracking-widest text-slate-500 hover:text-slate-300">sent hex</summary>
+                        <pre id="swr-sent-hex" class="mt-1 font-mono text-[10px] break-all whitespace-pre-wrap text-slate-400"></pre>
+                      </details>
+                      <details class="group" open>
+                        <summary class="cursor-pointer text-[11px] uppercase tracking-widest text-slate-500 hover:text-slate-300">recv hex</summary>
+                        <pre id="swr-recv-hex" class="mt-1 font-mono text-[10px] break-all whitespace-pre-wrap text-slate-400"></pre>
+                      </details>
+                      <details id="swr-parsed-header-row" class="hidden group">
+                        <summary class="cursor-pointer text-[11px] uppercase tracking-widest text-slate-500 hover:text-slate-300">parsed Header</summary>
+                        <pre id="swr-parsed-header" class="mt-1 font-mono text-[11px] whitespace-pre-wrap text-slate-300"></pre>
+                      </details>
+                      <details class="group" open>
+                        <summary class="cursor-pointer text-[11px] uppercase tracking-widest text-slate-500 hover:text-slate-300">parsed Output</summary>
+                        <pre id="swr-parsed" class="mt-1 font-mono text-[11px] whitespace-pre-wrap text-slate-200"></pre>
+                      </details>
+                    </div>
+                  </div>
+
+                  <!-- WIRE 형식 안내 -->
+                  <div id="svcio-wire-note" class="hidden text-[11px] text-slate-500 px-1">
+                    💡 클라이언트는 REST 로 호출하지만 mci-admin 이 wire frame 으로 직렬화 → broker 가 legacy native client 와 동일한 byte 수신. <span class="text-accent-400">정책/감사 layer 통과</span> — kill switch / blocked rkeys / audit 모두 정상 적용.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Audit timeline -->
+        <div id="page-audit" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">감사 로그</h3>
+              <p class="text-sm text-slate-400">최근 admin 액션 (in-memory ring, 200개 sliding window).</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <input id="audit-filter" placeholder="필터 (action / usid / alias)"
+                class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm w-64" />
+              <label class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer">
+                <input id="audit-auto" type="checkbox" class="w-4 h-4 accent-accent-500" checked />
+                자동 새로고침
+              </label>
+              <button id="audit-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻</button>
+            </div>
+          </div>
+          <div class="border-gradient rounded-2xl p-2">
+            <div id="audit-summary" class="px-3 py-2 text-xs text-slate-400 border-b border-ink-700/50 flex items-center gap-4">
+              <span>총 <span id="audit-count" class="text-slate-200 font-mono">0</span></span>
+              <span>표시 <span id="audit-shown" class="text-slate-200 font-mono">0</span></span>
+              <span class="text-slate-500">최신 → 오래된 순</span>
+            </div>
+            <div id="audit-timeline" class="relative max-h-[60vh] overflow-auto py-3 pl-6 pr-4">
+              <div class="absolute left-3 top-0 bottom-0 w-px bg-ink-700/60"></div>
+              <div class="text-slate-500 text-sm py-6 text-center">로딩 중…</div>
+            </div>
+          </div>
+          <p class="text-[11px] text-slate-500">운영에서는 immutable 외부 sink(7년 보관)가 single source — 본 화면은 즉시 표시용 sliding window 입니다.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- ───── Route edit modal ───── -->
+<div id="route-modal" class="hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+  <div class="border-gradient rounded-2xl w-full max-w-lg">
+    <div class="px-6 py-4 border-b border-ink-700/60 flex items-center justify-between">
+      <h3 id="route-modal-title" class="font-semibold">라우팅 룰</h3>
+      <button data-close="route-modal" class="text-slate-400 hover:text-slate-200">✕</button>
+    </div>
+    <form id="route-form" class="p-6 space-y-4">
+      <div>
+        <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1">Alias</label>
+        <input id="rf-alias" required maxlength="64"
+          class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1">Exchange</label>
+          <input id="rf-exchange" maxlength="8"
+            class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1">Routing Key</label>
+          <input id="rf-rkey" required maxlength="16"
+            class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1">Comment</label>
+        <input id="rf-comment"
+          class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm" />
+      </div>
+      <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+        <input id="rf-active" type="checkbox" class="w-4 h-4 accent-accent-500" />
+        <span>활성</span>
+      </label>
+      <div id="route-err" class="hidden text-sm text-bad bg-bad/10 border border-bad/30 rounded-lg px-3 py-2"></div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" data-close="route-modal" class="px-4 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">취소</button>
+        <button type="submit" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">저장</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+//
+// WTG Control UI — single-file SPA.
+// 동적 텍스트는 textContent / DOM API 만 사용 — innerHTML 미사용.
+//
+const LS_TOKEN  = "wtg_access_token";
+const LS_REFRESH = "wtg_refresh_token";
+const LS_USER   = "wtg_user";
+const LS_CHAN   = "wtg_channel";
+const LS_DEV    = "wtg_dev_mode";
+const LS_THEME  = "wtg_theme"; // "dark" | "light" | "system"
+
+const $  = (s, root = document) => root.querySelector(s);
+const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
+
+// 작은 createElement 헬퍼 — props 는 attr/className/onclick 등.
+function h(tag, props, ...children) {
+  const el = document.createElement(tag);
+  if (props) {
+    for (const [k, v] of Object.entries(props)) {
+      if (v == null || v === false) continue;
+      if (k === "class")        el.className = v;
+      else if (k === "dataset") Object.assign(el.dataset, v);
+      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
+      else if (k === "text")    el.textContent = v;
+      else                       el.setAttribute(k, v);
+    }
+  }
+  for (const c of children) {
+    if (c == null || c === false) continue;
+    el.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  }
+  return el;
+}
+
+// ───────── Theme ─────────
+//
+// preference: "dark" / "light" / "system" 또는 미설정.
+// system 은 prefers-color-scheme media query 를 따름 + 변경 watch.
+const themeMQ = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+
+function loadThemePref() { return localStorage.getItem(LS_THEME) || "system"; }
+
+function effectiveTheme(pref) {
+  if (pref === "dark" || pref === "light") return pref;
+  if (themeMQ && themeMQ.matches) return "light";
+  return "dark";
+}
+
+function applyTheme(pref) {
+  const theme = effectiveTheme(pref);
+  document.documentElement.setAttribute("data-theme", theme);
+  if (document.body) document.body.setAttribute("data-theme", theme);
+  // 토글 버튼 상태 — body 미생성 시점이면 noop.
+  $$("[data-theme-set]").forEach(b => {
+    b.dataset.active = (b.dataset.themeSet === pref) ? "true" : "false";
+  });
+  const cur = document.getElementById("theme-current");
+  if (cur) cur.textContent = pref + (pref === "system" ? " (" + theme + ")" : "");
+}
+
+function setThemePref(pref) {
+  localStorage.setItem(LS_THEME, pref);
+  applyTheme(pref);
+}
+
+// system 변경을 실시간 반영 (사용자 OS 다크/라이트 토글 시).
+if (themeMQ) {
+  try {
+    themeMQ.addEventListener("change", () => {
+      if (loadThemePref() === "system") applyTheme("system");
+    });
+  } catch (_) {
+    // older Safari fallback.
+    themeMQ.addListener(() => { if (loadThemePref() === "system") applyTheme("system"); });
+  }
+}
+
+// 부팅 시 즉시 적용 — DOMContentLoaded 보다 먼저 (FOUC 방지).
+applyTheme(loadThemePref());
+
+// ───────── HTTP ─────────
+async function api(path, opts = {}) {
+  const headers = Object.assign({"Content-Type": "application/json"}, opts.headers || {});
+  if (localStorage.getItem(LS_DEV) === "1") {
+    const u = localStorage.getItem(LS_USER) || "";
+    if (u) headers["X-WTG-User"] = u;
+  } else {
+    const t = localStorage.getItem(LS_TOKEN);
+    if (t) headers["Authorization"] = "Bearer " + t;
+  }
+  const res = await fetch(path, { ...opts, headers });
+  let body = null;
+  try { body = await res.json(); } catch (_) {}
+  if (!res.ok) {
+    const msg = (body && (body.message || body.error)) || res.statusText;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+  return body;
+}
+
+// ───────── Toast ─────────
+function toast(msg, kind = "ok") {
+  const wrap = $("#toasts");
+  const colorClass = kind === "ok" ? "bg-good" : kind === "warn" ? "bg-warn" : "bg-bad";
+  const close = h("button", { class: "text-slate-400 hover:text-slate-200", text: "✕" });
+  const dot = h("span", { class: "w-2 h-2 mt-2 rounded-full " + colorClass });
+  const body = h("div", { class: "flex-1 leading-relaxed", text: msg });
+  const el = h("div",
+    { class: "toast border-gradient rounded-xl px-4 py-3 text-sm flex items-start gap-3" },
+    dot, body, close);
+  close.onclick = () => el.remove();
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+// ───────── Auth ─────────
+async function login(usid, pw, totp) {
+  const data = { exchange: "ADMIN", routing_key: "LOGON",
+    data: { usid, password: pw, totp } };
+  const r = await api("/v1/login", { method: "POST", body: JSON.stringify(data) });
+  if (r.access_token) localStorage.setItem(LS_TOKEN, r.access_token);
+  if (r.refresh_token) localStorage.setItem(LS_REFRESH, r.refresh_token);
+  localStorage.setItem(LS_USER, usid);
+  localStorage.setItem(LS_CHAN, r.channel || "ADMIN");
+  localStorage.removeItem(LS_DEV);
+  return r;
+}
+function devLogin(usid) {
+  localStorage.setItem(LS_USER, usid);
+  localStorage.setItem(LS_CHAN, "ADMIN");
+  localStorage.setItem(LS_DEV, "1");
+}
+async function logout() {
+  try { await api("/v1/logout", { method: "POST" }); } catch (_) {}
+  localStorage.removeItem(LS_TOKEN);
+  localStorage.removeItem(LS_REFRESH);
+  localStorage.removeItem(LS_USER);
+  localStorage.removeItem(LS_CHAN);
+  localStorage.removeItem(LS_DEV);
+  stopDashboardPoller();
+  stopAuditPoller();
+  wsmonDisconnect();
+  stopStream();
+  showLogin();
+}
+
+// ───────── Screen toggles ─────────
+function showLogin() {
+  $("#login-screen").classList.remove("hidden");
+  $("#app-shell").classList.add("hidden");
+}
+function showApp() {
+  $("#login-screen").classList.add("hidden");
+  $("#app-shell").classList.remove("hidden");
+  $("#me-usid").textContent  = localStorage.getItem(LS_USER) || "—";
+  $("#kpi-user").textContent = localStorage.getItem(LS_USER) || "—";
+  $("#kpi-channel").textContent = "channel " + (localStorage.getItem(LS_CHAN) || "—");
+  startStream();
+  goPage("dashboard");
+}
+
+// ───────── Routing ─────────
+function goPage(name) {
+  $$(".page").forEach(p => p.classList.add("hidden"));
+  const pg = document.getElementById("page-" + name);
+  if (pg) pg.classList.remove("hidden");
+  $$("#nav .nav-btn").forEach(b => b.dataset.active = (b.dataset.page === name) ? "true" : "false");
+  const titles = { dashboard: "대시보드", routes: "라우팅 룰", policy: "정책 엔진",
+                   broker: "브로커 명령",
+                   tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
+                   svcio: "서비스 명세", audit: "감사 로그" };
+  $("#page-title").textContent = titles[name] || "—";
+  if (name !== "dashboard") stopDashboardPoller();
+  if (name === "dashboard") loadDashboard();
+  if (name === "routes")    loadRoutes();
+  if (name === "tester")    initTester();
+  if (name === "wsmon")     initWSMon();
+  if (name === "quote")     initQuote();
+  if (name === "svcio")     initSvcIO();
+  if (name !== "audit")     stopAuditPoller();
+  if (name === "audit")     initAudit();
+  if (name === "policy")    loadPolicy();
+}
+
+// ───────── Dashboard ─────────
+const dash = {
+  routes: [], rtts: [], broker: [],   // 각각 마지막 12 포인트 (mini sparkline 용)
+  MAX: 12,
+  poller: null,
+  // 풀 차트 — 최근 2분 (60 포인트, 2초 간격).
+  full: { labels: [], routes: [], rtts: [], broker: [] },
+  FULL_MAX: 60,
+  chart: null,
+};
+
+async function loadDashboard() {
+  // 차트 인스턴스 (최초 진입 시 1회).
+  ensureDashChart();
+
+  // 폴링 시작 (대시보드 진입 시 한 번만).
+  if (!dash.poller) {
+    pollDashboard(); // 즉시 1회
+    dash.poller = setInterval(pollDashboard, 2000);
+  }
+
+  // mode 표시.
+  const mode = localStorage.getItem(LS_DEV) === "1" ? "DevMode (X-WTG-User)" : "JWT (Bearer access_token)";
+  $("#kpi-mode").textContent = "mode: " + mode;
+}
+
+function ensureDashChart() {
+  if (dash.chart) return;
+  const canvas = $("#dash-chart");
+  if (!canvas || typeof Chart === "undefined") return;
+  const grid = "rgba(148,163,184,0.1)";
+  const ticks = "rgba(148,163,184,0.6)";
+  dash.chart = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels: dash.full.labels,
+      datasets: [
+        {
+          label: "활성 룰",
+          data: dash.full.routes,
+          borderColor: "#22d3ee",
+          backgroundColor: "rgba(34,211,238,0.15)",
+          fill: true, tension: 0.35, borderWidth: 2,
+          pointRadius: 0, yAxisID: "y",
+        },
+        {
+          label: "RTT (ms)",
+          data: dash.full.rtts,
+          borderColor: "#10b981",
+          backgroundColor: "rgba(16,185,129,0.0)",
+          tension: 0.35, borderWidth: 2,
+          pointRadius: 0, yAxisID: "y1",
+        },
+        {
+          label: "Broker (1=up)",
+          data: dash.full.broker,
+          borderColor: "#f59e0b",
+          backgroundColor: "rgba(245,158,11,0.15)",
+          fill: true, stepped: true, borderWidth: 1.5,
+          pointRadius: 0, yAxisID: "y",
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 250 },
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: "rgba(7,10,19,0.92)",
+          titleColor: "#e2e8f0",
+          bodyColor: "#cbd5e1",
+          borderColor: "rgba(34,211,238,0.3)",
+          borderWidth: 1,
+        },
+      },
+      scales: {
+        x: {
+          grid: { color: grid, drawTicks: false },
+          ticks: { color: ticks, autoSkip: true, maxTicksLimit: 8, font: { size: 10 } },
+        },
+        y:  {
+          beginAtZero: true,
+          grid: { color: grid },
+          ticks: { color: ticks, font: { size: 10 } },
+        },
+        y1: {
+          beginAtZero: true, position: "right",
+          grid: { drawOnChartArea: false },
+          ticks: { color: ticks, font: { size: 10 } },
+        },
+      },
+    },
+  });
+}
+
+function pushFull(label, routes, rtt, broker) {
+  dash.full.labels.push(label);
+  dash.full.routes.push(routes);
+  dash.full.rtts.push(rtt);
+  dash.full.broker.push(broker);
+  if (dash.full.labels.length > dash.FULL_MAX) {
+    dash.full.labels.shift();
+    dash.full.routes.shift();
+    dash.full.rtts.shift();
+    dash.full.broker.shift();
+  }
+  if (dash.chart) dash.chart.update("none");
+}
+
+function stopDashboardPoller() {
+  if (dash.poller) { clearInterval(dash.poller); dash.poller = null; }
+}
+
+async function pollDashboard() {
+  // 활성 룰 + 응답시간 측정.
+  const t0 = performance.now();
+  let ok = false, list = [];
+  try {
+    const r = await api("/v1/admin/routes");
+    list = r.rules || [];
+    ok = true;
+  } catch (e) {
+    // KPI 가시화 — 실패 시 broker DOWN 으로 마킹 (admin → broker 로 가는 경로
+    // 자체가 무관하긴 하지만, admin 자체 가용성 그래프로 이용).
+  }
+  const ms = Math.round(performance.now() - t0);
+
+  pushPoint(dash.rtts, ms);
+  pushPoint(dash.broker, ok ? 1 : 0);
+  if (ok) {
+    const active = list.filter(x => x.active).length;
+    pushPoint(dash.routes, active);
+
+    // 이전 값과 비교해 delta 표시.
+    const prev = dash.routes.length > 1 ? dash.routes[dash.routes.length - 2] : active;
+    const d = active - prev;
+    $("#kpi-routes-delta").textContent = (d >= 0 ? "+" : "") + d;
+    $("#kpi-routes-delta").className = "ml-auto text-xs font-mono " +
+      (d > 0 ? "text-good" : d < 0 ? "text-bad" : "text-slate-500");
+
+    $("#kpi-routes").textContent = active;
+  }
+
+  $("#kpi-rtt").textContent = ms;
+  const avg = dash.rtts.length ? Math.round(dash.rtts.reduce((a,b)=>a+b,0) / dash.rtts.length) : 0;
+  $("#kpi-rtt-avg").textContent = "avg " + avg + "ms";
+
+  $("#kpi-broker").textContent = ok ? "CONNECTED" : "DISCONNECTED";
+  $("#kpi-broker").className = "text-3xl font-semibold " + (ok ? "text-good" : "text-bad");
+
+  // sparkline 그리기.
+  drawSpark("#spark-routes", dash.routes);
+  drawSpark("#spark-rtt",    dash.rtts);
+  drawSpark("#spark-broker", dash.broker, { fill: true });
+
+  // 풀 차트 업데이트.
+  const lbl = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  const cur = ok ? list.filter(x => x.active).length : (dash.full.routes.at(-1) ?? 0);
+  pushFull(lbl, cur, ms, ok ? 1 : 0);
+
+  // 최근 룰 5개 — ok 일 때만 갱신.
+  if (ok) renderRecentRoutes(list);
+}
+
+function pushPoint(arr, v) {
+  arr.push(v);
+  if (arr.length > dash.MAX) arr.shift();
+}
+
+function renderRecentRoutes(list) {
+  const recent = $("#recent-routes");
+  if (!recent) return;
+  const top = [...list].sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")).slice(0, 5);
+  recent.replaceChildren();
+  if (top.length === 0) {
+    recent.appendChild(h("div", { class: "text-slate-500", text: "등록된 룰이 없습니다." }));
+    return;
+  }
+  const ul = h("ul", { class: "divide-y divide-ink-700/40" });
+  for (const r of top) {
+    ul.appendChild(h("li", { class: "py-2 flex items-center justify-between text-sm" },
+      h("span", { class: "font-mono", text: r.alias }),
+      h("span", { class: "text-slate-400 font-mono text-xs", text: (r.exchange || "-") + "/" + r.routing_key }),
+      h("span", { class: (r.active ? "text-good" : "text-slate-500") + " text-xs",
+                  text: r.active ? "active" : "inactive" }),
+    ));
+  }
+  recent.appendChild(ul);
+}
+
+// drawSpark — 단순 SVG 라인 차트 (currentColor stroke).
+function drawSpark(selector, values, opts = {}) {
+  const svg = $(selector);
+  if (!svg) return;
+  // 기존 자식 제거.
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  const w = 120, h = 32;
+  if (values.length < 2) {
+    const empty = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    empty.setAttribute("x", "60"); empty.setAttribute("y", "20");
+    empty.setAttribute("text-anchor", "middle");
+    empty.setAttribute("class", "fill-current");
+    empty.setAttribute("font-size", "10");
+    empty.style.opacity = "0.4";
+    empty.textContent = "수집 중…";
+    svg.appendChild(empty);
+    return;
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const step = w / (values.length - 1);
+  const pts = values.map((v, i) => [
+    +(i * step).toFixed(2),
+    +(h - ((v - min) / range) * (h - 4) - 2).toFixed(2),
+  ]);
+  const d = pts.map((p, i) => (i === 0 ? "M" : "L") + p[0] + "," + p[1]).join(" ");
+
+  // (옵션) area fill.
+  if (opts.fill) {
+    const last = pts[pts.length - 1][0];
+    const area = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    area.setAttribute("d", d + " L" + last + "," + h + " L0," + h + " Z");
+    area.setAttribute("class", "fill-current");
+    area.setAttribute("opacity", "0.18");
+    svg.appendChild(area);
+  }
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  line.setAttribute("d", d);
+  line.setAttribute("class", "stroke-current");
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke-width", "1.6");
+  line.setAttribute("stroke-linejoin", "round");
+  line.setAttribute("stroke-linecap", "round");
+  svg.appendChild(line);
+
+  // 마지막 포인트 dot.
+  const last = pts[pts.length - 1];
+  const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  dot.setAttribute("cx", last[0]);
+  dot.setAttribute("cy", last[1]);
+  dot.setAttribute("r", "2");
+  dot.setAttribute("class", "fill-current");
+  svg.appendChild(dot);
+}
+
+// ───────── Routes ─────────
+let routesCache = [];
+async function loadRoutes() {
+  try {
+    const r = await api("/v1/admin/routes");
+    routesCache = r.rules || [];
+    renderRoutes();
+  } catch (e) {
+    toast("라우팅 룰 로드 실패: " + e.message, "err");
+  }
+  // routes-test-channel select — localStorage 의 마지막 선택 복원 + change 저장.
+  // 테스터 화면의 LS_TESTER_CHANNEL 과 같은 키 공유 — 두 화면이 일관됨.
+  const sel = $("#routes-test-channel");
+  if (sel && !sel.dataset.wired) {
+    sel.dataset.wired = "1";
+    const saved = localStorage.getItem(LS_TESTER_CHANNEL);
+    if (saved) sel.value = saved;
+    sel.addEventListener("change", () => {
+      if (sel.value) localStorage.setItem(LS_TESTER_CHANNEL, sel.value);
+      else localStorage.removeItem(LS_TESTER_CHANNEL);
+    });
+  }
+  // routes-test-format select — svcio 화면의 LS_SVCIO_FORMAT 과 같은 키 공유.
+  const fmt = $("#routes-test-format");
+  if (fmt && !fmt.dataset.wired) {
+    fmt.dataset.wired = "1";
+    const saved = localStorage.getItem(LS_SVCIO_FORMAT);
+    if (saved === "API" || saved === "WIRE") fmt.value = saved;
+    fmt.addEventListener("change", () => {
+      localStorage.setItem(LS_SVCIO_FORMAT, fmt.value);
+    });
+  }
+}
+function renderRoutes() {
+  const tb = $("#routes-tbody");
+  tb.replaceChildren();
+  if (!routesCache.length) {
+    $("#routes-empty").classList.remove("hidden");
+    return;
+  }
+  $("#routes-empty").classList.add("hidden");
+
+  for (const r of routesCache) {
+    const toggleBtn = h("button", {
+      class: "toggle-active text-xs px-2 py-1 rounded-full " +
+             (r.active ? "bg-good/15 text-good" : "bg-ink-700 text-slate-400"),
+      text: (r.active ? "● active" : "○ inactive"),
+      dataset: { alias: r.alias, active: String(r.active) },
+    });
+    toggleBtn.onclick = async () => {
+      const want = !(toggleBtn.dataset.active === "true");
+      try {
+        await api("/v1/admin/routes/" + encodeURIComponent(r.alias) + "/active",
+          { method: "POST", body: JSON.stringify({ active: want }) });
+        toast(r.alias + (want ? " 활성화" : " 비활성화"));
+        loadRoutes();
+      } catch (e) { toast(e.message, "err"); }
+    };
+
+    // ▶ 테스트 — 라우팅 룰 화면 → API 테스터 deep link.
+    // 클릭 시 alias 로 호출하는 envelope 이 자동 채워지고 navigate. 사용자가
+    // alias 마다 별도 화면으로 이동/검색할 필요 없이 즉시 호출 가능.
+    // inactive 룰도 테스트 가능 (UI 상 색상만 흐림).
+    const testBtn = h("button", {
+      class: "test text-xs px-2 py-1 rounded-md bg-accent-500/15 text-accent-400 hover:bg-accent-500/25",
+      text: "▶ 테스트",
+    });
+    testBtn.onclick = () => {
+      // 라우팅 화면 상단 select 의 형식 + 채널 읽기.
+      const fmt = ($("#routes-test-format") || {}).value || "API";
+      const ch = ($("#routes-test-channel") || {}).value || "";
+
+      if (fmt === "WIRE") {
+        // 전문 형식 — svcio 화면으로 이동해서 wire 테스트.
+        // alias → svc code 매핑은 컨벤션이 두 가지 (dev: underscore / 운영: concat)
+        // 라 후보 목록을 만들어 차례로 시도 — 첫 번째 매칭 성공이 됨.
+        const candidates = svcCodeCandidates(r.exchange, r.routing_key);
+        toast("서비스 명세 — alias=" + r.alias + " (후보 " + candidates.length + "건 탐색)");
+        goPage("svcio");
+        setTimeout(() => svcioLoadFirstAvailable(candidates, "WIRE", r.alias), 50);
+        return;
+      }
+      // API 형식 — 테스터로 deep link (실행 가능).
+      goPage("tester");
+      testerLoadPreset({
+        method: "POST",
+        path: "/v1/admin/tx-test",
+        body: { alias: r.alias, data: "" },
+      });
+      const tch = $("#t-channel");
+      if (tch) {
+        tch.value = ch;
+        if (ch) localStorage.setItem(LS_TESTER_CHANNEL, ch);
+      }
+      toast("API 테스터로 이동 — alias=" + r.alias + (ch ? " · 채널=" + ch : ""));
+    };
+
+    const editBtn = h("button", {
+      class: "edit text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700",
+      text: "수정",
+    });
+    editBtn.onclick = () => openRouteModal(r);
+
+    const delBtn = h("button", {
+      class: "del text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-bad/20 hover:text-bad",
+      text: "삭제",
+    });
+    delBtn.onclick = async () => {
+      if (!confirm(r.alias + " 룰을 삭제할까요?")) return;
+      try {
+        await api("/v1/admin/routes/" + encodeURIComponent(r.alias), { method: "DELETE" });
+        toast(r.alias + " 삭제됨");
+        loadRoutes();
+      } catch (e) { toast(e.message, "err"); }
+    };
+
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+      h("td", { class: "px-4 py-3 font-mono " + (r.active ? "" : "text-slate-500"), text: r.alias }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: r.exchange || "-" }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: r.routing_key }),
+      h("td", { class: "px-4 py-3" }, toggleBtn),
+      h("td", { class: "px-4 py-3 text-xs text-slate-400 font-mono",
+                text: r.updated_at ? new Date(r.updated_at).toLocaleString("ko-KR") : "-" }),
+      h("td", { class: "px-4 py-3 text-right space-x-1" }, testBtn, editBtn, delBtn),
+    );
+    tb.appendChild(tr);
+  }
+}
+function openRouteModal(rule) {
+  const isEdit = !!rule;
+  $("#route-modal-title").textContent = isEdit ? ("룰 수정 — " + rule.alias) : "신규 라우팅 룰";
+  $("#rf-alias").value = rule?.alias || "";
+  $("#rf-alias").disabled = isEdit;
+  $("#rf-exchange").value = rule?.exchange || "";
+  $("#rf-rkey").value     = rule?.routing_key || "";
+  $("#rf-comment").value  = rule?.comment || "";
+  $("#rf-active").checked = rule?.active ?? true;
+  $("#route-err").classList.add("hidden");
+  $("#route-modal").classList.remove("hidden");
+}
+function closeRouteModal() { $("#route-modal").classList.add("hidden"); }
+
+// ───────── Broker commands ─────────
+async function brkRun(path, label) {
+  $("#brk-label").textContent = label;
+  $("#brk-status").textContent = "요청 중…";
+  $("#brk-output").textContent = "…";
+  const t0 = Date.now();
+  try {
+    const url = path.includes("whois") ? path + "?usid=" + encodeURIComponent(prompt("usid?") || "") : path;
+    const data = await api(url);
+    $("#brk-output").textContent = JSON.stringify(data, null, 2);
+    $("#brk-status").textContent = "200 OK · " + (Date.now() - t0) + " ms";
+  } catch (e) {
+    $("#brk-output").textContent = "(" + (e.status || "-") + ") " + e.message + "\n\n" +
+      JSON.stringify(e.body || {}, null, 2);
+    $("#brk-status").textContent = "failed · " + (Date.now() - t0) + " ms";
+  }
+}
+
+// ───────── API Tester ─────────
+// 정적 preset — admin endpoint 의 *고정* 동작들. 서비스 호출 (alias 기반) 은
+// initTester 가 라우팅 룰 store 에서 동적 생성하므로 여기엔 두지 않는다.
+const TESTER_PRESETS = [
+  { label: "헬스체크",        method: "GET",  path: "/v1/ping" },
+  { label: "Status",          method: "GET",  path: "/v1/admin/status" },
+  { label: "Clients",         method: "GET",  path: "/v1/admin/clients" },
+  { label: "Whois (admin01)", method: "GET",  path: "/v1/admin/whois?usid=admin01" },
+  { label: "Routes 목록",     method: "GET",  path: "/v1/admin/routes" },
+  { label: "Routes 신규",     method: "PUT",  path: "/v1/admin/routes/EXAMPLE",
+    body: { exchange: "ORDER", routing_key: "NEW", active: true, comment: "tester" } },
+  { label: "Admin Cmd",       method: "POST", path: "/v1/admin/cmd",
+    body: { subc: 150 } },
+  // Tx 테스터 — mci-admin 이 mci-api 의 /v1/tx 로 reverse-proxy 해서 매매 transaction
+  // echo round-trip 을 같은 origin 안에서 시각 검증할 수 있게 한다.
+  { label: "Tx echo",         method: "POST", path: "/v1/admin/tx-test",
+    body: { exchange: "TSTSVC", routing_key: "PING", data: { hello: "ui-test" } } },
+  // Push 발사 — mci-admin 의 broker connection 으로 user-targeted unsolicited 발사.
+  { label: "Push 발사",       method: "POST", path: "/v1/admin/push-test",
+    body: { user: "tester01", data: { event: "alert", text: "hello via push" } } },
+  { label: "로그아웃",        method: "POST", path: "/v1/logout" },
+];
+
+const LS_HISTORY = "wtg_tester_history";
+// alias / preset 별 마지막 body 보존 — 같은 preset 을 다시 클릭했을 때 직전에
+// 보냈던 body 가 자동 복원되어, 반복 호출 시 매번 다시 입력할 필요가 없게 한다.
+const LS_TESTER_BODIES  = "wtg_tester_bodies";
+// 채널 spoof drop-down 의 마지막 선택 — 페이지 reload 후에도 유지.
+const LS_TESTER_CHANNEL = "wtg_tester_channel";
+let testerInited = false;
+// 현재 로드된 preset 의 식별자. testerSend 시 body 를 이 키로 저장한다.
+// path/method 를 사용자가 직접 수정하면 null 로 리셋해서 잘못된 키에 저장되는
+// 사고를 방지한다.
+let currentPresetId = null;
+
+// presetIdOf — alias preset 은 alias 단위, 정적 preset 은 method+path 단위로 식별.
+function presetIdOf(p) {
+  if (p && p.body && typeof p.body.alias === "string" && p.body.alias) {
+    return "alias:" + p.body.alias;
+  }
+  return "static:" + (p.method || "?") + " " + (p.path || "");
+}
+
+function loadSavedBody(id) {
+  if (!id) return undefined;
+  try {
+    const m = JSON.parse(localStorage.getItem(LS_TESTER_BODIES) || "{}");
+    return m[id];
+  } catch (_) { return undefined; }
+}
+
+function saveTesterBody(id, body) {
+  if (!id) return;
+  let m = {};
+  try { m = JSON.parse(localStorage.getItem(LS_TESTER_BODIES) || "{}"); } catch (_) {}
+  if (body == null || body === "") delete m[id];
+  else m[id] = body;
+  try { localStorage.setItem(LS_TESTER_BODIES, JSON.stringify(m)); } catch (_) {}
+}
+
+function initTester() {
+  // testerInited 가 true 라도 alias preset 은 매번 새로 fetch 해서 라우팅 룰
+  // 변경이 즉시 반영되게 한다 (사용자가 라우팅 룰 화면에서 alias 추가 →
+  // API 테스터로 navigate → 새 alias 자동 출현).
+  const firstInit = !testerInited;
+  testerInited = true;
+
+  renderTesterPresets();
+  if (firstInit) {
+    if (!$("#t-path").value) $("#t-path").value = "/v1/admin/status";
+    initTesterDefaults();
+  }
+
+  // alias 동적 preset — 라우팅 룰 store 에서 fetch.
+  loadAliasPresets();
+}
+
+// renderTesterPresets — 정적 preset 만 그림. alias preset 은 별도.
+function renderTesterPresets() {
+  const presets = $("#tester-presets");
+  presets.replaceChildren();
+  for (const p of TESTER_PRESETS) {
+    presets.appendChild(makePresetButton(p));
+  }
+}
+
+function makePresetButton(p, opts) {
+  opts = opts || {};
+  const btn = h("button", {
+    class: "px-3 py-1.5 rounded-lg bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 transition text-xs " + (opts.extraClass || ""),
+  });
+  const m = h("span", { class: "font-mono text-[10px] text-slate-400 mr-1.5", text: p.method });
+  btn.appendChild(m);
+  btn.appendChild(document.createTextNode(p.label));
+  btn.onclick = () => testerLoadPreset(p);
+  return btn;
+}
+
+// loadAliasPresets — GET /v1/admin/routes 결과를 alias 별 button 으로 변환.
+// 새 서비스 추가 시 코드 수정 없이 라우팅 룰 등록만으로 API 테스터에 자동 출현.
+async function loadAliasPresets() {
+  let res;
+  try {
+    res = await api("/v1/admin/routes");
+  } catch (e) {
+    return; // 인증/네트워크 에러 — 정적 preset 만 표시
+  }
+  const rules = (res && res.rules) || [];
+  if (rules.length === 0) return;
+
+  const presets = $("#tester-presets");
+  // 구분 라벨 + 동적 alias preset 추가
+  presets.appendChild(h("span", {
+    class: "text-[10px] text-slate-500 uppercase tracking-widest self-center px-1",
+    text: "│ alias"
+  }));
+  // active=true 만, alias 정렬
+  const active = rules.filter(r => r.active).sort((a, b) => a.alias.localeCompare(b.alias));
+  for (const rule of active) {
+    const preset = {
+      label: rule.alias,
+      method: "POST",
+      path: "/v1/admin/tx-test",
+      body: { alias: rule.alias, data: "" },
+    };
+    const btn = makePresetButton(preset, { extraClass: "border-accent-500/30" });
+    btn.title = `${rule.exchange}/${rule.routing_key}` + (rule.comment ? ` — ${rule.comment}` : "");
+    presets.appendChild(btn);
+  }
+}
+
+// initTesterDefaults — 첫 진입 시 한 번 호출되는 기본값 / 헤더 / 히스토리 setup.
+function initTesterDefaults() {
+  if (!$("#t-headers").children.length) addHeaderRow();
+  // 채널 spoof drop-down 직전 선택 복원.
+  const ch = localStorage.getItem(LS_TESTER_CHANNEL);
+  if (ch) {
+    const sel = $("#t-channel");
+    if (sel) sel.value = ch;
+  }
+  renderHistory();
+}
+
+function wireTester() {
+  $("#t-send").onclick = testerSend;
+  $("#t-header-add").onclick = () => addHeaderRow();
+  $("#t-body-format").onclick = () => {
+    try {
+      const v = $("#t-body").value.trim();
+      if (!v) return;
+      $("#t-body").value = JSON.stringify(JSON.parse(v), null, 2);
+      $("#t-body-err").classList.add("hidden");
+    } catch (e) {
+      $("#t-body-err").textContent = "JSON 형식 오류: " + e.message;
+      $("#t-body-err").classList.remove("hidden");
+    }
+  };
+  $("#t-body-clear").onclick = () => {
+    $("#t-body").value = "";
+    $("#t-body-err").classList.add("hidden");
+    // preset 컨텍스트가 있으면 저장된 body 도 함께 삭제 — "비우기" 가 영속적으로 동작.
+    if (currentPresetId) saveTesterBody(currentPresetId, "");
+    updateBodyMemoBadge();
+  };
+  // 사용자가 path/method 를 직접 수정하면 preset 컨텍스트를 끊는다 — 다음 Send 가
+  // 잘못된 alias 키로 body 를 덮어쓰는 것을 방지.
+  $("#t-method").addEventListener("change", () => {
+    currentPresetId = null;
+    updateBodyMemoBadge();
+  });
+  $("#t-path").addEventListener("input", () => {
+    currentPresetId = null;
+    updateBodyMemoBadge();
+  });
+  $("#t-resp-copy").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($("#t-resp-body").textContent);
+      toast("응답 복사됨");
+    } catch (_) { toast("복사 실패", "warn"); }
+  };
+  const reqCopyBtn = $("#t-req-copy");
+  if (reqCopyBtn) {
+    reqCopyBtn.onclick = async () => {
+      // method/path + 헤더 + body 를 한 번에 복사 (curl-friendly dump).
+      const line = $("#t-req-line"); const hdr = $("#t-req-headers"); const bd = $("#t-req-body");
+      if (!line) return;
+      const dump = (line.textContent || "") + "\n\n"
+                 + (hdr ? hdr.textContent : "") + "\n\n"
+                 + (bd ? bd.textContent : "");
+      try { await navigator.clipboard.writeText(dump); toast("요청 복사됨"); }
+      catch (_) { toast("복사 실패", "warn"); }
+    };
+  }
+  $("#tester-history-clear").onclick = () => {
+    localStorage.removeItem(LS_HISTORY);
+    renderHistory();
+    toast("히스토리 초기화");
+  };
+
+  // path enter 로 즉시 실행.
+  $("#t-path").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); testerSend(); }
+  });
+}
+
+function addHeaderRow(name = "", value = "") {
+  const wrap = $("#t-headers");
+  const nameEl = h("input", { placeholder: "Header-Name",
+    class: "w-1/3 px-2 py-1.5 rounded-md bg-ink-900 border border-ink-700 focus:border-accent-500 outline-none font-mono text-xs" });
+  nameEl.value = name;
+  const valEl = h("input", { placeholder: "value",
+    class: "flex-1 px-2 py-1.5 rounded-md bg-ink-900 border border-ink-700 focus:border-accent-500 outline-none font-mono text-xs" });
+  valEl.value = value;
+  const rmBtn = h("button", { type: "button",
+    class: "px-2 text-slate-500 hover:text-bad", text: "✕" });
+  const row = h("div", { class: "flex gap-2 items-center" }, nameEl, valEl, rmBtn);
+  rmBtn.onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+
+function readTesterHeaders() {
+  const out = {};
+  $$("#t-headers > div").forEach(row => {
+    const inputs = row.querySelectorAll("input");
+    const k = inputs[0]?.value.trim();
+    const v = inputs[1]?.value.trim();
+    if (k) out[k] = v;
+  });
+  return out;
+}
+
+function testerLoadPreset(p) {
+  $("#t-method").value = p.method;
+  $("#t-path").value = p.path;
+  const id = presetIdOf(p);
+  currentPresetId = id;
+  const saved = loadSavedBody(id);
+  if (saved !== undefined) {
+    $("#t-body").value = saved;
+  } else {
+    $("#t-body").value = p.body ? JSON.stringify(p.body, null, 2) : "";
+  }
+  $("#t-body-err").classList.add("hidden");
+  updateBodyMemoBadge();
+}
+
+// updateBodyMemoBadge — currentPresetId 에 저장된 body 가 있으면 "기억됨" 배지 표시.
+function updateBodyMemoBadge() {
+  const badge = $("#t-body-memo");
+  if (!badge) return;
+  const has = currentPresetId && loadSavedBody(currentPresetId) !== undefined;
+  badge.classList.toggle("hidden", !has);
+}
+
+async function testerSend() {
+  const method = $("#t-method").value;
+  const path = $("#t-path").value.trim();
+  if (!path) { toast("path 가 비어있습니다", "warn"); return; }
+  if (!path.startsWith("/")) { toast("path 는 / 로 시작해야 합니다", "warn"); return; }
+
+  const headers = readTesterHeaders();
+  // 인증 헤더 자동 주입 (api 함수와 동일).
+  if (localStorage.getItem(LS_DEV) === "1") {
+    const u = localStorage.getItem(LS_USER); if (u) headers["X-WTG-User"] = u;
+  } else {
+    const t = localStorage.getItem(LS_TOKEN); if (t) headers["Authorization"] = "Bearer " + t;
+  }
+  // 채널 spoof — t-channel select 의 값이 비어있지 않으면 X-WTG-Channel 주입.
+  // DevMode 에서 mci-api 가 이 값을 Principal.Channel 로 그대로 사용 → 정책 분기.
+  const chSel = $("#t-channel");
+  if (chSel && chSel.value) {
+    headers["X-WTG-Channel"] = chSel.value;
+    localStorage.setItem(LS_TESTER_CHANNEL, chSel.value);
+  }
+
+  const opts = { method, headers };
+  if (method !== "GET" && method !== "HEAD") {
+    const raw = $("#t-body").value.trim();
+    if (raw) {
+      try {
+        JSON.parse(raw); // 유효성만 확인 — body 는 raw 그대로 전송.
+        opts.body = raw;
+        if (!headers["Content-Type"]) headers["Content-Type"] = "application/json";
+        $("#t-body-err").classList.add("hidden");
+      } catch (e) {
+        $("#t-body-err").textContent = "JSON 형식 오류: " + e.message;
+        $("#t-body-err").classList.remove("hidden");
+        return;
+      }
+    }
+  }
+
+  // 요청 패널 dump — 자동 주입된 X-WTG-User / Content-Type 까지 모두 노출.
+  // 새 markup 이 없으면 silent skip (브라우저 캐시 부정합 방어 — 옛 markup + 새 JS
+  // 조합에서 NPE 가 fetch 도달 자체를 막는 것을 방지).
+  const reqLineEl = $("#t-req-line");
+  if (reqLineEl) {
+    reqLineEl.textContent = method + " " + path;
+    const reqHdrLines = Object.entries(headers).map(([k, v]) => k + ": " + v);
+    const reqHdrEl = $("#t-req-headers");
+    if (reqHdrEl) reqHdrEl.textContent = reqHdrLines.length ? reqHdrLines.join("\n") : "(헤더 없음)";
+    const reqBodyEl = $("#t-req-body");
+    if (reqBodyEl) {
+      reqBodyEl.textContent = opts.body
+        ? (() => { try { return JSON.stringify(JSON.parse(opts.body), null, 2); } catch (_) { return opts.body; } })()
+        : "(본문 없음)";
+    }
+  }
+
+  // 현재 preset 의 body 를 LS 에 저장 — 다음 호출 시 자동 복원되어 반복 호출 가속.
+  // body 변경 없이 preset 만 바뀐 경우에도 저장되지만 동일 값이라 무해.
+  if (currentPresetId) {
+    saveTesterBody(currentPresetId, $("#t-body").value);
+    updateBodyMemoBadge();
+  }
+
+  $("#t-resp-status").textContent = "요청 중…";
+  $("#t-resp-time").textContent = "";
+  $("#t-resp-size").textContent = "";
+  $("#t-resp-body").textContent = "…";
+  $("#t-resp-headers").textContent = "—";
+  $("#t-send").disabled = true;
+
+  const t0 = performance.now();
+  let res, raw, status = 0, ok = false;
+  try {
+    res = await fetch(path, opts);
+    status = res.status; ok = res.ok;
+    raw = await res.text();
+  } catch (e) {
+    $("#t-resp-status").textContent = "ERR";
+    $("#t-resp-body").textContent = "fetch 실패: " + e.message;
+    $("#t-send").disabled = false;
+    return;
+  }
+  const ms = (performance.now() - t0).toFixed(0);
+  $("#t-send").disabled = false;
+
+  // 상태 표시 + 색상.
+  const statusEl = $("#t-resp-status");
+  statusEl.textContent = status + " " + (res.statusText || "");
+  statusEl.className = "font-mono " + (ok ? "text-good" : status >= 500 ? "text-bad" : "text-warn");
+
+  $("#t-resp-time").textContent = ms + " ms";
+  $("#t-resp-size").textContent = (new Blob([raw]).size) + " B";
+
+  // 응답 본문 — JSON 이면 pretty.
+  let pretty = raw;
+  try { pretty = JSON.stringify(JSON.parse(raw), null, 2); } catch (_) {}
+  $("#t-resp-body").textContent = pretty || "(empty)";
+
+  // 헤더.
+  const hdrLines = [];
+  res.headers.forEach((v, k) => hdrLines.push(k + ": " + v));
+  $("#t-resp-headers").textContent = hdrLines.length ? hdrLines.join("\n") : "—";
+
+  // 히스토리 저장.
+  pushHistory({
+    method, path, status, ok,
+    ms: Number(ms),
+    at: new Date().toISOString(),
+  });
+}
+
+function pushHistory(entry) {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(LS_HISTORY) || "[]"); } catch (_) {}
+  list.unshift(entry);
+  list = list.slice(0, 20);
+  localStorage.setItem(LS_HISTORY, JSON.stringify(list));
+  renderHistory();
+}
+
+function renderHistory() {
+  const wrap = $("#t-history");
+  if (!wrap) return;
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(LS_HISTORY) || "[]"); } catch (_) {}
+  $("#t-history-count").textContent = list.length;
+  wrap.replaceChildren();
+  if (!list.length) {
+    wrap.appendChild(h("div", { class: "text-slate-500 text-center py-2", text: "아직 기록 없음" }));
+    return;
+  }
+  for (const e of list) {
+    const colorCls = e.ok ? "text-good" : e.status >= 500 ? "text-bad" : "text-warn";
+    const row = h("button", {
+      class: "w-full flex items-center gap-3 px-3 py-1.5 rounded-md hover:bg-ink-800 transition text-left",
+    },
+      h("span", { class: "font-mono " + colorCls, text: String(e.status || "—").padEnd(3) }),
+      h("span", { class: "font-mono text-slate-400 text-[10px] w-12", text: e.method }),
+      h("span", { class: "font-mono text-slate-200 truncate flex-1", text: e.path }),
+      h("span", { class: "text-slate-500 text-[10px] font-mono", text: e.ms + "ms" }),
+      h("span", { class: "text-slate-600 text-[10px] font-mono", text: new Date(e.at).toLocaleTimeString("ko-KR") }),
+    );
+    row.onclick = () => {
+      $("#t-method").value = e.method;
+      $("#t-path").value = e.path;
+    };
+    wrap.appendChild(row);
+  }
+}
+
+// ───────── Live Stream (admin /v1/admin/stream) ─────────
+const stream = {
+  sock: null,
+  retry: null,
+  retryDelay: 1000,
+  closing: false,
+};
+
+function setStreamState(state) {
+  const el = $("#stream-state");
+  if (!el) return;
+  const map = {
+    connected:    { cls: "bg-good/20 text-good",       text: "stream ●" },
+    connecting:   { cls: "bg-warn/20 text-warn",       text: "stream ◐" },
+    disconnected: { cls: "bg-ink-700 text-slate-400",  text: "stream ○" },
+    error:        { cls: "bg-bad/20 text-bad",         text: "stream ✕" },
+  };
+  const m = map[state] || map.disconnected;
+  el.className = "text-xs px-2 py-0.5 rounded-full font-mono " + m.cls;
+  el.textContent = m.text;
+}
+
+function startStream() {
+  if (stream.sock) return;
+  stream.closing = false;
+  setStreamState("connecting");
+
+  // 동일 origin ws — http(s) → ws(s).
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  let url = proto + "//" + location.host + "/v1/admin/stream";
+  // query 토큰 — Authorization 헤더 못 주는 ws 우회.
+  if (localStorage.getItem(LS_DEV) !== "1") {
+    const t = localStorage.getItem(LS_TOKEN);
+    if (t) url += "?access_token=" + encodeURIComponent(t);
+  } else {
+    // DevMode 는 Authorization 헤더 못 주는 환경 — 서버가 X-WTG-User 만 본다.
+    // 브라우저 ws 는 헤더 못 줌 → 운영 모드 외엔 stream 비활성화 가능.
+    // dev 환경에서도 시도는 하되 401 받으면 retry 안함.
+  }
+
+  let sock;
+  try { sock = new WebSocket(url); } catch (e) {
+    setStreamState("error");
+    scheduleStreamRetry();
+    return;
+  }
+  stream.sock = sock;
+  sock.addEventListener("open", () => {
+    setStreamState("connected");
+    stream.retryDelay = 1000;
+  });
+  sock.addEventListener("message", (e) => {
+    let ev;
+    try { ev = JSON.parse(e.data); } catch (_) { return; }
+    handleStreamEvent(ev);
+  });
+  sock.addEventListener("close", () => {
+    stream.sock = null;
+    if (stream.closing) {
+      setStreamState("disconnected");
+      return;
+    }
+    setStreamState("disconnected");
+    scheduleStreamRetry();
+  });
+  sock.addEventListener("error", () => {
+    // close 도 곧 발동 — close 핸들러에서 retry.
+  });
+}
+
+function stopStream() {
+  stream.closing = true;
+  if (stream.retry) { clearTimeout(stream.retry); stream.retry = null; }
+  if (stream.sock) {
+    try { stream.sock.close(1000, "logout"); } catch (_) {}
+    stream.sock = null;
+  }
+  setStreamState("disconnected");
+}
+
+function scheduleStreamRetry() {
+  if (stream.closing) return;
+  if (stream.retry) return;
+  stream.retry = setTimeout(() => {
+    stream.retry = null;
+    if (!stream.closing) startStream();
+  }, stream.retryDelay);
+  stream.retryDelay = Math.min(stream.retryDelay * 2, 30000);
+}
+
+function handleStreamEvent(ev) {
+  switch (ev.type) {
+    case "hello":
+      // 첫 연결 hello — 디버그 로그 외 처리 없음.
+      return;
+    case "ping":
+      return; // keep-alive only.
+    case "audit":
+      // audit ring 의 새 항목. auditState 에 prepend.
+      if (ev.data) {
+        auditState.entries = [ev.data, ...auditState.entries].slice(0, 200);
+        if (!$("#page-audit").classList.contains("hidden")) renderAudit();
+      }
+      return;
+    case "policy":
+      policyState.state = ev.data;
+      if (!$("#page-policy").classList.contains("hidden")) renderPolicy();
+      return;
+    case "route":
+      // 라우팅 변경 알림 — 현재 routes 페이지면 새로고침.
+      if (!$("#page-routes").classList.contains("hidden")) loadRoutes();
+      // 대시보드 페이지면 next polling tick 에 자동 반영 (별도 액션 불필요).
+      return;
+  }
+}
+
+// ───────── Policy ─────────
+const policyState = { state: null };
+
+async function loadPolicy() {
+  try {
+    const st = await api("/v1/admin/policy");
+    policyState.state = st;
+    renderPolicy();
+  } catch (e) {
+    toast("정책 로드 실패: " + e.message, "err");
+  }
+}
+
+// killSwitchScopeChannels — 사용자 선택 (preset 또는 체크박스) 으로부터
+// channel 목록 산출. 빈 배열 = 전체 적용 (legacy).
+function killSwitchScopeChannels() {
+  return Array.from($$("#pol-kill-scope-presets .ks-ch"))
+    .filter(cb => cb.checked)
+    .map(cb => cb.dataset.ch);
+}
+
+function applyKillSwitchScopePreset(scope) {
+  const map = {
+    all:       [],
+    customer:  ["WEB", "MOB", "HTS"],
+    employee:  ["ADM", "EMP"],
+  };
+  const want = new Set(map[scope] || []);
+  $$("#pol-kill-scope-presets .ks-ch").forEach(cb => {
+    cb.checked = want.has(cb.dataset.ch);
+  });
+}
+
+function wirePolicy() {
+  $("#pol-refresh").onclick = loadPolicy;
+  $("#pol-kill-toggle").onclick = async () => {
+    const cur = !!policyState.state?.kill_switch;
+    if (cur && !confirm("Kill Switch 를 해제하시겠습니까?")) return;
+    const channels = killSwitchScopeChannels();
+    const scopeLabel = channels.length === 0
+      ? "*모든 채널*"
+      : channels.join(", ");
+    if (!cur && !confirm(`정말 Kill Switch 를 활성화하시겠습니까?\n적용 범위: ${scopeLabel}`)) return;
+    try {
+      const st = await api("/v1/admin/policy/kill-switch",
+        { method: "POST", body: JSON.stringify({ active: !cur, channels }) });
+      policyState.state = st;
+      renderPolicy();
+      toast("Kill Switch " + (st.kill_switch ? "활성화됨" : "해제됨")
+            + (st.kill_switch && channels.length > 0 ? " — " + channels.join(",") : ""));
+    } catch (e) { toast(e.message, "err"); }
+  };
+  // 범위 preset 버튼.
+  $$("#pol-kill-scope-presets .ks-preset").forEach(btn => {
+    btn.onclick = () => applyKillSwitchScopePreset(btn.dataset.scope);
+  });
+  $("#pol-maint-save").onclick = async () => {
+    const s = $("#pol-maint-start").value;
+    const e = $("#pol-maint-end").value;
+    const m = $("#pol-maint-msg").value;
+    const body = {
+      start: s ? new Date(s).toISOString() : null,
+      end:   e ? new Date(e).toISOString() : null,
+      message: m,
+    };
+    try {
+      const st = await api("/v1/admin/policy/maintenance",
+        { method: "POST", body: JSON.stringify(body) });
+      policyState.state = st;
+      renderPolicy();
+      toast("정비 창 저장됨");
+    } catch (err) { toast(err.message, "err"); }
+  };
+  $("#pol-maint-clear").onclick = () => {
+    $("#pol-maint-start").value = "";
+    $("#pol-maint-end").value = "";
+    $("#pol-maint-msg").value = "";
+  };
+
+  $("#pol-syms-add").onclick = () => addPolicyItem("symbols");
+  $("#pol-syms-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addPolicyItem("symbols"); }
+  });
+  $("#pol-rks-add").onclick = () => addPolicyItem("rkeys");
+  $("#pol-rks-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addPolicyItem("rkeys"); }
+  });
+}
+
+async function addPolicyItem(kind) {
+  const inputId = kind === "symbols" ? "#pol-syms-input" : "#pol-rks-input";
+  const v = $(inputId).value.trim().toUpperCase();
+  if (!v) return;
+  const cur = policyState.state || {};
+  const list = (kind === "symbols" ? cur.blocked_symbols : cur.blocked_routing_keys) || [];
+  if (list.includes(v)) { toast("이미 등록됨: " + v, "warn"); return; }
+  await savePolicyList(kind, [...list, v]);
+  $(inputId).value = "";
+}
+
+async function removePolicyItem(kind, item) {
+  const cur = policyState.state || {};
+  const list = (kind === "symbols" ? cur.blocked_symbols : cur.blocked_routing_keys) || [];
+  await savePolicyList(kind, list.filter(x => x !== item));
+}
+
+async function savePolicyList(kind, items) {
+  const path = kind === "symbols" ? "/v1/admin/policy/blocked-symbols" : "/v1/admin/policy/blocked-routing-keys";
+  try {
+    const st = await api(path, { method: "POST", body: JSON.stringify({ items }) });
+    policyState.state = st;
+    renderPolicy();
+    toast("저장됨");
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function renderPolicy() {
+  const st = policyState.state || {};
+  // 헤더 메타.
+  $("#pol-updated").textContent = st.updated_at ? new Date(st.updated_at).toLocaleString("ko-KR") : "—";
+  $("#pol-by").textContent = st.updated_by || "—";
+
+  // Kill Switch.
+  const ks = !!st.kill_switch;
+  const ksState = $("#pol-kill-state");
+  ksState.textContent = ks ? "🚨 ACTIVE" : "● INACTIVE";
+  ksState.className = "mt-1.5 text-2xl font-semibold " + (ks ? "text-bad" : "text-good");
+  const ksBtn = $("#pol-kill-toggle");
+  ksBtn.textContent = ks ? "해제" : "활성화";
+  ksBtn.className = "shrink-0 px-5 py-3 rounded-xl text-sm font-semibold transition " +
+    (ks ? "bg-good/15 text-good border border-good/40 hover:bg-good/25"
+        : "bg-bad/15 text-bad border border-bad/40 hover:bg-bad/25");
+  // 범위 표시 + 체크박스 동기화.
+  const ksChs = Array.isArray(st.kill_switch_channels) ? st.kill_switch_channels : [];
+  const scopeText = !ks
+    ? "—"
+    : (ksChs.length === 0 ? "전체 채널 (legacy)" : ksChs.join(", "));
+  $("#pol-kill-scope-now").textContent = scopeText;
+  // 활성 상태일 때 체크박스가 현재 적용 채널과 일치하도록 sync (사용자가 다른 값을
+  // 입력 중인 경우 덮지 않도록 — kill switch 비활성 시에만 sync).
+  if (!ks) {
+    const set = new Set(ksChs);
+    $$("#pol-kill-scope-presets .ks-ch").forEach(cb => {
+      cb.checked = set.has(cb.dataset.ch);
+    });
+  }
+
+  // Maintenance.
+  const m = st.maintenance || {};
+  const startVal = m.start ? new Date(m.start) : null;
+  const endVal = m.end ? new Date(m.end) : null;
+  $("#pol-maint-start").value = startVal ? toLocalDTValue(startVal) : "";
+  $("#pol-maint-end").value = endVal ? toLocalDTValue(endVal) : "";
+  $("#pol-maint-msg").value = m.message || "";
+  const now = new Date();
+  const active = startVal && endVal && now >= startVal && now < endVal;
+  const stateChip = $("#pol-maint-state");
+  stateChip.textContent = active ? "● ACTIVE" : (startVal && endVal ? "scheduled" : "inactive");
+  stateChip.className = "text-xs font-mono px-2 py-1 rounded-full " +
+    (active ? "bg-warn/15 text-warn" : startVal && endVal ? "bg-accent-500/15 text-accent-400" : "bg-ink-700 text-slate-400");
+
+  // 차단 심볼.
+  renderPolicyChips($("#pol-syms-list"), st.blocked_symbols || [], "symbols");
+  $("#pol-syms-count").textContent = (st.blocked_symbols || []).length + "개";
+
+  // 차단 routing keys.
+  renderPolicyChips($("#pol-rks-list"), st.blocked_routing_keys || [], "rkeys");
+  $("#pol-rks-count").textContent = (st.blocked_routing_keys || []).length + "개";
+}
+
+function renderPolicyChips(container, items, kind) {
+  container.replaceChildren();
+  if (!items.length) {
+    container.appendChild(h("div", { class: "text-slate-500 text-sm py-1", text: "(없음)" }));
+    return;
+  }
+  for (const item of items) {
+    const chip = h("span", {
+      class: "inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-ink-800 border border-ink-700 hover:border-bad/50 transition group",
+    });
+    chip.appendChild(h("span", { class: "font-mono text-sm text-slate-200", text: item }));
+    const x = h("button", {
+      class: "text-slate-500 hover:text-bad text-xs transition",
+      text: "✕",
+    });
+    x.onclick = () => removePolicyItem(kind, item);
+    chip.appendChild(x);
+    container.appendChild(chip);
+  }
+}
+
+// datetime-local input 용 yyyy-mm-ddThh:mm 포맷.
+function toLocalDTValue(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()) +
+    "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+
+// ───────── 서비스 명세 (svcio) ─────────
+//
+// data 는 채널 무관 동일 (SvcSpec) — gen template 만 채널별로 분기.
+// 새 채널 추가 시 SVCIO_GEN 의 key 한 줄만 추가.
+const svcioState = {
+  wired: false,
+  list: [],          // {code,name,...}
+  selected: null,    // SvcSpec
+  gen: "WEB",        // 활성 채널 탭 — WEB/MOB/ADM/HTS/EMP
+  format: "API",     // 호출 형식 — "API" (REST/JSON) 또는 "WIRE" (전문, display only)
+  rules: [],         // /v1/admin/routes 캐시 — alias 매핑 cross-ref 용
+};
+// 호출 형식 localStorage 보존 — 페이지 reload 후에도 유지. 라우팅 화면과 공유.
+const LS_SVCIO_FORMAT = "wtg_svcio_format";
+
+async function initSvcIO() {
+  if (!svcioState.wired) {
+    svcioState.wired = true;
+    $("#svcio-q").addEventListener("input", debounceSvcIO);
+    $$("#svcio-gen-tabs .gen-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        svcioState.gen = btn.dataset.gen;
+        renderSvcIOGen();
+        renderSvcIOTabs();
+      });
+    });
+    // 호출 형식 라디오 — 변경 시 gen 영역 재렌더 + LS 보존.
+    $$('input[name="svcio-format"]').forEach(r => {
+      r.addEventListener("change", () => {
+        if (r.checked) {
+          svcioState.format = r.value;  // "API" | "WIRE"
+          localStorage.setItem(LS_SVCIO_FORMAT, r.value);
+          renderSvcIOFormat();
+          renderSvcIOGen();
+        }
+      });
+    });
+    // wire 테스트 버튼 + 채널 select 변경 시 LS 동기화.
+    const wireBtn = $("#svcio-wire-send");
+    if (wireBtn) wireBtn.onclick = wireSend;
+    const wireCh = $("#svcio-wire-channel");
+    if (wireCh) wireCh.addEventListener("change", () => {
+      if (wireCh.value) localStorage.setItem(LS_TESTER_CHANNEL, wireCh.value);
+      else localStorage.removeItem(LS_TESTER_CHANNEL);
+    });
+    // 헤더 편집 버튼 wiring.
+    const reloadBtn = $("#svcio-edit-reload");
+    if (reloadBtn) reloadBtn.onclick = loadSvcIOSource;
+    const saveBtn = $("#svcio-edit-save");
+    if (saveBtn) saveBtn.onclick = saveSvcIOSource;
+    // 공통 헤더 모달 toggle.
+    const hdrBtn = $("#svcio-headers-btn");
+    if (hdrBtn) hdrBtn.onclick = openSvcioHeadersModal;
+    const hdrClose = $("#svcio-headers-close");
+    if (hdrClose) hdrClose.onclick = () => $("#svcio-headers-modal").classList.add("hidden");
+    // 모달 backdrop 클릭으로 닫기.
+    const hdrModal = $("#svcio-headers-modal");
+    if (hdrModal) hdrModal.addEventListener("click", (e) => {
+      if (e.target === hdrModal) hdrModal.classList.add("hidden");
+    });
+  }
+  // 공통 헤더 count 갱신 (페이지 진입 시).
+  refreshSvcioHeadersCount();
+  // 마지막 format 복원.
+  const savedFmt = localStorage.getItem(LS_SVCIO_FORMAT);
+  if (savedFmt === "WIRE" || savedFmt === "API") {
+    svcioState.format = savedFmt;
+    const radio = $(`input[name="svcio-format"][value="${savedFmt}"]`);
+    if (radio) radio.checked = true;
+  }
+  renderSvcIOFormat();
+  renderSvcIOTabs();
+  await loadSvcIOList();
+  await loadSvcIORules();
+}
+
+// renderSvcIOFormat — 형식에 따라 채널 탭 / wire 영역 보이기/숨기기.
+function renderSvcIOFormat() {
+  const isWire = svcioState.format === "WIRE";
+  $("#svcio-channels-row").classList.toggle("hidden", isWire);
+  $("#svcio-wire-test").classList.toggle("hidden", !isWire);
+  $("#svcio-wire-note").classList.toggle("hidden", !isWire);
+  if (isWire) renderWireForm();
+}
+
+// renderWireForm — 선택된 SvcSpec 의 Input 필드별로 입력창 + exchange/rkey 기본값 채움.
+function renderWireForm() {
+  const spec = svcioState.selected;
+  const form = $("#svcio-wire-form");
+  if (!form) return;
+  form.replaceChildren();
+  if (!spec) return;
+  // exchange / rkey 기본값 — 우선순위:
+  //   1. 라우팅 룰에 매칭되는 alias 가 있으면 그 룰의 (exchange, routing_key).
+  //   2. 없으면 운영 컨벤션 추정 (code 길이 8+ 는 5+나머지 split).
+  // 매칭 룰 출처 표시는 #svcio-wire-mapping-hint 에 적는다 (있을 때만).
+  const ex = $("#svcio-wire-exchange");
+  const rk = $("#svcio-wire-rkey");
+  const hint = $("#svcio-wire-mapping-hint");
+  let rule = null;
+  try {
+    const rules = Array.isArray(svcioState.rules) ? svcioState.rules : [];
+    const matched = rules.filter(r => r && (
+      r.alias === spec.code ||
+      r.routing_key === spec.code ||
+      (r.exchange + "_" + r.routing_key) === spec.code));
+    rule = matched.find(r => r.active) || matched[0] || null;
+  } catch (e) { rule = null; }
+  const guessEx = spec.code.length >= 8 ? spec.code.substring(0, 5) : spec.code;
+  const guessRk = spec.code.length >= 8 ? spec.code.substring(5) : "";
+  // 갱신 정책:
+  //   - 라우팅 룰 매칭이 있으면 → 항상 룰 값으로 set (룰을 single source of truth).
+  //     사용자가 룰 등록 후 같은 spec 다시 클릭만 해도 자동 매핑이 즉시 보임.
+  //   - 룰 매칭이 없으면 → spec 이 바뀔 때만 추정값으로 갱신 (사용자 수동 입력 보존).
+  //     dataset.lastSpec 으로 추적.
+  if (ex) {
+    if (rule) {
+      ex.value = rule.exchange;
+      ex.dataset.lastSpec = spec.code;
+    } else if (ex.dataset.lastSpec !== spec.code) {
+      ex.value = guessEx;
+      ex.dataset.lastSpec = spec.code;
+    }
+  }
+  if (rk) {
+    if (rule) {
+      rk.value = rule.routing_key;
+      rk.dataset.lastSpec = spec.code;
+    } else if (rk.dataset.lastSpec !== spec.code) {
+      rk.value = guessRk;
+      rk.dataset.lastSpec = spec.code;
+    }
+  }
+  if (hint) {
+    if (rule) {
+      hint.textContent = "라우팅 룰 \"" + rule.alias + "\" 매핑 (" + rule.exchange + "/" + rule.routing_key + ")" + (rule.active ? "" : " - 비활성");
+      hint.className = "text-[11px] text-emerald-400";
+    } else {
+      hint.textContent = "자동 추정 (" + guessEx + "/" + guessRk + ") - 라우팅 룰에 alias=" + spec.code + " 등록 시 자동 매핑";
+      hint.className = "text-[11px] text-amber-500";
+    }
+  }
+  // 채널 select — LS_TESTER_CHANNEL 공유.
+  const ch = $("#svcio-wire-channel");
+  if (ch && !ch.value) ch.value = localStorage.getItem(LS_TESTER_CHANNEL) || "";
+  // 공통 헤더 form — spec.header_type 있을 때만 표시.
+  const hdrSec = $("#svcio-wire-header-section");
+  const hdrForm = $("#svcio-wire-header-form");
+  const hdrHint = $("#svcio-wire-header-hint");
+  if (hdrSec && hdrForm) {
+    hdrForm.replaceChildren();
+    if (spec.header_type && (spec.header_fields || []).length > 0) {
+      hdrSec.classList.remove("hidden");
+      const total = spec.header_fields.reduce((s, f) => s + (f.size || 0), 0);
+      hdrHint.textContent = `(${spec.header_type} / ${total} byte) — 클릭해서 필드 펼치기`;
+      for (const f of spec.header_fields) {
+        if (f.children && f.children.length > 0) continue;
+        const wrap = h("label", { class: "flex flex-col gap-0.5" });
+        wrap.appendChild(h("span", { class: "text-[10px] text-slate-500",
+          text: f.name + " [" + f.size + "] " + (f.comment || "") }));
+        const inp = h("input", {
+          class: "px-2 py-1 rounded-md bg-ink-900 border border-ink-700 focus:border-accent-500 outline-none font-mono",
+          placeholder: f.comment || f.name,
+        });
+        inp.dataset.headerField = f.name;
+        inp.maxLength = f.size;
+        // sensible defaults — usid / chnl / ctyp 같은 자주 쓰는 필드 자동 채움.
+        if (f.name === "usid") inp.value = localStorage.getItem(LS_USER) || "";
+        if (f.name === "chnl") inp.value = ($("#svcio-wire-channel") || {}).value || "WEB";
+        wrap.appendChild(inp);
+        hdrForm.appendChild(wrap);
+      }
+    } else {
+      hdrSec.classList.add("hidden");
+    }
+  }
+
+  // Input 필드 (top-level char[N] 만 — nested grid 는 input 으로 잘 안 받음).
+  const flat = (spec.input || []).filter(f => !(f.children && f.children.length > 0));
+  if (flat.length === 0) {
+    form.appendChild(h("div", { class: "col-span-2 text-slate-500 text-center py-1",
+      text: "(Input 필드 없음 — 빈 body 로 호출됨)" }));
+    return;
+  }
+  for (const f of flat) {
+    const wrap = h("label", { class: "flex flex-col gap-0.5" });
+    wrap.appendChild(h("span", { class: "text-[10px] text-slate-500",
+      text: f.name + " [" + f.size + "] " + (f.comment || "") }));
+    const inp = h("input", {
+      class: "px-2 py-1 rounded-md bg-ink-900 border border-ink-700 focus:border-accent-500 outline-none font-mono",
+      placeholder: f.comment || f.name,
+    });
+    inp.dataset.field = f.name;
+    inp.maxLength = f.size;
+    wrap.appendChild(inp);
+    form.appendChild(wrap);
+  }
+}
+
+// wireSend — 입력 form 모아 /v1/admin/svc-io/{code}/test-wire 호출.
+async function wireSend() {
+  const spec = svcioState.selected;
+  if (!spec) return;
+  const ex = ($("#svcio-wire-exchange") || {}).value || "";
+  const rk = ($("#svcio-wire-rkey") || {}).value || "";
+  const channel = ($("#svcio-wire-channel") || {}).value || "";
+  const input = {};
+  $$("#svcio-wire-form input[data-field]").forEach(inp => {
+    if (inp.value) input[inp.dataset.field] = inp.value;
+  });
+  // 공통 헤더 입력값 모음 — header_type 이 있을 때만.
+  const header = {};
+  $$("#svcio-wire-header-form input[data-header-field]").forEach(inp => {
+    if (inp.value) header[inp.dataset.headerField] = inp.value;
+  });
+  // trxc 가 비어있으면 svc code 자동 채움 (대부분 svc 가 trxc=Code 기대).
+  if (spec.header_type && header.trxc === undefined) {
+    header.trxc = spec.code;
+  }
+  const btn = $("#svcio-wire-send");
+  btn.disabled = true;
+  const t0 = performance.now();
+  try {
+    const res = await api("/v1/admin/svc-io/" + encodeURIComponent(spec.code) + "/test-wire", {
+      method: "POST",
+      body: JSON.stringify({ channel, exchange: ex, routing_key: rk, header, input }),
+    });
+    showWireResult(res, "200 OK · " + (performance.now() - t0).toFixed(0) + " ms");
+  } catch (e) {
+    // api() 가 throw — error response 도 시각화하려면 res 내용 보여주기.
+    let body = e.message;
+    try {
+      // api() 가 status + body 를 message 에 합침. fallback 표시.
+    } catch (_) {}
+    showWireResult({ errm: body }, "ERR · " + (performance.now() - t0).toFixed(0) + " ms");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function showWireResult(res, status) {
+  $("#svcio-wire-result").classList.remove("hidden");
+  $("#swr-status").textContent = status;
+  $("#swr-sent").textContent = (res.sent_bytes || 0) + " B";
+  $("#swr-recv").textContent = (res.recv_bytes || 0) + " B";
+  $("#swr-dur").textContent = (res.duration_ms != null ? res.duration_ms : "-") + " ms";
+  $("#swr-sent-hex").textContent = formatHex(res.sent_hex || "");
+  $("#swr-recv-hex").textContent = formatHex(res.recv_hex || "");
+  // parsed Header 영역 — 운영 svc (header_type=COMHDR) 일 때만 채움.
+  const phRow = $("#swr-parsed-header-row");
+  if (res.parsed_header) {
+    phRow.classList.remove("hidden");
+    $("#swr-parsed-header").textContent = JSON.stringify(res.parsed_header, null, 2);
+  } else {
+    phRow.classList.add("hidden");
+  }
+  if (res.parsed) {
+    $("#swr-parsed").textContent = JSON.stringify(res.parsed, null, 2);
+  } else if (res.errm) {
+    let msg = "에러: " + res.errm + (res.errn ? " (errn=" + res.errn + ")" : "");
+    // 알려진 broker 에러 코드별 안내 — MB-1002 가 가장 흔함 (svc 미등록).
+    if (res.errn === 1002 || /MB-1002\b/.test(res.errm || "")) {
+      msg += "\n\n💡 broker 에 해당 exchange/routing_key 의 svc 가 떠있지 않습니다.\n";
+      msg += "   이 spec 은 운영 헤더 (`win/src/inc/trn/`) 에서 왔을 가능성이 큽니다 —\n";
+      msg += "   dev broker 가 운영 svc 를 띄우지 않으므로 wire 테스트는 실패합니다.\n";
+      msg += "   dev 검증은 좌측 목록의 [dev] badge 가 붙은 항목 (ECHOSVC_*, TSTSVC_PING) 으로.";
+    } else if (res.errn === 1010 || /MB-1010\b/.test(res.errm || "")) {
+      msg += "\n\n💡 인자 오류 — exchange / routing_key / body 형식 확인.";
+    } else if (res.errn === 1014 || /MB-1014\b/.test(res.errm || "")) {
+      msg += "\n\n💡 메시지 길이 부족 — body 가 svc 가 기대하는 size 미만일 수 있음.";
+    }
+    $("#swr-parsed").textContent = msg;
+  } else {
+    $("#swr-parsed").textContent = "(응답 없음)";
+  }
+}
+
+// ───────── 공통 헤더 모달 (named headers) ─────────
+let svcioHeadersCache = null;
+
+async function refreshSvcioHeadersCount() {
+  // 부팅 후 한 번만 fetch — count 표시용. 실제 list 는 모달 열 때.
+  try {
+    if (!svcioHeadersCache) {
+      const res = await api("/v1/admin/svc-io/headers");
+      svcioHeadersCache = res.headers || [];
+    }
+    const el = $("#svcio-headers-count");
+    if (el) el.textContent = svcioHeadersCache.length;
+  } catch (_) { /* 부팅 직후 일시 실패 — 모달 열 때 재시도 */ }
+}
+
+async function openSvcioHeadersModal() {
+  const modal = $("#svcio-headers-modal");
+  const body = $("#svcio-headers-body");
+  modal.classList.remove("hidden");
+  body.replaceChildren(h("div", { class: "text-slate-500 text-center py-4", text: "로드 중…" }));
+  try {
+    const res = await api("/v1/admin/svc-io/headers");
+    svcioHeadersCache = res.headers || [];
+    $("#svcio-headers-count").textContent = svcioHeadersCache.length;
+    body.replaceChildren();
+    if (svcioHeadersCache.length === 0) {
+      body.appendChild(h("div", { class: "text-slate-500 text-center py-4",
+        text: "등록된 공통 헤더 없음 — --svc-common-header flag 또는 WTG_ADMIN_SVC_COMHDR 환경변수 확인" }));
+      return;
+    }
+    for (const hdr of svcioHeadersCache) {
+      body.appendChild(renderHeaderEntry(hdr));
+    }
+  } catch (e) {
+    body.replaceChildren(h("div", { class: "text-bad text-center py-4",
+      text: "헤더 로드 실패: " + e.message }));
+  }
+}
+
+// renderHeaderEntry — 단일 named header 의 펼치기 항목.
+function renderHeaderEntry(hdr) {
+  const det = h("details", { class: "rounded-lg bg-ink-950 border border-ink-800" });
+  // open by default if it's COMHDR (the most commonly inspected one).
+  if (hdr.name === "COMHDR") det.open = true;
+  const sum = h("summary", {
+    class: "cursor-pointer px-3 py-2 flex items-baseline gap-3 hover:bg-ink-800/50 select-none",
+  },
+    h("span", { class: "font-mono text-accent-400 font-semibold", text: hdr.name }),
+    h("span", { class: "text-xs text-slate-400", text: `${hdr.field_count} 필드 · ${hdr.size} byte` }),
+  );
+  det.appendChild(sum);
+  const pane = h("div", { class: "px-3 pb-3 font-mono text-xs" });
+  // 필드 트리 — 기존 renderSvcIOFields 재사용.
+  pane.replaceChildren(...renderSvcIOFields(hdr.fields || [], 0));
+  det.appendChild(pane);
+  return det;
+}
+
+// inferExchange / inferRoutingKey — code 에서 exchange/rkey 추정.
+//   "ECHOSVC_PING" → ("ECHOSVC", "PING")  — underscore split (dev svc 컨벤션)
+//   "W1104S01"     → ("W1104",   "S01")    — 5+나머지 (legacy W svc 컨벤션)
+//   짧은 code      → (code,     "")       — 통째로 exchange
+function inferExchange(code) {
+  const us = code.indexOf("_");
+  if (us > 0) return code.substring(0, us);
+  if (code.length >= 8) return code.substring(0, 5);
+  return code;
+}
+function inferRoutingKey(code) {
+  const us = code.indexOf("_");
+  if (us > 0) return code.substring(us + 1);
+  if (code.length >= 8) return code.substring(5);
+  return "";
+}
+
+// formatHex — 한 줄에 16 byte (32 hex) 씩 잘라서 표시 — 가독성.
+function formatHex(hex) {
+  if (!hex) return "(empty)";
+  const lines = [];
+  for (let i = 0; i < hex.length; i += 32) {
+    lines.push(hex.substr(i, 32).match(/.{1,2}/g).join(" "));
+  }
+  return lines.join("\n");
+}
+
+// svcioLoadCode — 외부 (라우팅 화면 등) 에서 직접 코드 + 형식 지정해서 진입할 때.
+// 코드가 미등록이면 toast + 빈 detail.
+async function svcioLoadCode(code, format) {
+  if (format === "WIRE" || format === "API") {
+    svcioState.format = format;
+    localStorage.setItem(LS_SVCIO_FORMAT, format);
+    const radio = $(`input[name="svcio-format"][value="${format}"]`);
+    if (radio) radio.checked = true;
+    renderSvcIOFormat();
+  }
+  if (code) {
+    await loadSvcIODetail(code);
+  }
+}
+
+// svcCodeCandidates — alias 의 (exchange, routing_key) 에서 가능한 svc code 들을
+// 우선순위 순으로 반환. 두 컨벤션 (dev: underscore / 운영 W: concat) 모두 시도.
+function svcCodeCandidates(exchange, rkey) {
+  exchange = exchange || "";
+  rkey = rkey || "";
+  const list = [];
+  if (exchange && rkey) {
+    list.push(exchange + "_" + rkey);  // dev 컨벤션 (ECHOSVC_PING)
+    list.push(exchange + rkey);        // W svc 컨벤션 (W1104S01)
+  }
+  if (exchange) list.push(exchange);   // single-rkey 헤더 (TSTSVC 류)
+  if (rkey)     list.push(rkey);       // routing_key 만 (희소)
+  return list;
+}
+
+// svcioLoadFirstAvailable — 후보 코드 목록을 차례로 시도, 첫 번째 매칭을 로드.
+// 모두 실패면 toast 안내 + 빈 detail.
+async function svcioLoadFirstAvailable(candidates, format, aliasLabel) {
+  // 형식 라디오 먼저 적용 (실패해도 사용자가 다른 코드 검색하기 좋게).
+  if (format === "WIRE" || format === "API") {
+    svcioState.format = format;
+    localStorage.setItem(LS_SVCIO_FORMAT, format);
+    const radio = $(`input[name="svcio-format"][value="${format}"]`);
+    if (radio) radio.checked = true;
+    renderSvcIOFormat();
+  }
+  for (const code of candidates) {
+    try {
+      const spec = await api("/v1/admin/svc-io/" + encodeURIComponent(code));
+      // 발견 — 정상 detail 흐름으로 위임 (loadSvcIODetail 가 cross-ref / form 등 채움).
+      await loadSvcIODetail(code);
+      return;
+    } catch (e) {
+      // 404 — 다음 후보.
+    }
+  }
+  // 모두 실패.
+  toast(`alias=${aliasLabel} — svc 헤더 등록 안 됨 (시도: ${candidates.join(", ")})`, "warn");
+}
+
+let svcioDebounce = null;
+function debounceSvcIO() {
+  clearTimeout(svcioDebounce);
+  svcioDebounce = setTimeout(loadSvcIOList, 200);
+}
+
+async function loadSvcIOList() {
+  const q = $("#svcio-q").value.trim();
+  let res;
+  try {
+    const url = "/v1/admin/svc-io" + (q ? "?q=" + encodeURIComponent(q) + "&max=200" : "?max=200");
+    res = await api(url);
+  } catch (e) {
+    $("#svcio-list").replaceChildren(h("div", { class: "text-xs text-slate-500 text-center py-2",
+      text: "목록 로드 실패: " + e.message }));
+    $("#svcio-stats").textContent = "—";
+    return;
+  }
+  svcioState.list = res.items || [];
+  $("#svcio-stats").textContent = `${res.shown}/${res.total} 표시`;
+  renderSvcIOList();
+}
+
+function renderSvcIOList() {
+  const wrap = $("#svcio-list");
+  wrap.replaceChildren();
+  if (svcioState.list.length === 0) {
+    wrap.appendChild(h("div", { class: "text-xs text-slate-500 text-center py-2", text: "검색 결과 없음" }));
+    return;
+  }
+  for (const s of svcioState.list) {
+    // dev badge — broker 에 떠 있을 가능성이 높아 wire 테스트 가능.
+    // 운영 spec 만 있는 항목은 wire 호출 시 MB-1002 가능 (svc 미등록).
+    const devBadge = s.dev
+      ? h("span", { class: "text-[9px] px-1 rounded bg-good/20 text-good font-mono",
+                    text: "dev", title: "dev broker 에 svc 등록됨 — wire 테스트 가능" })
+      : h("span", { class: "text-[9px] px-1 rounded bg-ink-800 text-slate-500 font-mono",
+                    text: "spec", title: "운영 spec only — dev broker 에 svc 미등록일 수 있음" });
+    const row = h("button", {
+      class: "w-full text-left px-2 py-1.5 rounded-md hover:bg-ink-800 flex items-baseline gap-2",
+    },
+      devBadge,
+      h("span", { class: "font-mono text-xs text-accent-400", text: s.code }),
+      h("span", { class: "text-xs text-slate-300 truncate flex-1", text: s.name || "(이름 없음)" }),
+      h("span", { class: "text-[10px] text-slate-500 font-mono", text: `${s.input_fields}I/${s.output_fields}O` }),
+    );
+    if (svcioState.selected && svcioState.selected.code === s.code) {
+      row.classList.add("bg-ink-800");
+    }
+    row.onclick = () => loadSvcIODetail(s.code);
+    wrap.appendChild(row);
+  }
+}
+
+async function loadSvcIORules() {
+  // alias 매핑 cross-ref — 라우팅 룰 store 에서 svc code 로 매핑된 alias 찾기.
+  try {
+    const res = await api("/v1/admin/routes");
+    svcioState.rules = (res && res.rules) || [];
+  } catch (_) { svcioState.rules = []; }
+}
+
+async function loadSvcIODetail(code) {
+  let spec;
+  try {
+    // spec detail + 라우팅 룰 캐시 *동시 (parallel)* 새로고침 — 룰을 single
+    // source of truth 로 두기 위해 spec 클릭 시점에 항상 최신 룰 반영. 두 요청을
+    // sequential await 하면 latency 가 합산되므로 Promise.all 로 병렬 실행.
+    [spec] = await Promise.all([
+      api("/v1/admin/svc-io/" + encodeURIComponent(code)),
+      loadSvcIORules(),
+    ]);
+  } catch (e) {
+    toast(e.message, "err");
+    return;
+  }
+  svcioState.selected = spec;
+  $("#svcio-detail-empty").classList.add("hidden");
+  $("#svcio-detail").classList.remove("hidden");
+  $("#svcio-code").textContent = spec.code;
+  $("#svcio-name").textContent = spec.name || "";
+
+  // alias 매핑 — code 가 exchange / routing_key / "exchange_routing_key" 중
+  // 하나와 일치하는 룰. 마지막 형식 (underscore concat) 이 dev svc 헤더의
+  // 컨벤션 — ECHOSVC_PING 같은 code 가 alias WECHO_PING (ECHOSVC/PING) 매칭.
+  const matched = svcioState.rules.filter(r =>
+    r.exchange === spec.code ||
+    r.routing_key === spec.code ||
+    (r.exchange + "_" + r.routing_key) === spec.code);
+  const aliasEl = $("#svcio-aliases");
+  aliasEl.replaceChildren();
+  if (matched.length > 0) {
+    aliasEl.appendChild(h("span", { text: "alias: " }));
+    matched.forEach((r, i) => {
+      const tag = h("span", {
+        class: "inline-block px-1.5 py-0.5 rounded bg-accent-500/15 text-accent-400 font-mono mr-1",
+        text: r.alias,
+      });
+      aliasEl.appendChild(tag);
+    });
+  } else {
+    aliasEl.textContent = "alias 미연결 — 라우팅 룰에 등록되지 않음";
+  }
+
+  // 공통 헤더 섹션 — spec.header_type 있을 때만 표시.
+  const hdrSec = $("#svcio-header-section");
+  if (spec.header_type) {
+    hdrSec.classList.remove("hidden");
+    $("#svcio-header-name").textContent = spec.header_type;
+    const total = (spec.header_fields || []).reduce((s, f) => s + (f.size || 0), 0);
+    $("#svcio-header-size").textContent = `(${(spec.header_fields || []).length} 필드 / ${total} byte)`;
+    $("#svcio-header").replaceChildren(...renderSvcIOFields(spec.header_fields || [], 0));
+  } else {
+    hdrSec.classList.add("hidden");
+  }
+  $("#svcio-input").replaceChildren(...renderSvcIOFields(spec.input || [], 0));
+  $("#svcio-output").replaceChildren(...renderSvcIOFields(spec.output || [], 0));
+  if ((spec.input || []).length === 0 && (spec.output || []).length === 0) {
+    $("#svcio-input").appendChild(h("div", { class: "text-slate-500", text: "(필드 없음)" }));
+  }
+  renderSvcIOGen();
+  renderSvcIOList();  // 선택 highlight
+  // wire form 도 새 spec 의 필드로 재렌더 (전문 형식일 때만 보임).
+  // renderWireForm 안에서 라우팅 룰 매칭 / 추정값 + input.value set + hint 까지
+  // 일괄 처리하므로, 여기서 별도로 inferExchange/inferRoutingKey 로 덮어쓰지 않는다.
+  if (svcioState.format === "WIRE") renderWireForm();
+  // 결과 panel 은 이전 결과 잔재 숨김.
+  const r = $("#svcio-wire-result");
+  if (r) r.classList.add("hidden");
+  // 편집 패널 source 도 미리 로드 (펼치지 않아도 fetch).
+  loadSvcIOSource();
+}
+
+// loadSvcIOSource — 현재 선택 spec 의 헤더 raw 내용 fetch + textarea 채움.
+async function loadSvcIOSource() {
+  const spec = svcioState.selected;
+  if (!spec) return;
+  const ta = $("#svcio-edit-text");
+  const pathEl = $("#svcio-edit-path");
+  const modeEl = $("#svcio-edit-mode");
+  const msg = $("#svcio-edit-msg");
+  msg.classList.add("hidden");
+  try {
+    const res = await api("/v1/admin/svc-io/" + encodeURIComponent(spec.code) + "/source");
+    ta.value = res.content || "";
+    if (pathEl) pathEl.textContent = res.path || "";
+    if (res.editable) {
+      modeEl.textContent = "(dev 헤더 — 편집 가능)";
+      modeEl.className = "text-[10px] text-good ml-2";
+      ta.readOnly = false;
+      $("#svcio-edit-save").disabled = false;
+    } else {
+      modeEl.textContent = "(운영 헤더 — read-only)";
+      modeEl.className = "text-[10px] text-warn ml-2";
+      ta.readOnly = true;
+      $("#svcio-edit-save").disabled = true;
+      if (res.reason) showSvcioEditMsg(res.reason, "warn");
+    }
+  } catch (e) {
+    showSvcioEditMsg("source 로드 실패: " + e.message, "err");
+  }
+}
+
+// saveSvcIOSource — textarea 내용을 PUT, 자동 재파싱 → spec/form 즉시 갱신.
+async function saveSvcIOSource() {
+  const spec = svcioState.selected;
+  if (!spec) return;
+  const ta = $("#svcio-edit-text");
+  const content = ta.value;
+  if (!content.trim()) {
+    showSvcioEditMsg("내용이 비어있음", "err");
+    return;
+  }
+  if (!confirm("헤더를 저장하고 재파싱합니다.\n현재 내용은 .bak 로 백업됩니다.\n계속하시겠습니까?")) return;
+  const btn = $("#svcio-edit-save");
+  btn.disabled = true;
+  try {
+    const updated = await api("/v1/admin/svc-io/" + encodeURIComponent(spec.code) + "/source",
+      { method: "PUT", body: JSON.stringify({ content }) });
+    showSvcioEditMsg("저장 완료 — spec 재파싱됨", "good");
+    svcioState.selected = updated;
+    $("#svcio-input").replaceChildren(...renderSvcIOFields(updated.input || [], 0));
+    $("#svcio-output").replaceChildren(...renderSvcIOFields(updated.output || [], 0));
+    if (svcioState.format === "WIRE") renderWireForm();
+    renderSvcIOGen();
+  } catch (e) {
+    showSvcioEditMsg("저장 실패: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function showSvcioEditMsg(text, level) {
+  const msg = $("#svcio-edit-msg");
+  msg.textContent = text;
+  msg.classList.remove("hidden", "text-good", "text-warn", "text-bad", "text-slate-400");
+  msg.classList.add(level === "good" ? "text-good"
+                  : level === "warn" ? "text-warn"
+                  : level === "err"  ? "text-bad"
+                  :                    "text-slate-400");
+}
+
+// renderSvcIOFields — Field[] 트리를 indent 로 렌더. nested children 재귀.
+function renderSvcIOFields(fields, depth) {
+  const out = [];
+  for (const f of fields) {
+    const indent = depth * 16;
+    const sizeStr = f.size ? `[${f.size}]` : (f.repeat === -1 ? "[]" : (f.repeat ? `[${f.repeat}]` : ""));
+    const row = h("div", {
+      class: "flex items-baseline gap-2 py-0.5",
+      style: `padding-left: ${indent}px`,
+    },
+      h("span", { class: "text-slate-400 w-16 truncate", text: f.ctype }),
+      h("span", { class: "text-accent-400 truncate", text: f.name }),
+      h("span", { class: "text-slate-500 w-16 text-right", text: sizeStr }),
+      h("span", { class: "text-slate-300 truncate flex-1", text: f.comment || "" }),
+    );
+    out.push(row);
+    if (f.children && f.children.length > 0) {
+      out.push(...renderSvcIOFields(f.children, depth + 1));
+    }
+  }
+  return out;
+}
+
+// renderSvcIOTabs — 활성 탭 highlight.
+function renderSvcIOTabs() {
+  $$("#svcio-gen-tabs .gen-tab").forEach(b => {
+    b.classList.toggle("bg-accent-500/20", b.dataset.gen === svcioState.gen);
+    b.classList.toggle("text-accent-400", b.dataset.gen === svcioState.gen);
+  });
+}
+
+// renderSvcIOGen — 채널별 호출 코드 생성. data (SvcSpec) 는 동일, template 만 분기.
+function renderSvcIOGen() {
+  const spec = svcioState.selected;
+  if (!spec) return;
+  // 전문 (WIRE) 형식 — 채널 무관, wire frame layout 출력 (display only).
+  if (svcioState.format === "WIRE") {
+    $("#svcio-gen").textContent = renderWireFrame(spec);
+    return;
+  }
+  const tpl = SVCIO_GEN[svcioState.gen] || SVCIO_GEN.WEB;
+  // alias 매핑이 있으면 alias 형, 없으면 raw envelope.
+  const matched = svcioState.rules.filter(r =>
+    r.exchange === spec.code ||
+    r.routing_key === spec.code ||
+    (r.exchange + "_" + r.routing_key) === spec.code);
+  const ctx = {
+    code: spec.code,
+    name: spec.name || "",
+    alias: matched.length > 0 ? matched[0].alias : "",
+    exchange: matched.length > 0 ? matched[0].exchange : spec.code,
+    routingKey: matched.length > 0 ? matched[0].routing_key : "",
+    inputExample: makeInputExample(spec.input || []),
+  };
+  $("#svcio-gen").textContent = tpl(ctx);
+}
+
+// makeInputExample — Field 트리에서 sample JSON body 생성. 한글 주석은 sample value 로.
+function makeInputExample(fields) {
+  const obj = {};
+  for (const f of fields) {
+    if (f.children && f.children.length > 0) {
+      // grid (orec[]) — 1행 array.
+      const inner = makeInputExample(f.children);
+      obj[f.name] = [inner];
+    } else if (f.ctype === "char") {
+      obj[f.name] = "";  // string 기본
+    } else if (f.ctype === "int" || f.ctype === "long") {
+      obj[f.name] = 0;
+    } else if (f.ctype === "double" || f.ctype === "float") {
+      obj[f.name] = 0.0;
+    } else {
+      obj[f.name] = "";
+    }
+  }
+  return obj;
+}
+
+// ───────── Wire frame (전문) layout ─────────
+//
+// SvcSpec 의 Field 트리를 byte offset 표 + sample C 호출 코드로 출력.
+// 디스플레이 전용 — 실행 경로 없음. legacy mymq native client (HTS/EMP) 가
+// 실제로 broker 에 보내는 byte 배치 + 사용 코드 모양을 한눈에 보여준다.
+//
+// 단순 가정: char 외 타입은 alignment/패딩 무시. 실제 운영 svc 가 모두
+// `char[N]` 인 케이스가 압도적이므로 1차 prototype 으로 충분 (검증된 표본
+// 830 헤더 중 char 외 타입 등장 빈도 낮음).
+function renderWireFrame(spec) {
+  const lines = [];
+  lines.push(`/*`);
+  lines.push(` * ${spec.code}${spec.name ? "  " + spec.name : ""}`);
+  lines.push(` * 전문 (wire frame) layout — broker 가 받는 byte 배치.`);
+  lines.push(` *   legacy native client (HTS/EMP cs framework) 가 C struct 를`);
+  lines.push(` *   그대로 byte 단위로 직렬화해서 broker 에 송신.`);
+  lines.push(` */`);
+  lines.push("");
+
+  if ((spec.input || []).length > 0) {
+    lines.push("─── Input (" + spec.code + "_I) ─────────────────────────────");
+    lines.push(...wireFrameTable(spec.input, "Input"));
+    lines.push("");
+  }
+  if ((spec.output || []).length > 0) {
+    lines.push("─── Output (" + spec.code + "_O) ────────────────────────────");
+    lines.push(...wireFrameTable(spec.output, "Output"));
+    lines.push("");
+  }
+
+  // C 호출 sample — legacy mymq client 패턴.
+  lines.push("─── 호출 sample (legacy mymq client) ─────────────────────────");
+  lines.push("/*");
+  lines.push(" *  운영 cs (HTS/EMP) 의 native client 가 broker 에 직접 전문 송신.");
+  lines.push(" *  *주의*: 이 경로는 mci 의 정책/감사 layer 를 우회한다.");
+  lines.push(" *         권고는 mci-api 경유 (API 형식 탭 참조). 마이그레이션 시 비교.");
+  lines.push(" */");
+  lines.push("#include \"" + spec.code + ".h\"");
+  lines.push("");
+  lines.push(spec.code + "_I in;");
+  lines.push("memset(&in, ' ', sizeof(in));   /* 공백 fill — legacy convention */");
+  // 처음 3 필드만 sample 채우기 (가독성).
+  let filled = 0;
+  for (const f of (spec.input || [])) {
+    if (filled >= 3) break;
+    if (f.children && f.children.length > 0) continue;  // grid 는 sample 생략
+    if (f.ctype !== "char") continue;
+    const sampleVal = f.size >= 4 ? "0001" : "1";
+    lines.push(`strncpy(in.${f.name}, "${sampleVal}", sizeof(in.${f.name}));`);
+    filled++;
+  }
+  lines.push("");
+  lines.push("char rep[64*1024];");
+  lines.push("int  rep_len = sizeof(rep);");
+  lines.push("int  rc = mymq_call(client,");
+  lines.push("    /* exchange    */ \"" + inferExchange(spec.code) + "\",");
+  lines.push("    /* routing_key */ \"" + inferRoutingKey(spec.code) + "\",");
+  lines.push("    (char*)&in, sizeof(in),");
+  lines.push("    rep, &rep_len);");
+  lines.push("");
+  lines.push("if (rc == 0) {");
+  lines.push("    " + spec.code + "_O *out = (" + spec.code + "_O*)rep;");
+  lines.push("    /* 응답 처리 ... */");
+  lines.push("}");
+
+  return lines.join("\n");
+}
+
+// wireFrameTable — Field[] → offset 표. nested grid (children) 는 indent.
+function wireFrameTable(fields, label) {
+  const rows = [];
+  const head = `offset  size  name                          type     comment`;
+  rows.push(head);
+  rows.push("─".repeat(head.length));
+  let off = 0;
+  function walk(fs, depth, baseOff) {
+    let local = 0;
+    for (const f of fs) {
+      const indent = "  ".repeat(depth);
+      if (f.children && f.children.length > 0) {
+        const repStr = f.repeat === -1 ? "[]" : (f.repeat ? `[${f.repeat}]` : "[1]");
+        rows.push(
+          (baseOff + local).toString().padStart(6) +
+          "        " +
+          (indent + f.name + repStr + " {").padEnd(30) +
+          " " + f.ctype.padEnd(8) +
+          " " + (f.comment || "")
+        );
+        // grid 의 한 행 size 만 표시 (가변/N 회 반복).
+        const childSize = walk(f.children, depth + 1, 0);
+        rows.push("  ".repeat(depth + 1) + "} (한 행 " + childSize + " byte)");
+        // grid 전체 size — repeat 가 양수면 곱, 가변(-1) 이면 가변.
+        if (f.repeat && f.repeat > 0) local += childSize * f.repeat;
+        else if (f.repeat === -1) {
+          // 가변 — total 계산 불가, 상단 메시지로만 표시
+        } else local += childSize;  // 단일 (orec[1] 등)
+      } else {
+        const sz = f.size || 0;
+        rows.push(
+          (baseOff + local).toString().padStart(6) +
+          "  " + sz.toString().padStart(4) +
+          "  " + (indent + f.name).padEnd(30) +
+          " " + (f.ctype || "?").padEnd(8) +
+          " " + (f.comment || "")
+        );
+        local += sz;
+      }
+    }
+    return local;
+  }
+  const totalSize = walk(fields, 0, 0);
+  rows.push("─".repeat(head.length));
+  rows.push("total " + label + " size: " + totalSize + " byte (가변 grid 제외)");
+  return rows;
+}
+
+// SVCIO_GEN — 채널별 호출 코드 template.
+//
+// 채널 5종 (pkg/mymq.ChannelCode 와 정렬):
+//   WEB / MOB — 외부 (DMZ edge 경유, JWT 인증)
+//   ADM       — 내부 직원 운영 콘솔 (mci-admin)
+//   HTS / EMP — 내부 CS (mci-api 직결, X-WTG-User / SSO)
+//
+// 각 channel template 이 결정하는 3가지: (a) URL prefix (DMZ vs Internal),
+// (b) 인증 헤더 형식, (c) 그 채널의 표준 client. data layer (SvcSpec) 는 동일.
+// 새 채널 추가 시 이 객체에 key 한 줄만 더하면 됨 (open/closed).
+function _buildBody(c) {
+  return c.alias
+    ? { alias: c.alias, data: c.inputExample }
+    : { exchange: c.exchange, routing_key: c.routingKey || c.code, data: c.inputExample };
+}
+
+const SVCIO_GEN = {
+  // WEB — 외부 웹 브라우저. DMZ edge 경유, JWT (Authorization 헤더).
+  WEB: (c) => {
+    const body = _buildBody(c);
+    return `// 채널: WEB (외부 — 웹 브라우저)
+//   진입: mci-edge-api (DMZ) → mci-api → broker
+//   인증: JWT in Authorization header
+//   ${c.code}${c.name ? "  — " + c.name : ""}
+const res = await fetch('https://api.example.com/v1/tx', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + jwt,
+  },
+  body: JSON.stringify(${JSON.stringify(body, null, 2)})
+});
+const json = await res.json();`;
+  },
+
+  // MOB — 외부 모바일 앱. 같은 DMZ edge, native HTTP client.
+  MOB: (c) => {
+    const body = _buildBody(c);
+    return `// 채널: MOB (외부 — 모바일 앱)
+//   진입: mci-edge-api (DMZ) → mci-api → broker
+//   인증: JWT in Authorization header (앱 keychain 보관)
+//   ${c.code}${c.name ? "  — " + c.name : ""}
+// Swift 예:
+var req = URLRequest(url: URL(string: "https://api.example.com/v1/tx")!)
+req.httpMethod = "POST"
+req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+req.setValue("Bearer \\(jwt)", forHTTPHeaderField: "Authorization")
+req.httpBody = try JSONSerialization.data(withJSONObject:
+  ${JSON.stringify(body, null, 2).replace(/^/gm, "  ").trimStart()})
+let (data, _) = try await URLSession.shared.data(for: req)`;
+  },
+
+  // ADM — 내부 직원 운영 콘솔. mci-admin 의 tx-test reverse proxy 또는 direct.
+  ADM: (c) => {
+    const body = _buildBody(c);
+    return `# 채널: ADM (내부 — 직원 운영 콘솔)
+#   진입: mci-admin (Internal :9090) → reverse proxy → mci-api
+#   인증: SSO 또는 X-WTG-User (DevMode)
+#   ${c.code}${c.name ? "  — " + c.name : ""}
+curl -X POST http://mci-admin.internal:9090/v1/admin/tx-test \\
+    -H 'Content-Type: application/json' \\
+    -H 'X-WTG-User: <ADMIN_ID>' \\
+    -d '${JSON.stringify(body)}'
+
+# 또는 admin UI 의 [API 테스터] 화면에서 alias preset 클릭으로 즉시 호출`;
+  },
+
+  // HTS — 외부 고객 채널, cs native desktop client (Home Trading System).
+  // EMP 와 같은 기술 framework 지만 사용자가 고객 → DMZ edge 경유, 고객권.
+  HTS: (c) => {
+    const body = _buildBody(c);
+    return `// 채널: HTS (외부 고객 — Home Trading System, native desktop client)
+//   진입: mci-edge-api (DMZ) → mci-api → broker
+//   인증: 고객 SSO (Authorization: Bearer <JWT>)
+//   권한: 고객권 (자기 계좌 / 자기 거래만)
+//   ${c.code}${c.name ? "  — " + c.name : ""}
+// C++ 예 (legacy HTS desktop client):
+HttpRequest req("https://api.example.com/v1/tx");
+req.method("POST");
+req.header("Authorization", "Bearer " + customer_jwt);
+req.header("Content-Type", "application/json");
+req.body(R"(${JSON.stringify(body)})");
+auto rsp = req.send();
+
+// 비고: EMP 와 같은 cs framework 지만 노출 위치/권한이 정반대.
+//       kill switch ON 시 HTS (고객) 는 차단 대상.`;
+  },
+
+  // EMP — 내부 직원 채널, 딜러용 cs native desktop client.
+  // HTS 와 같은 기술 framework 지만 사용자가 딜러 → 내부 직결, 딜러권.
+  EMP: (c) => {
+    const body = _buildBody(c);
+    const wtgctlHint = c.alias
+      ? `wtgctl alias ${c.alias}`
+      : `wtgctl routes add ${c.code}_OP ${c.exchange} ${c.routingKey || c.code} "${c.name || ''}"\n# wtgctl alias ${c.code}_OP`;
+    return `// 채널: EMP (내부 직원 — 딜러 desktop client)
+//   진입: mci-api (Internal :8080) 직결 — DMZ 미경유
+//   인증: 직원 SSO 또는 X-WTG-User (DevMode)
+//   권한: 딜러권 (모든 계좌 / 운영 권한 일부)
+//   ${c.code}${c.name ? "  — " + c.name : ""}
+// C++ 예 (HTS 와 같은 cs framework, URL/auth 만 다름):
+HttpRequest req("http://mci-api.internal:8080/v1/tx");
+req.method("POST");
+req.header("X-WTG-User", dealer_id);
+req.header("Content-Type", "application/json");
+req.body(R"(${JSON.stringify(body)})");
+auto rsp = req.send();
+
+// 비고: kill switch ON 시 EMP (딜러) 는 비상 거래 가능하도록 정책 분기 가능.
+//       HTS 와 IsCSFramework() 동일 그룹 — 기술/wire 정책은 같이 적용.
+
+# 한 줄 검증 (wtgctl):
+# ${wtgctlHint.split("\n").join("\n# ")}`;
+  },
+};
+
+// ───────── Audit Timeline ─────────
+const auditState = { entries: [], poller: null, wired: false };
+
+function initAudit() {
+  if (!auditState.wired) {
+    $("#audit-refresh").onclick = loadAudit;
+    $("#audit-filter").addEventListener("input", renderAudit);
+    $("#audit-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startAuditPoller();
+      else stopAuditPoller();
+    });
+    auditState.wired = true;
+  }
+  loadAudit();
+  // ws stream 이 연결되어 있으면 polling 불필요 — push 로 즉시 받음.
+  if ($("#audit-auto").checked && (!stream.sock || stream.sock.readyState !== 1)) {
+    startAuditPoller();
+  }
+}
+
+function startAuditPoller() {
+  if (auditState.poller) return;
+  auditState.poller = setInterval(loadAudit, 3000);
+}
+function stopAuditPoller() {
+  if (auditState.poller) { clearInterval(auditState.poller); auditState.poller = null; }
+}
+
+async function loadAudit() {
+  try {
+    const r = await api("/v1/admin/audit?limit=200");
+    auditState.entries = r.entries || [];
+    $("#audit-count").textContent = r.count || auditState.entries.length;
+    renderAudit();
+  } catch (e) {
+    auditState.entries = [];
+    const tl = $("#audit-timeline");
+    tl.replaceChildren();
+    tl.appendChild(h("div", { class: "absolute left-3 top-0 bottom-0 w-px bg-ink-700/60" }));
+    tl.appendChild(h("div", { class: "text-bad text-sm py-6 text-center", text: "로드 실패: " + e.message }));
+  }
+}
+
+const ACTION_STYLES = {
+  PUT_ROUTE:        { dot: "bg-accent-400",  label: "수정/생성", icon: "✎" },
+  DELETE_ROUTE:     { dot: "bg-bad",         label: "삭제",     icon: "✕" },
+  SET_ROUTE_ACTIVE: { dot: "bg-warn",        label: "활성토글", icon: "⊙" },
+  default:          { dot: "bg-slate-500",   label: "액션",     icon: "•" },
+};
+
+function renderAudit() {
+  const tl = $("#audit-timeline");
+  if (!tl) return;
+  const filter = $("#audit-filter").value.trim().toLowerCase();
+
+  tl.replaceChildren();
+  // 라인.
+  tl.appendChild(h("div", { class: "absolute left-3 top-0 bottom-0 w-px bg-ink-700/60" }));
+
+  if (!auditState.entries.length) {
+    tl.appendChild(h("div", { class: "text-slate-500 text-sm py-6 text-center", text: "아직 기록된 액션이 없습니다." }));
+    $("#audit-shown").textContent = "0";
+    return;
+  }
+
+  let shown = 0;
+  for (const e of auditState.entries) {
+    const hay = (e.action + " " + (e.usid||"") + " " + JSON.stringify(e.attrs||{})).toLowerCase();
+    if (filter && !hay.includes(filter)) continue;
+    tl.appendChild(renderAuditEntry(e));
+    shown++;
+  }
+  $("#audit-shown").textContent = shown;
+}
+
+function renderAuditEntry(e) {
+  const style = ACTION_STYLES[e.action] || ACTION_STYLES.default;
+  const dot = h("div", {
+    class: "absolute -left-[3px] top-3 w-2 h-2 rounded-full ring-2 ring-ink-900 " + style.dot,
+  });
+  const at = e.at ? new Date(e.at) : null;
+  const tStr = at ? at.toLocaleTimeString("ko-KR", { hour12: false }) : "—";
+  const dStr = at ? at.toLocaleDateString("ko-KR") : "";
+
+  // attrs chips.
+  const chipsWrap = h("div", { class: "flex flex-wrap gap-1.5 mt-1.5" });
+  if (e.attrs) {
+    for (const [k, v] of Object.entries(e.attrs)) {
+      let val = String(v);
+      if (val.length > 40) val = val.slice(0, 40) + "…";
+      chipsWrap.appendChild(h("span", {
+        class: "px-2 py-0.5 rounded bg-ink-800 border border-ink-700 text-[11px] font-mono",
+      },
+        h("span", { class: "text-slate-500", text: k + "=" }),
+        h("span", { class: "text-slate-200", text: val }),
+      ));
+    }
+  }
+
+  const headerLine = h("div", { class: "flex items-baseline gap-2" },
+    h("span", { class: "text-base", text: style.icon }),
+    h("span", { class: "font-semibold text-slate-100", text: style.label }),
+    h("span", { class: "text-xs font-mono text-slate-500", text: e.action }),
+    h("span", { class: "ml-auto text-xs font-mono text-slate-400", text: tStr }),
+  );
+  const subLine = h("div", { class: "flex items-center gap-3 text-xs text-slate-500 mt-0.5" },
+    h("span", {}, "by ", h("span", { class: "font-mono text-slate-300", text: e.usid || "—" })),
+    e.rid ? h("span", { class: "font-mono text-[10px] text-slate-600", text: "rid:" + e.rid.slice(0, 8) }) : null,
+    h("span", { class: "ml-auto text-[10px] text-slate-600", text: dStr }),
+  );
+
+  return h("div", { class: "relative ml-2 mb-3" }, dot,
+    h("div", { class: "ml-3 px-3 py-2 rounded-lg bg-ink-850 border border-ink-700/50 hover:border-accent-500/40 transition" },
+      headerLine, subLine, chipsWrap),
+  );
+}
+
+// ───────── WS Live Monitor ─────────
+let wsmonInited = false;
+const wsmon = {
+  sock: null,
+  total: 0, dropped: 0, bytesWindow: 0, peakRate: 0,
+  startedAt: 0,
+  rateTimer: null, uptimeTimer: null,
+  log: [],          // 최근 메시지 (최대 N).
+  MAX_LOG: 200,
+};
+
+function initWSMon() {
+  if (wsmonInited) return;
+  wsmonInited = true;
+}
+
+function wireWSMon() {
+  $("#ws-preset").addEventListener("change", (e) => {
+    if (e.target.value) $("#ws-url").value = e.target.value;
+  });
+  $("#ws-connect").onclick = wsmonConnect;
+  $("#ws-disconnect").onclick = wsmonDisconnect;
+  $("#ws-clear").onclick = () => { wsmon.log = []; wsmonRender(); };
+  $("#ws-send-btn").onclick = wsmonSend;
+  $("#ws-send-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); wsmonSend(); }
+  });
+  $("#ws-filter").addEventListener("input", wsmonRender);
+  $("#ws-jsononly").addEventListener("change", wsmonRender);
+}
+
+function wsmonSetState(state) {
+  const text = $("#ws-state-text");
+  const dot = $("#ws-state-dot");
+  text.textContent = state;
+  dot.className = "w-2.5 h-2.5 rounded-full " + ({
+    connected: "bg-good",
+    connecting: "bg-warn animate-pulse",
+    disconnected: "bg-slate-600",
+    error: "bg-bad",
+    closed: "bg-slate-500",
+  }[state] || "bg-slate-600");
+  if (state === "connected") {
+    $("#ws-connect").classList.add("hidden");
+    $("#ws-disconnect").classList.remove("hidden");
+  } else {
+    $("#ws-connect").classList.remove("hidden");
+    $("#ws-disconnect").classList.add("hidden");
+  }
+}
+
+function wsmonConnect() {
+  let url = $("#ws-url").value.trim();
+  if (!url) { toast("URL 이 비어있습니다", "warn"); return; }
+  if (!/^wss?:\/\//.test(url)) { toast("ws:// 또는 wss:// 로 시작해야 합니다", "warn"); return; }
+
+  // 인증 query 자동 첨부 — 브라우저 WebSocket 은 사용자 정의 헤더 주입을 못 하므로
+  // query 로 전달한다. 서버 미들웨어 (BearerFromQuery / UserFromQuery) 가 헤더로 변환.
+  //   DevMode: ?x_wtg_user=<id>      운영(JWT): ?access_token=<token>
+  // "토큰 첨부" 체크박스가 켜져 있거나 dev 모드는 자동 첨부.
+  const isDev = localStorage.getItem(LS_DEV) === "1";
+  const sep = () => url.includes("?") ? "&" : "?";
+  if (isDev) {
+    const u = localStorage.getItem(LS_USER);
+    if (u && !/[?&]x_wtg_user=/.test(url))
+      url = url + sep() + "x_wtg_user=" + encodeURIComponent(u);
+  } else if ($("#ws-auth").checked) {
+    const t = localStorage.getItem(LS_TOKEN);
+    if (t && !/[?&]access_token=/.test(url))
+      url = url + sep() + "access_token=" + encodeURIComponent(t);
+  }
+
+  // 통계 리셋.
+  wsmon.total = 0; wsmon.dropped = 0; wsmon.bytesWindow = 0; wsmon.peakRate = 0;
+  wsmon.startedAt = Date.now();
+  $("#ws-stat-total").textContent   = "0";
+  $("#ws-stat-rate").textContent    = "0";
+  $("#ws-stat-peak").textContent    = "0";
+  $("#ws-stat-dropped").textContent = "0";
+
+  wsmonSetState("connecting");
+  let sock;
+  try { sock = new WebSocket(url); } catch (e) {
+    wsmonSetState("error");
+    toast("연결 실패: " + e.message, "err");
+    return;
+  }
+  wsmon.sock = sock;
+  sock.addEventListener("open",  () => {
+    wsmonSetState("connected");
+    wsmonAppend({ kind: "info", text: "✓ 연결됨 — " + url, ts: Date.now() });
+    if (!wsmon.rateTimer) wsmon.rateTimer = setInterval(wsmonTickRate, 1000);
+    if (!wsmon.uptimeTimer) wsmon.uptimeTimer = setInterval(wsmonTickUptime, 1000);
+  });
+  sock.addEventListener("close", (e) => {
+    wsmonSetState("closed");
+    wsmonAppend({ kind: "info", text: "✕ 종료 (code=" + e.code + " reason=" + (e.reason || "-") + ")", ts: Date.now() });
+    wsmonStopTimers();
+  });
+  sock.addEventListener("error", () => {
+    wsmonSetState("error");
+    wsmonAppend({ kind: "err", text: "전송 오류", ts: Date.now() });
+  });
+  sock.addEventListener("message", (e) => {
+    if ($("#ws-pause").checked) { wsmon.dropped++; $("#ws-stat-dropped").textContent = wsmon.dropped; return; }
+    const data = String(e.data ?? "");
+    wsmon.total++;
+    wsmon.bytesWindow += data.length;
+    $("#ws-stat-total").textContent = wsmon.total;
+    wsmonAppend({ kind: "in", text: data, ts: Date.now() });
+  });
+}
+
+function wsmonDisconnect() {
+  if (wsmon.sock) {
+    try { wsmon.sock.close(1000, "user"); } catch (_) {}
+    wsmon.sock = null;
+  }
+  wsmonStopTimers();
+}
+
+function wsmonStopTimers() {
+  if (wsmon.rateTimer)   { clearInterval(wsmon.rateTimer);   wsmon.rateTimer = null; }
+  if (wsmon.uptimeTimer) { clearInterval(wsmon.uptimeTimer); wsmon.uptimeTimer = null; }
+}
+
+function wsmonTickRate() {
+  const r = wsmon.bytesWindow;
+  wsmon.bytesWindow = 0;
+  $("#ws-stat-rate").textContent = r;
+  if (r > wsmon.peakRate) {
+    wsmon.peakRate = r;
+    $("#ws-stat-peak").textContent = wsmon.peakRate;
+  }
+}
+
+function wsmonTickUptime() {
+  if (!wsmon.startedAt) return;
+  const sec = Math.floor((Date.now() - wsmon.startedAt) / 1000);
+  const h = String(Math.floor(sec / 3600)).padStart(2, "0");
+  const m = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
+  const s = String(sec % 60).padStart(2, "0");
+  $("#ws-stat-uptime").textContent = h + ":" + m + ":" + s;
+}
+
+function wsmonSend() {
+  if (!wsmon.sock || wsmon.sock.readyState !== WebSocket.OPEN) {
+    toast("연결되어 있지 않음", "warn");
+    return;
+  }
+  const v = $("#ws-send-input").value;
+  if (!v) return;
+  try { wsmon.sock.send(v); } catch (e) { toast("전송 실패: " + e.message, "err"); return; }
+  wsmonAppend({ kind: "out", text: v, ts: Date.now() });
+  $("#ws-send-input").value = "";
+}
+
+function wsmonAppend(entry) {
+  wsmon.log.push(entry);
+  if (wsmon.log.length > wsmon.MAX_LOG) wsmon.log.splice(0, wsmon.log.length - wsmon.MAX_LOG);
+  wsmonRender();
+}
+
+function wsmonRender() {
+  const log = $("#ws-log");
+  if (!log) return;
+  const filter = $("#ws-filter").value.trim().toLowerCase();
+  const jsonOnly = $("#ws-jsononly").checked;
+
+  log.replaceChildren();
+  let shown = 0;
+  for (const e of wsmon.log) {
+    if (filter && !e.text.toLowerCase().includes(filter)) continue;
+    log.appendChild(wsmonRenderEntry(e, jsonOnly));
+    shown++;
+  }
+  $("#ws-msg-count").textContent = shown + " / " + wsmon.log.length;
+
+  if ($("#ws-autoscroll").checked) log.scrollTop = log.scrollHeight;
+}
+
+function wsmonRenderEntry(e, jsonOnly) {
+  const kindCls = {
+    in:   "text-slate-200",
+    out:  "text-accent-400",
+    info: "text-slate-400",
+    err:  "text-bad",
+  }[e.kind] || "text-slate-300";
+  const arrow = { in: "←", out: "→", info: "·", err: "!" }[e.kind] || " ";
+  const t = new Date(e.ts).toLocaleTimeString("ko-KR", { hour12: false }) +
+            "." + String(e.ts % 1000).padStart(3, "0");
+
+  let body = e.text;
+  if (jsonOnly && (e.kind === "in" || e.kind === "out")) {
+    try { body = JSON.stringify(JSON.parse(e.text), null, 2); } catch (_) {}
+  }
+
+  const ts = h("span", { class: "text-[10px] font-mono text-slate-500 shrink-0", text: t });
+  const ar = h("span", { class: "font-mono w-4 shrink-0 " + kindCls, text: arrow });
+  const tx = h("pre", { class: "codepanel flex-1 whitespace-pre-wrap break-all " + kindCls, text: body });
+  return h("div", { class: "px-4 py-1.5 flex gap-2 items-start hover:bg-ink-800/30 transition" }, ts, ar, tx);
+}
+
+// ───────── Quote (시세) ─────────
+//
+// quote-forwarder 가 broker 로 broadcast 한 시세 envelope 을 mci-push ws 에서 받아
+// 통화쌍별로 모아 호가창 + 최근 체결 리스트를 갱신한다.
+//
+// envelope 형식 (quote-forwarder 의 quoteEnvelope):
+//   { ts, feed, seq, msgtype: "snapshot"|"incremental",
+//     symbol?, sender?, target?, entries: [{action?, type, symbol?, px, qty}] }
+
+const quoteState = {
+  sock: null, wired: false,
+  symbols: new Map(),   // symbol → { feed, ts, bid, bidQty, ask, askQty, last, lastQty, prevBid, prevAsk }
+  trades: [],           // 최근 체결 (최대 50)
+  total: 0, rate: 0, rateBucket: 0, rateTimer: null,
+  TRADE_LIMIT: 50,
+};
+
+function initQuote() {
+  if (!quoteState.wired) {
+    quoteState.wired = true;
+    $("#q-connect").onclick = quoteConnect;
+    $("#q-disconnect").onclick = quoteDisconnect;
+    $("#q-clear").onclick = () => {
+      quoteState.symbols.clear();
+      quoteState.trades = [];
+      quoteState.total = 0;
+      quoteRender(); quoteRenderTrades();
+      $("#q-stat-total").textContent = "0";
+      $("#q-stat-trades").textContent = "0";
+    };
+  }
+  quoteSetState("idle");
+  // 자동 connect — 화면 진입 시 ws 가 닫혀있으면 시도.
+  if (!quoteState.sock) quoteConnect();
+}
+
+function quoteSetState(s) {
+  const el = $("#q-state");
+  if (!el) return;
+  const map = {
+    idle:        ["text-slate-500", "● idle"],
+    connecting:  ["text-warn",      "● connecting"],
+    connected:   ["text-good",      "● live"],
+    closed:      ["text-slate-500", "● closed"],
+    error:       ["text-bad",       "● error"],
+  };
+  const [cls, label] = map[s] || ["text-slate-500", "●"];
+  el.className = "font-mono " + cls;
+  el.textContent = label;
+  $("#q-connect").classList.toggle("hidden", s === "connected" || s === "connecting");
+  $("#q-disconnect").classList.toggle("hidden", s !== "connected");
+}
+
+function quoteConnect() {
+  let url = $("#q-url").value.trim();
+  if (!url) { toast("URL 이 비어있습니다", "warn"); return; }
+  // dev 모드 자동 query 첨부 (wsmonConnect 와 동일 로직)
+  const isDev = localStorage.getItem(LS_DEV) === "1";
+  const sep = () => url.includes("?") ? "&" : "?";
+  if (isDev) {
+    const u = localStorage.getItem(LS_USER);
+    if (u && !/[?&]x_wtg_user=/.test(url)) url += sep() + "x_wtg_user=" + encodeURIComponent(u);
+  } else {
+    const t = localStorage.getItem(LS_TOKEN);
+    if (t && !/[?&]access_token=/.test(url)) url += sep() + "access_token=" + encodeURIComponent(t);
+  }
+  quoteSetState("connecting");
+  let sock;
+  try { sock = new WebSocket(url); }
+  catch (e) { quoteSetState("error"); toast("연결 실패: " + e.message, "err"); return; }
+  quoteState.sock = sock;
+  sock.addEventListener("open", () => {
+    quoteSetState("connected");
+    if (!quoteState.rateTimer) quoteState.rateTimer = setInterval(quoteTickRate, 1000);
+  });
+  sock.addEventListener("message", (ev) => {
+    quoteState.total++;
+    quoteState.rateBucket++;
+    $("#q-stat-total").textContent = String(quoteState.total);
+    handleQuoteFrame(ev.data);
+  });
+  sock.addEventListener("error", () => quoteSetState("error"));
+  sock.addEventListener("close", () => {
+    quoteSetState("closed");
+    if (quoteState.rateTimer) { clearInterval(quoteState.rateTimer); quoteState.rateTimer = null; }
+    quoteState.sock = null;
+  });
+}
+
+function quoteDisconnect() {
+  if (quoteState.sock) try { quoteState.sock.close(); } catch (_) {}
+}
+
+function quoteTickRate() {
+  quoteState.rate = quoteState.rateBucket;
+  quoteState.rateBucket = 0;
+  $("#q-stat-rate").textContent = String(quoteState.rate);
+}
+
+// handleQuoteFrame — frame.data 의 JSON 을 파싱하고 envelope 의 data 가 우리 quote
+// envelope 일 때만 처리. broadcast frame 은 mci-push 에서 dispatcher 가 logon_id
+// 없는 형태로 wrap — JSON 의 data 만 꺼내 처리.
+function handleQuoteFrame(raw) {
+  let outer; try { outer = JSON.parse(raw); } catch (_) { return; }
+  const env = outer && outer.data;
+  if (!env || typeof env !== "object") return;
+  if (env.msgtype !== "snapshot" && env.msgtype !== "incremental") return;
+  applyQuoteEnvelope(env);
+}
+
+function applyQuoteEnvelope(env) {
+  const feed = env.feed || "";
+  const topSym = env.symbol || "";
+  for (const e of env.entries || []) {
+    const sym = e.symbol || topSym;
+    if (!sym) continue;
+    let row = quoteState.symbols.get(sym);
+    if (!row) {
+      row = { feed, ts: env.ts, bid: 0, bidQty: 0, ask: 0, askQty: 0,
+              last: 0, lastQty: 0, prevBid: 0, prevAsk: 0, prevLast: 0,
+              priceHistory: [] };  // sparkline 용 — 최근 N 틱 mid price (last 가 비면 (bid+ask)/2)
+      quoteState.symbols.set(sym, row);
+    }
+    row.feed = feed;
+    row.ts = env.ts;
+    if (e.action === "delete") {
+      if (e.type === "bid") { row.prevBid = row.bid; row.bid = 0; row.bidQty = 0; }
+      else if (e.type === "ask") { row.prevAsk = row.ask; row.ask = 0; row.askQty = 0; }
+      continue;
+    }
+    if (e.type === "bid") { row.prevBid = row.bid; row.bid = e.px || 0; row.bidQty = e.qty || 0; }
+    else if (e.type === "ask") { row.prevAsk = row.ask; row.ask = e.px || 0; row.askQty = e.qty || 0; }
+    else if (e.type === "trade") {
+      row.prevLast = row.last;
+      row.last = e.px || 0;
+      row.lastQty = e.qty || 0;
+      // 최근 체결 리스트에 prepend
+      quoteState.trades.unshift({ ts: env.ts, feed, sym, px: e.px || 0, qty: e.qty || 0 });
+      if (quoteState.trades.length > quoteState.TRADE_LIMIT)
+        quoteState.trades.length = quoteState.TRADE_LIMIT;
+      $("#q-stat-trades").textContent = String(quoteState.trades.length);
+      quoteRenderTrades();
+    }
+    // sparkline 데이터 — last 가 있으면 last, 아니면 (bid+ask)/2.
+    // bid 또는 ask 만 갱신되어도 history 한 점 추가 (snapshot 바뀜 시각화).
+    const px = row.last || (row.bid && row.ask ? (row.bid + row.ask) / 2 : (row.bid || row.ask));
+    if (px) {
+      row.priceHistory.push(px);
+      if (row.priceHistory.length > 60) row.priceHistory.shift();
+    }
+  }
+  $("#q-stat-symbols").textContent = String(quoteState.symbols.size);
+  quoteRender();
+}
+
+function quoteRender() {
+  const grid = $("#q-symbols-grid");
+  if (!grid) return;
+  grid.replaceChildren();
+  if (quoteState.symbols.size === 0) {
+    grid.appendChild(h("div", { class: "text-slate-500 text-center py-6 col-span-full text-sm",
+                                text: "아직 시세 없음 — quote-forwarder 가 시세를 흘리면 여기에 표시됩니다." }));
+    return;
+  }
+  const sorted = Array.from(quoteState.symbols.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [sym, r] of sorted) {
+    const card = h("div", { class: "border border-ink-700/60 rounded-xl p-3 bg-ink-800/30" });
+    const head = h("div", { class: "flex items-center justify-between mb-2" });
+    head.appendChild(h("div", { class: "font-semibold text-sm", text: sym }));
+    head.appendChild(h("div", { class: "text-[10px] text-slate-500 font-mono", text: r.feed || "" }));
+    card.appendChild(head);
+
+    const spreadTxt = (r.ask && r.bid) ? "spread " + (r.ask - r.bid).toFixed(4) : "";
+    const grid3 = h("div", { class: "grid grid-cols-3 gap-2 text-xs font-mono" });
+    grid3.appendChild(quoteCell("BID", r.bid, r.bidQty, r.bid - r.prevBid, "text-good"));
+    grid3.appendChild(quoteCell("LAST", r.last, r.lastQty, r.last - r.prevLast, "text-accent-400"));
+    grid3.appendChild(quoteCell("ASK", r.ask, r.askQty, r.ask - r.prevAsk, "text-bad"));
+    card.appendChild(grid3);
+
+    // sparkline — 최근 60틱 mid price 추이. canvas 직접 그리기 (Chart.js
+    // 인스턴스 N 개는 무거움). 카드마다 작은 line.
+    if (r.priceHistory && r.priceHistory.length >= 2) {
+      const canvas = h("canvas", { class: "mt-2 w-full block" });
+      canvas.width = 240; canvas.height = 32;
+      // 마운트 직후 그리기 — DOM 에 들어가야 getContext 가 정상.
+      requestAnimationFrame(() => drawSparkline(canvas, r.priceHistory));
+      card.appendChild(canvas);
+    }
+
+    if (spreadTxt) {
+      card.appendChild(h("div", { class: "text-[10px] text-slate-500 mt-1 text-right font-mono", text: spreadTxt }));
+    }
+    grid.appendChild(card);
+  }
+}
+
+// drawSparkline — canvas 에 history 의 line + 첫/끝점 dot. 가격 변동 vs 0 으로
+// 오르내림 색상. min-max 범위로 정규화.
+function drawSparkline(canvas, history) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  if (history.length < 2) return;
+  const min = Math.min(...history), max = Math.max(...history);
+  const range = max - min || 1;
+  const x = (i) => (i / (history.length - 1)) * (W - 4) + 2;
+  const y = (v) => H - 4 - ((v - min) / range) * (H - 8);
+  // 첫 vs 끝 비교로 색상 결정
+  const up = history[history.length - 1] >= history[0];
+  const stroke = up ? "rgba(74, 222, 128, 0.85)" : "rgba(248, 113, 113, 0.85)";
+  const fill   = up ? "rgba(74, 222, 128, 0.12)" : "rgba(248, 113, 113, 0.12)";
+  // line + 채움
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(history[0]));
+  for (let i = 1; i < history.length; i++) ctx.lineTo(x(i), y(history[i]));
+  ctx.lineTo(x(history.length - 1), H);
+  ctx.lineTo(x(0), H);
+  ctx.closePath();
+  ctx.fillStyle = fill; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(history[0]));
+  for (let i = 1; i < history.length; i++) ctx.lineTo(x(i), y(history[i]));
+  ctx.strokeStyle = stroke; ctx.lineWidth = 1.4; ctx.stroke();
+  // 끝점 dot
+  ctx.beginPath();
+  ctx.arc(x(history.length - 1), y(history[history.length - 1]), 2.2, 0, Math.PI * 2);
+  ctx.fillStyle = stroke; ctx.fill();
+}
+
+function quoteCell(label, px, qty, diff, baseCls) {
+  const wrap = h("div", { class: "p-2 rounded-md bg-ink-900/40" });
+  wrap.appendChild(h("div", { class: "text-[10px] uppercase tracking-widest text-slate-500", text: label }));
+  const pxLine = h("div", { class: "font-mono text-sm " + baseCls, text: px ? px.toFixed(4) : "—" });
+  wrap.appendChild(pxLine);
+  if (qty) wrap.appendChild(h("div", { class: "text-[10px] text-slate-400 font-mono", text: "qty " + qty.toLocaleString() }));
+  if (px && diff && Math.abs(diff) > 1e-9) {
+    const arrow = diff > 0 ? "▲" : "▼";
+    const cls = diff > 0 ? "text-good" : "text-bad";
+    wrap.appendChild(h("div", { class: "text-[10px] font-mono mt-0.5 " + cls, text: arrow + " " + Math.abs(diff).toFixed(4) }));
+  }
+  return wrap;
+}
+
+function quoteRenderTrades() {
+  const wrap = $("#q-trades-list");
+  if (!wrap) return;
+  $("#q-trades-count").textContent = String(quoteState.trades.length);
+  wrap.replaceChildren();
+  if (quoteState.trades.length === 0) {
+    wrap.appendChild(h("div", { class: "text-slate-500 text-center py-2", text: "체결 없음" }));
+    return;
+  }
+  for (const t of quoteState.trades) {
+    const ts = (() => { try { return new Date(t.ts).toLocaleTimeString("ko-KR", { hour12: false }); } catch (_) { return t.ts; } })();
+    const row = h("div", { class: "flex items-center gap-3" });
+    row.appendChild(h("span", { class: "text-slate-500 w-20 shrink-0", text: ts }));
+    row.appendChild(h("span", { class: "text-slate-400 w-16 shrink-0", text: t.feed }));
+    row.appendChild(h("span", { class: "text-slate-200 w-24 shrink-0", text: t.sym }));
+    row.appendChild(h("span", { class: "text-accent-400 w-24 shrink-0 text-right", text: t.px.toFixed(4) }));
+    row.appendChild(h("span", { class: "text-slate-400 text-right", text: (t.qty || 0).toLocaleString() }));
+    wrap.appendChild(row);
+  }
+}
+
+// ───────── Init / Wire ─────────
+document.addEventListener("DOMContentLoaded", () => {
+  // 시계
+  const tick = () => $("#now").textContent = new Date().toLocaleTimeString("ko-KR");
+  tick(); setInterval(tick, 1000);
+
+  // 로그인
+  $("#login-form").onsubmit = async (e) => {
+    e.preventDefault();
+    $("#login-err").classList.add("hidden");
+    $("#login-submit").disabled = true;
+    try {
+      await login($("#login-usid").value.trim(), $("#login-pw").value, $("#login-totp").value);
+      toast("로그인 성공");
+      showApp();
+    } catch (err) {
+      $("#login-err").textContent = err.message || "로그인 실패";
+      $("#login-err").classList.remove("hidden");
+    } finally {
+      $("#login-submit").disabled = false;
+    }
+  };
+  $("#dev-enter").onclick = () => {
+    const u = $("#login-usid").value.trim();
+    if (!u) { $("#login-err").textContent = "사용자 ID 를 입력해주세요"; $("#login-err").classList.remove("hidden"); return; }
+    devLogin(u);
+    toast("DevMode 진입");
+    showApp();
+  };
+
+  // 네비
+  document.body.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-page]");
+    if (t) { goPage(t.dataset.page); }
+    const c = e.target.closest("[data-close]");
+    if (c) { document.getElementById(c.dataset.close).classList.add("hidden"); }
+  });
+  $("#logout-btn").onclick = logout;
+
+  // 테마 토글 — 부팅 시 한 번 더 그려서 active 상태 표시.
+  applyTheme(loadThemePref());
+  $$("[data-theme-set]").forEach(b => {
+    b.onclick = () => setThemePref(b.dataset.themeSet);
+  });
+
+  // routes
+  $("#routes-refresh").onclick = loadRoutes;
+  $("#routes-add").onclick = () => openRouteModal(null);
+  $("#routes-add2").onclick = () => openRouteModal(null);
+  $("#route-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const alias = $("#rf-alias").value.trim();
+    const body = {
+      exchange: $("#rf-exchange").value.trim(),
+      routing_key: $("#rf-rkey").value.trim(),
+      comment: $("#rf-comment").value.trim(),
+      active: $("#rf-active").checked,
+    };
+    try {
+      await api("/v1/admin/routes/" + encodeURIComponent(alias),
+        { method: "PUT", body: JSON.stringify(body) });
+      toast("저장 완료");
+      closeRouteModal();
+      loadRoutes();
+    } catch (err) {
+      $("#route-err").textContent = err.message;
+      $("#route-err").classList.remove("hidden");
+    }
+  };
+
+  // broker
+  $$(".brk-btn").forEach(b => b.onclick = () => brkRun(b.dataset.path, b.dataset.label));
+
+  // tester
+  wireTester();
+
+  // ws monitor
+  wireWSMon();
+
+  // policy
+  wirePolicy();
+
+  // 부팅
+  if (localStorage.getItem(LS_TOKEN) || localStorage.getItem(LS_DEV) === "1") showApp();
+  else showLogin();
+});
+</script>
+
+</body>
+</html>

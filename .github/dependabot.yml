@@ -1,0 +1,37 @@
+# WTG Dependabot 설정.
+#
+# Go 모듈과 GitHub Actions 의 의존성을 매주 점검해서 PR 을 생성한다.
+# 보안 패치는 별도로 자동 빈도 — Dependabot 기본 정책 (security-updates).
+
+version: 2
+updates:
+  # Go 모듈 — 매주 월요일 KST 09:00 (UTC 00:00) 에 점검.
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # GitHub Actions — 워크플로우 액션 버전 업데이트.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "00:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci(actions)"

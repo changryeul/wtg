@@ -1,0 +1,51 @@
+// WTG (Winway Trading Gateway) — Price stream service.
+//
+// Internal mci-price ↔ DMZ mci-edge-price 사이의 gRPC bidirectional stream.
+// 시세 fan-out 의 핵심 통신 채널.
+//
+// 보안: mTLS gRPC (Phase 8 운영화 시점). DMZ → Internal 정방향만 정책상
+// 허용되므로, edge 가 Internal 로 connect 하고 Internal 이 그 stream 으로
+// tick 을 push 하는 reverse stream 패턴.
+
+syntax = "proto3";
+
+package wtg.v1;
+
+option go_package = "github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1";
+
+// PriceService 는 mci-price (Internal) 가 노출하는 gRPC 서비스다.
+service PriceService {
+  // Subscribe 는 edge 가 호출해서 Internal 로부터 tick stream 을 받는다.
+  // bidirectional 형태로 정의해서 edge 가 시작 시 구독 심볼/필터를 지정 가능.
+  // 1차 prototype: edge 는 빈 SubscribeRequest 만 보내고 모든 tick 수신.
+  rpc Subscribe(SubscribeRequest) returns (stream Tick);
+}
+
+// SubscribeRequest 는 edge 가 보내는 구독 옵션 (1차는 빈 메시지).
+message SubscribeRequest {
+  // 구독 대상 통화쌍 화이트리스트. 비어있으면 모든 심볼 수신.
+  repeated string symbols = 1;
+
+  // 구독자 식별 (edge instance 이름 등 — 디버깅/감사용).
+  string subscriber_id = 2;
+}
+
+// Tick 은 정규화된 시세 단위.
+//
+// internal/price/decoder.go 의 Tick 구조와 1:1 대응. wire 호환성은
+// proto 가 단일 출처이며 Go 측 struct 는 변환 코드로 매핑.
+message Tick {
+  uint64 market_id = 1;
+  string symbol = 2;
+  uint32 seq_num = 3;
+  uint32 mask = 4;
+  uint32 type = 5;     // pushmsg.type (uint8 → uint32 wrap)
+  uint32 flag = 6;     // pushmsg.flag (uint8 → uint32 wrap)
+
+  // body 는 cooker 의 시세 페이로드 raw bytes.
+  // edge 는 그대로 ws 클라이언트로 forward — 해석하지 않음 (passthrough 원칙).
+  bytes body = 7;
+
+  // mci-price 가 디코딩한 wallclock (Unix nano). 디버깅/지연 측정용.
+  int64 received_unix_nano = 8;
+}

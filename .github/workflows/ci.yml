@@ -1,0 +1,111 @@
+# WTG (Winway Trading Gateway) — CI 워크플로우
+#
+# PR / main 푸시 시점에 다음을 검증한다:
+#   - go fmt 가 모든 파일에 적용되어 있는지
+#   - go vet 클린
+#   - staticcheck 클린
+#   - govulncheck (의존성 CVE)
+#   - 단위/통합 테스트 (race detector + coverage)
+#   - 모든 cmd/ 빌드 성공
+#
+# CI 와 로컬 Makefile 이 동일한 명령을 사용하므로, 개발자가 commit 전에
+# `make ci` 로 같은 결과를 재현할 수 있다.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 동일 PR 의 새 push 시 이전 실행 취소.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: gofmt 차이 확인
+        run: |
+          diff=$(gofmt -l .)
+          if [ -n "$diff" ]; then
+            echo "다음 파일들이 gofmt 미적용 상태입니다:"
+            echo "$diff"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: '2024.1.1'
+          install-go: false
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: go mod download
+        run: go mod download
+
+      - name: 단위/통합 테스트 (race + coverage)
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: 커버리지 요약
+        run: go tool cover -func=coverage.out | tail -20
+
+      - name: 커버리지 artifact 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: 모든 cmd/ 빌드
+        run: make build
+
+      - name: 빌드 결과물 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linux-amd64
+          path: build/bin/
+          retention-days: 7

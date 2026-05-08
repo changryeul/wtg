@@ -1,0 +1,55 @@
+// WTG (Winway Trading Gateway) — Push fan-out service.
+//
+// Internal mci-push ↔ DMZ mci-edge-push 사이의 gRPC stream.
+// 매매 엔진의 unsolicited 메시지(체결, 주문상태, 알림)를 사용자 단말까지
+// 전달하는 역방향(reverse) 흐름.
+//
+// 1차 prototype 의 단순화:
+//   - edge 는 빈 SubscribeRequest 만 보냄.
+//   - mci-push 는 모든 unsolicited 를 stream 으로 forward.
+//   - logon_id 기반 사용자 매핑은 edge 가 자체 Registry 로 처리.
+//   - 2차에서는 edge 가 자기 가진 logon_id 화이트리스트를 보내서 broker→edge
+//     트래픽 효율화 가능 (운영 측정 후 결정).
+
+syntax = "proto3";
+
+package wtg.v1;
+
+option go_package = "github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1";
+
+// PushService 는 mci-push (Internal) 가 노출하는 gRPC 서비스.
+service PushService {
+  // Subscribe 는 edge 가 호출해서 Internal 로부터 push 메시지 stream 을 받는다.
+  rpc Subscribe(PushSubscribeRequest) returns (stream PushMessage);
+}
+
+// PushSubscribeRequest 는 edge 가 보내는 구독 옵션.
+message PushSubscribeRequest {
+  // 구독자(=edge 인스턴스) 식별자 — 로그/감사용.
+  string subscriber_id = 1;
+
+  // 1차 prototype: 비어있음. 2차에 화이트리스트(logon_id 목록) 또는
+  // channel/exchange 필터 추가 가능.
+}
+
+// PushMessage 는 매매 엔진이 발행한 단일 사용자/브로드캐스트 push.
+//
+// edge 는 logon_id 가 비어있지 않으면 해당 사용자의 모든 ws 에 fan-out,
+// 비어있으면 broadcast (시스템 알림 등) 처리.
+message PushMessage {
+  // mymq 함수 코드: FCCast=4, FCPush=13, FCSignal=14.
+  uint32 func = 1;
+  uint32 subc = 2;
+
+  // broadcast prefix 에서 추출된 메타.
+  string exchange = 3;
+  string channel = 4;
+  string logon_id = 5;
+
+  // raw payload (cooker / 매매 엔진이 보낸 본문 그대로).
+  // edge 는 해석하지 않고 ws 클라이언트로 forward.
+  bytes data = 6;
+
+  // 디버깅/지연 측정용.
+  int64 received_unix_nano = 7;
+}

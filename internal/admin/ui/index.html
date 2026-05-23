@@ -249,8 +249,12 @@
         <button data-page="tester"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">API 테스터</button>
         <button data-page="wsmon"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">WS 모니터</button>
         <button data-page="quote"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">시세</button>
+        <button data-page="symbols"    class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">통화쌍</button>
+        <button data-page="pricing"    class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">마진 테이블</button>
+        <button data-page="profiles"   class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">프로파일</button>
         <button data-page="svcio"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">서비스 명세</button>
         <button data-page="audit"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">감사 로그</button>
+        <button data-page="guide"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">운영 가이드</button>
       </nav>
       <div class="absolute bottom-0 w-full px-3 pb-4 space-y-2">
         <!-- 테마 토글 — 다크/라이트/시스템 -->
@@ -549,7 +553,7 @@
             <button class="brk-btn" data-path="/v1/admin/clients"   data-label="Clients">Clients</button>
             <button class="brk-btn" data-path="/v1/admin/exchanges" data-label="Exchanges">Exchanges</button>
             <button class="brk-btn" data-path="/v1/admin/users"     data-label="Users">Users</button>
-            <button class="brk-btn whois" data-path="/v1/admin/whois" data-label="Whois (usid)">Whois …</button>
+            <button class="brk-btn whois" data-path="/v1/admin/whois" data-label="Whois (xchg/rkey/qnam)">Whois …</button>
           </div>
           <div class="border-gradient rounded-2xl">
             <div class="px-4 py-3 border-b border-ink-700/60 flex items-center justify-between">
@@ -814,6 +818,171 @@
           </div>
         </div>
 
+        <!-- 통화쌍 (symbols) — quote.SymbolEntry CRUD via etcd → mci-price watch -->
+        <div id="page-symbols" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">통화쌍</h3>
+              <p class="text-sm text-slate-400">외부 심볼(USDKRW) ↔ 내부 pair(USD/KRW) 매핑. 비활성으로 토글하면 mci-price 가 즉시 해당 tick 을 drop. etcd watch 로 인스턴스 전체에 전파.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="symbols-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 새로고침</button>
+              <button id="symbols-add" class="px-3 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">+ 신규</button>
+            </div>
+          </div>
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                <tr class="border-b border-ink-700/60">
+                  <th class="text-left px-4 py-3 font-medium">Symbol</th>
+                  <th class="text-left px-4 py-3 font-medium">Pair</th>
+                  <th class="text-left px-4 py-3 font-medium">Active</th>
+                  <th class="text-right px-4 py-3 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody id="symbols-tbody"></tbody>
+            </table>
+            <div id="symbols-empty" class="hidden p-8 text-center text-slate-500">
+              아직 등록된 통화쌍이 없습니다. <button class="text-accent-400 hover:text-accent-500" id="symbols-add2">신규 등록</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 마진 테이블 (pricing) — PricingTableDoc 단일 JSON 편집기 -->
+        <div id="page-pricing" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">마진 테이블</h3>
+              <p class="text-sm text-slate-400">swap point / 본점 / 영업점·채널 마진을 담은 단일 JSON. 저장 시 모든 mci-price 가 atomic 으로 새 테이블로 전환. Version 은 운영자가 손으로 1씩 올리는 게 좋습니다 (감사용).</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="pricing-reload" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 다시 읽기</button>
+              <button id="pricing-format" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">{ } 포맷</button>
+              <button id="pricing-save" class="px-3 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">💾 저장</button>
+            </div>
+          </div>
+          <div class="border-gradient rounded-2xl p-4 space-y-3">
+            <div class="flex items-center gap-3 text-xs text-slate-400">
+              <span>현재 Version: <span id="pricing-version" class="font-mono text-slate-200">—</span></span>
+              <span>HQ entries: <span id="pricing-count-hq" class="font-mono text-slate-200">—</span></span>
+              <span>Site entries: <span id="pricing-count-site" class="font-mono text-slate-200">—</span></span>
+              <span>Swap entries: <span id="pricing-count-swap" class="font-mono text-slate-200">—</span></span>
+            </div>
+            <textarea id="pricing-editor"
+              spellcheck="false"
+              class="w-full font-mono text-xs bg-ink-900 border border-ink-700 rounded-lg p-3 outline-none focus:border-accent-500"
+              style="height: 60vh; resize: vertical;"
+              placeholder='{"version":1,"hq_margin":[],"site_margin":[],"swap_point":[]}'></textarea>
+            <div id="pricing-error" class="hidden text-xs text-bad font-mono"></div>
+          </div>
+        </div>
+
+        <!-- 프로파일 (profiles) — 활성 Profile 카탈로그 CRUD -->
+        <div id="page-profiles" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">활성 프로파일</h3>
+              <p class="text-sm text-slate-400">(Channel × Site × Tier) 조합. PricingConsumer 가 각 프로파일 별로 마진 적용된 시세를 별도 publish.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="profiles-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 새로고침</button>
+              <button id="profiles-add" class="px-3 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">+ 신규</button>
+            </div>
+          </div>
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                <tr class="border-b border-ink-700/60">
+                  <th class="text-left px-4 py-3 font-medium">Key (Profile)</th>
+                  <th class="text-left px-4 py-3 font-medium">Channel</th>
+                  <th class="text-left px-4 py-3 font-medium">Site</th>
+                  <th class="text-left px-4 py-3 font-medium">Tier</th>
+                  <th class="text-right px-4 py-3 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody id="profiles-tbody"></tbody>
+            </table>
+            <div id="profiles-empty" class="hidden p-8 text-center text-slate-500">
+              아직 등록된 프로파일이 없습니다. <button class="text-accent-400 hover:text-accent-500" id="profiles-add2">신규 등록</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 통화쌍 모달 -->
+        <div id="symbol-modal" class="fixed inset-0 bg-ink-950/80 z-50 hidden items-center justify-center p-4" style="backdrop-filter: blur(4px);">
+          <div class="bg-ink-850 border border-ink-700 rounded-2xl shadow-2xl max-w-md w-full p-5 space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 id="symbol-modal-title" class="text-base font-semibold">신규 통화쌍</h4>
+              <button class="text-slate-400 hover:text-slate-200" onclick="closeSymbolModal()">✕</button>
+            </div>
+            <div class="space-y-2 text-sm">
+              <div>
+                <label class="text-xs text-slate-400">Symbol (외부 표기)</label>
+                <input id="sm-symbol" placeholder="USDKRW"
+                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </div>
+              <div>
+                <label class="text-xs text-slate-400">Pair (내부 표기)</label>
+                <input id="sm-pair" placeholder="USD/KRW"
+                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </div>
+              <label class="inline-flex items-center gap-2 text-xs text-slate-300">
+                <input type="checkbox" id="sm-active" />
+                활성 (체크 해제 시 mci-price 가 tick drop)
+              </label>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+              <button onclick="closeSymbolModal()" class="px-4 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">취소</button>
+              <button id="sm-save" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm">저장</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 프로파일 모달 -->
+        <div id="profile-modal" class="fixed inset-0 bg-ink-950/80 z-50 hidden items-center justify-center p-4" style="backdrop-filter: blur(4px);">
+          <div class="bg-ink-850 border border-ink-700 rounded-2xl shadow-2xl max-w-md w-full p-5 space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 id="profile-modal-title" class="text-base font-semibold">신규 프로파일</h4>
+              <button class="text-slate-400 hover:text-slate-200" onclick="closeProfileModal()">✕</button>
+            </div>
+            <div class="space-y-2 text-sm">
+              <div>
+                <label class="text-xs text-slate-400">Channel</label>
+                <select id="pf-channel" class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
+                  <option value="WEB">WEB</option>
+                  <option value="MOB">MOB</option>
+                  <option value="HTS">HTS</option>
+                  <option value="EMP">EMP</option>
+                  <option value="FIX">FIX</option>
+                  <option value="API">API</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs text-slate-400">Site</label>
+                <select id="pf-site" class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
+                  <option value="BRANCH">BRANCH (영업점)</option>
+                  <option value="HQ">HQ (본점)</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs text-slate-400">Tier</label>
+                <select id="pf-tier" class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
+                  <option value="VIP">VIP</option>
+                  <option value="GOLD">GOLD</option>
+                  <option value="STD">STD</option>
+                </select>
+              </div>
+              <div class="text-xs text-slate-400">
+                결과 key: <span id="pf-key-preview" class="font-mono text-accent-400">WEB.BRANCH.VIP</span>
+              </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+              <button onclick="closeProfileModal()" class="px-4 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">취소</button>
+              <button id="pf-save" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm">저장</button>
+            </div>
+          </div>
+        </div>
+
         <!-- 서비스 명세 (svcio) -->
         <div id="page-svcio" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -1047,6 +1216,139 @@
           </div>
           <p class="text-[11px] text-slate-500">운영에서는 immutable 외부 sink(7년 보관)가 single source — 본 화면은 즉시 표시용 sliding window 입니다.</p>
         </div>
+
+        <!-- ───── 운영 가이드 (Operations Guide) ─────
+             docs/operations.md §A.7 ~ §A.11 의 정보성 표를 SPA 안에 직접 노출.
+             동적 로딩 없음 — 운영자가 한 화면에서 "이 값은 어디서 바뀌나 / 무엇을
+             보존하나 / 비상 시 무엇을 누르나" 를 즉시 확인하기 위한 정적 레퍼런스. -->
+        <div id="page-guide" class="page hidden space-y-4">
+          <div>
+            <h3 class="text-lg font-semibold">운영 가이드</h3>
+            <p class="text-sm text-slate-400">control panel 에서 다루는 모든 항목 / 저장 위치 / 비상 대응 / 권한 규칙 한눈에. 자세한 명세는 <span class="font-mono text-slate-300">docs/operations.md §A</span>.</p>
+          </div>
+
+          <!-- A.7 — 부팅 시 한 번 결정되는 값 -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">A.7 부팅 시 결정값 (재시작 필요)</div>
+                <div class="text-sm text-slate-300">control panel 에서 바꿀 수 없는 — flag/env 로만 결정되는 항목. systemd unit / EnvironmentFile 로 고정.</div>
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-xs uppercase tracking-wider text-slate-400 border-b border-ink-700/60">
+                  <tr><th class="text-left py-2 pr-4">항목</th><th class="text-left py-2 pr-4">flag</th><th class="text-left py-2">변경 시</th></tr>
+                </thead>
+                <tbody class="text-slate-300">
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">listen 주소</td><td class="py-2 pr-4 font-mono text-xs">-listen</td><td class="py-2">mci-admin 재시작</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">broker 좌표</td><td class="py-2 pr-4 font-mono text-xs">-broker-host, -broker-port</td><td class="py-2">재시작</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">etcd 좌표</td><td class="py-2 pr-4 font-mono text-xs">-etcd, -etcd-prefix, -etcd-policy-key</td><td class="py-2">재시작</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">사내 CIDR 화이트리스트</td><td class="py-2 pr-4 font-mono text-xs">-allow-cidrs</td><td class="py-2">재시작</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">운영자 mTLS CA</td><td class="py-2 pr-4 font-mono text-xs">-tls-client-ca</td><td class="py-2">재시작</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">svc-io 디렉터리</td><td class="py-2 pr-4 font-mono text-xs">-svc-inc-dir, -svc-common-header</td><td class="py-2">재시작 (또는 source 편집 후 자동 reparse)</td></tr>
+                  <tr><td class="py-2 pr-4">DevMode 토글</td><td class="py-2 pr-4 font-mono text-xs">-dev, -no-broker</td><td class="py-2">재시작</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- A.8 — 저장 위치 / 영속성 매트릭스 -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">A.8 저장 위치 / 영속성</div>
+                <div class="text-sm text-slate-300">각 데이터의 보존 여부와 인스턴스 간 공유 방식.</div>
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-xs uppercase tracking-wider text-slate-400 border-b border-ink-700/60">
+                  <tr><th class="text-left py-2 pr-4">데이터</th><th class="text-left py-2 pr-4">저장소</th><th class="text-left py-2 pr-4">재시작 후 보존</th><th class="text-left py-2">다중 인스턴스 공유</th></tr>
+                </thead>
+                <tbody class="text-slate-300">
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">라우팅 룰 (운영)</td><td class="py-2 pr-4 font-mono text-xs">etcd wtg/routes/*</td><td class="py-2 pr-4 text-emerald-400">✓</td><td class="py-2 text-emerald-400">✓ watch</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">라우팅 룰 (dev)</td><td class="py-2 pr-4 font-mono text-xs">in-memory + -dev-routes-file JSON</td><td class="py-2 pr-4">파일 있으면 ✓</td><td class="py-2 text-rose-400">✗</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">정책 (운영)</td><td class="py-2 pr-4 font-mono text-xs">etcd wtg/policy</td><td class="py-2 pr-4 text-emerald-400">✓</td><td class="py-2 text-emerald-400">✓ watch</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">정책 (dev)</td><td class="py-2 pr-4 font-mono text-xs">in-memory + (옵션) -dev-policy-url poll</td><td class="py-2 pr-4 text-rose-400">✗</td><td class="py-2">poll 로 일관</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">Audit ring</td><td class="py-2 pr-4 font-mono text-xs">in-memory 200건</td><td class="py-2 pr-4 text-rose-400">✗</td><td class="py-2">인스턴스별 (외부 sink 가 진실)</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">svc-io 카탈로그</td><td class="py-2 pr-4 font-mono text-xs">디스크 → in-memory</td><td class="py-2 pr-4">디스크 ✓ / 메모리 ✗</td><td class="py-2">동일 디스크 mount</td></tr>
+                  <tr><td class="py-2 pr-4">ws Hub 구독자</td><td class="py-2 pr-4 font-mono text-xs">in-memory</td><td class="py-2 pr-4 text-rose-400">✗</td><td class="py-2">인스턴스별</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- A.9 — 일상 vs 비상 대응 매트릭스 -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">A.9 일상 운영 vs 비상 대응</div>
+                <div class="text-sm text-slate-300">상황별로 어디를 누르고 어느 endpoint 를 호출하는지.</div>
+              </div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="text-xs uppercase tracking-wider text-slate-400 border-b border-ink-700/60">
+                  <tr><th class="text-left py-2 pr-4">상황</th><th class="text-left py-2 pr-4">작업</th><th class="text-left py-2">endpoint</th></tr>
+                </thead>
+                <tbody class="text-slate-300">
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">신규 transaction 라이브</td><td class="py-2 pr-4">alias 등록</td><td class="py-2 font-mono text-xs">PUT /v1/admin/routes/{alias}</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">특정 alias 잠시 차단</td><td class="py-2 pr-4">active=false 토글</td><td class="py-2 font-mono text-xs">POST /v1/admin/routes/{alias}/active</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">broker exchange 이전</td><td class="py-2 pr-4">exchange/rkey 만 수정</td><td class="py-2 font-mono text-xs">PUT /v1/admin/routes/{alias}</td></tr>
+                  <tr class="border-b border-ink-800/60 bg-rose-500/5"><td class="py-2 pr-4 text-rose-300 font-semibold">고객만 비상 차단</td><td class="py-2 pr-4">scoped kill-switch</td><td class="py-2 font-mono text-xs">POST /v1/admin/policy/kill-switch {active:true, channels:[...]}</td></tr>
+                  <tr class="border-b border-ink-800/60 bg-rose-500/5"><td class="py-2 pr-4 text-rose-300 font-semibold">전 시스템 비상 정지</td><td class="py-2 pr-4">전체 kill-switch</td><td class="py-2 font-mono text-xs">POST /v1/admin/policy/kill-switch {active:true}</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">정기 정비창 예약</td><td class="py-2 pr-4">maintenance 설정</td><td class="py-2 font-mono text-xs">POST /v1/admin/policy/maintenance</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">특정 종목 차단</td><td class="py-2 pr-4">symbols 교체</td><td class="py-2 font-mono text-xs">POST /v1/admin/policy/blocked-symbols</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">raw 우회 방어</td><td class="py-2 pr-4">rkey 차단 추가</td><td class="py-2 font-mono text-xs">POST /v1/admin/policy/blocked-routing-keys</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">누가 무엇을 바꿨나</td><td class="py-2 pr-4">audit 조회</td><td class="py-2 font-mono text-xs">GET /v1/admin/audit?limit=200</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">다른 admin 화면 동기화</td><td class="py-2 pr-4">ws 구독</td><td class="py-2 font-mono text-xs">GET /v1/admin/stream</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">broker 정상성 확인</td><td class="py-2 pr-4">broker status</td><td class="py-2 font-mono text-xs">GET /v1/admin/status</td></tr>
+                  <tr class="border-b border-ink-800/60"><td class="py-2 pr-4">로그인 사용자 검색</td><td class="py-2 pr-4">usid glob</td><td class="py-2 font-mono text-xs">GET /v1/admin/users?argv0=trader*</td></tr>
+                  <tr><td class="py-2 pr-4">transaction 라우팅 추적</td><td class="py-2 pr-4">whois (xchg/rkey)</td><td class="py-2 font-mono text-xs">GET /v1/admin/whois?argv0=ECHOSVC&amp;argv1=PING</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- A.10 — 권한 / 보안 -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">A.10 권한 / 보안</div>
+                <div class="text-sm text-slate-300">모든 admin endpoint 가 통과해야 하는 게이트.</div>
+              </div>
+            </div>
+            <ul class="text-sm text-slate-300 space-y-2 list-disc list-inside">
+              <li>모든 <span class="font-mono text-xs text-slate-200">/v1/admin/*</span> 는 JWT + <span class="font-mono text-xs text-slate-200">ChannelAdmin</span> 통과 필수.</li>
+              <li>사내망 <span class="font-mono text-xs text-slate-200">-allow-cidrs</span> 화이트리스트 통과 필수.</li>
+              <li>운영자 mTLS (<span class="font-mono text-xs text-slate-200">-tls-client-ca</span>) 통과 필수.</li>
+              <li><span class="font-mono text-xs text-slate-200">updated_by</span> 필드는 항상 <span class="font-mono text-xs text-slate-200">Principal.Usid</span> 에서 자동 — 익명 변경 불가.</li>
+              <li>비즈니스 권한 (거래 한도 / 통화쌍 / 거래시간) 은 <strong class="text-amber-300">여기서 안 다룬다</strong> — 매매 엔진 책임.</li>
+            </ul>
+          </div>
+
+          <!-- A.11 — 빠른 운영 체크리스트 -->
+          <div class="border-gradient rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <div class="text-xs uppercase tracking-widest text-slate-400">A.11 빠른 운영 체크리스트</div>
+                <div class="text-sm text-slate-300">정기적으로 점검할 운영 항목.</div>
+              </div>
+            </div>
+            <ul class="text-sm text-slate-300 space-y-2 font-mono">
+              <li><span class="text-slate-500">□</span> alias 카탈로그 정합성     <span class="text-slate-500">— docs/conventions.md ↔ /v1/admin/routes 비교</span></li>
+              <li><span class="text-slate-500">□</span> 정책 snapshot 백업        <span class="text-slate-500">— GET /v1/admin/policy 정기 dump</span></li>
+              <li><span class="text-slate-500">□</span> Audit 외부 sink 가동      <span class="text-slate-500">— 7년 보관 정책 충족</span></li>
+              <li><span class="text-slate-500">□</span> ws stream 사용 중인지     <span class="text-slate-500">— admin 다중 운영 시 race 방지</span></li>
+              <li><span class="text-slate-500">□</span> -upstream-api 운영 비활성  <span class="text-slate-500">— 운영 매매 트래픽 우회 차단</span></li>
+              <li><span class="text-slate-500">□</span> -dev 플래그 운영 unit 잔존 X <span class="text-slate-500">— JWT 우회 방지</span></li>
+              <li><span class="text-slate-500">□</span> etcd 좌표 일치 (admin ↔ 모든 api) <span class="text-slate-500">— operations.md §4</span></li>
+            </ul>
+          </div>
+
+          <p class="text-[11px] text-slate-500">자세한 필드별 의미와 검사 순서는 docs/operations.md §A.1 ~ §A.6 참조. 본 화면은 §A.7 ~ §A.11 의 정보성 표만 노출합니다.</p>
+        </div>
       </section>
     </main>
   </div>
@@ -1269,7 +1571,8 @@ function goPage(name) {
   const titles = { dashboard: "대시보드", routes: "라우팅 룰", policy: "정책 엔진",
                    broker: "브로커 명령",
                    tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
-                   svcio: "서비스 명세", audit: "감사 로그" };
+                   symbols: "통화쌍", pricing: "마진 테이블", profiles: "프로파일",
+                   svcio: "서비스 명세", audit: "감사 로그", guide: "운영 가이드" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
   if (name === "dashboard") loadDashboard();
@@ -1277,6 +1580,9 @@ function goPage(name) {
   if (name === "tester")    initTester();
   if (name === "wsmon")     initWSMon();
   if (name === "quote")     initQuote();
+  if (name === "symbols")   loadSymbols();
+  if (name === "pricing")   loadPricing();
+  if (name === "profiles")  loadProfiles();
   if (name === "svcio")     initSvcIO();
   if (name !== "audit")     stopAuditPoller();
   if (name === "audit")     initAudit();
@@ -1681,7 +1987,24 @@ async function brkRun(path, label) {
   $("#brk-output").textContent = "…";
   const t0 = Date.now();
   try {
-    const url = path.includes("whois") ? path + "?usid=" + encodeURIComponent(prompt("usid?") || "") : path;
+    let url = path;
+    if (path.includes("whois")) {
+      // broker 의 GET_WHOIS 는 argv[0]=xchg, argv[1]=rkey, argv[2]=qnam 로 검색.
+      // 사용자가 콤마 구분으로 한 번에 입력 — 빈 칸은 필터 없음 (전체 매칭).
+      const raw = prompt(
+        "Whois 검색 — xchg, rkey, qnam (콤마 구분, 빈값=전체)\n" +
+        "예: ECHOSVC,PING,    (ECHOSVC exchange 의 PING routing key)\n" +
+        "예: ,NEW*,           (모든 exchange 의 NEW* routing key glob)",
+        "");
+      if (raw === null) { $("#brk-status").textContent = "취소됨"; return; }
+      const parts = raw.split(",").map(s => s.trim());
+      const qs = new URLSearchParams();
+      if (parts[0]) qs.set("argv0", parts[0]);
+      if (parts[1]) qs.set("argv1", parts[1]);
+      if (parts[2]) qs.set("argv2", parts[2]);
+      const qstr = qs.toString();
+      url = qstr ? path + "?" + qstr : path;
+    }
     const data = await api(url);
     $("#brk-output").textContent = JSON.stringify(data, null, 2);
     $("#brk-status").textContent = "200 OK · " + (Date.now() - t0) + " ms";
@@ -1692,6 +2015,259 @@ async function brkRun(path, label) {
   }
 }
 
+// ───────── Symbols (통화쌍) ─────────
+let symbolsCache = [];
+async function loadSymbols() {
+  try {
+    const r = await api("/v1/admin/symbols");
+    symbolsCache = r.symbols || [];
+    renderSymbols();
+  } catch (e) {
+    toast("통화쌍 로드 실패: " + e.message, "err");
+  }
+}
+function renderSymbols() {
+  const tb = $("#symbols-tbody");
+  tb.replaceChildren();
+  if (!symbolsCache.length) {
+    $("#symbols-empty").classList.remove("hidden");
+    return;
+  }
+  $("#symbols-empty").classList.add("hidden");
+  for (const s of symbolsCache) {
+    const toggle = h("button", {
+      class: "text-xs px-2 py-1 rounded-full " +
+             (s.active ? "bg-good/15 text-good" : "bg-ink-700 text-slate-400"),
+      text: (s.active ? "● active" : "○ inactive"),
+    });
+    toggle.onclick = async () => {
+      try {
+        await api("/v1/admin/symbols/" + encodeURIComponent(s.symbol), {
+          method: "PUT",
+          body: JSON.stringify({ symbol: s.symbol, pair: s.pair, active: !s.active }),
+        });
+        toast(s.symbol + (s.active ? " 비활성화" : " 활성화"));
+        loadSymbols();
+      } catch (e) { toast(e.message, "err"); }
+    };
+    const editBtn = h("button", {
+      class: "text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700",
+      text: "수정",
+    });
+    editBtn.onclick = () => openSymbolModal(s);
+    const delBtn = h("button", {
+      class: "text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-bad/20 hover:text-bad",
+      text: "삭제",
+    });
+    delBtn.onclick = async () => {
+      if (!confirm(s.symbol + " 통화쌍을 삭제할까요?")) return;
+      try {
+        await api("/v1/admin/symbols/" + encodeURIComponent(s.symbol), { method: "DELETE" });
+        toast(s.symbol + " 삭제됨");
+        loadSymbols();
+      } catch (e) { toast(e.message, "err"); }
+    };
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+      h("td", { class: "px-4 py-3 font-mono " + (s.active ? "" : "text-slate-500"), text: s.symbol }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: s.pair }),
+      h("td", { class: "px-4 py-3" }, toggle),
+      h("td", { class: "px-4 py-3 text-right space-x-1" }, editBtn, delBtn),
+    );
+    tb.appendChild(tr);
+  }
+}
+function openSymbolModal(entry) {
+  const isEdit = !!entry;
+  $("#symbol-modal-title").textContent = isEdit ? ("수정 — " + entry.symbol) : "신규 통화쌍";
+  $("#sm-symbol").value = entry?.symbol || "";
+  $("#sm-symbol").disabled = !!isEdit; // 수정 시 key 변경 금지
+  $("#sm-pair").value = entry?.pair || "";
+  $("#sm-active").checked = entry ? !!entry.active : true;
+  $("#symbol-modal").classList.remove("hidden");
+  $("#symbol-modal").classList.add("flex");
+}
+function closeSymbolModal() {
+  $("#symbol-modal").classList.add("hidden");
+  $("#symbol-modal").classList.remove("flex");
+}
+async function saveSymbol() {
+  const sym = $("#sm-symbol").value.trim();
+  const pair = $("#sm-pair").value.trim();
+  const active = $("#sm-active").checked;
+  if (!sym || !pair) {
+    toast("symbol, pair 모두 필요", "err");
+    return;
+  }
+  try {
+    await api("/v1/admin/symbols/" + encodeURIComponent(sym), {
+      method: "PUT",
+      body: JSON.stringify({ symbol: sym, pair: pair, active: active }),
+    });
+    toast(sym + " 저장됨");
+    closeSymbolModal();
+    loadSymbols();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+// ───────── Pricing (마진 테이블) ─────────
+async function loadPricing() {
+  try {
+    const resp = await fetch("/v1/admin/pricing/table", { credentials: "same-origin" });
+    if (resp.status === 404) {
+      $("#pricing-editor").value = "";
+      $("#pricing-version").textContent = "(미등록)";
+      $("#pricing-count-hq").textContent = "0";
+      $("#pricing-count-site").textContent = "0";
+      $("#pricing-count-swap").textContent = "0";
+      return;
+    }
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const text = await resp.text();
+    $("#pricing-editor").value = text;
+    try {
+      const doc = JSON.parse(text);
+      $("#pricing-version").textContent = doc.version != null ? String(doc.version) : "—";
+      $("#pricing-count-hq").textContent = (doc.hq_margin || []).length;
+      $("#pricing-count-site").textContent = (doc.site_margin || []).length;
+      $("#pricing-count-swap").textContent = (doc.swap_point || []).length;
+    } catch (_) {}
+    $("#pricing-error").classList.add("hidden");
+  } catch (e) {
+    toast("마진 테이블 로드 실패: " + e.message, "err");
+  }
+}
+async function savePricing() {
+  const raw = $("#pricing-editor").value.trim();
+  if (!raw) {
+    showPricingError("본문이 비어있음");
+    return;
+  }
+  try {
+    JSON.parse(raw); // 클라이언트 사전 검증
+  } catch (e) {
+    showPricingError("JSON 파싱 실패: " + e.message);
+    return;
+  }
+  try {
+    const resp = await fetch("/v1/admin/pricing/table", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: raw,
+    });
+    if (!resp.ok) {
+      let body = {};
+      try { body = await resp.json(); } catch (_) {}
+      showPricingError("HTTP " + resp.status + ": " + (body.message || "—"));
+      return;
+    }
+    toast("마진 테이블 저장됨 — 모든 mci-price 에 전파");
+    loadPricing();
+  } catch (e) {
+    showPricingError(e.message);
+  }
+}
+function showPricingError(msg) {
+  const el = $("#pricing-error");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+function formatPricingEditor() {
+  const raw = $("#pricing-editor").value.trim();
+  if (!raw) return;
+  try {
+    const obj = JSON.parse(raw);
+    $("#pricing-editor").value = JSON.stringify(obj, null, 2);
+    $("#pricing-error").classList.add("hidden");
+  } catch (e) {
+    showPricingError("포맷 실패: " + e.message);
+  }
+}
+
+// ───────── Profiles (활성 프로파일) ─────────
+let profilesCache = [];
+async function loadProfiles() {
+  try {
+    const r = await api("/v1/admin/profiles");
+    profilesCache = r.profiles || [];
+    renderProfiles();
+  } catch (e) {
+    toast("프로파일 로드 실패: " + e.message, "err");
+  }
+}
+function profileKeyOf(p) {
+  return (p.channel || "") + "." + (p.site || "") + "." + (p.tier || "");
+}
+function renderProfiles() {
+  const tb = $("#profiles-tbody");
+  tb.replaceChildren();
+  if (!profilesCache.length) {
+    $("#profiles-empty").classList.remove("hidden");
+    return;
+  }
+  $("#profiles-empty").classList.add("hidden");
+  for (const p of profilesCache) {
+    const key = profileKeyOf(p);
+    const delBtn = h("button", {
+      class: "text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-bad/20 hover:text-bad",
+      text: "삭제",
+    });
+    delBtn.onclick = async () => {
+      if (!confirm(key + " 프로파일을 삭제할까요?")) return;
+      try {
+        await api("/v1/admin/profiles/" + encodeURIComponent(key), { method: "DELETE" });
+        toast(key + " 삭제됨");
+        loadProfiles();
+      } catch (e) { toast(e.message, "err"); }
+    };
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+      h("td", { class: "px-4 py-3 font-mono text-accent-400", text: key }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: p.channel || "" }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: p.site || "" }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: p.tier || "" }),
+      h("td", { class: "px-4 py-3 text-right" }, delBtn),
+    );
+    tb.appendChild(tr);
+  }
+}
+function openProfileModal() {
+  $("#profile-modal-title").textContent = "신규 프로파일";
+  // 셋 다 default 첫 옵션으로.
+  $("#pf-channel").value = "WEB";
+  $("#pf-site").value = "BRANCH";
+  $("#pf-tier").value = "VIP";
+  updateProfileKeyPreview();
+  $("#profile-modal").classList.remove("hidden");
+  $("#profile-modal").classList.add("flex");
+}
+function closeProfileModal() {
+  $("#profile-modal").classList.add("hidden");
+  $("#profile-modal").classList.remove("flex");
+}
+function updateProfileKeyPreview() {
+  $("#pf-key-preview").textContent =
+    $("#pf-channel").value + "." + $("#pf-site").value + "." + $("#pf-tier").value;
+}
+async function saveProfile() {
+  const ch = $("#pf-channel").value;
+  const site = $("#pf-site").value;
+  const tier = $("#pf-tier").value;
+  if (!ch || !site || !tier) {
+    toast("channel/site/tier 모두 필수", "err");
+    return;
+  }
+  const key = ch + "." + site + "." + tier;
+  try {
+    await api("/v1/admin/profiles/" + encodeURIComponent(key), {
+      method: "PUT",
+      body: JSON.stringify({ channel: ch, site: site, tier: tier }),
+    });
+    toast(key + " 저장됨");
+    closeProfileModal();
+    loadProfiles();
+  } catch (e) { toast(e.message, "err"); }
+}
+
 // ───────── API Tester ─────────
 // 정적 preset — admin endpoint 의 *고정* 동작들. 서비스 호출 (alias 기반) 은
 // initTester 가 라우팅 룰 store 에서 동적 생성하므로 여기엔 두지 않는다.
@@ -1699,7 +2275,7 @@ const TESTER_PRESETS = [
   { label: "헬스체크",        method: "GET",  path: "/v1/ping" },
   { label: "Status",          method: "GET",  path: "/v1/admin/status" },
   { label: "Clients",         method: "GET",  path: "/v1/admin/clients" },
-  { label: "Whois (admin01)", method: "GET",  path: "/v1/admin/whois?usid=admin01" },
+  { label: "Whois (ECHOSVC)", method: "GET",  path: "/v1/admin/whois?argv0=ECHOSVC" },
   { label: "Routes 목록",     method: "GET",  path: "/v1/admin/routes" },
   { label: "Routes 신규",     method: "PUT",  path: "/v1/admin/routes/EXAMPLE",
     body: { exchange: "ORDER", routing_key: "NEW", active: true, comment: "tester" } },
@@ -2501,10 +3077,12 @@ function renderWireForm() {
   if (!form) return;
   form.replaceChildren();
   if (!spec) return;
-  // exchange / rkey 기본값 — 우선순위:
-  //   1. 라우팅 룰에 매칭되는 alias 가 있으면 그 룰의 (exchange, routing_key).
-  //   2. 없으면 운영 컨벤션 추정 (code 길이 8+ 는 5+나머지 split).
-  // 매칭 룰 출처 표시는 #svcio-wire-mapping-hint 에 적는다 (있을 때만).
+  // exchange / rkey 결정 — alias 우선, 없으면 비워둠 (사용자 수동 입력 또는 alias 등록 유도).
+  //
+  // 과거 5+나머지 split 휴리스틱(W1102S01 → W1102/S01)을 사용했는데, broker 의
+  // 진짜 매핑(W1102S01 → ECHOSVC/W1102S01)과 자주 안 맞아 사고가 발생.
+  // 정확한 매핑은 /v1/admin/whois?argv1=<code> 로 broker 에 직접 조회하거나
+  // scripts/import-svc-routes.sh 로 일괄 import.
   const ex = $("#svcio-wire-exchange");
   const rk = $("#svcio-wire-rkey");
   const hint = $("#svcio-wire-mapping-hint");
@@ -2517,19 +3095,16 @@ function renderWireForm() {
       (r.exchange + "_" + r.routing_key) === spec.code));
     rule = matched.find(r => r.active) || matched[0] || null;
   } catch (e) { rule = null; }
-  const guessEx = spec.code.length >= 8 ? spec.code.substring(0, 5) : spec.code;
-  const guessRk = spec.code.length >= 8 ? spec.code.substring(5) : "";
   // 갱신 정책:
   //   - 라우팅 룰 매칭이 있으면 → 항상 룰 값으로 set (룰을 single source of truth).
-  //     사용자가 룰 등록 후 같은 spec 다시 클릭만 해도 자동 매핑이 즉시 보임.
-  //   - 룰 매칭이 없으면 → spec 이 바뀔 때만 추정값으로 갱신 (사용자 수동 입력 보존).
+  //   - 룰 매칭이 없으면 → spec 이 바뀔 때만 비움 (사용자 수동 입력 보존).
   //     dataset.lastSpec 으로 추적.
   if (ex) {
     if (rule) {
       ex.value = rule.exchange;
       ex.dataset.lastSpec = spec.code;
     } else if (ex.dataset.lastSpec !== spec.code) {
-      ex.value = guessEx;
+      ex.value = "";
       ex.dataset.lastSpec = spec.code;
     }
   }
@@ -2538,7 +3113,7 @@ function renderWireForm() {
       rk.value = rule.routing_key;
       rk.dataset.lastSpec = spec.code;
     } else if (rk.dataset.lastSpec !== spec.code) {
-      rk.value = guessRk;
+      rk.value = "";
       rk.dataset.lastSpec = spec.code;
     }
   }
@@ -2547,7 +3122,7 @@ function renderWireForm() {
       hint.textContent = "라우팅 룰 \"" + rule.alias + "\" 매핑 (" + rule.exchange + "/" + rule.routing_key + ")" + (rule.active ? "" : " - 비활성");
       hint.className = "text-[11px] text-emerald-400";
     } else {
-      hint.textContent = "자동 추정 (" + guessEx + "/" + guessRk + ") - 라우팅 룰에 alias=" + spec.code + " 등록 시 자동 매핑";
+      hint.textContent = "라우팅 룰 미등록 — broker 의 진짜 매핑은 /v1/admin/whois?argv1=" + spec.code + " 로 조회. 또는 scripts/import-svc-routes.sh 로 일괄 import";
       hint.className = "text-[11px] text-amber-500";
     }
   }
@@ -3971,6 +4546,27 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#routes-refresh").onclick = loadRoutes;
   $("#routes-add").onclick = () => openRouteModal(null);
   $("#routes-add2").onclick = () => openRouteModal(null);
+
+  // symbols
+  $("#symbols-refresh").onclick = loadSymbols;
+  $("#symbols-add").onclick = () => openSymbolModal(null);
+  $("#symbols-add2").onclick = () => openSymbolModal(null);
+  $("#sm-save").onclick = saveSymbol;
+
+  // pricing
+  $("#pricing-reload").onclick = loadPricing;
+  $("#pricing-save").onclick = savePricing;
+  $("#pricing-format").onclick = formatPricingEditor;
+
+  // profiles
+  $("#profiles-refresh").onclick = loadProfiles;
+  $("#profiles-add").onclick = () => openProfileModal();
+  $("#profiles-add2").onclick = () => openProfileModal();
+  $("#pf-save").onclick = saveProfile;
+  ["#pf-channel", "#pf-site", "#pf-tier"].forEach(sel => {
+    const el = $(sel);
+    if (el) el.onchange = updateProfileKeyPreview;
+  });
   $("#route-form").onsubmit = async (e) => {
     e.preventDefault();
     const alias = $("#rf-alias").value.trim();

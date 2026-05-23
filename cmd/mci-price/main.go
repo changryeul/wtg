@@ -43,6 +43,7 @@ import (
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
 	"github.com/winwaysystems/wtg/pkg/session"
+	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
 
 func main() {
@@ -93,13 +94,27 @@ func main() {
 		etcdProfileSrc *price.EtcdProfileSource
 	)
 	if len(cfg.EtcdEndpoints) > 0 {
-		var err error
-		etcdCli, err = clientv3.New(clientv3.Config{
+		clientCfg := clientv3.Config{
 			Endpoints:   cfg.EtcdEndpoints,
 			DialTimeout: cfg.EtcdDialTimeout,
 			Username:    cfg.EtcdUsername,
 			Password:    cfg.EtcdPassword,
-		})
+		}
+		if cfg.EtcdTLSCertFile != "" || cfg.EtcdTLSKeyFile != "" || cfg.EtcdTLSCAFile != "" {
+			tlsCfg, err := tlsutil.LoadClient(tlsutil.ClientOptions{
+				CertFile:     cfg.EtcdTLSCertFile,
+				KeyFile:      cfg.EtcdTLSKeyFile,
+				ServerCAFile: cfg.EtcdTLSCAFile,
+				ServerName:   cfg.EtcdTLSServerName,
+			})
+			if err != nil {
+				logger.Error("etcd TLS 구성 실패", slog.Any("error", err))
+				os.Exit(1)
+			}
+			clientCfg.TLS = tlsCfg
+		}
+		var err error
+		etcdCli, err = clientv3.New(clientCfg)
 		if err != nil {
 			logger.Error("etcd dial 실패", slog.Any("error", err))
 			os.Exit(1)
@@ -108,6 +123,8 @@ func main() {
 		logger.Info("etcd 활성",
 			slog.Any("endpoints", cfg.EtcdEndpoints),
 			slog.String("prefix", cfg.EtcdPrefix),
+			slog.Bool("tls", clientCfg.TLS != nil),
+			slog.Bool("mtls", cfg.EtcdTLSCertFile != ""),
 		)
 	}
 

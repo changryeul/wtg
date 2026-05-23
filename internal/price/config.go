@@ -124,6 +124,15 @@ type Config struct {
 	EtcdDialTimeout time.Duration // default 5s.
 	EtcdUsername    string
 	EtcdPassword    string
+
+	// etcd 클라이언트 TLS — 운영 권장.
+	// CertFile/KeyFile 둘 다 비면 client cert 없이 (CA 검증만), 둘 다 채워지면 mTLS.
+	// CAFile 빈 값이면 시스템 trust store 사용.
+	// 모두 비면 plain TCP.
+	EtcdTLSCertFile   string
+	EtcdTLSKeyFile    string
+	EtcdTLSCAFile     string
+	EtcdTLSServerName string // SNI / 호스트네임 검증
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -161,6 +170,11 @@ func DefaultConfig() Config {
 		EtcdEndpoints:   nil,
 		EtcdPrefix:      "wtg/",
 		EtcdDialTimeout: 5 * time.Second,
+
+		EtcdTLSCertFile:   "",
+		EtcdTLSKeyFile:    "",
+		EtcdTLSCAFile:     "",
+		EtcdTLSServerName: "",
 	}
 }
 
@@ -254,6 +268,18 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_ETCD_PASS"); v != "" {
 		cfg.EtcdPassword = v
 	}
+	if v := os.Getenv("WTG_PRICE_ETCD_TLS_CERT"); v != "" {
+		cfg.EtcdTLSCertFile = v
+	}
+	if v := os.Getenv("WTG_PRICE_ETCD_TLS_KEY"); v != "" {
+		cfg.EtcdTLSKeyFile = v
+	}
+	if v := os.Getenv("WTG_PRICE_ETCD_TLS_CA"); v != "" {
+		cfg.EtcdTLSCAFile = v
+	}
+	if v := os.Getenv("WTG_PRICE_ETCD_TLS_SNI"); v != "" {
+		cfg.EtcdTLSServerName = v
+	}
 
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
@@ -289,6 +315,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&etcdStr, "etcd", etcdStr, "etcd endpoints 콤마 구분 (설정 시 hot reload 활성, 정적 파일 옵션 무시)")
 	fs.StringVar(&cfg.EtcdPrefix, "etcd-prefix", cfg.EtcdPrefix, "etcd key prefix (default wtg/)")
 	fs.DurationVar(&cfg.EtcdDialTimeout, "etcd-dial-timeout", cfg.EtcdDialTimeout, "etcd dial timeout")
+	fs.StringVar(&cfg.EtcdTLSCertFile, "etcd-tls-cert", cfg.EtcdTLSCertFile, "etcd 클라이언트 cert PEM (mTLS)")
+	fs.StringVar(&cfg.EtcdTLSKeyFile, "etcd-tls-key", cfg.EtcdTLSKeyFile, "etcd 클라이언트 key PEM (mTLS)")
+	fs.StringVar(&cfg.EtcdTLSCAFile, "etcd-tls-ca", cfg.EtcdTLSCAFile, "etcd 서버 검증용 CA bundle")
+	fs.StringVar(&cfg.EtcdTLSServerName, "etcd-tls-sni", cfg.EtcdTLSServerName, "etcd TLS SNI / hostname")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

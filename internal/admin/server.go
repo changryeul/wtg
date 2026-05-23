@@ -218,10 +218,27 @@ func (s *Server) Start(ctx context.Context) error {
 	var pricingDeps *PricingDeps
 	var profilesDeps *ProfilesDeps
 	if eps := policy.SplitEndpoints(s.cfg.EtcdEndpoints); len(eps) > 0 && s.etcdShared == nil {
-		cli, err := clientv3.New(clientv3.Config{
+		clientCfg := clientv3.Config{
 			Endpoints:   eps,
 			DialTimeout: 5 * time.Second,
-		})
+		}
+		if s.cfg.EtcdTLSCertFile != "" || s.cfg.EtcdTLSKeyFile != "" || s.cfg.EtcdTLSCAFile != "" {
+			tlsCfg, err := tlsutil.LoadClient(tlsutil.ClientOptions{
+				CertFile:     s.cfg.EtcdTLSCertFile,
+				KeyFile:      s.cfg.EtcdTLSKeyFile,
+				ServerCAFile: s.cfg.EtcdTLSCAFile,
+				ServerName:   s.cfg.EtcdTLSServerName,
+			})
+			if err != nil {
+				return fmt.Errorf("admin etcd TLS 구성: %w", err)
+			}
+			clientCfg.TLS = tlsCfg
+			s.logger.Info("admin etcd TLS 활성",
+				slog.Bool("mtls", s.cfg.EtcdTLSCertFile != ""),
+				slog.String("sni", s.cfg.EtcdTLSServerName),
+			)
+		}
+		cli, err := clientv3.New(clientCfg)
 		if err != nil {
 			return fmt.Errorf("admin shared etcd dial: %w", err)
 		}

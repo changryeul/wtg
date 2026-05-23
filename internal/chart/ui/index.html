@@ -15,9 +15,10 @@
   html, body { background: var(--bg-base); color: var(--text); }
   body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
   .chip {
-    padding: .25rem .6rem; border-radius: .5rem;
+    padding: .15rem .5rem; border-radius: .5rem;
     background: var(--bg-elev); border: 1px solid var(--border);
-    font-size: .75rem; cursor: pointer; transition: all .15s;
+    font-size: .7rem; cursor: pointer; transition: all .15s;
+    white-space: nowrap;
   }
   .chip:hover { border-color: var(--accent); color: var(--accent); }
   .chip[data-active="true"] {
@@ -27,21 +28,31 @@
     background: var(--bg-card); border: 1px solid var(--border);
     border-radius: 1rem;
   }
+  .cell-active { box-shadow: 0 0 0 2px rgba(34,211,238,0.35); }
   select, input {
     background: var(--bg-elev); border: 1px solid var(--border);
-    color: var(--text); padding: .5rem .75rem; border-radius: .5rem;
-    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .85rem;
+    color: var(--text); padding: .35rem .6rem; border-radius: .5rem;
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .8rem;
   }
   select:focus, input:focus { outline: none; border-color: var(--accent); }
+  /* layout grid */
+  #charts-layout.layout-1   { display: grid; grid-template-columns: 1fr;       grid-template-rows: 1fr;       gap: .75rem; }
+  #charts-layout.layout-2v  { display: grid; grid-template-columns: 1fr 1fr;   grid-template-rows: 1fr;       gap: .75rem; }
+  #charts-layout.layout-2h  { display: grid; grid-template-columns: 1fr;       grid-template-rows: 1fr 1fr;   gap: .75rem; }
+  #charts-layout.layout-2x2 { display: grid; grid-template-columns: 1fr 1fr;   grid-template-rows: 1fr 1fr;   gap: .75rem; }
+  #charts-layout { height: calc(100vh - 200px); min-height: 600px; }
+  .cell { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  .cell .chart-area { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .cell .chart-area > div { flex-shrink: 0; }
 </style>
 </head>
 <body class="min-h-screen">
 
-<!-- alert 배너 stack (Notification 권한 없을 때의 in-page fallback) -->
+<!-- alert 배너 stack (Notification 미허용 시 fallback) -->
 <div id="alert-banners" class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm"></div>
 
 <!-- Alert 추가 모달 -->
-<div id="alert-modal" class="fixed inset-0 bg-ink-950/80 z-40 hidden items-center justify-center p-4" style="backdrop-filter: blur(4px);">
+<div id="alert-modal" class="fixed inset-0 z-40 hidden items-center justify-center p-4" style="background: rgba(7,10,19,0.8); backdrop-filter: blur(4px);">
   <div class="panel max-w-md w-full p-5 space-y-3">
     <div class="flex items-center justify-between">
       <h4 class="text-base font-semibold">신규 알림</h4>
@@ -49,12 +60,12 @@
     </div>
     <div class="space-y-2 text-sm">
       <div>
-        <label class="text-xs text-slate-400">통화쌍</label>
+        <label class="text-xs text-slate-400">통화쌍 (활성 셀 기준)</label>
         <div class="font-mono text-accent" id="am-pair-preview">—</div>
       </div>
       <div>
         <label class="text-xs text-slate-400">조건</label>
-        <select id="am-type">
+        <select id="am-type" class="w-full">
           <optgroup label="── 임계값 (값 필요) ──">
             <option value="price_above">가격 ↑ (이상 돌파 시)</option>
             <option value="price_below">가격 ↓ (이하 이탈 시)</option>
@@ -85,10 +96,10 @@
       </div>
       <div id="am-value-row">
         <label class="text-xs text-slate-400">임계값</label>
-        <input id="am-value" type="number" step="any" placeholder="예: 1400.00 (가격) / 70 (RSI)" class="w-full" />
+        <input id="am-value" type="number" step="any" placeholder="예: 1400.00 / 70" class="w-full" />
       </div>
       <div class="text-[11px] text-slate-500">
-        한 번 trigger 되면 자동 비활성화 됩니다 (one-shot). 다시 활성화하려면 알림을 삭제하고 새로 등록하세요.
+        한 번 trigger 되면 자동 비활성화됩니다 (one-shot).
       </div>
     </div>
     <div class="flex justify-end gap-2 pt-2">
@@ -98,151 +109,44 @@
   </div>
 </div>
 
-<div class="max-w-[1400px] mx-auto p-4 space-y-4">
-
-  <!-- 헤더 -->
-  <header class="flex items-center justify-between">
+<div class="max-w-[1700px] mx-auto p-3 space-y-3">
+  <!-- 헤더 + Layout 선택 + 전역 Alerts -->
+  <div class="flex flex-wrap items-center gap-3">
     <div>
-      <h1 class="text-xl font-semibold">WTG Chart</h1>
-      <p class="text-xs text-slate-400">FX OHLC — TimescaleDB historical + WS live</p>
+      <h1 class="text-lg font-semibold">WTG Chart</h1>
+      <p class="text-[11px] text-slate-400">FX OHLC · TimescaleDB historical + WS live · multi-pane / multi-chart</p>
     </div>
-    <div class="flex items-center gap-2 text-xs">
-      <span class="text-slate-500 uppercase tracking-widest text-[10px]">WS</span>
-      <span id="ws-state" class="font-mono text-slate-400">●</span>
+    <div class="flex items-center gap-1 ml-2">
+      <label class="text-[10px] text-slate-400 uppercase tracking-widest mr-1">Layout</label>
+      <button class="chip layout-btn" data-layout="1"   data-active="true">1</button>
+      <button class="chip layout-btn" data-layout="2v">2&nbsp;|</button>
+      <button class="chip layout-btn" data-layout="2h">—</button>
+      <button class="chip layout-btn" data-layout="2x2">2×2</button>
     </div>
-  </header>
-
-  <!-- 컨트롤 패널 -->
-  <div class="panel p-4 space-y-3">
-    <div class="flex flex-wrap items-center gap-3">
-      <div class="flex items-center gap-2">
-        <label class="text-xs text-slate-400 uppercase tracking-widest">통화쌍</label>
-        <select id="sel-pair">
-          <option value="USD/KRW">USD/KRW</option>
-          <option value="EUR/KRW">EUR/KRW</option>
-          <option value="JPY/KRW">JPY/KRW</option>
-          <option value="GBP/KRW">GBP/KRW</option>
-          <option value="AUD/KRW">AUD/KRW</option>
-          <option value="CNY/KRW">CNY/KRW</option>
-          <option value="EUR/USD">EUR/USD</option>
-          <option value="USD/JPY">USD/JPY</option>
-          <option value="GBP/USD">GBP/USD</option>
-          <option value="AUD/USD">AUD/USD</option>
-        </select>
-      </div>
-
-      <div class="flex items-center gap-1">
-        <label class="text-xs text-slate-400 uppercase tracking-widest mr-1">TF</label>
-        <button class="chip tf-btn" data-tf="1m" data-active="true">1m</button>
-        <button class="chip tf-btn" data-tf="5m">5m</button>
-        <button class="chip tf-btn" data-tf="15m">15m</button>
-        <button class="chip tf-btn" data-tf="1h">1h</button>
-        <button class="chip tf-btn" data-tf="1d">1d</button>
-      </div>
-
-      <div class="flex items-center gap-1">
-        <label class="text-xs text-slate-400 uppercase tracking-widest mr-1">기간</label>
-        <button class="chip range-btn" data-range="1h">1H</button>
-        <button class="chip range-btn" data-range="4h" data-active="true">4H</button>
-        <button class="chip range-btn" data-range="1d">1D</button>
-        <button class="chip range-btn" data-range="1w">1W</button>
-        <button class="chip range-btn" data-range="1mo">1M</button>
-      </div>
-
-      <div class="ml-auto flex items-center gap-2">
-        <button id="reload" class="chip">↻ 새로고침</button>
-        <button id="autoscroll" class="chip" data-active="true">▶ 자동 스크롤</button>
-      </div>
-    </div>
-
-    <!-- Indicator 토글 행 -->
-    <div class="flex flex-wrap items-center gap-2 pt-1 border-t border-ink-700/40" style="border-top-color: var(--border);">
-      <label class="text-xs text-slate-400 uppercase tracking-widest mr-1">Indicators</label>
-      <button class="chip ind-btn" data-ind="sma20">SMA 20</button>
-      <button class="chip ind-btn" data-ind="sma50">SMA 50</button>
-      <button class="chip ind-btn" data-ind="ema9">EMA 9</button>
-      <button class="chip ind-btn" data-ind="bb20">BB(20,2)</button>
-      <button class="chip ind-btn" data-ind="rsi14">RSI 14</button>
-      <button class="chip ind-btn" data-ind="macd">MACD(12,26,9)</button>
-      <button class="chip ind-btn" data-ind="stoch">Stoch(14,3)</button>
-      <button class="chip ind-btn" data-ind="vol">Volume</button>
-    </div>
-
-    <!-- Alerts (가격/RSI 임계값) -->
-    <div class="flex flex-wrap items-center gap-2 pt-1" style="border-top: 1px solid var(--border);">
-      <label class="text-xs text-slate-400 uppercase tracking-widest mr-1">Alerts</label>
-      <span class="text-xs text-slate-500">활성 <span id="alert-count" class="font-mono text-slate-200">0</span></span>
+    <div class="ml-auto flex items-center gap-1 text-[11px]">
+      <label class="text-slate-400 uppercase tracking-widest mr-1">Alerts</label>
+      <span class="text-slate-500">활성 <span id="alert-count" class="font-mono text-slate-200">0</span></span>
       <button id="alert-add" class="chip">+ 신규</button>
       <button id="alert-toggle-list" class="chip">목록</button>
       <button id="alert-permission" class="chip" title="브라우저 알림 권한 요청">🔔 권한</button>
       <span id="alert-perm-state" class="text-[10px] text-slate-500 ml-1">—</span>
     </div>
-    <div id="alert-list" class="hidden mt-2 space-y-1 text-xs"></div>
-
-    <!-- 라이브 시세 헤더 (최근 봉의 OHLC 표시) -->
-    <div class="flex flex-wrap items-center gap-4 text-xs font-mono">
-      <span class="text-slate-500 uppercase tracking-widest text-[10px]">최근 봉</span>
-      <span>O <span id="cur-open" class="text-slate-200">—</span></span>
-      <span>H <span id="cur-high" class="text-good">—</span></span>
-      <span>L <span id="cur-low" class="text-bad">—</span></span>
-      <span>C <span id="cur-close" class="text-accent">—</span></span>
-      <span class="text-slate-500">|</span>
-      <span>틱 <span id="cur-ticks" class="text-slate-200">—</span></span>
-      <span class="text-slate-500">|</span>
-      <span>봉 <span id="bar-count" class="text-slate-200">0</span></span>
-      <span class="text-slate-500">|</span>
-      <span>마지막 갱신 <span id="last-update" class="text-slate-400">—</span></span>
-    </div>
   </div>
+  <div id="alert-list" class="hidden text-xs space-y-1"></div>
 
-  <!-- 차트 (multi-pane: 메인 + indicator pane 들) -->
-  <div class="panel p-2">
-    <div id="charts">
-      <div id="chart-main" style="height: 60vh;"></div>
-      <!-- indicator pane 들이 여기 동적으로 append 됨. timeScale 동기화. -->
-    </div>
-  </div>
+  <!-- chart cells grid -->
+  <div id="charts-layout" class="layout-1"></div>
 
-  <!-- 상태 표시 -->
   <div id="status" class="text-xs text-slate-500 font-mono"></div>
-
 </div>
 
 <script>
-// ───────── helpers ─────────
+// ═════════════════════════════════════════════════════════════════════════════
+// helpers
+// ═════════════════════════════════════════════════════════════════════════════
 const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
-// localStorage 설정 저장 / 복원.
-// 단일 JSON blob 으로 일관성 유지 — partial corruption 방지.
-const LS_SETTINGS = "wtg_chart_settings_v1";
-
-function loadSavedSettings() {
-  try {
-    const raw = localStorage.getItem(LS_SETTINGS);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (_) {
-    return null; // 손상된 JSON 은 그냥 무시 (default 로 시작).
-  }
-}
-
-function saveSettings() {
-  try {
-    const s = {
-      pair: currentPair,
-      tf: currentTF,
-      range: currentRange,
-      autoScroll: autoScroll,
-      indicators: Array.from(indActive),
-    };
-    localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
-  } catch (_) {
-    // private mode / quota — silent.
-  }
-}
-
-// DOM 빌드 헬퍼 — innerHTML 회피 (XSS 안전).
 function el(tag, opts, ...children) {
   const e = document.createElement(tag);
   if (opts) {
@@ -251,614 +155,91 @@ function el(tag, opts, ...children) {
     if (opts.style) Object.assign(e.style, opts.style);
     if (opts.onclick) e.onclick = opts.onclick;
     if (opts.title) e.title = opts.title;
+    if (opts.dataset) Object.assign(e.dataset, opts.dataset);
+    if (opts.attrs) for (const k in opts.attrs) e.setAttribute(k, opts.attrs[k]);
   }
-  for (const c of children) if (c != null) e.appendChild(c);
+  for (const c of children) {
+    if (c == null) continue;
+    if (typeof c === "string") e.appendChild(document.createTextNode(c));
+    else e.appendChild(c);
+  }
   return e;
 }
 
-// ───────── Alerts (가격 / RSI 임계값) ─────────
-//
-// 모델: 각 alert 는 {id, type, pair, value, enabled, lastVal} 로 보관.
-// 평가: 봉 close 시점에 currentPair 매칭하는 alert 의 type 별 현재값을 계산해
-//      prev → curr 의 임계값 crossing 여부 확인. 한 번 trigger 시 자동 disable
-//      (one-shot) — 같은 알림이 매 봉 반복 발사되는 것을 방지.
-// 알림: Notification API granted → 브라우저 알림, 아니면 인-페이지 배너.
-// 영속: localStorage 별도 key (LS_ALERTS).
+function fmt(x) { return x == null ? "—" : x.toLocaleString(undefined, {maximumFractionDigits: 5}); }
 
-const LS_ALERTS = "wtg_chart_alerts_v1";
-let alerts = [];
+// ═════════════════════════════════════════════════════════════════════════════
+// 영속 — settings (layout + per-cell config) + alerts (전역)
+// ═════════════════════════════════════════════════════════════════════════════
+const LS_SETTINGS = "wtg_chart_settings_v2"; // v1 → v2 (cells array 추가)
+const LS_ALERTS   = "wtg_chart_alerts_v1";
 
-function loadAlerts() {
+function loadSavedSettings() {
   try {
-    const raw = localStorage.getItem(LS_ALERTS);
-    if (!raw) return;
-    const arr = JSON.parse(raw);
-    if (Array.isArray(arr)) alerts = arr;
+    const raw = localStorage.getItem(LS_SETTINGS);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) { return null; }
+}
+function saveSettings() {
+  try {
+    const cells = layoutManager.cells.map(c => c.snapshotConfig());
+    const s = { layout: layoutManager.layout, cells };
+    localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
   } catch (_) {}
 }
 
-function saveAlerts() {
-  try { localStorage.setItem(LS_ALERTS, JSON.stringify(alerts)); } catch (_) {}
-}
-
-function nextAlertId() {
-  return "a_" + Math.random().toString(36).slice(2, 9) + "_" + Date.now().toString(36);
-}
-
-function addAlert(type, value) {
-  const a = {
-    id: nextAlertId(),
-    type: type,
-    pair: currentPair,
-    value: alertTypeNeedsValue(type) ? Number(value) : 0,
-    enabled: true,
-    lastVal: null,  // 임계값 type 용
-    lastDiff: null, // crossover type 용 (signed diff)
-  };
-  alerts.push(a);
-  saveAlerts();
-  renderAlertList();
-}
-
-function removeAlert(id) {
-  alerts = alerts.filter(a => a.id !== id);
-  saveAlerts();
-  renderAlertList();
-}
-
-function toggleAlertEnabled(id) {
-  const a = alerts.find(x => x.id === id);
-  if (!a) return;
-  a.enabled = !a.enabled;
-  if (a.enabled) a.lastVal = null; // 재활성 시 첫 평가 skip 위해 reset.
-  saveAlerts();
-  renderAlertList();
-}
-
-const ALERT_TYPE_LABEL = {
-  price_above: "가격 ↑",
-  price_below: "가격 ↓",
-  rsi_above:   "RSI ↑",
-  rsi_below:   "RSI ↓",
-  price_cross_sma20_up:   "가격 > SMA20",
-  price_cross_sma20_down: "가격 < SMA20",
-  price_cross_sma50_up:   "가격 > SMA50",
-  price_cross_sma50_down: "가격 < SMA50",
-  sma_golden_cross_20_50: "SMA20 > SMA50 (Golden)",
-  sma_death_cross_20_50:  "SMA20 < SMA50 (Death)",
-  macd_cross_signal_up:   "MACD > Signal",
-  macd_cross_signal_down: "MACD < Signal",
-  macd_cross_zero_up:     "MACD > 0",
-  macd_cross_zero_down:   "MACD < 0",
-  stoch_cross_d_up:       "%K > %D",
-  stoch_cross_d_down:     "%K < %D",
-  stoch_overbought:       "%K > 80 (과매수)",
-  stoch_oversold:         "%K < 20 (과매도)",
-};
-
-// 임계값 (value) 입력이 필요한 type 인지.
-function alertTypeNeedsValue(t) {
-  return t === "price_above" || t === "price_below" ||
-         t === "rsi_above"   || t === "rsi_below";
-}
-
-function renderAlertList() {
-  const list = $("#alert-list");
-  list.replaceChildren();
-  const activeCount = alerts.filter(a => a.enabled).length;
-  $("#alert-count").textContent = activeCount;
-  if (alerts.length === 0) {
-    list.appendChild(el("div", { class: "text-slate-500", text: "등록된 알림이 없습니다." }));
-    return;
-  }
-  for (const a of alerts) {
-    const row = el("div", {
-      class: "flex items-center gap-2 py-1 px-2 rounded",
-      style: { background: a.enabled ? "rgba(34,211,238,0.06)" : "rgba(100,116,139,0.08)" },
-    });
-    // label — pair · type [· value (threshold type 만)]
-    const needsValue = alertTypeNeedsValue(a.type);
-    const label = el("div", {
-      class: "flex-1 font-mono",
-      style: a.enabled ? {} : { opacity: "0.5" },
-    },
-      el("span", { class: "text-slate-300", text: a.pair }),
-      document.createTextNode(" · "),
-      el("span", { class: "text-accent", text: ALERT_TYPE_LABEL[a.type] || a.type }),
-    );
-    if (needsValue) {
-      label.appendChild(document.createTextNode(" · "));
-      label.appendChild(el("span", { class: "text-slate-200", text: String(a.value) }));
-    }
-    row.appendChild(label);
-
-    row.appendChild(el("button", {
-      class: "chip",
-      text: a.enabled ? "● ON" : "○ OFF",
-      onclick: () => toggleAlertEnabled(a.id),
-    }));
-    row.appendChild(el("button", {
-      class: "chip",
-      text: "✕",
-      onclick: () => { if (confirm("이 알림을 삭제할까요?")) removeAlert(a.id); },
-    }));
-    list.appendChild(row);
-  }
-}
-
-// 새 봉 또는 봉 갱신 후 호출 — crossing 평가.
-//
-// 두 가지 분류:
-//   1) 임계값 (price_above/below, rsi_above/below):
-//      a.lastVal vs curr 비교. value 와의 단방향 crossing.
-//   2) crossover (price vs SMA, SMA vs SMA):
-//      a.lastDiff (signed) vs currDiff 부호 전환으로 crossing 검출.
-function evaluateAlerts(candle) {
-  if (alerts.length === 0) return;
-  const active = alerts.filter(a => a.enabled && a.pair === currentPair);
-  if (active.length === 0) return;
-
-  // 필요한 값만 lazy compute.
-  const needRSI   = active.some(a => a.type.startsWith("rsi_"));
-  const needSMA20 = active.some(a => a.type.includes("sma20") || a.type.includes("_20_"));
-  const needSMA50 = active.some(a => a.type.includes("sma50") || a.type.includes("_50_"));
-  const needMACD  = active.some(a => a.type.startsWith("macd_"));
-  const needStoch = active.some(a => a.type.startsWith("stoch_"));
-
-  let rsi = null, sma20 = null, sma50 = null;
-  let macdLast = null, signalLast = null;
-  let stochK = null, stochD = null;
-  if (needRSI) {
-    const r = calcRSI(candleData, 14);
-    if (r.length > 0) rsi = r[r.length - 1].value;
-  }
-  if (needSMA20) {
-    const s = calcSMA(candleData, 20);
-    if (s.length > 0) sma20 = s[s.length - 1].value;
-  }
-  if (needSMA50) {
-    const s = calcSMA(candleData, 50);
-    if (s.length > 0) sma50 = s[s.length - 1].value;
-  }
-  if (needMACD) {
-    const m = calcMACD(candleData, 12, 26, 9);
-    if (m.macd.length > 0)   macdLast   = m.macd[m.macd.length - 1].value;
-    if (m.signal.length > 0) signalLast = m.signal[m.signal.length - 1].value;
-  }
-  if (needStoch) {
-    const s = calcStoch(candleData, 14, 3);
-    if (s.k.length > 0) stochK = s.k[s.k.length - 1].value;
-    if (s.d.length > 0) stochD = s.d[s.d.length - 1].value;
-  }
-  const close = candle.close;
-
-  for (const a of alerts) {
-    if (!a.enabled || a.pair !== currentPair) continue;
-
-    let crossed = false;
-    let triggerVal = null;
-
-    switch (a.type) {
-      case "price_above": case "price_below":
-      case "rsi_above":   case "rsi_below": {
-        let curr = null;
-        if (a.type === "price_above" || a.type === "price_below") curr = close;
-        else curr = rsi;
-        if (curr == null) break;
-        const prev = a.lastVal;
-        a.lastVal = curr;
-        if (prev == null) break;
-        if (a.type === "price_above" || a.type === "rsi_above") {
-          crossed = prev <= a.value && curr > a.value;
-        } else {
-          crossed = prev >= a.value && curr < a.value;
-        }
-        triggerVal = curr;
-        break;
-      }
-      case "price_cross_sma20_up":   case "price_cross_sma20_down":
-      case "price_cross_sma50_up":   case "price_cross_sma50_down": {
-        const smaVal = a.type.includes("sma20") ? sma20 : sma50;
-        if (smaVal == null) break;
-        const currDiff = close - smaVal;
-        const prevDiff = a.lastDiff;
-        a.lastDiff = currDiff;
-        if (prevDiff == null) break;
-        if (a.type.endsWith("_up")) {
-          crossed = prevDiff <= 0 && currDiff > 0;
-        } else {
-          crossed = prevDiff >= 0 && currDiff < 0;
-        }
-        triggerVal = close;
-        break;
-      }
-      case "sma_golden_cross_20_50": case "sma_death_cross_20_50": {
-        if (sma20 == null || sma50 == null) break;
-        const currDiff = sma20 - sma50;
-        const prevDiff = a.lastDiff;
-        a.lastDiff = currDiff;
-        if (prevDiff == null) break;
-        if (a.type === "sma_golden_cross_20_50") {
-          crossed = prevDiff <= 0 && currDiff > 0;
-        } else {
-          crossed = prevDiff >= 0 && currDiff < 0;
-        }
-        triggerVal = sma20;
-        break;
-      }
-      case "macd_cross_signal_up": case "macd_cross_signal_down": {
-        if (macdLast == null || signalLast == null) break;
-        const currDiff = macdLast - signalLast;
-        const prevDiff = a.lastDiff;
-        a.lastDiff = currDiff;
-        if (prevDiff == null) break;
-        if (a.type === "macd_cross_signal_up") {
-          crossed = prevDiff <= 0 && currDiff > 0;
-        } else {
-          crossed = prevDiff >= 0 && currDiff < 0;
-        }
-        triggerVal = macdLast;
-        break;
-      }
-      case "macd_cross_zero_up": case "macd_cross_zero_down": {
-        if (macdLast == null) break;
-        // zero baseline — diff 가 곧 MACD 값 자체.
-        const currDiff = macdLast;
-        const prevDiff = a.lastDiff;
-        a.lastDiff = currDiff;
-        if (prevDiff == null) break;
-        if (a.type === "macd_cross_zero_up") {
-          crossed = prevDiff <= 0 && currDiff > 0;
-        } else {
-          crossed = prevDiff >= 0 && currDiff < 0;
-        }
-        triggerVal = macdLast;
-        break;
-      }
-      case "stoch_cross_d_up": case "stoch_cross_d_down": {
-        if (stochK == null || stochD == null) break;
-        const currDiff = stochK - stochD;
-        const prevDiff = a.lastDiff;
-        a.lastDiff = currDiff;
-        if (prevDiff == null) break;
-        if (a.type === "stoch_cross_d_up") {
-          crossed = prevDiff <= 0 && currDiff > 0;
-        } else {
-          crossed = prevDiff >= 0 && currDiff < 0;
-        }
-        triggerVal = stochK;
-        break;
-      }
-      case "stoch_overbought": case "stoch_oversold": {
-        // %K 의 zone (80/20) crossing — 고정 임계값. value 사용 안 함.
-        if (stochK == null) break;
-        const threshold = (a.type === "stoch_overbought") ? 80 : 20;
-        const curr = stochK;
-        const prev = a.lastVal;
-        a.lastVal = curr;
-        if (prev == null) break;
-        if (a.type === "stoch_overbought") {
-          crossed = prev <= threshold && curr > threshold;
-        } else {
-          crossed = prev >= threshold && curr < threshold;
-        }
-        triggerVal = curr;
-        break;
-      }
-    }
-
-    if (crossed) {
-      fireAlert(a, triggerVal == null ? 0 : triggerVal);
-      a.enabled = false;
-      saveAlerts();
-      renderAlertList();
-    }
-  }
-}
-
-function fireAlert(a, val) {
-  const label = ALERT_TYPE_LABEL[a.type] || a.type;
-  let msg;
-  if (alertTypeNeedsValue(a.type)) {
-    msg = a.pair + " " + label + " " + String(a.value) +
-          " 도달 (현재: " + val.toFixed(5) + ")";
-  } else {
-    msg = a.pair + " " + label + " 발생 (현재: " + val.toFixed(5) + ")";
-  }
-  if ("Notification" in window && Notification.permission === "granted") {
-    try { new Notification("WTG Chart", { body: msg }); } catch (_) {}
-  }
-  showAlertBanner(msg);
-}
-
-function showAlertBanner(msg) {
-  const stack = $("#alert-banners");
-  const div = el("div", {
-    class: "panel p-3 text-sm flex items-start gap-2",
-    style: {
-      borderColor: "var(--accent)",
-      background: "rgba(34,211,238,0.08)",
-    },
-  },
-    el("div", { class: "flex-1", text: msg }),
-  );
-  const close = el("button", {
-    class: "text-slate-400 hover:text-slate-200",
-    text: "✕",
-    onclick: () => div.remove(),
-  });
-  div.appendChild(close);
-  stack.appendChild(div);
-  setTimeout(() => div.remove(), 10000);
-}
-
-function openAlertModal() {
-  $("#am-pair-preview").textContent = currentPair;
-  $("#am-type").value = "price_above";
-  $("#am-value").value = "";
-  $("#am-value-row").style.display = ""; // price_above 는 value 필요.
-  $("#alert-modal").classList.remove("hidden");
-  $("#alert-modal").classList.add("flex");
-}
-function closeAlertModal() {
-  $("#alert-modal").classList.add("hidden");
-  $("#alert-modal").classList.remove("flex");
-}
-
-function refreshNotificationPermissionUI() {
-  if (!("Notification" in window)) {
-    $("#alert-perm-state").textContent = "(미지원)";
-    return;
-  }
-  const p = Notification.permission;
-  $("#alert-perm-state").textContent =
-    p === "granted" ? "허용됨" :
-    p === "denied"  ? "거부됨" :
-    "미요청";
-  $("#alert-perm-state").style.color =
-    p === "granted" ? "var(--good)" :
-    p === "denied"  ? "var(--bad)"  :
-    "var(--text-muted)";
-}
-
-function setActive(group, value) {
-  $$(group).forEach(b => b.dataset.active = (b.dataset.tf === value || b.dataset.range === value) ? "true" : "false");
-}
-function getActive(group, attr) {
-  const el = $$(group).find(b => b.dataset.active === "true");
-  return el ? el.dataset[attr] : null;
-}
-function setStatus(msg, kind) {
-  const el = $("#status");
-  el.textContent = msg;
-  el.style.color = kind === "err" ? "var(--bad)" : (kind === "ok" ? "var(--good)" : "var(--text-muted)");
-}
-function fmt(x) { return x == null ? "—" : x.toLocaleString(undefined, {maximumFractionDigits: 5}); }
-
-// ───────── multi-pane 차트 초기화 ─────────
-// 메인 chart 는 캔들 + overlay (SMA/EMA/BB) 만. RSI/MACD/Stoch/Volume 은 각각
-// 별도 LightweightCharts 인스턴스로 stacked 하고 timeScale 을 양방향 동기화.
-
-const commonOpts = () => ({
-  layout: {
-    background: { type: "solid", color: getComputedStyle(document.documentElement).getPropertyValue("--bg-card") || "#101727" },
-    textColor: "#cbd5e1",
-    fontFamily: "JetBrains Mono, ui-monospace, monospace",
-  },
-  grid: {
-    vertLines: { color: "rgba(255,255,255,0.05)" },
-    horzLines: { color: "rgba(255,255,255,0.05)" },
-  },
-  rightPriceScale: { borderColor: "#1f2a40" },
-  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-});
-
-const mainChart = LightweightCharts.createChart($("#chart-main"), {
-  ...commonOpts(),
-  timeScale: { borderColor: "#1f2a40", timeVisible: true, secondsVisible: false },
-});
-const candleSeries = mainChart.addCandlestickSeries({
-  upColor: "#10b981", downColor: "#ef4444",
-  borderUpColor: "#10b981", borderDownColor: "#ef4444",
-  wickUpColor: "#10b981", wickDownColor: "#ef4444",
-});
-
-// panes: id → { chart, el, primary }. primary 는 crosshair sync 용 대표 series.
-const panes = {};
-// 메인 차트의 primary series — crosshair sync 의 setCrosshairPosition 인자로 사용.
-let mainPrimary = candleSeries;
-// 동기화 무한루프 방지 가드 — timeScale, crosshair 각각.
-let syncingRange = false;
-let syncingCrosshair = false;
-
-function attachSync(chart) {
-  chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-    if (syncingRange || !range) return;
-    syncingRange = true;
-    if (mainChart !== chart) {
-      mainChart.timeScale().setVisibleLogicalRange(range);
-    }
-    for (const id in panes) {
-      if (panes[id].chart !== chart) {
-        panes[id].chart.timeScale().setVisibleLogicalRange(range);
-      }
-    }
-    syncingRange = false;
-  });
-}
-attachSync(mainChart);
-
-// 모든 chart 인스턴스 enumerate — crosshair sync 에서 사용.
-function allCharts() {
-  const out = [{ chart: mainChart, primary: mainPrimary }];
-  for (const id in panes) {
-    out.push({ chart: panes[id].chart, primary: panes[id].primary });
-  }
-  return out;
-}
-
-// crosshair 동기화 — 한 차트에서 마우스 이동 / 떠남 이벤트를 다른 차트로 전파.
-//
-// lightweight-charts v4 의 setCrosshairPosition(price, time, series) 는 (vertical line
-// at time) + (horizontal line at price) 를 그린다. 우리는 시간축만 sync 하면 충분
-// 하지만 API 는 price 도 받으므로 series 의 해당 time 값을 lookup 해서 채운다.
-//
-// 무한루프 가드: 한 차트의 setCrosshairPosition 호출이 다른 차트의 crosshair move
-// 이벤트를 다시 트리거하지 않도록 syncingCrosshair flag 사용.
-function attachCrosshairSync(chart) {
-  chart.subscribeCrosshairMove((param) => {
-    if (syncingCrosshair) return;
-    syncingCrosshair = true;
-    try {
-      if (!param || !param.time) {
-        // 커서가 차트 밖으로 — 다른 차트의 crosshair 도 모두 clear.
-        for (const c of allCharts()) {
-          if (c.chart !== chart) c.chart.clearCrosshairPosition();
-        }
-        return;
-      }
-      // param.time 을 다른 차트에 propagate.
-      for (const c of allCharts()) {
-        if (c.chart === chart) continue;
-        if (!c.primary) continue;
-        // price 는 해당 series 의 param.time 값을 사용 — 없으면 0.
-        let price = 0;
-        const data = param.seriesData ? param.seriesData.get(c.primary) : null;
-        if (data && typeof data.value === "number") {
-          price = data.value;
-        } else if (data && typeof data.close === "number") {
-          price = data.close;
-        }
-        c.chart.setCrosshairPosition(price, param.time, c.primary);
-      }
-    } finally {
-      syncingCrosshair = false;
-    }
-  });
-}
-attachCrosshairSync(mainChart);
-
-function ensurePane(id) {
-  if (panes[id]) return panes[id];
-  const el = document.createElement("div");
-  el.id = "chart-" + id;
-  el.style.height = "140px";
-  el.style.marginTop = "6px";
-  el.style.borderTop = "1px solid var(--border)";
-  $("#charts").appendChild(el);
-  const c = LightweightCharts.createChart(el, {
-    ...commonOpts(),
-    // 시간축은 메인만 표시 — pane 들은 visible:false 로 공간 절약.
-    timeScale: { borderColor: "#1f2a40", visible: false },
-    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-    handleScale:  { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
-  });
-  attachSync(c);
-  attachCrosshairSync(c);
-  // 윈도우 크기에 맞춤.
-  c.applyOptions({ width: $("#chart-main").clientWidth });
-  panes[id] = { chart: c, el, primary: null };
-  return panes[id];
-}
-
-function removePane(id) {
-  if (!panes[id]) return;
-  panes[id].chart.remove();
-  panes[id].el.remove();
-  delete panes[id];
-}
-
-// resize — 모든 pane 의 width 를 메인 너비로 맞춤.
-function resizeAllPanes() {
-  const w = $("#chart-main").clientWidth;
-  mainChart.applyOptions({ width: w });
-  for (const id in panes) panes[id].chart.applyOptions({ width: w });
-}
-window.addEventListener("resize", resizeAllPanes);
-
-// ───────── Indicator 관리 ─────────
-// 마지막으로 로드된 candle 배열 (시간 ASC) — 라이브 업데이트 시 indicator 재계산용.
-let candleData = [];
-// id → series 매핑. 토글 OFF 시 series.removeSeries 로 정리.
-const indSeries = {};
-// 활성 indicator id 집합.
-const indActive = new Set();
-
+// ═════════════════════════════════════════════════════════════════════════════
+// indicator color / 계산 함수 (pure)
+// ═════════════════════════════════════════════════════════════════════════════
 const IND_COLORS = {
-  sma20: "#22d3ee",
-  sma50: "#a78bfa",
-  ema9:  "#f59e0b",
-  bb20:  "#94a3b8",
-  rsi14: "#22d3ee",
-  vol:   "#64748b",
-  macd_line:   "#22d3ee",
-  macd_signal: "#f59e0b",
-  stoch_k:     "#22d3ee",
-  stoch_d:     "#f59e0b",
+  sma20: "#22d3ee", sma50: "#a78bfa", ema9: "#f59e0b", bb20: "#94a3b8",
+  rsi14: "#22d3ee", vol: "#64748b",
+  macd_line: "#22d3ee", macd_signal: "#f59e0b",
+  stoch_k: "#22d3ee", stoch_d: "#f59e0b",
 };
 
-// SMA[i] = avg(close[i-N+1..i]). 앞쪽 N-1 개는 결과 없음.
 function calcSMA(candles, n) {
-  const out = [];
-  let sum = 0;
+  const out = []; let sum = 0;
   for (let i = 0; i < candles.length; i++) {
     sum += candles[i].close;
     if (i >= n) sum -= candles[i - n].close;
-    if (i >= n - 1) {
-      out.push({ time: candles[i].time, value: sum / n });
-    }
+    if (i >= n - 1) out.push({ time: candles[i].time, value: sum / n });
   }
   return out;
 }
-
-// EMA — 첫 n개의 SMA 로 seed 한 뒤 EMA 수식 적용.
 function calcEMA(candles, n) {
   if (candles.length < n) return [];
-  const k = 2 / (n + 1);
-  const out = [];
-  let ema;
-  // seed: 첫 n 개의 평균.
-  let sum = 0;
-  for (let i = 0; i < n; i++) sum += candles[i].close;
-  ema = sum / n;
-  out.push({ time: candles[n - 1].time, value: ema });
+  const k = 2 / (n + 1); const out = [];
+  let sum = 0; for (let i = 0; i < n; i++) sum += candles[i].close;
+  let ema = sum / n; out.push({ time: candles[n - 1].time, value: ema });
   for (let i = n; i < candles.length; i++) {
     ema = candles[i].close * k + ema * (1 - k);
     out.push({ time: candles[i].time, value: ema });
   }
   return out;
 }
-
-// Bollinger Bands — SMA(n) ± k·stdev.  반환: [{upper,lower,mid}, ...]
 function calcBB(candles, n, kMul) {
-  const out = [];
-  if (candles.length < n) return out;
+  const out = []; if (candles.length < n) return out;
   for (let i = n - 1; i < candles.length; i++) {
     let sum = 0;
     for (let j = i - n + 1; j <= i; j++) sum += candles[j].close;
     const mid = sum / n;
     let varSum = 0;
-    for (let j = i - n + 1; j <= i; j++) {
-      const d = candles[j].close - mid;
-      varSum += d * d;
-    }
+    for (let j = i - n + 1; j <= i; j++) { const d = candles[j].close - mid; varSum += d * d; }
     const sd = Math.sqrt(varSum / n);
     out.push({ time: candles[i].time, mid, upper: mid + kMul * sd, lower: mid - kMul * sd });
   }
   return out;
 }
-
-// Wilder's RSI — gain/loss 의 Wilder smoothing.
 function calcRSI(candles, n) {
-  const out = [];
-  if (candles.length <= n) return out;
+  const out = []; if (candles.length <= n) return out;
   let avgGain = 0, avgLoss = 0;
   for (let i = 1; i <= n; i++) {
     const ch = candles[i].close - candles[i - 1].close;
     if (ch >= 0) avgGain += ch; else avgLoss += -ch;
   }
   avgGain /= n; avgLoss /= n;
-  // 첫 RSI 시점 = candle[n].
   let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
   out.push({ time: candles[n].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + rs) });
   for (let i = n + 1; i < candles.length; i++) {
@@ -872,33 +253,21 @@ function calcRSI(candles, n) {
   }
   return out;
 }
-
-// MACD(fast, slow, signal) = (EMA_fast - EMA_slow), signal=EMA(MACD), hist=MACD-Signal.
-// 표준 (12, 26, 9). 반환 모양은 lightweight-charts 의 setData 와 호환 가능한 3개 시리즈.
 function calcMACD(candles, fast, slow, sig) {
   const out = { macd: [], signal: [], hist: [] };
   if (candles.length < slow + sig) return out;
-
-  // EMA 배열 — candle index 기준 (앞부분 null) 로 정렬해서 시점 align.
   const emaArr = (n) => {
     const arr = new Array(candles.length).fill(null);
     if (candles.length < n) return arr;
-    const k = 2 / (n + 1);
-    let sum = 0;
+    const k = 2 / (n + 1); let sum = 0;
     for (let i = 0; i < n; i++) sum += candles[i].close;
-    let e = sum / n;
-    arr[n - 1] = e;
+    let e = sum / n; arr[n - 1] = e;
     for (let i = n; i < candles.length; i++) {
-      e = candles[i].close * k + e * (1 - k);
-      arr[i] = e;
+      e = candles[i].close * k + e * (1 - k); arr[i] = e;
     }
     return arr;
   };
-
-  const ef = emaArr(fast);
-  const es = emaArr(slow);
-
-  // MACD line = EMA_fast - EMA_slow (둘 다 정의된 index 부터).
+  const ef = emaArr(fast); const es = emaArr(slow);
   const macdVals = new Array(candles.length).fill(null);
   for (let i = slow - 1; i < candles.length; i++) {
     if (ef[i] != null && es[i] != null) {
@@ -906,8 +275,6 @@ function calcMACD(candles, fast, slow, sig) {
       out.macd.push({ time: candles[i].time, value: macdVals[i] });
     }
   }
-
-  // Signal = EMA(sig) of MACD line. 첫 sig 개 평균으로 seed.
   const firstMacdIdx = slow - 1;
   if (candles.length < firstMacdIdx + sig) return out;
   let sigSum = 0;
@@ -920,31 +287,18 @@ function calcMACD(candles, fast, slow, sig) {
     signalEMA = macdVals[i] * k + signalEMA * (1 - k);
     out.signal.push({ time: candles[i].time, value: signalEMA });
   }
-
-  // Histogram = MACD - Signal (signal 정의된 시점부터).
   const sigMap = new Map(out.signal.map(s => [s.time, s.value]));
   for (const m of out.macd) {
-    const sv = sigMap.get(m.time);
-    if (sv == null) continue;
+    const sv = sigMap.get(m.time); if (sv == null) continue;
     const v = m.value - sv;
-    out.hist.push({
-      time: m.time,
-      value: v,
-      color: v >= 0 ? "rgba(16,185,129,0.5)" : "rgba(239,68,68,0.5)",
-    });
+    out.hist.push({ time: m.time, value: v,
+      color: v >= 0 ? "rgba(16,185,129,0.5)" : "rgba(239,68,68,0.5)" });
   }
   return out;
 }
-
-// Fast Stochastic Oscillator — %K = 100·(close - lowest_low_N) / (highest_high_N - lowest_low_N),
-// %D = SMA(%K, dPeriod). 표준 (14, 3). 0~100 oscillator.
-//
-// 봉 자체의 high/low 를 사용 — mid 캔들이므로 high_bid/ask 의 mid 임 (정확도 충분).
 function calcStoch(candles, kPeriod, dPeriod) {
   const out = { k: [], d: [] };
   if (candles.length < kPeriod) return out;
-
-  // %K 계산.
   for (let i = kPeriod - 1; i < candles.length; i++) {
     let hh = -Infinity, ll = Infinity;
     for (let j = i - kPeriod + 1; j <= i; j++) {
@@ -955,8 +309,6 @@ function calcStoch(candles, kPeriod, dPeriod) {
     const kVal = range === 0 ? 50 : 100 * (candles[i].close - ll) / range;
     out.k.push({ time: candles[i].time, value: kVal });
   }
-
-  // %D = SMA(dPeriod) of %K.
   if (out.k.length < dPeriod) return out;
   for (let i = dPeriod - 1; i < out.k.length; i++) {
     let sum = 0;
@@ -965,136 +317,13 @@ function calcStoch(candles, kPeriod, dPeriod) {
   }
   return out;
 }
-
-// Volume — tick_count 를 histogram.
 function calcVolume(candles) {
   return candles.map(c => ({
-    time: c.time,
-    value: c._raw ? c._raw.tick_count : 0,
+    time: c.time, value: c._raw ? c._raw.tick_count : 0,
     color: c.close >= c.open ? "rgba(16,185,129,0.5)" : "rgba(239,68,68,0.5)",
   }));
 }
 
-// indicator id 별 series 생성·데이터 적용.
-function applyIndicator(id) {
-  // 기존 series 제거.
-  removeIndicator(id);
-  if (candleData.length === 0) return;
-  // overlays — 메인 차트 위에 그림 (SMA/EMA/BB).
-  // oscillators — 별도 pane (RSI/MACD/Stoch/Volume) — ensurePane(id) 가 pane 인스턴스 생성.
-  switch (id) {
-    case "sma20": {
-      const s = mainChart.addLineSeries({ color: IND_COLORS.sma20, lineWidth: 1, priceLineVisible: false });
-      s.setData(calcSMA(candleData, 20));
-      indSeries[id] = { series: [s], pane: null };
-      break;
-    }
-    case "sma50": {
-      const s = mainChart.addLineSeries({ color: IND_COLORS.sma50, lineWidth: 1, priceLineVisible: false });
-      s.setData(calcSMA(candleData, 50));
-      indSeries[id] = { series: [s], pane: null };
-      break;
-    }
-    case "ema9": {
-      const s = mainChart.addLineSeries({ color: IND_COLORS.ema9, lineWidth: 1, priceLineVisible: false });
-      s.setData(calcEMA(candleData, 9));
-      indSeries[id] = { series: [s], pane: null };
-      break;
-    }
-    case "bb20": {
-      const upper = mainChart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
-      const lower = mainChart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
-      const bb = calcBB(candleData, 20, 2);
-      upper.setData(bb.map(b => ({ time: b.time, value: b.upper })));
-      lower.setData(bb.map(b => ({ time: b.time, value: b.lower })));
-      indSeries[id] = { series: [upper, lower], pane: null };
-      break;
-    }
-    case "rsi14": {
-      const p = ensurePane("rsi14");
-      const s = p.chart.addLineSeries({
-        color: IND_COLORS.rsi14, lineWidth: 1, priceLineVisible: false,
-      });
-      s.setData(calcRSI(candleData, 14));
-      p.primary = s;
-      indSeries[id] = { series: [s], pane: "rsi14" };
-      break;
-    }
-    case "macd": {
-      const p = ensurePane("macd");
-      const m  = p.chart.addLineSeries({ color: IND_COLORS.macd_line, lineWidth: 1, priceLineVisible: false });
-      const sg = p.chart.addLineSeries({ color: IND_COLORS.macd_signal, lineWidth: 1, priceLineVisible: false });
-      const h  = p.chart.addHistogramSeries({ priceLineVisible: false });
-      const calc = calcMACD(candleData, 12, 26, 9);
-      m.setData(calc.macd);
-      sg.setData(calc.signal);
-      h.setData(calc.hist);
-      p.primary = m;
-      indSeries[id] = { series: [m, sg, h], pane: "macd" };
-      break;
-    }
-    case "stoch": {
-      const p = ensurePane("stoch");
-      const kSer = p.chart.addLineSeries({ color: IND_COLORS.stoch_k, lineWidth: 1, priceLineVisible: false });
-      const dSer = p.chart.addLineSeries({ color: IND_COLORS.stoch_d, lineWidth: 1, priceLineVisible: false });
-      const c = calcStoch(candleData, 14, 3);
-      kSer.setData(c.k);
-      dSer.setData(c.d);
-      p.primary = kSer;
-      indSeries[id] = { series: [kSer, dSer], pane: "stoch" };
-      break;
-    }
-    case "vol": {
-      const p = ensurePane("vol");
-      const s = p.chart.addHistogramSeries({
-        priceLineVisible: false,
-        priceFormat: { type: "volume" },
-      });
-      s.setData(calcVolume(candleData));
-      p.primary = s;
-      indSeries[id] = { series: [s], pane: "vol" };
-      break;
-    }
-  }
-  // pane 추가 직후엔 메인 timeScale 의 현재 visible range 와 sync.
-  syncPaneToMain(id);
-}
-
-function syncPaneToMain(id) {
-  const entry = indSeries[id];
-  if (!entry || !entry.pane) return;
-  const range = mainChart.timeScale().getVisibleLogicalRange();
-  if (range) {
-    panes[entry.pane].chart.timeScale().setVisibleLogicalRange(range);
-  }
-}
-
-function removeIndicator(id) {
-  const entry = indSeries[id];
-  if (!entry) return;
-  // pane 기반 indicator 는 pane 통째 제거 (해당 pane 의 series 도 같이 정리됨).
-  if (entry.pane) {
-    removePane(entry.pane);
-  } else {
-    for (const s of entry.series) mainChart.removeSeries(s);
-  }
-  delete indSeries[id];
-}
-
-// 모든 활성 indicator 재계산 (historical 로드 후 / 라이브 봉 도착 후).
-function recomputeAllIndicators() {
-  for (const id of indActive) applyIndicator(id);
-}
-
-// ───────── 상태 ─────────
-let currentPair = "USD/KRW";
-let currentTF = "1m";
-let currentRange = "4h";
-let ws = null;
-let barCount = 0;
-let autoScroll = true;
-
-// ───────── REST 로 historical 로드 ─────────
 function rangeToDuration(range) {
   switch (range) {
     case "1h":  return 1 * 3600 * 1000;
@@ -1105,48 +334,8 @@ function rangeToDuration(range) {
     default:    return 4 * 3600 * 1000;
   }
 }
-async function loadHistorical() {
-  const to = new Date();
-  const from = new Date(to.getTime() - rangeToDuration(currentRange));
-  const url = "/v1/chart"
-    + "?pair=" + encodeURIComponent(currentPair)
-    + "&tf="   + encodeURIComponent(currentTF)
-    + "&from=" + encodeURIComponent(from.toISOString())
-    + "&to="   + encodeURIComponent(to.toISOString())
-    + "&limit=5000";
-  try {
-    setStatus("loading…");
-    const resp = await fetch(url, { credentials: "same-origin" });
-    if (!resp.ok) {
-      setStatus("로드 실패: HTTP " + resp.status, "err");
-      candleSeries.setData([]);
-      barCount = 0;
-      $("#bar-count").textContent = "0";
-      return;
-    }
-    const data = await resp.json();
-    const bars = (data.bars || []).map(barToCandle);
-    candleData = bars;
-    candleSeries.setData(bars);
-    barCount = bars.length;
-    $("#bar-count").textContent = barCount;
-    if (bars.length > 0) {
-      updateRecentDisplay(bars[bars.length - 1]);
-    } else {
-      ["cur-open","cur-high","cur-low","cur-close","cur-ticks"].forEach(id => $("#" + id).textContent = "—");
-    }
-    recomputeAllIndicators();
-    if (autoScroll) mainChart.timeScale().scrollToRealTime();
-    setStatus(currentPair + " " + currentTF + " · " + bars.length + "건 로드됨", "ok");
-  } catch (e) {
-    setStatus("로드 에러: " + e.message, "err");
-  }
-}
-
-// Bar (REST) 또는 라이브 (WS) 의 OHLC bid/ask 를 mid 캔들로 변환.
-// FX 는 단일 mid 캔들이 표준 — 정확한 spread 표시는 별도 indicator 가 필요할 때만.
 function barToCandle(b) {
-  const t = Math.floor(new Date(b.opened_at).getTime() / 1000); // UNIX seconds
+  const t = Math.floor(new Date(b.opened_at).getTime() / 1000);
   const o = (b.open_bid + b.open_ask) / 2;
   const h = (b.high_bid + b.high_ask) / 2;
   const l = (b.low_bid + b.low_ask) / 2;
@@ -1154,114 +343,707 @@ function barToCandle(b) {
   return { time: t, open: o, high: h, low: l, close: c, _raw: b };
 }
 
-function updateRecentDisplay(candle) {
-  $("#cur-open").textContent  = fmt(candle.open);
-  $("#cur-high").textContent  = fmt(candle.high);
-  $("#cur-low").textContent   = fmt(candle.low);
-  $("#cur-close").textContent = fmt(candle.close);
-  $("#cur-ticks").textContent = candle._raw ? candle._raw.tick_count : "—";
-  $("#last-update").textContent = new Date().toLocaleTimeString("ko-KR");
-}
+const PAIRS = [
+  "USD/KRW","EUR/KRW","JPY/KRW","GBP/KRW","AUD/KRW","CNY/KRW",
+  "EUR/USD","USD/JPY","GBP/USD","AUD/USD",
+];
+const TFS = ["1m","5m","15m","1h","1d"];
+const RANGES = ["1h","4h","1d","1w","1mo"];
+const IND_DEFS = [
+  { id: "sma20", label: "SMA20" },
+  { id: "sma50", label: "SMA50" },
+  { id: "ema9",  label: "EMA9"  },
+  { id: "bb20",  label: "BB"    },
+  { id: "rsi14", label: "RSI"   },
+  { id: "macd",  label: "MACD"  },
+  { id: "stoch", label: "Stoch" },
+  { id: "vol",   label: "Vol"   },
+];
 
-// ───────── WS 라이브 ─────────
-function connectWS() {
-  if (ws) {
-    try { ws.close(); } catch (_) {}
+// ═════════════════════════════════════════════════════════════════════════════
+// ChartCell — 단일 차트 인스턴스. 다중 layout 의 각 셀에 1:1.
+// ═════════════════════════════════════════════════════════════════════════════
+class ChartCell {
+  constructor(idx, config) {
+    this.idx = idx;
+    this.pair = (config && config.pair) || "USD/KRW";
+    this.tf = (config && config.tf) || "1m";
+    this.range = (config && config.range) || "4h";
+    this.autoScroll = (config && typeof config.autoScroll === "boolean") ? config.autoScroll : true;
+    this.indActive = new Set((config && Array.isArray(config.indicators)) ? config.indicators : []);
+    this.indSeries = {};
+    this.panes = {};   // {id:{chart,el,primary}}
+    this.candleData = [];
+    this.barCount = 0;
+    this.ws = null;
+    this.destroyed = false;
+    this._syncingRange = false;
+    this._syncingCross = false;
+
+    this.root = this.buildDOM();
+    this.buildChart();
+    this.wireControls();
   }
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = proto + "//" + window.location.host
-    + "/v1/chart/stream"
-    + "?pairs=" + encodeURIComponent(currentPair)
-    + "&tfs="  + encodeURIComponent(currentTF);
-  ws = new WebSocket(url);
-  $("#ws-state").style.color = "var(--text-muted)";
-  ws.onopen = () => {
-    $("#ws-state").style.color = "var(--good)";
-    setStatus("WS 연결됨", "ok");
-  };
-  ws.onmessage = (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch (_) { return; }
-    if (msg.type !== "bar") return;
-    // 필터 — pair/tf 가 현재 보고 있는 것과 다르면 무시 (서버 필터 외 추가 안전).
-    if (msg.pair !== currentPair || msg.tf !== currentTF) return;
-    const candle = barToCandle(msg);
-    candleSeries.update(candle);
-    // candleData 에 append / 같은 시각이면 갱신.
-    if (candleData.length > 0 && candleData[candleData.length - 1].time === candle.time) {
-      candleData[candleData.length - 1] = candle;
-    } else {
-      candleData.push(candle);
-      barCount += 1;
-      $("#bar-count").textContent = barCount;
+
+  snapshotConfig() {
+    return {
+      pair: this.pair, tf: this.tf, range: this.range,
+      autoScroll: this.autoScroll, indicators: Array.from(this.indActive),
+    };
+  }
+
+  buildDOM() {
+    const root = el("div", { class: "panel p-2 cell flex flex-col gap-2",
+      dataset: { cellIdx: String(this.idx) },
+      onclick: () => layoutManager.setActiveCell(this.idx),
+    });
+
+    // 헤더 — pair / TF / range / indicators / autoscroll / 최근봉.
+    const header = el("div", { class: "flex flex-wrap items-center gap-2 text-[11px]" });
+
+    const pairSel = el("select", { class: "ws-pair" });
+    pairSel.style.fontSize = ".75rem";
+    for (const p of PAIRS) {
+      const opt = el("option", { text: p });
+      opt.value = p;
+      if (p === this.pair) opt.selected = true;
+      pairSel.appendChild(opt);
     }
-    // 활성 indicator 만 재계산 (가장 최근 값 위주 — 단순화: 전체 재적용).
-    recomputeAllIndicators();
-    updateRecentDisplay(candle);
-    // alert 임계값 평가 — 새 봉 또는 봉 갱신 후.
-    evaluateAlerts(candle);
-  };
-  ws.onerror = () => {
-    $("#ws-state").style.color = "var(--bad)";
-    setStatus("WS 에러 — 재연결 시도 중", "err");
-  };
-  ws.onclose = () => {
-    $("#ws-state").style.color = "var(--bad)";
-    // 5초 후 재연결.
-    setTimeout(connectWS, 5000);
-  };
+    pairSel.addEventListener("change", () => { this.pair = pairSel.value; saveSettings(); this.refresh(); });
+    header.appendChild(pairSel);
+
+    const tfGroup = el("div", { class: "flex gap-1" });
+    for (const t of TFS) {
+      const b = el("button", { class: "chip", text: t, dataset: { tf: t } });
+      if (t === this.tf) b.dataset.active = "true";
+      b.addEventListener("click", () => {
+        this.tf = t;
+        tfGroup.querySelectorAll(".chip").forEach(x => x.dataset.active = (x.dataset.tf === t) ? "true" : "false");
+        saveSettings(); this.refresh();
+      });
+      tfGroup.appendChild(b);
+    }
+    header.appendChild(tfGroup);
+
+    const rangeGroup = el("div", { class: "flex gap-1" });
+    for (const r of RANGES) {
+      const b = el("button", { class: "chip", text: r.toUpperCase(), dataset: { range: r } });
+      if (r === this.range) b.dataset.active = "true";
+      b.addEventListener("click", () => {
+        this.range = r;
+        rangeGroup.querySelectorAll(".chip").forEach(x => x.dataset.active = (x.dataset.range === r) ? "true" : "false");
+        saveSettings(); this.loadHistorical();
+      });
+      rangeGroup.appendChild(b);
+    }
+    header.appendChild(rangeGroup);
+
+    const autoBtn = el("button", { class: "chip", text: "▶ Auto" });
+    if (this.autoScroll) autoBtn.dataset.active = "true";
+    autoBtn.addEventListener("click", () => {
+      this.autoScroll = !this.autoScroll;
+      autoBtn.dataset.active = this.autoScroll ? "true" : "false";
+      saveSettings();
+      if (this.autoScroll) this.mainChart.timeScale().scrollToRealTime();
+    });
+    header.appendChild(autoBtn);
+
+    const indGroup = el("div", { class: "flex gap-1 flex-wrap" });
+    for (const def of IND_DEFS) {
+      const b = el("button", { class: "chip", text: def.label, dataset: { ind: def.id } });
+      if (this.indActive.has(def.id)) b.dataset.active = "true";
+      b.addEventListener("click", () => {
+        if (this.indActive.has(def.id)) {
+          this.indActive.delete(def.id); this.removeIndicator(def.id);
+          b.dataset.active = "false";
+        } else {
+          this.indActive.add(def.id); this.applyIndicator(def.id);
+          b.dataset.active = "true";
+        }
+        saveSettings();
+      });
+      indGroup.appendChild(b);
+    }
+    header.appendChild(indGroup);
+
+    const recent = el("div", { class: "text-[10px] font-mono ml-auto text-slate-400 hidden lg:flex gap-3 items-center" });
+    this._recentO = el("span", { class: "text-slate-200", text: "—" });
+    this._recentH = el("span", { class: "text-green-400", text: "—" });
+    this._recentL = el("span", { class: "text-red-400", text: "—" });
+    this._recentC = el("span", { class: "text-cyan-300", text: "—" });
+    this._wsState = el("span", { class: "font-mono", text: "●" });
+    this._wsState.style.color = "var(--text-muted)";
+    recent.appendChild(el("span", null, "O ", this._recentO));
+    recent.appendChild(el("span", null, "H ", this._recentH));
+    recent.appendChild(el("span", null, "L ", this._recentL));
+    recent.appendChild(el("span", null, "C ", this._recentC));
+    recent.appendChild(this._wsState);
+    header.appendChild(recent);
+
+    root.appendChild(header);
+
+    // chart area — main + dynamic panes.
+    const chartArea = el("div", { class: "chart-area" });
+    this._chartMain = el("div", { class: "flex-1" });
+    this._chartMain.style.minHeight = "200px";
+    chartArea.appendChild(this._chartMain);
+    root.appendChild(chartArea);
+    this._chartArea = chartArea;
+
+    return root;
+  }
+
+  buildChart() {
+    const baseOpts = () => ({
+      layout: {
+        background: { type: "solid", color: "#101727" },
+        textColor: "#cbd5e1",
+        fontFamily: "JetBrains Mono, ui-monospace, monospace",
+      },
+      grid: {
+        vertLines: { color: "rgba(255,255,255,0.05)" },
+        horzLines: { color: "rgba(255,255,255,0.05)" },
+      },
+      rightPriceScale: { borderColor: "#1f2a40" },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+    this.mainChart = LightweightCharts.createChart(this._chartMain, {
+      ...baseOpts(),
+      timeScale: { borderColor: "#1f2a40", timeVisible: true, secondsVisible: false },
+    });
+    this.candleSeries = this.mainChart.addCandlestickSeries({
+      upColor: "#10b981", downColor: "#ef4444",
+      borderUpColor: "#10b981", borderDownColor: "#ef4444",
+      wickUpColor: "#10b981", wickDownColor: "#ef4444",
+    });
+    this.mainPrimary = this.candleSeries;
+    this._attachIntraCellSync(this.mainChart);
+  }
+
+  // 셀 내부 sync — 메인 ↔ 각 pane.
+  _attachIntraCellSync(chart) {
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (this._syncingRange || !range) return;
+      this._syncingRange = true;
+      const all = this._allCharts();
+      for (const c of all) {
+        if (c.chart !== chart) c.chart.timeScale().setVisibleLogicalRange(range);
+      }
+      this._syncingRange = false;
+    });
+    chart.subscribeCrosshairMove((param) => {
+      if (this._syncingCross) return;
+      this._syncingCross = true;
+      try {
+        if (!param || !param.time) {
+          for (const c of this._allCharts()) {
+            if (c.chart !== chart) c.chart.clearCrosshairPosition();
+          }
+          return;
+        }
+        for (const c of this._allCharts()) {
+          if (c.chart === chart) continue;
+          if (!c.primary) continue;
+          let price = 0;
+          const data = param.seriesData ? param.seriesData.get(c.primary) : null;
+          if (data && typeof data.value === "number") price = data.value;
+          else if (data && typeof data.close === "number") price = data.close;
+          c.chart.setCrosshairPosition(price, param.time, c.primary);
+        }
+      } finally { this._syncingCross = false; }
+    });
+  }
+
+  _allCharts() {
+    const out = [{ chart: this.mainChart, primary: this.mainPrimary }];
+    for (const id in this.panes) {
+      out.push({ chart: this.panes[id].chart, primary: this.panes[id].primary });
+    }
+    return out;
+  }
+
+  ensurePane(id) {
+    if (this.panes[id]) return this.panes[id];
+    const div = el("div");
+    div.style.height = "120px";
+    div.style.marginTop = "4px";
+    div.style.borderTop = "1px solid var(--border)";
+    this._chartArea.appendChild(div);
+    const c = LightweightCharts.createChart(div, {
+      layout: { background: { type: "solid", color: "#101727" }, textColor: "#cbd5e1",
+                fontFamily: "JetBrains Mono, ui-monospace, monospace" },
+      grid: { vertLines: { color: "rgba(255,255,255,0.05)" }, horzLines: { color: "rgba(255,255,255,0.05)" } },
+      rightPriceScale: { borderColor: "#1f2a40" },
+      timeScale: { borderColor: "#1f2a40", visible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+    this._attachIntraCellSync(c);
+    c.applyOptions({ width: this._chartMain.clientWidth });
+    this.panes[id] = { chart: c, el: div, primary: null };
+    return this.panes[id];
+  }
+
+  removePane(id) {
+    const p = this.panes[id]; if (!p) return;
+    p.chart.remove(); p.el.remove();
+    delete this.panes[id];
+  }
+
+  applyIndicator(id) {
+    this.removeIndicator(id);
+    if (this.candleData.length === 0) return;
+    switch (id) {
+      case "sma20": {
+        const s = this.mainChart.addLineSeries({ color: IND_COLORS.sma20, lineWidth: 1, priceLineVisible: false });
+        s.setData(calcSMA(this.candleData, 20));
+        this.indSeries[id] = { series: [s], pane: null }; break;
+      }
+      case "sma50": {
+        const s = this.mainChart.addLineSeries({ color: IND_COLORS.sma50, lineWidth: 1, priceLineVisible: false });
+        s.setData(calcSMA(this.candleData, 50));
+        this.indSeries[id] = { series: [s], pane: null }; break;
+      }
+      case "ema9": {
+        const s = this.mainChart.addLineSeries({ color: IND_COLORS.ema9, lineWidth: 1, priceLineVisible: false });
+        s.setData(calcEMA(this.candleData, 9));
+        this.indSeries[id] = { series: [s], pane: null }; break;
+      }
+      case "bb20": {
+        const u = this.mainChart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
+        const lo = this.mainChart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
+        const bb = calcBB(this.candleData, 20, 2);
+        u.setData(bb.map(b => ({ time: b.time, value: b.upper })));
+        lo.setData(bb.map(b => ({ time: b.time, value: b.lower })));
+        this.indSeries[id] = { series: [u, lo], pane: null }; break;
+      }
+      case "rsi14": {
+        const p = this.ensurePane("rsi14");
+        const s = p.chart.addLineSeries({ color: IND_COLORS.rsi14, lineWidth: 1, priceLineVisible: false });
+        s.setData(calcRSI(this.candleData, 14));
+        p.primary = s;
+        this.indSeries[id] = { series: [s], pane: "rsi14" }; break;
+      }
+      case "macd": {
+        const p = this.ensurePane("macd");
+        const m  = p.chart.addLineSeries({ color: IND_COLORS.macd_line, lineWidth: 1, priceLineVisible: false });
+        const sg = p.chart.addLineSeries({ color: IND_COLORS.macd_signal, lineWidth: 1, priceLineVisible: false });
+        const h  = p.chart.addHistogramSeries({ priceLineVisible: false });
+        const calc = calcMACD(this.candleData, 12, 26, 9);
+        m.setData(calc.macd); sg.setData(calc.signal); h.setData(calc.hist);
+        p.primary = m;
+        this.indSeries[id] = { series: [m, sg, h], pane: "macd" }; break;
+      }
+      case "stoch": {
+        const p = this.ensurePane("stoch");
+        const k = p.chart.addLineSeries({ color: IND_COLORS.stoch_k, lineWidth: 1, priceLineVisible: false });
+        const d = p.chart.addLineSeries({ color: IND_COLORS.stoch_d, lineWidth: 1, priceLineVisible: false });
+        const c = calcStoch(this.candleData, 14, 3);
+        k.setData(c.k); d.setData(c.d);
+        p.primary = k;
+        this.indSeries[id] = { series: [k, d], pane: "stoch" }; break;
+      }
+      case "vol": {
+        const p = this.ensurePane("vol");
+        const s = p.chart.addHistogramSeries({ priceLineVisible: false, priceFormat: { type: "volume" } });
+        s.setData(calcVolume(this.candleData));
+        p.primary = s;
+        this.indSeries[id] = { series: [s], pane: "vol" }; break;
+      }
+    }
+  }
+
+  removeIndicator(id) {
+    const entry = this.indSeries[id]; if (!entry) return;
+    if (entry.pane) this.removePane(entry.pane);
+    else for (const s of entry.series) this.mainChart.removeSeries(s);
+    delete this.indSeries[id];
+  }
+
+  recomputeAllIndicators() {
+    for (const id of this.indActive) this.applyIndicator(id);
+  }
+
+  resize() {
+    const w = this._chartMain.clientWidth;
+    this.mainChart.applyOptions({ width: w });
+    for (const id in this.panes) this.panes[id].chart.applyOptions({ width: w });
+  }
+
+  async loadHistorical() {
+    const to = new Date();
+    const from = new Date(to.getTime() - rangeToDuration(this.range));
+    const url = "/v1/chart?pair=" + encodeURIComponent(this.pair) +
+      "&tf=" + encodeURIComponent(this.tf) +
+      "&from=" + encodeURIComponent(from.toISOString()) +
+      "&to=" + encodeURIComponent(to.toISOString()) + "&limit=5000";
+    try {
+      const resp = await fetch(url, { credentials: "same-origin" });
+      if (!resp.ok) {
+        this.candleSeries.setData([]); this.candleData = []; this.barCount = 0;
+        return;
+      }
+      const data = await resp.json();
+      const bars = (data.bars || []).map(barToCandle);
+      this.candleData = bars;
+      this.candleSeries.setData(bars);
+      this.barCount = bars.length;
+      if (bars.length > 0) this._updateRecent(bars[bars.length - 1]);
+      else this._updateRecent(null);
+      this.recomputeAllIndicators();
+      if (this.autoScroll) this.mainChart.timeScale().scrollToRealTime();
+    } catch (e) {
+      console.warn("loadHistorical:", e);
+    }
+  }
+
+  connectWS() {
+    if (this.ws) { try { this.ws.close(); } catch (_) {} }
+    if (this.destroyed) return;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const url = proto + "//" + window.location.host + "/v1/chart/stream"
+      + "?pairs=" + encodeURIComponent(this.pair)
+      + "&tfs=" + encodeURIComponent(this.tf);
+    this.ws = new WebSocket(url);
+    this._wsState.style.color = "var(--text-muted)";
+    this.ws.onopen = () => { this._wsState.style.color = "var(--good)"; };
+    this.ws.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch (_) { return; }
+      if (msg.type !== "bar") return;
+      if (msg.pair !== this.pair || msg.tf !== this.tf) return;
+      const candle = barToCandle(msg);
+      this.candleSeries.update(candle);
+      if (this.candleData.length > 0 && this.candleData[this.candleData.length - 1].time === candle.time) {
+        this.candleData[this.candleData.length - 1] = candle;
+      } else {
+        this.candleData.push(candle); this.barCount += 1;
+      }
+      this.recomputeAllIndicators();
+      this._updateRecent(candle);
+      evaluateAlertsForCell(this, candle);
+    };
+    this.ws.onerror = () => { this._wsState.style.color = "var(--bad)"; };
+    this.ws.onclose = () => {
+      this._wsState.style.color = "var(--bad)";
+      if (!this.destroyed) setTimeout(() => this.connectWS(), 5000);
+    };
+  }
+
+  _updateRecent(candle) {
+    if (!candle) {
+      this._recentO.textContent = this._recentH.textContent =
+      this._recentL.textContent = this._recentC.textContent = "—";
+      return;
+    }
+    this._recentO.textContent = fmt(candle.open);
+    this._recentH.textContent = fmt(candle.high);
+    this._recentL.textContent = fmt(candle.low);
+    this._recentC.textContent = fmt(candle.close);
+  }
+
+  refresh() { this.loadHistorical(); this.connectWS(); }
+
+  wireControls() { /* 모든 컨트롤은 buildDOM 에서 이미 wire 됨 */ }
+
+  destroy() {
+    this.destroyed = true;
+    if (this.ws) try { this.ws.close(); } catch (_) {}
+    try { this.mainChart.remove(); } catch (_) {}
+    for (const id in this.panes) try { this.panes[id].chart.remove(); } catch (_) {}
+    this.root.remove();
+  }
 }
 
-// ───────── 컨트롤 wiring ─────────
-$("#sel-pair").addEventListener("change", (e) => {
-  currentPair = e.target.value;
-  saveSettings();
-  refreshAll();
-});
-$$(".tf-btn").forEach(b => {
-  b.addEventListener("click", () => {
-    currentTF = b.dataset.tf;
-    setActive(".tf-btn", currentTF);
-    saveSettings();
-    refreshAll();
-  });
-});
-$$(".range-btn").forEach(b => {
-  b.addEventListener("click", () => {
-    currentRange = b.dataset.range;
-    setActive(".range-btn", currentRange);
-    saveSettings();
-    loadHistorical(); // WS 는 그대로
-  });
-});
-$("#reload").addEventListener("click", refreshAll);
-$("#autoscroll").addEventListener("click", () => {
-  autoScroll = !autoScroll;
-  $("#autoscroll").dataset.active = autoScroll ? "true" : "false";
-  saveSettings();
-  if (autoScroll) mainChart.timeScale().scrollToRealTime();
-});
-$$(".ind-btn").forEach(b => {
-  b.addEventListener("click", () => {
-    const id = b.dataset.ind;
-    if (indActive.has(id)) {
-      indActive.delete(id);
-      removeIndicator(id);
-      b.dataset.active = "false";
-    } else {
-      indActive.add(id);
-      applyIndicator(id);
-      b.dataset.active = "true";
-    }
-    saveSettings();
-  });
-});
+// ═════════════════════════════════════════════════════════════════════════════
+// LayoutManager — 1 / 2v / 2h / 2x2 grid 셀 관리
+// ═════════════════════════════════════════════════════════════════════════════
+const layoutManager = {
+  layout: "1",
+  cells: [],
+  activeCellIdx: 0,
 
-// Alerts 컨트롤 wiring.
+  setLayout(layout, savedCells) {
+    this.layout = layout;
+    const container = $("#charts-layout");
+    container.className = "layout-" + layout;
+    // 기존 셀 정리.
+    for (const c of this.cells) c.destroy();
+    this.cells = [];
+    container.replaceChildren();
+    const n = (layout === "1") ? 1 : (layout === "2x2") ? 4 : 2;
+    for (let i = 0; i < n; i++) {
+      const cfg = (savedCells && savedCells[i]) || null;
+      const cell = new ChartCell(i, cfg);
+      this.cells.push(cell);
+      container.appendChild(cell.root);
+    }
+    this.activeCellIdx = 0;
+    this._highlightActive();
+    // 모든 셀 데이터 로드.
+    for (const c of this.cells) c.refresh();
+    // resize 한 번.
+    setTimeout(() => { for (const c of this.cells) c.resize(); }, 50);
+    // layout 버튼 상태.
+    $$(".layout-btn").forEach(b => b.dataset.active = (b.dataset.layout === layout) ? "true" : "false");
+    saveSettings();
+  },
+
+  setActiveCell(idx) {
+    if (idx < 0 || idx >= this.cells.length) return;
+    this.activeCellIdx = idx;
+    this._highlightActive();
+  },
+
+  _highlightActive() {
+    for (let i = 0; i < this.cells.length; i++) {
+      this.cells[i].root.classList.toggle("cell-active", i === this.activeCellIdx);
+    }
+  },
+
+  activeCell() { return this.cells[this.activeCellIdx]; },
+
+  resizeAll() { for (const c of this.cells) c.resize(); },
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Alerts — 전역. evaluateAlertsForCell 가 WS 콜백에서 호출됨.
+// ═════════════════════════════════════════════════════════════════════════════
+let alerts = [];
+
+function loadAlerts() {
+  try {
+    const raw = localStorage.getItem(LS_ALERTS); if (!raw) return;
+    const arr = JSON.parse(raw); if (Array.isArray(arr)) alerts = arr;
+  } catch (_) {}
+}
+function saveAlerts() {
+  try { localStorage.setItem(LS_ALERTS, JSON.stringify(alerts)); } catch (_) {}
+}
+function nextAlertId() {
+  return "a_" + Math.random().toString(36).slice(2, 9) + "_" + Date.now().toString(36);
+}
+const ALERT_TYPE_LABEL = {
+  price_above: "가격 ↑", price_below: "가격 ↓",
+  rsi_above: "RSI ↑", rsi_below: "RSI ↓",
+  price_cross_sma20_up: "가격 > SMA20", price_cross_sma20_down: "가격 < SMA20",
+  price_cross_sma50_up: "가격 > SMA50", price_cross_sma50_down: "가격 < SMA50",
+  sma_golden_cross_20_50: "SMA20 > SMA50 (Golden)",
+  sma_death_cross_20_50:  "SMA20 < SMA50 (Death)",
+  macd_cross_signal_up: "MACD > Signal", macd_cross_signal_down: "MACD < Signal",
+  macd_cross_zero_up: "MACD > 0", macd_cross_zero_down: "MACD < 0",
+  stoch_cross_d_up: "%K > %D", stoch_cross_d_down: "%K < %D",
+  stoch_overbought: "%K > 80 (과매수)", stoch_oversold: "%K < 20 (과매도)",
+};
+function alertTypeNeedsValue(t) {
+  return t === "price_above" || t === "price_below" || t === "rsi_above" || t === "rsi_below";
+}
+
+function addAlert(type, value, pair) {
+  alerts.push({
+    id: nextAlertId(), type, pair,
+    value: alertTypeNeedsValue(type) ? Number(value) : 0,
+    enabled: true, lastVal: null, lastDiff: null,
+  });
+  saveAlerts(); renderAlertList();
+}
+function removeAlert(id) {
+  alerts = alerts.filter(a => a.id !== id); saveAlerts(); renderAlertList();
+}
+function toggleAlertEnabled(id) {
+  const a = alerts.find(x => x.id === id); if (!a) return;
+  a.enabled = !a.enabled;
+  if (a.enabled) { a.lastVal = null; a.lastDiff = null; }
+  saveAlerts(); renderAlertList();
+}
+function renderAlertList() {
+  const list = $("#alert-list"); list.replaceChildren();
+  $("#alert-count").textContent = alerts.filter(a => a.enabled).length;
+  if (alerts.length === 0) {
+    list.appendChild(el("div", { class: "text-slate-500", text: "등록된 알림이 없습니다." }));
+    return;
+  }
+  for (const a of alerts) {
+    const needsValue = alertTypeNeedsValue(a.type);
+    const row = el("div", { class: "flex items-center gap-2 py-1 px-2 rounded",
+      style: { background: a.enabled ? "rgba(34,211,238,0.06)" : "rgba(100,116,139,0.08)" } });
+    const label = el("div", { class: "flex-1 font-mono", style: a.enabled ? {} : { opacity: "0.5" } },
+      el("span", { class: "text-slate-300", text: a.pair }),
+      " · ",
+      el("span", { class: "text-cyan-300", text: ALERT_TYPE_LABEL[a.type] || a.type }),
+    );
+    if (needsValue) {
+      label.appendChild(document.createTextNode(" · "));
+      label.appendChild(el("span", { class: "text-slate-200", text: String(a.value) }));
+    }
+    row.appendChild(label);
+    row.appendChild(el("button", { class: "chip", text: a.enabled ? "● ON" : "○ OFF",
+      onclick: () => toggleAlertEnabled(a.id) }));
+    row.appendChild(el("button", { class: "chip", text: "✕",
+      onclick: () => { if (confirm("이 알림을 삭제할까요?")) removeAlert(a.id); } }));
+    list.appendChild(row);
+  }
+}
+
+// 셀 단위 평가 — 셀의 WS 콜백이 호출. 셀의 pair 와 매칭되는 alert 만 평가.
+function evaluateAlertsForCell(cell, candle) {
+  if (alerts.length === 0) return;
+  const active = alerts.filter(a => a.enabled && a.pair === cell.pair);
+  if (active.length === 0) return;
+
+  const needRSI = active.some(a => a.type.startsWith("rsi_"));
+  const needSMA20 = active.some(a => a.type.includes("sma20") || a.type.includes("_20_"));
+  const needSMA50 = active.some(a => a.type.includes("sma50") || a.type.includes("_50_"));
+  const needMACD = active.some(a => a.type.startsWith("macd_"));
+  const needStoch = active.some(a => a.type.startsWith("stoch_"));
+
+  let rsi = null, sma20 = null, sma50 = null, macdLast = null, signalLast = null, stochK = null, stochD = null;
+  if (needRSI)   { const r = calcRSI(cell.candleData, 14); if (r.length) rsi = r[r.length - 1].value; }
+  if (needSMA20) { const s = calcSMA(cell.candleData, 20); if (s.length) sma20 = s[s.length - 1].value; }
+  if (needSMA50) { const s = calcSMA(cell.candleData, 50); if (s.length) sma50 = s[s.length - 1].value; }
+  if (needMACD) {
+    const m = calcMACD(cell.candleData, 12, 26, 9);
+    if (m.macd.length)   macdLast   = m.macd[m.macd.length - 1].value;
+    if (m.signal.length) signalLast = m.signal[m.signal.length - 1].value;
+  }
+  if (needStoch) {
+    const s = calcStoch(cell.candleData, 14, 3);
+    if (s.k.length) stochK = s.k[s.k.length - 1].value;
+    if (s.d.length) stochD = s.d[s.d.length - 1].value;
+  }
+  const close = candle.close;
+
+  for (const a of alerts) {
+    if (!a.enabled || a.pair !== cell.pair) continue;
+    let crossed = false; let triggerVal = null;
+    switch (a.type) {
+      case "price_above": case "price_below":
+      case "rsi_above": case "rsi_below": {
+        let curr = null;
+        if (a.type === "price_above" || a.type === "price_below") curr = close; else curr = rsi;
+        if (curr == null) break;
+        const prev = a.lastVal; a.lastVal = curr;
+        if (prev == null) break;
+        if (a.type === "price_above" || a.type === "rsi_above") crossed = prev <= a.value && curr > a.value;
+        else crossed = prev >= a.value && curr < a.value;
+        triggerVal = curr; break;
+      }
+      case "price_cross_sma20_up": case "price_cross_sma20_down":
+      case "price_cross_sma50_up": case "price_cross_sma50_down": {
+        const smaVal = a.type.includes("sma20") ? sma20 : sma50;
+        if (smaVal == null) break;
+        const currDiff = close - smaVal;
+        const prevDiff = a.lastDiff; a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type.endsWith("_up")) crossed = prevDiff <= 0 && currDiff > 0;
+        else crossed = prevDiff >= 0 && currDiff < 0;
+        triggerVal = close; break;
+      }
+      case "sma_golden_cross_20_50": case "sma_death_cross_20_50": {
+        if (sma20 == null || sma50 == null) break;
+        const currDiff = sma20 - sma50;
+        const prevDiff = a.lastDiff; a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type === "sma_golden_cross_20_50") crossed = prevDiff <= 0 && currDiff > 0;
+        else crossed = prevDiff >= 0 && currDiff < 0;
+        triggerVal = sma20; break;
+      }
+      case "macd_cross_signal_up": case "macd_cross_signal_down": {
+        if (macdLast == null || signalLast == null) break;
+        const currDiff = macdLast - signalLast;
+        const prevDiff = a.lastDiff; a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type === "macd_cross_signal_up") crossed = prevDiff <= 0 && currDiff > 0;
+        else crossed = prevDiff >= 0 && currDiff < 0;
+        triggerVal = macdLast; break;
+      }
+      case "macd_cross_zero_up": case "macd_cross_zero_down": {
+        if (macdLast == null) break;
+        const currDiff = macdLast;
+        const prevDiff = a.lastDiff; a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type === "macd_cross_zero_up") crossed = prevDiff <= 0 && currDiff > 0;
+        else crossed = prevDiff >= 0 && currDiff < 0;
+        triggerVal = macdLast; break;
+      }
+      case "stoch_cross_d_up": case "stoch_cross_d_down": {
+        if (stochK == null || stochD == null) break;
+        const currDiff = stochK - stochD;
+        const prevDiff = a.lastDiff; a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type === "stoch_cross_d_up") crossed = prevDiff <= 0 && currDiff > 0;
+        else crossed = prevDiff >= 0 && currDiff < 0;
+        triggerVal = stochK; break;
+      }
+      case "stoch_overbought": case "stoch_oversold": {
+        if (stochK == null) break;
+        const threshold = (a.type === "stoch_overbought") ? 80 : 20;
+        const curr = stochK;
+        const prev = a.lastVal; a.lastVal = curr;
+        if (prev == null) break;
+        if (a.type === "stoch_overbought") crossed = prev <= threshold && curr > threshold;
+        else crossed = prev >= threshold && curr < threshold;
+        triggerVal = curr; break;
+      }
+    }
+    if (crossed) {
+      fireAlert(a, triggerVal == null ? 0 : triggerVal);
+      a.enabled = false; saveAlerts(); renderAlertList();
+    }
+  }
+}
+
+function fireAlert(a, val) {
+  const label = ALERT_TYPE_LABEL[a.type] || a.type;
+  const msg = alertTypeNeedsValue(a.type)
+    ? a.pair + " " + label + " " + String(a.value) + " 도달 (현재: " + val.toFixed(5) + ")"
+    : a.pair + " " + label + " 발생 (현재: " + val.toFixed(5) + ")";
+  if ("Notification" in window && Notification.permission === "granted") {
+    try { new Notification("WTG Chart", { body: msg }); } catch (_) {}
+  }
+  showAlertBanner(msg);
+}
+function showAlertBanner(msg) {
+  const stack = $("#alert-banners");
+  const div = el("div", { class: "panel p-3 text-sm flex items-start gap-2",
+    style: { borderColor: "var(--accent)", background: "rgba(34,211,238,0.08)" } },
+    el("div", { class: "flex-1", text: msg }),
+  );
+  div.appendChild(el("button", { class: "text-slate-400 hover:text-slate-200", text: "✕",
+    onclick: () => div.remove() }));
+  stack.appendChild(div);
+  setTimeout(() => div.remove(), 10000);
+}
+
+function openAlertModal() {
+  const active = layoutManager.activeCell();
+  $("#am-pair-preview").textContent = active ? active.pair : "—";
+  $("#am-type").value = "price_above";
+  $("#am-value").value = "";
+  $("#am-value-row").style.display = "";
+  $("#alert-modal").classList.remove("hidden");
+  $("#alert-modal").classList.add("flex");
+}
+function closeAlertModal() {
+  $("#alert-modal").classList.add("hidden");
+  $("#alert-modal").classList.remove("flex");
+}
+function refreshNotificationPermissionUI() {
+  if (!("Notification" in window)) { $("#alert-perm-state").textContent = "(미지원)"; return; }
+  const p = Notification.permission;
+  $("#alert-perm-state").textContent =
+    p === "granted" ? "허용됨" : p === "denied" ? "거부됨" : "미요청";
+  $("#alert-perm-state").style.color =
+    p === "granted" ? "var(--good)" : p === "denied" ? "var(--bad)" : "var(--text-muted)";
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 전역 컨트롤 wiring + 초기화
+// ═════════════════════════════════════════════════════════════════════════════
+$$(".layout-btn").forEach(b => {
+  b.addEventListener("click", () => layoutManager.setLayout(b.dataset.layout));
+});
 $("#alert-add").addEventListener("click", openAlertModal);
 $("#alert-toggle-list").addEventListener("click", () => {
-  const list = $("#alert-list");
-  list.classList.toggle("hidden");
+  $("#alert-list").classList.toggle("hidden");
 });
 $("#alert-permission").addEventListener("click", async () => {
   if (!("Notification" in window)) return;
@@ -1272,76 +1054,36 @@ $("#alert-permission").addEventListener("click", async () => {
 });
 $("#am-save").addEventListener("click", () => {
   const t = $("#am-type").value;
+  const active = layoutManager.activeCell();
+  if (!active) { alert("활성 셀이 없습니다"); return; }
   if (alertTypeNeedsValue(t)) {
     const v = $("#am-value").value;
-    if (!v || isNaN(Number(v))) {
-      alert("임계값은 숫자여야 합니다");
-      return;
-    }
-    addAlert(t, Number(v));
+    if (!v || isNaN(Number(v))) { alert("임계값은 숫자여야 합니다"); return; }
+    addAlert(t, Number(v), active.pair);
   } else {
-    addAlert(t, 0); // crossover — value 무시
+    addAlert(t, 0, active.pair);
   }
   closeAlertModal();
 });
-
-// type 변경 시 value 입력 표시/숨김.
 $("#am-type").addEventListener("change", () => {
-  const t = $("#am-type").value;
-  $("#am-value-row").style.display = alertTypeNeedsValue(t) ? "" : "none";
+  $("#am-value-row").style.display = alertTypeNeedsValue($("#am-type").value) ? "" : "none";
 });
 
-function refreshAll() {
-  loadHistorical();
-  connectWS();
-}
+window.addEventListener("resize", () => layoutManager.resizeAll());
 
-// ───────── 초기화 ─────────
-// localStorage 복원 — UI 컨트롤 + 활성 indicator 반영. refreshAll 이전에 적용.
-(function restoreSettings() {
-  const s = loadSavedSettings();
-  if (!s) return;
-  // pair — 사전 정의 option 에 있을 때만 (custom pair 보안 차원에서).
-  if (s.pair && Array.from($("#sel-pair").options).some(o => o.value === s.pair)) {
-    currentPair = s.pair;
-    $("#sel-pair").value = s.pair;
-  }
-  // TF
-  if (s.tf && $$(".tf-btn").some(b => b.dataset.tf === s.tf)) {
-    currentTF = s.tf;
-    setActive(".tf-btn", currentTF);
-  }
-  // range
-  if (s.range && $$(".range-btn").some(b => b.dataset.range === s.range)) {
-    currentRange = s.range;
-    setActive(".range-btn", currentRange);
-  }
-  // autoScroll
-  if (typeof s.autoScroll === "boolean") {
-    autoScroll = s.autoScroll;
-    $("#autoscroll").dataset.active = autoScroll ? "true" : "false";
-  }
-  // indicators — 저장된 ID 만 활성. ind-btn 의 data-active 도 반영.
-  // applyIndicator 호출은 refreshAll 의 historical 로드 직후 recomputeAllIndicators
-  // 가 처리하므로 여기선 set + 버튼 상태만.
-  if (Array.isArray(s.indicators)) {
-    const knownIds = new Set($$(".ind-btn").map(b => b.dataset.ind));
-    for (const id of s.indicators) {
-      if (!knownIds.has(id)) continue;
-      indActive.add(id);
-      const btn = $$(".ind-btn").find(b => b.dataset.ind === id);
-      if (btn) btn.dataset.active = "true";
-    }
-  }
-})();
-
-// Alerts 로드 + 권한 상태 표시.
+// 초기화 — 저장된 설정 복원 + layout 적용.
 loadAlerts();
 renderAlertList();
 refreshNotificationPermissionUI();
 
-resizeAllPanes();
-refreshAll();
+(function init() {
+  const s = loadSavedSettings();
+  if (s && s.layout && s.cells) {
+    layoutManager.setLayout(s.layout, s.cells);
+  } else {
+    layoutManager.setLayout("1");
+  }
+})();
 </script>
 
 </body>

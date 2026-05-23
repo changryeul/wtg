@@ -66,6 +66,13 @@ type Config struct {
 	EtcdRoutesPath string // "wtg/routes/" 디폴트
 	EtcdPolicyKey  string // "wtg/policy" 디폴트
 
+	// etcd 클라이언트 TLS — 모두 비어있으면 평문.
+	// routing.New 와 policy.StartEtcdSync 양쪽에 동일 인증서 사용.
+	EtcdTLSCertFile   string
+	EtcdTLSKeyFile    string
+	EtcdTLSCAFile     string
+	EtcdTLSServerName string
+
 	// Broker TLS — broker 측에 TLS listener 가 있어야 사용 가능.
 	// docs/broker-tls.md 참조. 비면 plain TCP (기존 동작).
 	BrokerTLSCertFile string
@@ -165,6 +172,18 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_API_ETCD_POLICY_KEY"); v != "" {
 		cfg.EtcdPolicyKey = v
 	}
+	if v := os.Getenv("WTG_API_ETCD_TLS_CERT"); v != "" {
+		cfg.EtcdTLSCertFile = v
+	}
+	if v := os.Getenv("WTG_API_ETCD_TLS_KEY"); v != "" {
+		cfg.EtcdTLSKeyFile = v
+	}
+	if v := os.Getenv("WTG_API_ETCD_TLS_CA"); v != "" {
+		cfg.EtcdTLSCAFile = v
+	}
+	if v := os.Getenv("WTG_API_ETCD_TLS_SNI"); v != "" {
+		cfg.EtcdTLSServerName = v
+	}
 	if v := os.Getenv("WTG_API_BROKER_TLS_CERT"); v != "" {
 		cfg.BrokerTLSCertFile = v
 	}
@@ -204,6 +223,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "라우팅 룰 etcd endpoints (콤마 구분, 비면 in-memory)")
 	fs.StringVar(&cfg.EtcdRoutesPath, "etcd-prefix", cfg.EtcdRoutesPath, "etcd 키 prefix (default wtg/routes/)")
 	fs.StringVar(&cfg.EtcdPolicyKey, "etcd-policy-key", cfg.EtcdPolicyKey, "etcd 정책 단일 key (default wtg/policy)")
+	fs.StringVar(&cfg.EtcdTLSCertFile, "etcd-tls-cert", cfg.EtcdTLSCertFile, "etcd 클라이언트 cert PEM (mTLS)")
+	fs.StringVar(&cfg.EtcdTLSKeyFile, "etcd-tls-key", cfg.EtcdTLSKeyFile, "etcd 클라이언트 key PEM (mTLS)")
+	fs.StringVar(&cfg.EtcdTLSCAFile, "etcd-tls-ca", cfg.EtcdTLSCAFile, "etcd 서버 검증용 CA bundle")
+	fs.StringVar(&cfg.EtcdTLSServerName, "etcd-tls-sni", cfg.EtcdTLSServerName, "etcd TLS SNI / hostname")
 	fs.StringVar(&cfg.BrokerTLSCertFile, "broker-tls-cert", cfg.BrokerTLSCertFile, "broker TLS 클라이언트 cert PEM")
 	fs.StringVar(&cfg.BrokerTLSKeyFile, "broker-tls-key", cfg.BrokerTLSKeyFile, "broker TLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.BrokerTLSCAFile, "broker-tls-ca", cfg.BrokerTLSCAFile, "broker TLS 서버 검증용 CA bundle")

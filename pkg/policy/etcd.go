@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,7 +39,9 @@ type EtcdSyncOptions struct {
 	DialTimeout time.Duration
 	Username    string
 	Password    string
-	Logger      *slog.Logger
+	// TLS — nil 이면 평문. 호출자가 pkg/tlsutil.LoadClient 로 만들어 넘긴다.
+	TLS    *tls.Config
+	Logger *slog.Logger
 }
 
 // StartEtcdSync 는 etcd 클라이언트를 dial 하고 초기 Get 으로 Engine 을 채운 뒤,
@@ -60,6 +63,7 @@ func StartEtcdSync(ctx context.Context, engine *Engine, opt EtcdSyncOptions) (*E
 		DialTimeout: opt.DialTimeout,
 		Username:    opt.Username,
 		Password:    opt.Password,
+		TLS:         opt.TLS,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("policy: etcd dial: %w", err)

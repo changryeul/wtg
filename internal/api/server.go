@@ -46,6 +46,20 @@ type Server struct {
 // SetPolicyEngine — mci-admin 과 공유 시 외부 주입.
 func (s *Server) SetPolicyEngine(e *policy.Engine) { s.policy = e }
 
+// buildEtcdTLS — cfg.EtcdTLS* → *tls.Config. 모두 비어있으면 nil.
+// routing/policy 양쪽에 동일 인증서로 plumb.
+func (s *Server) buildEtcdTLS() (*tls.Config, error) {
+	if s.cfg.EtcdTLSCertFile == "" && s.cfg.EtcdTLSKeyFile == "" && s.cfg.EtcdTLSCAFile == "" {
+		return nil, nil
+	}
+	return tlsutil.LoadClient(tlsutil.ClientOptions{
+		CertFile:     s.cfg.EtcdTLSCertFile,
+		KeyFile:      s.cfg.EtcdTLSKeyFile,
+		ServerCAFile: s.cfg.EtcdTLSCAFile,
+		ServerName:   s.cfg.EtcdTLSServerName,
+	})
+}
+
 // SetJWT 는 Issuer/Verifier 를 함께 주입한다 (운영 키 페어).
 //
 // 호출하지 않으면 1차 호환 모드 (raw session_id 만 발급) 로 동작.
@@ -124,12 +138,19 @@ func (s *Server) Start(ctx context.Context) error {
 			s.refresh = auth.NewMemoryRefreshStore(auth.MemoryRefreshStoreOptions{})
 		}
 	}
+	// etcd TLS 1회 빌드 → routing/policy 모두 동일 인증서.
+	etcdTLS, err := s.buildEtcdTLS()
+	if err != nil {
+		return fmt.Errorf("api etcd TLS: %w", err)
+	}
+
 	// 라우팅 룰 저장소 — etcd endpoint 가 있으면 EtcdRegistry 로 mci-admin 과 공유,
 	// 없으면 InMemoryRegistry (단일 인스턴스 / dev).
 	if s.routes == nil {
 		reg, err := routing.New(ctx, routing.FactoryOptions{
 			Endpoints: s.cfg.EtcdEndpoints,
 			Prefix:    s.cfg.EtcdRoutesPath,
+			TLS:       etcdTLS,
 			Logger:    s.logger,
 		})
 		if err != nil {
@@ -156,6 +177,7 @@ func (s *Server) Start(ctx context.Context) error {
 		ps, err := policy.StartEtcdSync(ctx, s.policy, policy.EtcdSyncOptions{
 			Endpoints: eps,
 			Key:       s.cfg.EtcdPolicyKey,
+			TLS:       etcdTLS,
 			Logger:    s.logger,
 		})
 		if err != nil {

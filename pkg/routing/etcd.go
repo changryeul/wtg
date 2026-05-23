@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,8 +52,11 @@ type EtcdRegistryOptions struct {
 	// Username/Password — 인증된 etcd 사용 시.
 	Username string
 	Password string
-	// TLS — *tls.Config (nil 이면 plain). pkg/tlsutil.LoadClient 결과 그대로 가능.
-	TLS *clientv3.Config // 직접 Config 를 넘기고 싶을 때.
+	// TLS — *clientv3.Config 통째 override (호환용; 신규 코드는 TLSConfig 사용 권장).
+	TLS *clientv3.Config
+	// TLSConfig — clientv3.Config.TLS 에 직접 적용되는 *tls.Config.
+	// pkg/tlsutil.LoadClient 결과 그대로 넘기면 된다 (nil = 평문).
+	TLSConfig *tls.Config
 	// Logger — 옵셔널.
 	Logger *slog.Logger
 	// Now — 테스트용 시간 주입.
@@ -74,7 +78,12 @@ func NewEtcdRegistry(ctx context.Context, opt EtcdRegistryOptions) (*EtcdRegistr
 		Password:    opt.Password,
 	}
 	if opt.TLS != nil {
+		// 호환 path — 통째 override.
 		cfg = *opt.TLS
+	}
+	if opt.TLSConfig != nil {
+		// 신규 path — *tls.Config 만 주입 (다른 필드는 위에서 세팅된 그대로).
+		cfg.TLS = opt.TLSConfig
 	}
 	if cfg.DialTimeout == 0 {
 		cfg.DialTimeout = 5 * time.Second

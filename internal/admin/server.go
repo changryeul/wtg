@@ -51,6 +51,20 @@ type Server struct {
 // 호출하지 않으면 자동 생성 (단일 인스턴스).
 func (s *Server) SetPolicyEngine(e *policy.Engine) { s.policy = e }
 
+// buildEtcdTLS 는 cfg.EtcdTLS* 필드를 *tls.Config 로 변환한다.
+// 모두 비어있으면 nil 반환 (평문 etcd). routing/policy/공유 client 모두 동일 인증서.
+func (s *Server) buildEtcdTLS() (*tls.Config, error) {
+	if s.cfg.EtcdTLSCertFile == "" && s.cfg.EtcdTLSKeyFile == "" && s.cfg.EtcdTLSCAFile == "" {
+		return nil, nil
+	}
+	return tlsutil.LoadClient(tlsutil.ClientOptions{
+		CertFile:     s.cfg.EtcdTLSCertFile,
+		KeyFile:      s.cfg.EtcdTLSKeyFile,
+		ServerCAFile: s.cfg.EtcdTLSCAFile,
+		ServerName:   s.cfg.EtcdTLSServerName,
+	})
+}
+
 // SetRoutingRegistry 는 외부에서 라우팅 저장소를 주입한다 (테스트 / 운영 시
 // etcd-backed 구현 차환). NewServer 직후 / Start 전에 호출.
 //
@@ -126,12 +140,19 @@ func (s *Server) Start(ctx context.Context) error {
 			s.refresh = auth.NewMemoryRefreshStore(auth.MemoryRefreshStoreOptions{})
 		}
 	}
+	// etcd TLS 한 번만 빌드 — routing/policy/공유 client 모두 동일 인증서 사용.
+	etcdTLS, err := s.buildEtcdTLS()
+	if err != nil {
+		return fmt.Errorf("admin etcd TLS: %w", err)
+	}
+
 	// 라우팅 룰 저장소 — etcd endpoint 가 있으면 EtcdRegistry, 없으면 in-memory.
 	// mci-api 인스턴스들과 룰 동기화는 etcd watch 가 책임.
 	if s.routes == nil {
 		reg, err := routing.New(ctx, routing.FactoryOptions{
 			Endpoints: s.cfg.EtcdEndpoints,
 			Prefix:    s.cfg.EtcdRoutesPath,
+			TLS:       etcdTLS,
 			Logger:    s.logger,
 		})
 		if err != nil {
@@ -175,6 +196,7 @@ func (s *Server) Start(ctx context.Context) error {
 		ps, err := policy.StartEtcdSync(ctx, s.policy, policy.EtcdSyncOptions{
 			Endpoints: eps,
 			Key:       s.cfg.EtcdPolicyKey,
+			TLS:       etcdTLS,
 			Logger:    s.logger,
 		})
 		if err != nil {
@@ -221,19 +243,10 @@ func (s *Server) Start(ctx context.Context) error {
 		clientCfg := clientv3.Config{
 			Endpoints:   eps,
 			DialTimeout: 5 * time.Second,
+			TLS:         etcdTLS, // 위에서 1회 빌드, routing/policy/공유 client 동일 사용.
 		}
-		if s.cfg.EtcdTLSCertFile != "" || s.cfg.EtcdTLSKeyFile != "" || s.cfg.EtcdTLSCAFile != "" {
-			tlsCfg, err := tlsutil.LoadClient(tlsutil.ClientOptions{
-				CertFile:     s.cfg.EtcdTLSCertFile,
-				KeyFile:      s.cfg.EtcdTLSKeyFile,
-				ServerCAFile: s.cfg.EtcdTLSCAFile,
-				ServerName:   s.cfg.EtcdTLSServerName,
-			})
-			if err != nil {
-				return fmt.Errorf("admin etcd TLS 구성: %w", err)
-			}
-			clientCfg.TLS = tlsCfg
-			s.logger.Info("admin etcd TLS 활성",
+		if etcdTLS != nil {
+			s.logger.Info("admin etcd TLS 활성 (routing/policy/shared 동일)",
 				slog.Bool("mtls", s.cfg.EtcdTLSCertFile != ""),
 				slog.String("sni", s.cfg.EtcdTLSServerName),
 			)

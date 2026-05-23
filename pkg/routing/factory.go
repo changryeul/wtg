@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"strings"
 	"time"
@@ -12,7 +13,9 @@ type FactoryOptions struct {
 	// Endpoints 가 비면 InMemoryRegistry 반환 (test/dev/단일 인스턴스).
 	Endpoints string // 콤마 구분 (예: "etcd-0:2379,etcd-1:2379")
 	Prefix    string // etcd key prefix
-	Logger    *slog.Logger
+	// TLS — nil 이면 평문. 호출자가 pkg/tlsutil.LoadClient 로 만들어 넘긴다.
+	TLS    *tls.Config
+	Logger *slog.Logger
 }
 
 // New 는 endpoints 가 채워져 있으면 EtcdRegistry, 비면 InMemoryRegistry 를 만든다.
@@ -28,6 +31,7 @@ func New(ctx context.Context, opt FactoryOptions) (Registry, error) {
 	return NewEtcdRegistry(dialCtx, EtcdRegistryOptions{
 		Endpoints: endpoints,
 		Prefix:    opt.Prefix,
+		TLSConfig: opt.TLS,
 		Logger:    opt.Logger,
 	})
 }

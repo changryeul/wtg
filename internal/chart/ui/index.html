@@ -55,13 +55,23 @@
       <div>
         <label class="text-xs text-slate-400">조건</label>
         <select id="am-type">
-          <option value="price_above">가격 ↑ (이상 돌파 시)</option>
-          <option value="price_below">가격 ↓ (이하 이탈 시)</option>
-          <option value="rsi_above">RSI ↑ (이상 돌파 시) — 일반적으로 70 (과매수)</option>
-          <option value="rsi_below">RSI ↓ (이하 이탈 시) — 일반적으로 30 (과매도)</option>
+          <optgroup label="── 임계값 (값 필요) ──">
+            <option value="price_above">가격 ↑ (이상 돌파 시)</option>
+            <option value="price_below">가격 ↓ (이하 이탈 시)</option>
+            <option value="rsi_above">RSI ↑ (일반적으로 70 — 과매수)</option>
+            <option value="rsi_below">RSI ↓ (일반적으로 30 — 과매도)</option>
+          </optgroup>
+          <optgroup label="── 이동평균 crossover (값 불필요) ──">
+            <option value="price_cross_sma20_up">가격 > SMA(20) 상향돌파</option>
+            <option value="price_cross_sma20_down">가격 < SMA(20) 하향이탈</option>
+            <option value="price_cross_sma50_up">가격 > SMA(50) 상향돌파</option>
+            <option value="price_cross_sma50_down">가격 < SMA(50) 하향이탈</option>
+            <option value="sma_golden_cross_20_50">SMA(20) > SMA(50) Golden Cross</option>
+            <option value="sma_death_cross_20_50">SMA(20) < SMA(50) Death Cross</option>
+          </optgroup>
         </select>
       </div>
-      <div>
+      <div id="am-value-row">
         <label class="text-xs text-slate-400">임계값</label>
         <input id="am-value" type="number" step="any" placeholder="예: 1400.00 (가격) / 70 (RSI)" class="w-full" />
       </div>
@@ -264,14 +274,16 @@ function nextAlertId() {
 }
 
 function addAlert(type, value) {
-  alerts.push({
+  const a = {
     id: nextAlertId(),
     type: type,
     pair: currentPair,
-    value: Number(value),
+    value: alertTypeNeedsValue(type) ? Number(value) : 0,
     enabled: true,
-    lastVal: null,
-  });
+    lastVal: null,  // 임계값 type 용
+    lastDiff: null, // crossover type 용 (signed diff)
+  };
+  alerts.push(a);
   saveAlerts();
   renderAlertList();
 }
@@ -296,7 +308,19 @@ const ALERT_TYPE_LABEL = {
   price_below: "가격 ↓",
   rsi_above:   "RSI ↑",
   rsi_below:   "RSI ↓",
+  price_cross_sma20_up:   "가격 > SMA20",
+  price_cross_sma20_down: "가격 < SMA20",
+  price_cross_sma50_up:   "가격 > SMA50",
+  price_cross_sma50_down: "가격 < SMA50",
+  sma_golden_cross_20_50: "SMA20 > SMA50 (Golden)",
+  sma_death_cross_20_50:  "SMA20 < SMA50 (Death)",
 };
+
+// 임계값 (value) 입력이 필요한 type 인지.
+function alertTypeNeedsValue(t) {
+  return t === "price_above" || t === "price_below" ||
+         t === "rsi_above"   || t === "rsi_below";
+}
 
 function renderAlertList() {
   const list = $("#alert-list");
@@ -312,7 +336,8 @@ function renderAlertList() {
       class: "flex items-center gap-2 py-1 px-2 rounded",
       style: { background: a.enabled ? "rgba(34,211,238,0.06)" : "rgba(100,116,139,0.08)" },
     });
-    // label — pair · type · value (각 span 분리, textContent 만 사용)
+    // label — pair · type [· value (threshold type 만)]
+    const needsValue = alertTypeNeedsValue(a.type);
     const label = el("div", {
       class: "flex-1 font-mono",
       style: a.enabled ? {} : { opacity: "0.5" },
@@ -320,9 +345,11 @@ function renderAlertList() {
       el("span", { class: "text-slate-300", text: a.pair }),
       document.createTextNode(" · "),
       el("span", { class: "text-accent", text: ALERT_TYPE_LABEL[a.type] || a.type }),
-      document.createTextNode(" · "),
-      el("span", { class: "text-slate-200", text: String(a.value) }),
     );
+    if (needsValue) {
+      label.appendChild(document.createTextNode(" · "));
+      label.appendChild(el("span", { class: "text-slate-200", text: String(a.value) }));
+    }
     row.appendChild(label);
 
     row.appendChild(el("button", {
@@ -340,36 +367,96 @@ function renderAlertList() {
 }
 
 // 새 봉 또는 봉 갱신 후 호출 — crossing 평가.
+//
+// 두 가지 분류:
+//   1) 임계값 (price_above/below, rsi_above/below):
+//      a.lastVal vs curr 비교. value 와의 단방향 crossing.
+//   2) crossover (price vs SMA, SMA vs SMA):
+//      a.lastDiff (signed) vs currDiff 부호 전환으로 crossing 검출.
 function evaluateAlerts(candle) {
   if (alerts.length === 0) return;
-  // 매번 RSI 계산이 부담될 수 있어 lazy: 필요한 alert 가 있을 때만.
-  let rsi = null;
-  if (alerts.some(a => a.enabled && a.pair === currentPair && a.type.startsWith("rsi_"))) {
+  const active = alerts.filter(a => a.enabled && a.pair === currentPair);
+  if (active.length === 0) return;
+
+  // 필요한 값만 lazy compute.
+  const needRSI   = active.some(a => a.type.startsWith("rsi_"));
+  const needSMA20 = active.some(a => a.type.includes("sma20") || a.type.includes("_20_"));
+  const needSMA50 = active.some(a => a.type.includes("sma50") || a.type.includes("_50_"));
+
+  let rsi = null, sma20 = null, sma50 = null;
+  if (needRSI) {
     const r = calcRSI(candleData, 14);
     if (r.length > 0) rsi = r[r.length - 1].value;
   }
+  if (needSMA20) {
+    const s = calcSMA(candleData, 20);
+    if (s.length > 0) sma20 = s[s.length - 1].value;
+  }
+  if (needSMA50) {
+    const s = calcSMA(candleData, 50);
+    if (s.length > 0) sma50 = s[s.length - 1].value;
+  }
+  const close = candle.close;
+
   for (const a of alerts) {
-    if (!a.enabled) continue;
-    if (a.pair !== currentPair) continue;
-
-    let curr = null;
-    if (a.type === "price_above" || a.type === "price_below") curr = candle.close;
-    else if (a.type === "rsi_above" || a.type === "rsi_below") curr = rsi;
-    if (curr == null) continue;
-
-    const prev = a.lastVal;
-    a.lastVal = curr;
-    if (prev == null) continue; // 첫 평가 — 비교 skip.
+    if (!a.enabled || a.pair !== currentPair) continue;
 
     let crossed = false;
-    if (a.type === "price_above" || a.type === "rsi_above") {
-      crossed = prev <= a.value && curr > a.value;
-    } else {
-      crossed = prev >= a.value && curr < a.value;
+    let triggerVal = null;
+
+    switch (a.type) {
+      case "price_above": case "price_below":
+      case "rsi_above":   case "rsi_below": {
+        let curr = null;
+        if (a.type === "price_above" || a.type === "price_below") curr = close;
+        else curr = rsi;
+        if (curr == null) break;
+        const prev = a.lastVal;
+        a.lastVal = curr;
+        if (prev == null) break;
+        if (a.type === "price_above" || a.type === "rsi_above") {
+          crossed = prev <= a.value && curr > a.value;
+        } else {
+          crossed = prev >= a.value && curr < a.value;
+        }
+        triggerVal = curr;
+        break;
+      }
+      case "price_cross_sma20_up":   case "price_cross_sma20_down":
+      case "price_cross_sma50_up":   case "price_cross_sma50_down": {
+        const smaVal = a.type.includes("sma20") ? sma20 : sma50;
+        if (smaVal == null) break;
+        const currDiff = close - smaVal;
+        const prevDiff = a.lastDiff;
+        a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type.endsWith("_up")) {
+          crossed = prevDiff <= 0 && currDiff > 0;
+        } else {
+          crossed = prevDiff >= 0 && currDiff < 0;
+        }
+        triggerVal = close;
+        break;
+      }
+      case "sma_golden_cross_20_50": case "sma_death_cross_20_50": {
+        if (sma20 == null || sma50 == null) break;
+        const currDiff = sma20 - sma50;
+        const prevDiff = a.lastDiff;
+        a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type === "sma_golden_cross_20_50") {
+          crossed = prevDiff <= 0 && currDiff > 0;
+        } else {
+          crossed = prevDiff >= 0 && currDiff < 0;
+        }
+        triggerVal = sma20;
+        break;
+      }
     }
+
     if (crossed) {
-      fireAlert(a, curr);
-      a.enabled = false; // one-shot.
+      fireAlert(a, triggerVal == null ? 0 : triggerVal);
+      a.enabled = false;
       saveAlerts();
       renderAlertList();
     }
@@ -377,8 +464,14 @@ function evaluateAlerts(candle) {
 }
 
 function fireAlert(a, val) {
-  const msg = (a.pair) + " " + (ALERT_TYPE_LABEL[a.type] || a.type) + " " +
-    String(a.value) + " 도달 (현재: " + val.toFixed(5) + ")";
+  const label = ALERT_TYPE_LABEL[a.type] || a.type;
+  let msg;
+  if (alertTypeNeedsValue(a.type)) {
+    msg = a.pair + " " + label + " " + String(a.value) +
+          " 도달 (현재: " + val.toFixed(5) + ")";
+  } else {
+    msg = a.pair + " " + label + " 발생 (현재: " + val.toFixed(5) + ")";
+  }
   if ("Notification" in window && Notification.permission === "granted") {
     try { new Notification("WTG Chart", { body: msg }); } catch (_) {}
   }
@@ -410,6 +503,7 @@ function openAlertModal() {
   $("#am-pair-preview").textContent = currentPair;
   $("#am-type").value = "price_above";
   $("#am-value").value = "";
+  $("#am-value-row").style.display = ""; // price_above 는 value 필요.
   $("#alert-modal").classList.remove("hidden");
   $("#alert-modal").classList.add("flex");
 }
@@ -1085,13 +1179,23 @@ $("#alert-permission").addEventListener("click", async () => {
 });
 $("#am-save").addEventListener("click", () => {
   const t = $("#am-type").value;
-  const v = $("#am-value").value;
-  if (!v || isNaN(Number(v))) {
-    alert("임계값은 숫자여야 합니다");
-    return;
+  if (alertTypeNeedsValue(t)) {
+    const v = $("#am-value").value;
+    if (!v || isNaN(Number(v))) {
+      alert("임계값은 숫자여야 합니다");
+      return;
+    }
+    addAlert(t, Number(v));
+  } else {
+    addAlert(t, 0); // crossover — value 무시
   }
-  addAlert(t, Number(v));
   closeAlertModal();
+});
+
+// type 변경 시 value 입력 표시/숨김.
+$("#am-type").addEventListener("change", () => {
+  const t = $("#am-type").value;
+  $("#am-value-row").style.display = alertTypeNeedsValue(t) ? "" : "none";
 });
 
 function refreshAll() {

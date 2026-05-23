@@ -79,6 +79,12 @@ type Config struct {
 	EtcdRoutesPath string
 	EtcdPolicyKey  string
 
+	// 시세 도메인 자원 etcd key — mci-price 의 watcher 와 동일한 컨벤션.
+	// 비어있으면 각 default 사용 (admin_symbols/admin_pricing/admin_profiles 참조).
+	EtcdSymbolsPrefix  string // default "wtg/quote/symbols/"
+	EtcdPricingKey     string // default "wtg/pricing/table"
+	EtcdProfilesPrefix string // default "wtg/price/profiles/"
+
 	// UpstreamAPIURL — mci-api 의 base URL.
 	// "" 이면 tx-test reverse proxy 가 비활성. WTG Control UI 의 "Tx echo" preset 이
 	// 이 값을 통해 매매 transaction round-trip 을 시각적으로 검증한다.
@@ -188,6 +194,15 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_ADMIN_ETCD_POLICY_KEY"); v != "" {
 		cfg.EtcdPolicyKey = v
 	}
+	if v := os.Getenv("WTG_ADMIN_ETCD_SYMBOLS_PREFIX"); v != "" {
+		cfg.EtcdSymbolsPrefix = v
+	}
+	if v := os.Getenv("WTG_ADMIN_ETCD_PRICING_KEY"); v != "" {
+		cfg.EtcdPricingKey = v
+	}
+	if v := os.Getenv("WTG_ADMIN_ETCD_PROFILES_PREFIX"); v != "" {
+		cfg.EtcdProfilesPrefix = v
+	}
 	if v := os.Getenv("WTG_ADMIN_BROKER_TLS_CERT"); v != "" {
 		cfg.BrokerTLSCertFile = v
 	}
@@ -234,6 +249,9 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "라우팅 룰 etcd endpoints (콤마 구분, 비면 in-memory)")
 	fs.StringVar(&cfg.EtcdRoutesPath, "etcd-prefix", cfg.EtcdRoutesPath, "etcd 키 prefix (default wtg/routes/)")
 	fs.StringVar(&cfg.EtcdPolicyKey, "etcd-policy-key", cfg.EtcdPolicyKey, "etcd 정책 단일 key (default wtg/policy)")
+	fs.StringVar(&cfg.EtcdSymbolsPrefix, "etcd-symbols-prefix", cfg.EtcdSymbolsPrefix, "etcd 통화쌍 prefix (default wtg/quote/symbols/)")
+	fs.StringVar(&cfg.EtcdPricingKey, "etcd-pricing-key", cfg.EtcdPricingKey, "etcd PricingTable 단일 key (default wtg/pricing/table)")
+	fs.StringVar(&cfg.EtcdProfilesPrefix, "etcd-profiles-prefix", cfg.EtcdProfilesPrefix, "etcd 활성 Profile prefix (default wtg/price/profiles/)")
 	fs.StringVar(&cfg.BrokerTLSCertFile, "broker-tls-cert", cfg.BrokerTLSCertFile, "broker TLS 클라이언트 cert PEM")
 	fs.StringVar(&cfg.BrokerTLSKeyFile, "broker-tls-key", cfg.BrokerTLSKeyFile, "broker TLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.BrokerTLSCAFile, "broker-tls-ca", cfg.BrokerTLSCAFile, "broker TLS 서버 검증용 CA bundle")

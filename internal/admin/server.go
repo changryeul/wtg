@@ -12,6 +12,8 @@ import (
 
 	apihandlers "github.com/winwaysystems/wtg/internal/api/handlers"
 	"github.com/winwaysystems/wtg/internal/api/middleware"
+	clientv3 "go.etcd.io/etcd/client/v3"
+
 	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
@@ -39,6 +41,10 @@ type Server struct {
 	hub         *Hub
 	tlsReloader *tlsutil.Reloader
 	http        *http.Server
+
+	// 신규 자원 (symbols/pricing/profiles) 용 공유 etcd 클라이언트.
+	// EtcdEndpoints 가 비어있으면 nil — 핸들러는 503 반환.
+	etcdShared *clientv3.Client
 }
 
 // SetPolicyEngine — 외부에서 정책 엔진 주입 (mci-api 와 공유 가능).
@@ -141,6 +147,10 @@ func (s *Server) Start(ctx context.Context) error {
 		routing.SeedDevRoutesExPolicy(s.routes, s.logger, s.cfg.DevRoutesFile, policy)
 		// hot reload — cfg 파일 mtime polling. 파일 변경 시 재시드.
 		routing.WatchRoutesFilePolicy(ctx, s.routes, s.logger, s.cfg.DevRoutesFile, 2*time.Second, policy)
+		// File-backed wrap — UI 에서 등록한 alias 가 file 에 자동 write-back.
+		// Seed 끝난 후 wrap → 시드 자체는 file write 노이즈 없음.
+		// DevRoutesFile 빈 값이면 wrap 은 no-op (그대로 in-memory only).
+		s.routes = routing.WrapWithFileWriteback(s.routes, s.cfg.DevRoutesFile, s.logger)
 	}
 	// Audit ring buffer — 최근 admin 액션 200개 (UI 표시용).
 	if s.audit == nil {
@@ -202,6 +212,43 @@ func (s *Server) Start(ctx context.Context) error {
 		Hub:    s.hub,
 	}
 
+	// 시세 도메인 자원 (symbols/pricing/profiles) — etcd 직접 KV.
+	// EtcdEndpoints 가 비어있으면 dial 안 함 (핸들러는 503).
+	var symbolsDeps *SymbolsDeps
+	var pricingDeps *PricingDeps
+	var profilesDeps *ProfilesDeps
+	if eps := policy.SplitEndpoints(s.cfg.EtcdEndpoints); len(eps) > 0 && s.etcdShared == nil {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   eps,
+			DialTimeout: 5 * time.Second,
+		})
+		if err != nil {
+			return fmt.Errorf("admin shared etcd dial: %w", err)
+		}
+		s.etcdShared = cli
+	}
+	symbolsDeps = &SymbolsDeps{
+		Cli:    s.etcdShared,
+		Prefix: s.cfg.EtcdSymbolsPrefix,
+		Logger: s.logger,
+		Audit:  s.audit,
+		Hub:    s.hub,
+	}
+	pricingDeps = &PricingDeps{
+		Cli:    s.etcdShared,
+		Key:    s.cfg.EtcdPricingKey,
+		Logger: s.logger,
+		Audit:  s.audit,
+		Hub:    s.hub,
+	}
+	profilesDeps = &ProfilesDeps{
+		Cli:    s.etcdShared,
+		Prefix: s.cfg.EtcdProfilesPrefix,
+		Logger: s.logger,
+		Audit:  s.audit,
+		Hub:    s.hub,
+	}
+
 	// svc I/O 명세 — 부팅 시 헤더 디렉터리 일괄 인덱싱. cfg 가 비어있으면 빈
 	// registry — UI 가 안내 메시지만 표시.
 	if s.svcio == nil {
@@ -245,6 +292,20 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("DELETE /v1/admin/routes/{alias}", DeleteRoute(routeDeps))
 	mux.HandleFunc("POST /v1/admin/routes/{alias}/active", SetRouteActive(routeDeps))
 	mux.HandleFunc("GET /v1/admin/audit", AuditList(routeDeps))
+
+	// 시세 도메인 — etcd 직접 KV CRUD (mci-price 가 watch 로 즉시 반영).
+	mux.HandleFunc("GET /v1/admin/symbols", ListSymbols(symbolsDeps))
+	mux.HandleFunc("GET /v1/admin/symbols/{symbol}", GetSymbol(symbolsDeps))
+	mux.HandleFunc("PUT /v1/admin/symbols/{symbol}", PutSymbol(symbolsDeps))
+	mux.HandleFunc("DELETE /v1/admin/symbols/{symbol}", DeleteSymbol(symbolsDeps))
+
+	mux.HandleFunc("GET /v1/admin/pricing/table", GetPricingTable(pricingDeps))
+	mux.HandleFunc("PUT /v1/admin/pricing/table", PutPricingTable(pricingDeps))
+
+	mux.HandleFunc("GET /v1/admin/profiles", ListProfiles(profilesDeps))
+	mux.HandleFunc("GET /v1/admin/profiles/{key}", GetProfile(profilesDeps))
+	mux.HandleFunc("PUT /v1/admin/profiles/{key}", PutProfile(profilesDeps))
+	mux.HandleFunc("DELETE /v1/admin/profiles/{key}", DeleteProfile(profilesDeps))
 	// 정책 엔진 — kill switch / 정비 창 / 차단 심볼·라우팅키.
 	mux.HandleFunc("GET /v1/admin/policy", GetPolicy(policyDeps))
 	mux.HandleFunc("POST /v1/admin/policy/kill-switch", SetKillSwitch(policyDeps))
@@ -260,6 +321,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// mci 의 정책/감사 layer 통과. legacy native client 가 보낼 wire 와 동일.
 	wireDeps := &TestWireDeps{
 		Registry:    s.svcio,
+		Routes:      s.routes,
 		MQ:          mqCaller,
 		Policy:      s.policy,
 		Audit:       s.audit,
@@ -405,6 +467,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.policySync != nil {
 		if err := s.policySync.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	if s.etcdShared != nil {
+		if err := s.etcdShared.Close(); err != nil && first == nil {
 			first = err
 		}
 	}

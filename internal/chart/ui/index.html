@@ -75,6 +75,12 @@
             <option value="macd_cross_zero_up">MACD > 0 상향돌파 (모멘텀 +)</option>
             <option value="macd_cross_zero_down">MACD < 0 하향이탈 (모멘텀 −)</option>
           </optgroup>
+          <optgroup label="── Stochastic (값 불필요) ──">
+            <option value="stoch_cross_d_up">%K > %D 상향돌파 (강세)</option>
+            <option value="stoch_cross_d_down">%K < %D 하향이탈 (약세)</option>
+            <option value="stoch_overbought">%K > 80 진입 (과매수 영역)</option>
+            <option value="stoch_oversold">%K < 20 진입 (과매도 영역)</option>
+          </optgroup>
         </select>
       </div>
       <div id="am-value-row">
@@ -324,6 +330,10 @@ const ALERT_TYPE_LABEL = {
   macd_cross_signal_down: "MACD < Signal",
   macd_cross_zero_up:     "MACD > 0",
   macd_cross_zero_down:   "MACD < 0",
+  stoch_cross_d_up:       "%K > %D",
+  stoch_cross_d_down:     "%K < %D",
+  stoch_overbought:       "%K > 80 (과매수)",
+  stoch_oversold:         "%K < 20 (과매도)",
 };
 
 // 임계값 (value) 입력이 필요한 type 인지.
@@ -393,9 +403,11 @@ function evaluateAlerts(candle) {
   const needSMA20 = active.some(a => a.type.includes("sma20") || a.type.includes("_20_"));
   const needSMA50 = active.some(a => a.type.includes("sma50") || a.type.includes("_50_"));
   const needMACD  = active.some(a => a.type.startsWith("macd_"));
+  const needStoch = active.some(a => a.type.startsWith("stoch_"));
 
   let rsi = null, sma20 = null, sma50 = null;
   let macdLast = null, signalLast = null;
+  let stochK = null, stochD = null;
   if (needRSI) {
     const r = calcRSI(candleData, 14);
     if (r.length > 0) rsi = r[r.length - 1].value;
@@ -412,6 +424,11 @@ function evaluateAlerts(candle) {
     const m = calcMACD(candleData, 12, 26, 9);
     if (m.macd.length > 0)   macdLast   = m.macd[m.macd.length - 1].value;
     if (m.signal.length > 0) signalLast = m.signal[m.signal.length - 1].value;
+  }
+  if (needStoch) {
+    const s = calcStoch(candleData, 14, 3);
+    if (s.k.length > 0) stochK = s.k[s.k.length - 1].value;
+    if (s.d.length > 0) stochD = s.d[s.d.length - 1].value;
   }
   const close = candle.close;
 
@@ -496,6 +513,36 @@ function evaluateAlerts(candle) {
           crossed = prevDiff >= 0 && currDiff < 0;
         }
         triggerVal = macdLast;
+        break;
+      }
+      case "stoch_cross_d_up": case "stoch_cross_d_down": {
+        if (stochK == null || stochD == null) break;
+        const currDiff = stochK - stochD;
+        const prevDiff = a.lastDiff;
+        a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type === "stoch_cross_d_up") {
+          crossed = prevDiff <= 0 && currDiff > 0;
+        } else {
+          crossed = prevDiff >= 0 && currDiff < 0;
+        }
+        triggerVal = stochK;
+        break;
+      }
+      case "stoch_overbought": case "stoch_oversold": {
+        // %K 의 zone (80/20) crossing — 고정 임계값. value 사용 안 함.
+        if (stochK == null) break;
+        const threshold = (a.type === "stoch_overbought") ? 80 : 20;
+        const curr = stochK;
+        const prev = a.lastVal;
+        a.lastVal = curr;
+        if (prev == null) break;
+        if (a.type === "stoch_overbought") {
+          crossed = prev <= threshold && curr > threshold;
+        } else {
+          crossed = prev >= threshold && curr < threshold;
+        }
+        triggerVal = curr;
         break;
       }
     }

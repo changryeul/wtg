@@ -252,6 +252,7 @@
         <button data-page="symbols"    class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">통화쌍</button>
         <button data-page="pricing"    class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">마진 테이블</button>
         <button data-page="profiles"   class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">프로파일</button>
+        <button data-page="users"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">사용자 프로파일</button>
         <button data-page="svcio"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">서비스 명세</button>
         <button data-page="audit"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">감사 로그</button>
         <button data-page="guide"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">운영 가이드</button>
@@ -904,6 +905,72 @@
             </table>
             <div id="profiles-empty" class="hidden p-8 text-center text-slate-500">
               아직 등록된 프로파일이 없습니다. <button class="text-accent-400 hover:text-accent-500" id="profiles-add2">신규 등록</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 사용자 프로파일 (users) — auth.UserProfile CRUD via etcd → mci-api watch -->
+        <div id="page-users" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">사용자 프로파일</h3>
+              <p class="text-sm text-slate-400">로그인 시점에 usid 로 조회되어 Session.Profile (Site / Tier) 의 권위 출처로 사용됩니다. 클라이언트가 body 로 보낸 값은 무시 — 여기서 등록한 값만 신뢰. 미등록 사용자는 quote 매칭이 안 되어 raw 시세만 수신.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="users-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 새로고침</button>
+              <button id="users-add" class="px-3 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">+ 신규</button>
+            </div>
+          </div>
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                <tr class="border-b border-ink-700/60">
+                  <th class="text-left px-4 py-3 font-medium">Usid</th>
+                  <th class="text-left px-4 py-3 font-medium">Site</th>
+                  <th class="text-left px-4 py-3 font-medium">Tier</th>
+                  <th class="text-right px-4 py-3 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody"></tbody>
+            </table>
+            <div id="users-empty" class="hidden p-8 text-center text-slate-500">
+              아직 등록된 사용자 프로파일이 없습니다. <button class="text-accent-400 hover:text-accent-500" id="users-add2">신규 등록</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 사용자 프로파일 모달 -->
+        <div id="user-modal" class="fixed inset-0 bg-ink-950/80 z-50 hidden items-center justify-center p-4" style="backdrop-filter: blur(4px);">
+          <div class="bg-ink-850 border border-ink-700 rounded-2xl shadow-2xl max-w-md w-full p-5 space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 id="user-modal-title" class="text-base font-semibold">신규 사용자 프로파일</h4>
+              <button class="text-slate-400 hover:text-slate-200" onclick="closeUserModal()">✕</button>
+            </div>
+            <div class="space-y-2 text-sm">
+              <div>
+                <label class="text-xs text-slate-400">Usid (사용자 ID, cookie_t.usid 와 동일)</label>
+                <input id="up-usid" placeholder="trader01"
+                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </div>
+              <div>
+                <label class="text-xs text-slate-400">Site</label>
+                <select id="up-site" class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
+                  <option value="BRANCH">BRANCH (영업점)</option>
+                  <option value="HQ">HQ (본점)</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs text-slate-400">Tier</label>
+                <select id="up-tier" class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
+                  <option value="VIP">VIP</option>
+                  <option value="GOLD">GOLD</option>
+                  <option value="STD">STD</option>
+                </select>
+              </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+              <button onclick="closeUserModal()" class="px-4 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">취소</button>
+              <button id="up-save" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm">저장</button>
             </div>
           </div>
         </div>
@@ -1572,6 +1639,7 @@ function goPage(name) {
                    broker: "브로커 명령",
                    tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
                    symbols: "통화쌍", pricing: "마진 테이블", profiles: "프로파일",
+                   users: "사용자 프로파일",
                    svcio: "서비스 명세", audit: "감사 로그", guide: "운영 가이드" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
@@ -1583,6 +1651,7 @@ function goPage(name) {
   if (name === "symbols")   loadSymbols();
   if (name === "pricing")   loadPricing();
   if (name === "profiles")  loadProfiles();
+  if (name === "users")     loadUserProfiles();
   if (name === "svcio")     initSvcIO();
   if (name !== "audit")     stopAuditPoller();
   if (name === "audit")     initAudit();
@@ -2265,6 +2334,85 @@ async function saveProfile() {
     toast(key + " 저장됨");
     closeProfileModal();
     loadProfiles();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+// ───────── User Profiles (사용자 프로파일 — Site/Tier 권위 출처) ─────────
+let userProfilesCache = [];
+async function loadUserProfiles() {
+  try {
+    const r = await api("/v1/admin/user-profiles");
+    userProfilesCache = r.profiles || [];
+    renderUserProfiles();
+  } catch (e) {
+    toast("사용자 프로파일 로드 실패: " + e.message, "err");
+  }
+}
+function renderUserProfiles() {
+  const tb = $("#users-tbody");
+  tb.replaceChildren();
+  if (!userProfilesCache.length) {
+    $("#users-empty").classList.remove("hidden");
+    return;
+  }
+  $("#users-empty").classList.add("hidden");
+  for (const u of userProfilesCache) {
+    const editBtn = h("button", {
+      class: "text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700",
+      text: "수정",
+    });
+    editBtn.onclick = () => openUserProfileModal(u);
+    const delBtn = h("button", {
+      class: "text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-bad/20 hover:text-bad",
+      text: "삭제",
+    });
+    delBtn.onclick = async () => {
+      if (!confirm(u.usid + " 사용자 프로파일을 삭제할까요?")) return;
+      try {
+        await api("/v1/admin/user-profiles/" + encodeURIComponent(u.usid), { method: "DELETE" });
+        toast(u.usid + " 삭제됨");
+        loadUserProfiles();
+      } catch (e) { toast(e.message, "err"); }
+    };
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+      h("td", { class: "px-4 py-3 font-mono text-accent-400", text: u.usid }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: u.site || "" }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: u.tier || "" }),
+      h("td", { class: "px-4 py-3 text-right space-x-1" }, editBtn, delBtn),
+    );
+    tb.appendChild(tr);
+  }
+}
+function openUserProfileModal(entry) {
+  const isEdit = !!entry;
+  $("#user-modal-title").textContent = isEdit ? ("수정 — " + entry.usid) : "신규 사용자 프로파일";
+  $("#up-usid").value = entry?.usid || "";
+  $("#up-usid").disabled = !!isEdit; // 수정 시 key 변경 금지
+  $("#up-site").value = entry?.site || "BRANCH";
+  $("#up-tier").value = entry?.tier || "STD";
+  $("#user-modal").classList.remove("hidden");
+  $("#user-modal").classList.add("flex");
+}
+function closeUserModal() {
+  $("#user-modal").classList.add("hidden");
+  $("#user-modal").classList.remove("flex");
+}
+async function saveUserProfile() {
+  const usid = $("#up-usid").value.trim();
+  const site = $("#up-site").value;
+  const tier = $("#up-tier").value;
+  if (!usid || !site || !tier) {
+    toast("usid / site / tier 모두 필요", "err");
+    return;
+  }
+  try {
+    await api("/v1/admin/user-profiles/" + encodeURIComponent(usid), {
+      method: "PUT",
+      body: JSON.stringify({ site: site, tier: tier }),
+    });
+    toast(usid + " 저장됨");
+    closeUserModal();
+    loadUserProfiles();
   } catch (e) { toast(e.message, "err"); }
 }
 
@@ -4567,6 +4715,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const el = $(sel);
     if (el) el.onchange = updateProfileKeyPreview;
   });
+
+  // user-profiles (사용자 프로파일)
+  $("#users-refresh").onclick = loadUserProfiles;
+  $("#users-add").onclick = () => openUserProfileModal(null);
+  $("#users-add2").onclick = () => openUserProfileModal(null);
+  $("#up-save").onclick = saveUserProfile;
   $("#route-form").onsubmit = async (e) => {
     e.preventDefault();
     const alias = $("#rf-alias").value.trim();

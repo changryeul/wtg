@@ -183,10 +183,13 @@ const candleSeries = mainChart.addCandlestickSeries({
   wickUpColor: "#10b981", wickDownColor: "#ef4444",
 });
 
-// panes: id → { chart, el }. 메인은 별도 보관.
+// panes: id → { chart, el, primary }. primary 는 crosshair sync 용 대표 series.
 const panes = {};
-// timeScale 동기화 — 무한루프 방지 가드.
+// 메인 차트의 primary series — crosshair sync 의 setCrosshairPosition 인자로 사용.
+let mainPrimary = candleSeries;
+// 동기화 무한루프 방지 가드 — timeScale, crosshair 각각.
 let syncingRange = false;
+let syncingCrosshair = false;
 
 function attachSync(chart) {
   chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
@@ -205,6 +208,56 @@ function attachSync(chart) {
 }
 attachSync(mainChart);
 
+// 모든 chart 인스턴스 enumerate — crosshair sync 에서 사용.
+function allCharts() {
+  const out = [{ chart: mainChart, primary: mainPrimary }];
+  for (const id in panes) {
+    out.push({ chart: panes[id].chart, primary: panes[id].primary });
+  }
+  return out;
+}
+
+// crosshair 동기화 — 한 차트에서 마우스 이동 / 떠남 이벤트를 다른 차트로 전파.
+//
+// lightweight-charts v4 의 setCrosshairPosition(price, time, series) 는 (vertical line
+// at time) + (horizontal line at price) 를 그린다. 우리는 시간축만 sync 하면 충분
+// 하지만 API 는 price 도 받으므로 series 의 해당 time 값을 lookup 해서 채운다.
+//
+// 무한루프 가드: 한 차트의 setCrosshairPosition 호출이 다른 차트의 crosshair move
+// 이벤트를 다시 트리거하지 않도록 syncingCrosshair flag 사용.
+function attachCrosshairSync(chart) {
+  chart.subscribeCrosshairMove((param) => {
+    if (syncingCrosshair) return;
+    syncingCrosshair = true;
+    try {
+      if (!param || !param.time) {
+        // 커서가 차트 밖으로 — 다른 차트의 crosshair 도 모두 clear.
+        for (const c of allCharts()) {
+          if (c.chart !== chart) c.chart.clearCrosshairPosition();
+        }
+        return;
+      }
+      // param.time 을 다른 차트에 propagate.
+      for (const c of allCharts()) {
+        if (c.chart === chart) continue;
+        if (!c.primary) continue;
+        // price 는 해당 series 의 param.time 값을 사용 — 없으면 0.
+        let price = 0;
+        const data = param.seriesData ? param.seriesData.get(c.primary) : null;
+        if (data && typeof data.value === "number") {
+          price = data.value;
+        } else if (data && typeof data.close === "number") {
+          price = data.close;
+        }
+        c.chart.setCrosshairPosition(price, param.time, c.primary);
+      }
+    } finally {
+      syncingCrosshair = false;
+    }
+  });
+}
+attachCrosshairSync(mainChart);
+
 function ensurePane(id) {
   if (panes[id]) return panes[id];
   const el = document.createElement("div");
@@ -221,9 +274,10 @@ function ensurePane(id) {
     handleScale:  { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
   });
   attachSync(c);
+  attachCrosshairSync(c);
   // 윈도우 크기에 맞춤.
   c.applyOptions({ width: $("#chart-main").clientWidth });
-  panes[id] = { chart: c, el };
+  panes[id] = { chart: c, el, primary: null };
   return panes[id];
 }
 
@@ -482,6 +536,7 @@ function applyIndicator(id) {
         color: IND_COLORS.rsi14, lineWidth: 1, priceLineVisible: false,
       });
       s.setData(calcRSI(candleData, 14));
+      p.primary = s;
       indSeries[id] = { series: [s], pane: "rsi14" };
       break;
     }
@@ -494,6 +549,7 @@ function applyIndicator(id) {
       m.setData(calc.macd);
       sg.setData(calc.signal);
       h.setData(calc.hist);
+      p.primary = m;
       indSeries[id] = { series: [m, sg, h], pane: "macd" };
       break;
     }
@@ -504,6 +560,7 @@ function applyIndicator(id) {
       const c = calcStoch(candleData, 14, 3);
       kSer.setData(c.k);
       dSer.setData(c.d);
+      p.primary = kSer;
       indSeries[id] = { series: [kSer, dSer], pane: "stoch" };
       break;
     }
@@ -514,6 +571,7 @@ function applyIndicator(id) {
         priceFormat: { type: "volume" },
       });
       s.setData(calcVolume(candleData));
+      p.primary = s;
       indSeries[id] = { series: [s], pane: "vol" };
       break;
     }

@@ -69,6 +69,12 @@
             <option value="sma_golden_cross_20_50">SMA(20) > SMA(50) Golden Cross</option>
             <option value="sma_death_cross_20_50">SMA(20) < SMA(50) Death Cross</option>
           </optgroup>
+          <optgroup label="── MACD crossover (값 불필요) ──">
+            <option value="macd_cross_signal_up">MACD > Signal 상향돌파 (강세)</option>
+            <option value="macd_cross_signal_down">MACD < Signal 하향이탈 (약세)</option>
+            <option value="macd_cross_zero_up">MACD > 0 상향돌파 (모멘텀 +)</option>
+            <option value="macd_cross_zero_down">MACD < 0 하향이탈 (모멘텀 −)</option>
+          </optgroup>
         </select>
       </div>
       <div id="am-value-row">
@@ -314,6 +320,10 @@ const ALERT_TYPE_LABEL = {
   price_cross_sma50_down: "가격 < SMA50",
   sma_golden_cross_20_50: "SMA20 > SMA50 (Golden)",
   sma_death_cross_20_50:  "SMA20 < SMA50 (Death)",
+  macd_cross_signal_up:   "MACD > Signal",
+  macd_cross_signal_down: "MACD < Signal",
+  macd_cross_zero_up:     "MACD > 0",
+  macd_cross_zero_down:   "MACD < 0",
 };
 
 // 임계값 (value) 입력이 필요한 type 인지.
@@ -382,8 +392,10 @@ function evaluateAlerts(candle) {
   const needRSI   = active.some(a => a.type.startsWith("rsi_"));
   const needSMA20 = active.some(a => a.type.includes("sma20") || a.type.includes("_20_"));
   const needSMA50 = active.some(a => a.type.includes("sma50") || a.type.includes("_50_"));
+  const needMACD  = active.some(a => a.type.startsWith("macd_"));
 
   let rsi = null, sma20 = null, sma50 = null;
+  let macdLast = null, signalLast = null;
   if (needRSI) {
     const r = calcRSI(candleData, 14);
     if (r.length > 0) rsi = r[r.length - 1].value;
@@ -395,6 +407,11 @@ function evaluateAlerts(candle) {
   if (needSMA50) {
     const s = calcSMA(candleData, 50);
     if (s.length > 0) sma50 = s[s.length - 1].value;
+  }
+  if (needMACD) {
+    const m = calcMACD(candleData, 12, 26, 9);
+    if (m.macd.length > 0)   macdLast   = m.macd[m.macd.length - 1].value;
+    if (m.signal.length > 0) signalLast = m.signal[m.signal.length - 1].value;
   }
   const close = candle.close;
 
@@ -450,6 +467,35 @@ function evaluateAlerts(candle) {
           crossed = prevDiff >= 0 && currDiff < 0;
         }
         triggerVal = sma20;
+        break;
+      }
+      case "macd_cross_signal_up": case "macd_cross_signal_down": {
+        if (macdLast == null || signalLast == null) break;
+        const currDiff = macdLast - signalLast;
+        const prevDiff = a.lastDiff;
+        a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type === "macd_cross_signal_up") {
+          crossed = prevDiff <= 0 && currDiff > 0;
+        } else {
+          crossed = prevDiff >= 0 && currDiff < 0;
+        }
+        triggerVal = macdLast;
+        break;
+      }
+      case "macd_cross_zero_up": case "macd_cross_zero_down": {
+        if (macdLast == null) break;
+        // zero baseline — diff 가 곧 MACD 값 자체.
+        const currDiff = macdLast;
+        const prevDiff = a.lastDiff;
+        a.lastDiff = currDiff;
+        if (prevDiff == null) break;
+        if (a.type === "macd_cross_zero_up") {
+          crossed = prevDiff <= 0 && currDiff > 0;
+        } else {
+          crossed = prevDiff >= 0 && currDiff < 0;
+        }
+        triggerVal = macdLast;
         break;
       }
     }

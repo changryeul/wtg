@@ -108,6 +108,10 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	mux.Handle("GET /v1/chart", s.wrapMetrics(handleChart(s.repo, s.cfg.QueryMaxRows, s.logger)))
 	mux.HandleFunc("GET /v1/chart/stream", s.handleChartStream)
 
+	// 챠트 SPA — embed UI. /v1/* 외의 모든 경로는 정적 파일 서빙.
+	// http.ServeMux 의 패턴 매칭 — "/" 는 catch-all 이라 미지정 path 는 UI 로.
+	mux.Handle("GET /", UIHandler())
+
 	s.http = &http.Server{
 		Addr:         s.cfg.ListenAddr,
 		Handler:      mux,

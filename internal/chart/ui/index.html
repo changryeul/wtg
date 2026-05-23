@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WTG Chart · FX</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg-base: #070a13; --bg-card: #101727; --bg-elev: #172033;
+    --border: #1f2a40; --text: #e2e8f0; --text-muted: #94a3b8;
+    --accent: #22d3ee; --good: #10b981; --bad: #ef4444;
+  }
+  html, body { background: var(--bg-base); color: var(--text); }
+  body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  .chip {
+    padding: .25rem .6rem; border-radius: .5rem;
+    background: var(--bg-elev); border: 1px solid var(--border);
+    font-size: .75rem; cursor: pointer; transition: all .15s;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip[data-active="true"] {
+    background: rgba(34,211,238,0.1); border-color: var(--accent); color: var(--accent);
+  }
+  .panel {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 1rem;
+  }
+  select, input {
+    background: var(--bg-elev); border: 1px solid var(--border);
+    color: var(--text); padding: .5rem .75rem; border-radius: .5rem;
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .85rem;
+  }
+  select:focus, input:focus { outline: none; border-color: var(--accent); }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div class="max-w-[1400px] mx-auto p-4 space-y-4">
+
+  <!-- 헤더 -->
+  <header class="flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-semibold">WTG Chart</h1>
+      <p class="text-xs text-slate-400">FX OHLC — TimescaleDB historical + WS live</p>
+    </div>
+    <div class="flex items-center gap-2 text-xs">
+      <span class="text-slate-500 uppercase tracking-widest text-[10px]">WS</span>
+      <span id="ws-state" class="font-mono text-slate-400">●</span>
+    </div>
+  </header>
+
+  <!-- 컨트롤 패널 -->
+  <div class="panel p-4 space-y-3">
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="flex items-center gap-2">
+        <label class="text-xs text-slate-400 uppercase tracking-widest">통화쌍</label>
+        <select id="sel-pair">
+          <option value="USD/KRW">USD/KRW</option>
+          <option value="EUR/KRW">EUR/KRW</option>
+          <option value="JPY/KRW">JPY/KRW</option>
+          <option value="GBP/KRW">GBP/KRW</option>
+          <option value="AUD/KRW">AUD/KRW</option>
+          <option value="CNY/KRW">CNY/KRW</option>
+          <option value="EUR/USD">EUR/USD</option>
+          <option value="USD/JPY">USD/JPY</option>
+          <option value="GBP/USD">GBP/USD</option>
+          <option value="AUD/USD">AUD/USD</option>
+        </select>
+      </div>
+
+      <div class="flex items-center gap-1">
+        <label class="text-xs text-slate-400 uppercase tracking-widest mr-1">TF</label>
+        <button class="chip tf-btn" data-tf="1m" data-active="true">1m</button>
+        <button class="chip tf-btn" data-tf="5m">5m</button>
+        <button class="chip tf-btn" data-tf="15m">15m</button>
+        <button class="chip tf-btn" data-tf="1h">1h</button>
+        <button class="chip tf-btn" data-tf="1d">1d</button>
+      </div>
+
+      <div class="flex items-center gap-1">
+        <label class="text-xs text-slate-400 uppercase tracking-widest mr-1">기간</label>
+        <button class="chip range-btn" data-range="1h">1H</button>
+        <button class="chip range-btn" data-range="4h" data-active="true">4H</button>
+        <button class="chip range-btn" data-range="1d">1D</button>
+        <button class="chip range-btn" data-range="1w">1W</button>
+        <button class="chip range-btn" data-range="1mo">1M</button>
+      </div>
+
+      <div class="ml-auto flex items-center gap-2">
+        <button id="reload" class="chip">↻ 새로고침</button>
+        <button id="autoscroll" class="chip" data-active="true">▶ 자동 스크롤</button>
+      </div>
+    </div>
+
+    <!-- 라이브 시세 헤더 (최근 봉의 OHLC 표시) -->
+    <div class="flex flex-wrap items-center gap-4 text-xs font-mono">
+      <span class="text-slate-500 uppercase tracking-widest text-[10px]">최근 봉</span>
+      <span>O <span id="cur-open" class="text-slate-200">—</span></span>
+      <span>H <span id="cur-high" class="text-good">—</span></span>
+      <span>L <span id="cur-low" class="text-bad">—</span></span>
+      <span>C <span id="cur-close" class="text-accent">—</span></span>
+      <span class="text-slate-500">|</span>
+      <span>틱 <span id="cur-ticks" class="text-slate-200">—</span></span>
+      <span class="text-slate-500">|</span>
+      <span>봉 <span id="bar-count" class="text-slate-200">0</span></span>
+      <span class="text-slate-500">|</span>
+      <span>마지막 갱신 <span id="last-update" class="text-slate-400">—</span></span>
+    </div>
+  </div>
+
+  <!-- 차트 -->
+  <div class="panel p-2">
+    <div id="chart" style="height: 70vh;"></div>
+  </div>
+
+  <!-- 상태 표시 -->
+  <div id="status" class="text-xs text-slate-500 font-mono"></div>
+
+</div>
+
+<script>
+// ───────── helpers ─────────
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+function setActive(group, value) {
+  $$(group).forEach(b => b.dataset.active = (b.dataset.tf === value || b.dataset.range === value) ? "true" : "false");
+}
+function getActive(group, attr) {
+  const el = $$(group).find(b => b.dataset.active === "true");
+  return el ? el.dataset[attr] : null;
+}
+function setStatus(msg, kind) {
+  const el = $("#status");
+  el.textContent = msg;
+  el.style.color = kind === "err" ? "var(--bad)" : (kind === "ok" ? "var(--good)" : "var(--text-muted)");
+}
+function fmt(x) { return x == null ? "—" : x.toLocaleString(undefined, {maximumFractionDigits: 5}); }
+
+// ───────── 차트 초기화 ─────────
+const chart = LightweightCharts.createChart($("#chart"), {
+  layout: {
+    background: { type: "solid", color: getComputedStyle(document.documentElement).getPropertyValue("--bg-card") || "#101727" },
+    textColor: "#cbd5e1",
+    fontFamily: "JetBrains Mono, ui-monospace, monospace",
+  },
+  grid: {
+    vertLines: { color: "rgba(255,255,255,0.05)" },
+    horzLines: { color: "rgba(255,255,255,0.05)" },
+  },
+  rightPriceScale: { borderColor: "#1f2a40" },
+  timeScale: { borderColor: "#1f2a40", timeVisible: true, secondsVisible: false },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+});
+const candleSeries = chart.addCandlestickSeries({
+  upColor: "#10b981", downColor: "#ef4444",
+  borderUpColor: "#10b981", borderDownColor: "#ef4444",
+  wickUpColor: "#10b981", wickDownColor: "#ef4444",
+});
+window.addEventListener("resize", () => {
+  chart.applyOptions({ width: $("#chart").clientWidth });
+});
+
+// ───────── 상태 ─────────
+let currentPair = "USD/KRW";
+let currentTF = "1m";
+let currentRange = "4h";
+let ws = null;
+let barCount = 0;
+let autoScroll = true;
+
+// ───────── REST 로 historical 로드 ─────────
+function rangeToDuration(range) {
+  switch (range) {
+    case "1h":  return 1 * 3600 * 1000;
+    case "4h":  return 4 * 3600 * 1000;
+    case "1d":  return 24 * 3600 * 1000;
+    case "1w":  return 7 * 24 * 3600 * 1000;
+    case "1mo": return 30 * 24 * 3600 * 1000;
+    default:    return 4 * 3600 * 1000;
+  }
+}
+async function loadHistorical() {
+  const to = new Date();
+  const from = new Date(to.getTime() - rangeToDuration(currentRange));
+  const url = "/v1/chart"
+    + "?pair=" + encodeURIComponent(currentPair)
+    + "&tf="   + encodeURIComponent(currentTF)
+    + "&from=" + encodeURIComponent(from.toISOString())
+    + "&to="   + encodeURIComponent(to.toISOString())
+    + "&limit=5000";
+  try {
+    setStatus("loading…");
+    const resp = await fetch(url, { credentials: "same-origin" });
+    if (!resp.ok) {
+      setStatus("로드 실패: HTTP " + resp.status, "err");
+      candleSeries.setData([]);
+      barCount = 0;
+      $("#bar-count").textContent = "0";
+      return;
+    }
+    const data = await resp.json();
+    const bars = (data.bars || []).map(barToCandle);
+    candleSeries.setData(bars);
+    barCount = bars.length;
+    $("#bar-count").textContent = barCount;
+    if (bars.length > 0) {
+      updateRecentDisplay(bars[bars.length - 1]);
+    } else {
+      ["cur-open","cur-high","cur-low","cur-close","cur-ticks"].forEach(id => $("#" + id).textContent = "—");
+    }
+    if (autoScroll) chart.timeScale().scrollToRealTime();
+    setStatus(currentPair + " " + currentTF + " · " + bars.length + "건 로드됨", "ok");
+  } catch (e) {
+    setStatus("로드 에러: " + e.message, "err");
+  }
+}
+
+// Bar (REST) 또는 라이브 (WS) 의 OHLC bid/ask 를 mid 캔들로 변환.
+// FX 는 단일 mid 캔들이 표준 — 정확한 spread 표시는 별도 indicator 가 필요할 때만.
+function barToCandle(b) {
+  const t = Math.floor(new Date(b.opened_at).getTime() / 1000); // UNIX seconds
+  const o = (b.open_bid + b.open_ask) / 2;
+  const h = (b.high_bid + b.high_ask) / 2;
+  const l = (b.low_bid + b.low_ask) / 2;
+  const c = (b.close_bid + b.close_ask) / 2;
+  return { time: t, open: o, high: h, low: l, close: c, _raw: b };
+}
+
+function updateRecentDisplay(candle) {
+  $("#cur-open").textContent  = fmt(candle.open);
+  $("#cur-high").textContent  = fmt(candle.high);
+  $("#cur-low").textContent   = fmt(candle.low);
+  $("#cur-close").textContent = fmt(candle.close);
+  $("#cur-ticks").textContent = candle._raw ? candle._raw.tick_count : "—";
+  $("#last-update").textContent = new Date().toLocaleTimeString("ko-KR");
+}
+
+// ───────── WS 라이브 ─────────
+function connectWS() {
+  if (ws) {
+    try { ws.close(); } catch (_) {}
+  }
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const url = proto + "//" + window.location.host
+    + "/v1/chart/stream"
+    + "?pairs=" + encodeURIComponent(currentPair)
+    + "&tfs="  + encodeURIComponent(currentTF);
+  ws = new WebSocket(url);
+  $("#ws-state").style.color = "var(--text-muted)";
+  ws.onopen = () => {
+    $("#ws-state").style.color = "var(--good)";
+    setStatus("WS 연결됨", "ok");
+  };
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (msg.type !== "bar") return;
+    // 필터 — pair/tf 가 현재 보고 있는 것과 다르면 무시 (서버 필터 외 추가 안전).
+    if (msg.pair !== currentPair || msg.tf !== currentTF) return;
+    const candle = barToCandle(msg);
+    candleSeries.update(candle);
+    barCount += 1;
+    $("#bar-count").textContent = barCount;
+    updateRecentDisplay(candle);
+  };
+  ws.onerror = () => {
+    $("#ws-state").style.color = "var(--bad)";
+    setStatus("WS 에러 — 재연결 시도 중", "err");
+  };
+  ws.onclose = () => {
+    $("#ws-state").style.color = "var(--bad)";
+    // 5초 후 재연결.
+    setTimeout(connectWS, 5000);
+  };
+}
+
+// ───────── 컨트롤 wiring ─────────
+$("#sel-pair").addEventListener("change", (e) => {
+  currentPair = e.target.value;
+  refreshAll();
+});
+$$(".tf-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    currentTF = b.dataset.tf;
+    setActive(".tf-btn", currentTF);
+    refreshAll();
+  });
+});
+$$(".range-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    currentRange = b.dataset.range;
+    setActive(".range-btn", currentRange);
+    loadHistorical(); // WS 는 그대로
+  });
+});
+$("#reload").addEventListener("click", refreshAll);
+$("#autoscroll").addEventListener("click", () => {
+  autoScroll = !autoScroll;
+  $("#autoscroll").dataset.active = autoScroll ? "true" : "false";
+  if (autoScroll) chart.timeScale().scrollToRealTime();
+});
+
+function refreshAll() {
+  loadHistorical();
+  connectWS();
+}
+
+// ───────── 초기화 ─────────
+chart.applyOptions({ width: $("#chart").clientWidth });
+refreshAll();
+</script>
+
+</body>
+</html>

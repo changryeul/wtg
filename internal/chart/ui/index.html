@@ -123,9 +123,12 @@
     </div>
   </div>
 
-  <!-- 차트 -->
+  <!-- 차트 (multi-pane: 메인 + indicator pane 들) -->
   <div class="panel p-2">
-    <div id="chart" style="height: 70vh;"></div>
+    <div id="charts">
+      <div id="chart-main" style="height: 60vh;"></div>
+      <!-- indicator pane 들이 여기 동적으로 append 됨. timeScale 동기화. -->
+    </div>
   </div>
 
   <!-- 상태 표시 -->
@@ -152,8 +155,11 @@ function setStatus(msg, kind) {
 }
 function fmt(x) { return x == null ? "—" : x.toLocaleString(undefined, {maximumFractionDigits: 5}); }
 
-// ───────── 차트 초기화 ─────────
-const chart = LightweightCharts.createChart($("#chart"), {
+// ───────── multi-pane 차트 초기화 ─────────
+// 메인 chart 는 캔들 + overlay (SMA/EMA/BB) 만. RSI/MACD/Stoch/Volume 은 각각
+// 별도 LightweightCharts 인스턴스로 stacked 하고 timeScale 을 양방향 동기화.
+
+const commonOpts = () => ({
   layout: {
     background: { type: "solid", color: getComputedStyle(document.documentElement).getPropertyValue("--bg-card") || "#101727" },
     textColor: "#cbd5e1",
@@ -164,20 +170,77 @@ const chart = LightweightCharts.createChart($("#chart"), {
     horzLines: { color: "rgba(255,255,255,0.05)" },
   },
   rightPriceScale: { borderColor: "#1f2a40" },
-  timeScale: { borderColor: "#1f2a40", timeVisible: true, secondsVisible: false },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
 });
-const candleSeries = chart.addCandlestickSeries({
+
+const mainChart = LightweightCharts.createChart($("#chart-main"), {
+  ...commonOpts(),
+  timeScale: { borderColor: "#1f2a40", timeVisible: true, secondsVisible: false },
+});
+const candleSeries = mainChart.addCandlestickSeries({
   upColor: "#10b981", downColor: "#ef4444",
   borderUpColor: "#10b981", borderDownColor: "#ef4444",
   wickUpColor: "#10b981", wickDownColor: "#ef4444",
 });
-// 메인 캔들 영역을 위에 70% 정도 차지하도록 — RSI/Volume 패널이 아래쪽에 여유.
-candleSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.30 } });
 
-window.addEventListener("resize", () => {
-  chart.applyOptions({ width: $("#chart").clientWidth });
-});
+// panes: id → { chart, el }. 메인은 별도 보관.
+const panes = {};
+// timeScale 동기화 — 무한루프 방지 가드.
+let syncingRange = false;
+
+function attachSync(chart) {
+  chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    if (syncingRange || !range) return;
+    syncingRange = true;
+    if (mainChart !== chart) {
+      mainChart.timeScale().setVisibleLogicalRange(range);
+    }
+    for (const id in panes) {
+      if (panes[id].chart !== chart) {
+        panes[id].chart.timeScale().setVisibleLogicalRange(range);
+      }
+    }
+    syncingRange = false;
+  });
+}
+attachSync(mainChart);
+
+function ensurePane(id) {
+  if (panes[id]) return panes[id];
+  const el = document.createElement("div");
+  el.id = "chart-" + id;
+  el.style.height = "140px";
+  el.style.marginTop = "6px";
+  el.style.borderTop = "1px solid var(--border)";
+  $("#charts").appendChild(el);
+  const c = LightweightCharts.createChart(el, {
+    ...commonOpts(),
+    // 시간축은 메인만 표시 — pane 들은 visible:false 로 공간 절약.
+    timeScale: { borderColor: "#1f2a40", visible: false },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale:  { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
+  });
+  attachSync(c);
+  // 윈도우 크기에 맞춤.
+  c.applyOptions({ width: $("#chart-main").clientWidth });
+  panes[id] = { chart: c, el };
+  return panes[id];
+}
+
+function removePane(id) {
+  if (!panes[id]) return;
+  panes[id].chart.remove();
+  panes[id].el.remove();
+  delete panes[id];
+}
+
+// resize — 모든 pane 의 width 를 메인 너비로 맞춤.
+function resizeAllPanes() {
+  const w = $("#chart-main").clientWidth;
+  mainChart.applyOptions({ width: w });
+  for (const id in panes) panes[id].chart.applyOptions({ width: w });
+}
+window.addEventListener("resize", resizeAllPanes);
 
 // ───────── Indicator 관리 ─────────
 // 마지막으로 로드된 candle 배열 (시간 ASC) — 라이브 업데이트 시 indicator 재계산용.
@@ -383,115 +446,100 @@ function applyIndicator(id) {
   // 기존 series 제거.
   removeIndicator(id);
   if (candleData.length === 0) return;
+  // overlays — 메인 차트 위에 그림 (SMA/EMA/BB).
+  // oscillators — 별도 pane (RSI/MACD/Stoch/Volume) — ensurePane(id) 가 pane 인스턴스 생성.
   switch (id) {
     case "sma20": {
-      const s = chart.addLineSeries({ color: IND_COLORS.sma20, lineWidth: 1, priceLineVisible: false });
+      const s = mainChart.addLineSeries({ color: IND_COLORS.sma20, lineWidth: 1, priceLineVisible: false });
       s.setData(calcSMA(candleData, 20));
-      indSeries[id] = [s];
+      indSeries[id] = { series: [s], pane: null };
       break;
     }
     case "sma50": {
-      const s = chart.addLineSeries({ color: IND_COLORS.sma50, lineWidth: 1, priceLineVisible: false });
+      const s = mainChart.addLineSeries({ color: IND_COLORS.sma50, lineWidth: 1, priceLineVisible: false });
       s.setData(calcSMA(candleData, 50));
-      indSeries[id] = [s];
+      indSeries[id] = { series: [s], pane: null };
       break;
     }
     case "ema9": {
-      const s = chart.addLineSeries({ color: IND_COLORS.ema9, lineWidth: 1, priceLineVisible: false });
+      const s = mainChart.addLineSeries({ color: IND_COLORS.ema9, lineWidth: 1, priceLineVisible: false });
       s.setData(calcEMA(candleData, 9));
-      indSeries[id] = [s];
+      indSeries[id] = { series: [s], pane: null };
       break;
     }
     case "bb20": {
-      const upper = chart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
-      const lower = chart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
+      const upper = mainChart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
+      const lower = mainChart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
       const bb = calcBB(candleData, 20, 2);
       upper.setData(bb.map(b => ({ time: b.time, value: b.upper })));
       lower.setData(bb.map(b => ({ time: b.time, value: b.lower })));
-      indSeries[id] = [upper, lower];
+      indSeries[id] = { series: [upper, lower], pane: null };
       break;
     }
     case "rsi14": {
-      // 별도 priceScale 로 0~100 oscillator 영역 분리.
-      const s = chart.addLineSeries({
+      const p = ensurePane("rsi14");
+      const s = p.chart.addLineSeries({
         color: IND_COLORS.rsi14, lineWidth: 1, priceLineVisible: false,
-        priceScaleId: "rsi",
       });
       s.setData(calcRSI(candleData, 14));
-      chart.priceScale("rsi").applyOptions({
-        scaleMargins: { top: 0.72, bottom: 0.04 },
-        borderVisible: false,
-      });
-      indSeries[id] = [s];
+      indSeries[id] = { series: [s], pane: "rsi14" };
       break;
     }
     case "macd": {
-      // MACD 라인 + Signal 라인 + Histogram — 모두 같은 priceScaleId="macd" 공유.
-      // RSI 와 동일 영역 (top 0.72 ~ bottom 0.04) 에 stack — 동시 활성 시 시각 겹침.
-      const m = chart.addLineSeries({
-        color: IND_COLORS.macd_line, lineWidth: 1, priceLineVisible: false,
-        priceScaleId: "macd",
-      });
-      const sg = chart.addLineSeries({
-        color: IND_COLORS.macd_signal, lineWidth: 1, priceLineVisible: false,
-        priceScaleId: "macd",
-      });
-      const h = chart.addHistogramSeries({
-        priceLineVisible: false,
-        priceScaleId: "macd",
-      });
+      const p = ensurePane("macd");
+      const m  = p.chart.addLineSeries({ color: IND_COLORS.macd_line, lineWidth: 1, priceLineVisible: false });
+      const sg = p.chart.addLineSeries({ color: IND_COLORS.macd_signal, lineWidth: 1, priceLineVisible: false });
+      const h  = p.chart.addHistogramSeries({ priceLineVisible: false });
       const calc = calcMACD(candleData, 12, 26, 9);
       m.setData(calc.macd);
       sg.setData(calc.signal);
       h.setData(calc.hist);
-      chart.priceScale("macd").applyOptions({
-        scaleMargins: { top: 0.72, bottom: 0.04 },
-        borderVisible: false,
-      });
-      indSeries[id] = [m, sg, h];
+      indSeries[id] = { series: [m, sg, h], pane: "macd" };
       break;
     }
     case "stoch": {
-      // %K (cyan) + %D (amber). RSI/MACD 와 같은 oscillator 영역 (top 0.72) — 동시 활성 시 겹침.
-      const kSer = chart.addLineSeries({
-        color: IND_COLORS.stoch_k, lineWidth: 1, priceLineVisible: false,
-        priceScaleId: "stoch",
-      });
-      const dSer = chart.addLineSeries({
-        color: IND_COLORS.stoch_d, lineWidth: 1, priceLineVisible: false,
-        priceScaleId: "stoch",
-      });
+      const p = ensurePane("stoch");
+      const kSer = p.chart.addLineSeries({ color: IND_COLORS.stoch_k, lineWidth: 1, priceLineVisible: false });
+      const dSer = p.chart.addLineSeries({ color: IND_COLORS.stoch_d, lineWidth: 1, priceLineVisible: false });
       const c = calcStoch(candleData, 14, 3);
       kSer.setData(c.k);
       dSer.setData(c.d);
-      chart.priceScale("stoch").applyOptions({
-        scaleMargins: { top: 0.72, bottom: 0.04 },
-        borderVisible: false,
-      });
-      indSeries[id] = [kSer, dSer];
+      indSeries[id] = { series: [kSer, dSer], pane: "stoch" };
       break;
     }
     case "vol": {
-      const s = chart.addHistogramSeries({
+      const p = ensurePane("vol");
+      const s = p.chart.addHistogramSeries({
         priceLineVisible: false,
         priceFormat: { type: "volume" },
-        priceScaleId: "vol",
       });
       s.setData(calcVolume(candleData));
-      chart.priceScale("vol").applyOptions({
-        scaleMargins: { top: 0.85, bottom: 0 },
-        borderVisible: false,
-      });
-      indSeries[id] = [s];
+      indSeries[id] = { series: [s], pane: "vol" };
       break;
     }
+  }
+  // pane 추가 직후엔 메인 timeScale 의 현재 visible range 와 sync.
+  syncPaneToMain(id);
+}
+
+function syncPaneToMain(id) {
+  const entry = indSeries[id];
+  if (!entry || !entry.pane) return;
+  const range = mainChart.timeScale().getVisibleLogicalRange();
+  if (range) {
+    panes[entry.pane].chart.timeScale().setVisibleLogicalRange(range);
   }
 }
 
 function removeIndicator(id) {
-  const arr = indSeries[id];
-  if (!arr) return;
-  for (const s of arr) chart.removeSeries(s);
+  const entry = indSeries[id];
+  if (!entry) return;
+  // pane 기반 indicator 는 pane 통째 제거 (해당 pane 의 series 도 같이 정리됨).
+  if (entry.pane) {
+    removePane(entry.pane);
+  } else {
+    for (const s of entry.series) mainChart.removeSeries(s);
+  }
   delete indSeries[id];
 }
 
@@ -550,7 +598,7 @@ async function loadHistorical() {
       ["cur-open","cur-high","cur-low","cur-close","cur-ticks"].forEach(id => $("#" + id).textContent = "—");
     }
     recomputeAllIndicators();
-    if (autoScroll) chart.timeScale().scrollToRealTime();
+    if (autoScroll) mainChart.timeScale().scrollToRealTime();
     setStatus(currentPair + " " + currentTF + " · " + bars.length + "건 로드됨", "ok");
   } catch (e) {
     setStatus("로드 에러: " + e.message, "err");
@@ -647,7 +695,7 @@ $("#reload").addEventListener("click", refreshAll);
 $("#autoscroll").addEventListener("click", () => {
   autoScroll = !autoScroll;
   $("#autoscroll").dataset.active = autoScroll ? "true" : "false";
-  if (autoScroll) chart.timeScale().scrollToRealTime();
+  if (autoScroll) mainChart.timeScale().scrollToRealTime();
 });
 $$(".ind-btn").forEach(b => {
   b.addEventListener("click", () => {
@@ -670,7 +718,7 @@ function refreshAll() {
 }
 
 // ───────── 초기화 ─────────
-chart.applyOptions({ width: $("#chart").clientWidth });
+resizeAllPanes();
 refreshAll();
 </script>
 

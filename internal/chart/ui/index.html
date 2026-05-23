@@ -37,6 +37,45 @@
 </head>
 <body class="min-h-screen">
 
+<!-- alert 배너 stack (Notification 권한 없을 때의 in-page fallback) -->
+<div id="alert-banners" class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm"></div>
+
+<!-- Alert 추가 모달 -->
+<div id="alert-modal" class="fixed inset-0 bg-ink-950/80 z-40 hidden items-center justify-center p-4" style="backdrop-filter: blur(4px);">
+  <div class="panel max-w-md w-full p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h4 class="text-base font-semibold">신규 알림</h4>
+      <button onclick="closeAlertModal()" class="text-slate-400 hover:text-slate-200">✕</button>
+    </div>
+    <div class="space-y-2 text-sm">
+      <div>
+        <label class="text-xs text-slate-400">통화쌍</label>
+        <div class="font-mono text-accent" id="am-pair-preview">—</div>
+      </div>
+      <div>
+        <label class="text-xs text-slate-400">조건</label>
+        <select id="am-type">
+          <option value="price_above">가격 ↑ (이상 돌파 시)</option>
+          <option value="price_below">가격 ↓ (이하 이탈 시)</option>
+          <option value="rsi_above">RSI ↑ (이상 돌파 시) — 일반적으로 70 (과매수)</option>
+          <option value="rsi_below">RSI ↓ (이하 이탈 시) — 일반적으로 30 (과매도)</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs text-slate-400">임계값</label>
+        <input id="am-value" type="number" step="any" placeholder="예: 1400.00 (가격) / 70 (RSI)" class="w-full" />
+      </div>
+      <div class="text-[11px] text-slate-500">
+        한 번 trigger 되면 자동 비활성화 됩니다 (one-shot). 다시 활성화하려면 알림을 삭제하고 새로 등록하세요.
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 pt-2">
+      <button onclick="closeAlertModal()" class="chip">취소</button>
+      <button id="am-save" class="chip" style="background: linear-gradient(to right, #06b6d4, #6366f1); color: #070a13; font-weight: 600;">저장</button>
+    </div>
+  </div>
+</div>
+
 <div class="max-w-[1400px] mx-auto p-4 space-y-4">
 
   <!-- 헤더 -->
@@ -107,6 +146,17 @@
       <button class="chip ind-btn" data-ind="vol">Volume</button>
     </div>
 
+    <!-- Alerts (가격/RSI 임계값) -->
+    <div class="flex flex-wrap items-center gap-2 pt-1" style="border-top: 1px solid var(--border);">
+      <label class="text-xs text-slate-400 uppercase tracking-widest mr-1">Alerts</label>
+      <span class="text-xs text-slate-500">활성 <span id="alert-count" class="font-mono text-slate-200">0</span></span>
+      <button id="alert-add" class="chip">+ 신규</button>
+      <button id="alert-toggle-list" class="chip">목록</button>
+      <button id="alert-permission" class="chip" title="브라우저 알림 권한 요청">🔔 권한</button>
+      <span id="alert-perm-state" class="text-[10px] text-slate-500 ml-1">—</span>
+    </div>
+    <div id="alert-list" class="hidden mt-2 space-y-1 text-xs"></div>
+
     <!-- 라이브 시세 헤더 (최근 봉의 OHLC 표시) -->
     <div class="flex flex-wrap items-center gap-4 text-xs font-mono">
       <span class="text-slate-500 uppercase tracking-widest text-[10px]">최근 봉</span>
@@ -168,6 +218,220 @@ function saveSettings() {
   } catch (_) {
     // private mode / quota — silent.
   }
+}
+
+// DOM 빌드 헬퍼 — innerHTML 회피 (XSS 안전).
+function el(tag, opts, ...children) {
+  const e = document.createElement(tag);
+  if (opts) {
+    if (opts.class) e.className = opts.class;
+    if (opts.text != null) e.textContent = opts.text;
+    if (opts.style) Object.assign(e.style, opts.style);
+    if (opts.onclick) e.onclick = opts.onclick;
+    if (opts.title) e.title = opts.title;
+  }
+  for (const c of children) if (c != null) e.appendChild(c);
+  return e;
+}
+
+// ───────── Alerts (가격 / RSI 임계값) ─────────
+//
+// 모델: 각 alert 는 {id, type, pair, value, enabled, lastVal} 로 보관.
+// 평가: 봉 close 시점에 currentPair 매칭하는 alert 의 type 별 현재값을 계산해
+//      prev → curr 의 임계값 crossing 여부 확인. 한 번 trigger 시 자동 disable
+//      (one-shot) — 같은 알림이 매 봉 반복 발사되는 것을 방지.
+// 알림: Notification API granted → 브라우저 알림, 아니면 인-페이지 배너.
+// 영속: localStorage 별도 key (LS_ALERTS).
+
+const LS_ALERTS = "wtg_chart_alerts_v1";
+let alerts = [];
+
+function loadAlerts() {
+  try {
+    const raw = localStorage.getItem(LS_ALERTS);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) alerts = arr;
+  } catch (_) {}
+}
+
+function saveAlerts() {
+  try { localStorage.setItem(LS_ALERTS, JSON.stringify(alerts)); } catch (_) {}
+}
+
+function nextAlertId() {
+  return "a_" + Math.random().toString(36).slice(2, 9) + "_" + Date.now().toString(36);
+}
+
+function addAlert(type, value) {
+  alerts.push({
+    id: nextAlertId(),
+    type: type,
+    pair: currentPair,
+    value: Number(value),
+    enabled: true,
+    lastVal: null,
+  });
+  saveAlerts();
+  renderAlertList();
+}
+
+function removeAlert(id) {
+  alerts = alerts.filter(a => a.id !== id);
+  saveAlerts();
+  renderAlertList();
+}
+
+function toggleAlertEnabled(id) {
+  const a = alerts.find(x => x.id === id);
+  if (!a) return;
+  a.enabled = !a.enabled;
+  if (a.enabled) a.lastVal = null; // 재활성 시 첫 평가 skip 위해 reset.
+  saveAlerts();
+  renderAlertList();
+}
+
+const ALERT_TYPE_LABEL = {
+  price_above: "가격 ↑",
+  price_below: "가격 ↓",
+  rsi_above:   "RSI ↑",
+  rsi_below:   "RSI ↓",
+};
+
+function renderAlertList() {
+  const list = $("#alert-list");
+  list.replaceChildren();
+  const activeCount = alerts.filter(a => a.enabled).length;
+  $("#alert-count").textContent = activeCount;
+  if (alerts.length === 0) {
+    list.appendChild(el("div", { class: "text-slate-500", text: "등록된 알림이 없습니다." }));
+    return;
+  }
+  for (const a of alerts) {
+    const row = el("div", {
+      class: "flex items-center gap-2 py-1 px-2 rounded",
+      style: { background: a.enabled ? "rgba(34,211,238,0.06)" : "rgba(100,116,139,0.08)" },
+    });
+    // label — pair · type · value (각 span 분리, textContent 만 사용)
+    const label = el("div", {
+      class: "flex-1 font-mono",
+      style: a.enabled ? {} : { opacity: "0.5" },
+    },
+      el("span", { class: "text-slate-300", text: a.pair }),
+      document.createTextNode(" · "),
+      el("span", { class: "text-accent", text: ALERT_TYPE_LABEL[a.type] || a.type }),
+      document.createTextNode(" · "),
+      el("span", { class: "text-slate-200", text: String(a.value) }),
+    );
+    row.appendChild(label);
+
+    row.appendChild(el("button", {
+      class: "chip",
+      text: a.enabled ? "● ON" : "○ OFF",
+      onclick: () => toggleAlertEnabled(a.id),
+    }));
+    row.appendChild(el("button", {
+      class: "chip",
+      text: "✕",
+      onclick: () => { if (confirm("이 알림을 삭제할까요?")) removeAlert(a.id); },
+    }));
+    list.appendChild(row);
+  }
+}
+
+// 새 봉 또는 봉 갱신 후 호출 — crossing 평가.
+function evaluateAlerts(candle) {
+  if (alerts.length === 0) return;
+  // 매번 RSI 계산이 부담될 수 있어 lazy: 필요한 alert 가 있을 때만.
+  let rsi = null;
+  if (alerts.some(a => a.enabled && a.pair === currentPair && a.type.startsWith("rsi_"))) {
+    const r = calcRSI(candleData, 14);
+    if (r.length > 0) rsi = r[r.length - 1].value;
+  }
+  for (const a of alerts) {
+    if (!a.enabled) continue;
+    if (a.pair !== currentPair) continue;
+
+    let curr = null;
+    if (a.type === "price_above" || a.type === "price_below") curr = candle.close;
+    else if (a.type === "rsi_above" || a.type === "rsi_below") curr = rsi;
+    if (curr == null) continue;
+
+    const prev = a.lastVal;
+    a.lastVal = curr;
+    if (prev == null) continue; // 첫 평가 — 비교 skip.
+
+    let crossed = false;
+    if (a.type === "price_above" || a.type === "rsi_above") {
+      crossed = prev <= a.value && curr > a.value;
+    } else {
+      crossed = prev >= a.value && curr < a.value;
+    }
+    if (crossed) {
+      fireAlert(a, curr);
+      a.enabled = false; // one-shot.
+      saveAlerts();
+      renderAlertList();
+    }
+  }
+}
+
+function fireAlert(a, val) {
+  const msg = (a.pair) + " " + (ALERT_TYPE_LABEL[a.type] || a.type) + " " +
+    String(a.value) + " 도달 (현재: " + val.toFixed(5) + ")";
+  if ("Notification" in window && Notification.permission === "granted") {
+    try { new Notification("WTG Chart", { body: msg }); } catch (_) {}
+  }
+  showAlertBanner(msg);
+}
+
+function showAlertBanner(msg) {
+  const stack = $("#alert-banners");
+  const div = el("div", {
+    class: "panel p-3 text-sm flex items-start gap-2",
+    style: {
+      borderColor: "var(--accent)",
+      background: "rgba(34,211,238,0.08)",
+    },
+  },
+    el("div", { class: "flex-1", text: msg }),
+  );
+  const close = el("button", {
+    class: "text-slate-400 hover:text-slate-200",
+    text: "✕",
+    onclick: () => div.remove(),
+  });
+  div.appendChild(close);
+  stack.appendChild(div);
+  setTimeout(() => div.remove(), 10000);
+}
+
+function openAlertModal() {
+  $("#am-pair-preview").textContent = currentPair;
+  $("#am-type").value = "price_above";
+  $("#am-value").value = "";
+  $("#alert-modal").classList.remove("hidden");
+  $("#alert-modal").classList.add("flex");
+}
+function closeAlertModal() {
+  $("#alert-modal").classList.add("hidden");
+  $("#alert-modal").classList.remove("flex");
+}
+
+function refreshNotificationPermissionUI() {
+  if (!("Notification" in window)) {
+    $("#alert-perm-state").textContent = "(미지원)";
+    return;
+  }
+  const p = Notification.permission;
+  $("#alert-perm-state").textContent =
+    p === "granted" ? "허용됨" :
+    p === "denied"  ? "거부됨" :
+    "미요청";
+  $("#alert-perm-state").style.color =
+    p === "granted" ? "var(--good)" :
+    p === "denied"  ? "var(--bad)"  :
+    "var(--text-muted)";
 }
 
 function setActive(group, value) {
@@ -747,6 +1011,8 @@ function connectWS() {
     // 활성 indicator 만 재계산 (가장 최근 값 위주 — 단순화: 전체 재적용).
     recomputeAllIndicators();
     updateRecentDisplay(candle);
+    // alert 임계값 평가 — 새 봉 또는 봉 갱신 후.
+    evaluateAlerts(candle);
   };
   ws.onerror = () => {
     $("#ws-state").style.color = "var(--bad)";
@@ -804,6 +1070,30 @@ $$(".ind-btn").forEach(b => {
   });
 });
 
+// Alerts 컨트롤 wiring.
+$("#alert-add").addEventListener("click", openAlertModal);
+$("#alert-toggle-list").addEventListener("click", () => {
+  const list = $("#alert-list");
+  list.classList.toggle("hidden");
+});
+$("#alert-permission").addEventListener("click", async () => {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    try { await Notification.requestPermission(); } catch (_) {}
+  }
+  refreshNotificationPermissionUI();
+});
+$("#am-save").addEventListener("click", () => {
+  const t = $("#am-type").value;
+  const v = $("#am-value").value;
+  if (!v || isNaN(Number(v))) {
+    alert("임계값은 숫자여야 합니다");
+    return;
+  }
+  addAlert(t, Number(v));
+  closeAlertModal();
+});
+
 function refreshAll() {
   loadHistorical();
   connectWS();
@@ -847,6 +1137,11 @@ function refreshAll() {
     }
   }
 })();
+
+// Alerts 로드 + 권한 상태 표시.
+loadAlerts();
+renderAlertList();
+refreshNotificationPermissionUI();
 
 resizeAllPanes();
 refreshAll();

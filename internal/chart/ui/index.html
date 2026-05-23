@@ -94,6 +94,17 @@
       </div>
     </div>
 
+    <!-- Indicator 토글 행 -->
+    <div class="flex flex-wrap items-center gap-2 pt-1 border-t border-ink-700/40" style="border-top-color: var(--border);">
+      <label class="text-xs text-slate-400 uppercase tracking-widest mr-1">Indicators</label>
+      <button class="chip ind-btn" data-ind="sma20">SMA 20</button>
+      <button class="chip ind-btn" data-ind="sma50">SMA 50</button>
+      <button class="chip ind-btn" data-ind="ema9">EMA 9</button>
+      <button class="chip ind-btn" data-ind="bb20">BB(20,2)</button>
+      <button class="chip ind-btn" data-ind="rsi14">RSI 14</button>
+      <button class="chip ind-btn" data-ind="vol">Volume</button>
+    </div>
+
     <!-- 라이브 시세 헤더 (최근 봉의 OHLC 표시) -->
     <div class="flex flex-wrap items-center gap-4 text-xs font-mono">
       <span class="text-slate-500 uppercase tracking-widest text-[10px]">최근 봉</span>
@@ -159,9 +170,190 @@ const candleSeries = chart.addCandlestickSeries({
   borderUpColor: "#10b981", borderDownColor: "#ef4444",
   wickUpColor: "#10b981", wickDownColor: "#ef4444",
 });
+// 메인 캔들 영역을 위에 70% 정도 차지하도록 — RSI/Volume 패널이 아래쪽에 여유.
+candleSeries.priceScale().applyOptions({ scaleMargins: { top: 0.05, bottom: 0.30 } });
+
 window.addEventListener("resize", () => {
   chart.applyOptions({ width: $("#chart").clientWidth });
 });
+
+// ───────── Indicator 관리 ─────────
+// 마지막으로 로드된 candle 배열 (시간 ASC) — 라이브 업데이트 시 indicator 재계산용.
+let candleData = [];
+// id → series 매핑. 토글 OFF 시 series.removeSeries 로 정리.
+const indSeries = {};
+// 활성 indicator id 집합.
+const indActive = new Set();
+
+const IND_COLORS = {
+  sma20: "#22d3ee",
+  sma50: "#a78bfa",
+  ema9:  "#f59e0b",
+  bb20:  "#94a3b8",
+  rsi14: "#22d3ee",
+  vol:   "#64748b",
+};
+
+// SMA[i] = avg(close[i-N+1..i]). 앞쪽 N-1 개는 결과 없음.
+function calcSMA(candles, n) {
+  const out = [];
+  let sum = 0;
+  for (let i = 0; i < candles.length; i++) {
+    sum += candles[i].close;
+    if (i >= n) sum -= candles[i - n].close;
+    if (i >= n - 1) {
+      out.push({ time: candles[i].time, value: sum / n });
+    }
+  }
+  return out;
+}
+
+// EMA — 첫 n개의 SMA 로 seed 한 뒤 EMA 수식 적용.
+function calcEMA(candles, n) {
+  if (candles.length < n) return [];
+  const k = 2 / (n + 1);
+  const out = [];
+  let ema;
+  // seed: 첫 n 개의 평균.
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += candles[i].close;
+  ema = sum / n;
+  out.push({ time: candles[n - 1].time, value: ema });
+  for (let i = n; i < candles.length; i++) {
+    ema = candles[i].close * k + ema * (1 - k);
+    out.push({ time: candles[i].time, value: ema });
+  }
+  return out;
+}
+
+// Bollinger Bands — SMA(n) ± k·stdev.  반환: [{upper,lower,mid}, ...]
+function calcBB(candles, n, kMul) {
+  const out = [];
+  if (candles.length < n) return out;
+  for (let i = n - 1; i < candles.length; i++) {
+    let sum = 0;
+    for (let j = i - n + 1; j <= i; j++) sum += candles[j].close;
+    const mid = sum / n;
+    let varSum = 0;
+    for (let j = i - n + 1; j <= i; j++) {
+      const d = candles[j].close - mid;
+      varSum += d * d;
+    }
+    const sd = Math.sqrt(varSum / n);
+    out.push({ time: candles[i].time, mid, upper: mid + kMul * sd, lower: mid - kMul * sd });
+  }
+  return out;
+}
+
+// Wilder's RSI — gain/loss 의 Wilder smoothing.
+function calcRSI(candles, n) {
+  const out = [];
+  if (candles.length <= n) return out;
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 1; i <= n; i++) {
+    const ch = candles[i].close - candles[i - 1].close;
+    if (ch >= 0) avgGain += ch; else avgLoss += -ch;
+  }
+  avgGain /= n; avgLoss /= n;
+  // 첫 RSI 시점 = candle[n].
+  let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  out.push({ time: candles[n].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + rs) });
+  for (let i = n + 1; i < candles.length; i++) {
+    const ch = candles[i].close - candles[i - 1].close;
+    const gain = ch > 0 ? ch : 0;
+    const loss = ch < 0 ? -ch : 0;
+    avgGain = (avgGain * (n - 1) + gain) / n;
+    avgLoss = (avgLoss * (n - 1) + loss) / n;
+    rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    out.push({ time: candles[i].time, value: avgLoss === 0 ? 100 : 100 - 100 / (1 + rs) });
+  }
+  return out;
+}
+
+// Volume — tick_count 를 histogram.
+function calcVolume(candles) {
+  return candles.map(c => ({
+    time: c.time,
+    value: c._raw ? c._raw.tick_count : 0,
+    color: c.close >= c.open ? "rgba(16,185,129,0.5)" : "rgba(239,68,68,0.5)",
+  }));
+}
+
+// indicator id 별 series 생성·데이터 적용.
+function applyIndicator(id) {
+  // 기존 series 제거.
+  removeIndicator(id);
+  if (candleData.length === 0) return;
+  switch (id) {
+    case "sma20": {
+      const s = chart.addLineSeries({ color: IND_COLORS.sma20, lineWidth: 1, priceLineVisible: false });
+      s.setData(calcSMA(candleData, 20));
+      indSeries[id] = [s];
+      break;
+    }
+    case "sma50": {
+      const s = chart.addLineSeries({ color: IND_COLORS.sma50, lineWidth: 1, priceLineVisible: false });
+      s.setData(calcSMA(candleData, 50));
+      indSeries[id] = [s];
+      break;
+    }
+    case "ema9": {
+      const s = chart.addLineSeries({ color: IND_COLORS.ema9, lineWidth: 1, priceLineVisible: false });
+      s.setData(calcEMA(candleData, 9));
+      indSeries[id] = [s];
+      break;
+    }
+    case "bb20": {
+      const upper = chart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
+      const lower = chart.addLineSeries({ color: IND_COLORS.bb20, lineWidth: 1, priceLineVisible: false, lineStyle: 2 });
+      const bb = calcBB(candleData, 20, 2);
+      upper.setData(bb.map(b => ({ time: b.time, value: b.upper })));
+      lower.setData(bb.map(b => ({ time: b.time, value: b.lower })));
+      indSeries[id] = [upper, lower];
+      break;
+    }
+    case "rsi14": {
+      // 별도 priceScale 로 0~100 oscillator 영역 분리.
+      const s = chart.addLineSeries({
+        color: IND_COLORS.rsi14, lineWidth: 1, priceLineVisible: false,
+        priceScaleId: "rsi",
+      });
+      s.setData(calcRSI(candleData, 14));
+      chart.priceScale("rsi").applyOptions({
+        scaleMargins: { top: 0.72, bottom: 0.04 },
+        borderVisible: false,
+      });
+      indSeries[id] = [s];
+      break;
+    }
+    case "vol": {
+      const s = chart.addHistogramSeries({
+        priceLineVisible: false,
+        priceFormat: { type: "volume" },
+        priceScaleId: "vol",
+      });
+      s.setData(calcVolume(candleData));
+      chart.priceScale("vol").applyOptions({
+        scaleMargins: { top: 0.85, bottom: 0 },
+        borderVisible: false,
+      });
+      indSeries[id] = [s];
+      break;
+    }
+  }
+}
+
+function removeIndicator(id) {
+  const arr = indSeries[id];
+  if (!arr) return;
+  for (const s of arr) chart.removeSeries(s);
+  delete indSeries[id];
+}
+
+// 모든 활성 indicator 재계산 (historical 로드 후 / 라이브 봉 도착 후).
+function recomputeAllIndicators() {
+  for (const id of indActive) applyIndicator(id);
+}
 
 // ───────── 상태 ─────────
 let currentPair = "USD/KRW";
@@ -203,6 +395,7 @@ async function loadHistorical() {
     }
     const data = await resp.json();
     const bars = (data.bars || []).map(barToCandle);
+    candleData = bars;
     candleSeries.setData(bars);
     barCount = bars.length;
     $("#bar-count").textContent = barCount;
@@ -211,6 +404,7 @@ async function loadHistorical() {
     } else {
       ["cur-open","cur-high","cur-low","cur-close","cur-ticks"].forEach(id => $("#" + id).textContent = "—");
     }
+    recomputeAllIndicators();
     if (autoScroll) chart.timeScale().scrollToRealTime();
     setStatus(currentPair + " " + currentTF + " · " + bars.length + "건 로드됨", "ok");
   } catch (e) {
@@ -262,8 +456,16 @@ function connectWS() {
     if (msg.pair !== currentPair || msg.tf !== currentTF) return;
     const candle = barToCandle(msg);
     candleSeries.update(candle);
-    barCount += 1;
-    $("#bar-count").textContent = barCount;
+    // candleData 에 append / 같은 시각이면 갱신.
+    if (candleData.length > 0 && candleData[candleData.length - 1].time === candle.time) {
+      candleData[candleData.length - 1] = candle;
+    } else {
+      candleData.push(candle);
+      barCount += 1;
+      $("#bar-count").textContent = barCount;
+    }
+    // 활성 indicator 만 재계산 (가장 최근 값 위주 — 단순화: 전체 재적용).
+    recomputeAllIndicators();
     updateRecentDisplay(candle);
   };
   ws.onerror = () => {
@@ -301,6 +503,20 @@ $("#autoscroll").addEventListener("click", () => {
   autoScroll = !autoScroll;
   $("#autoscroll").dataset.active = autoScroll ? "true" : "false";
   if (autoScroll) chart.timeScale().scrollToRealTime();
+});
+$$(".ind-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    const id = b.dataset.ind;
+    if (indActive.has(id)) {
+      indActive.delete(id);
+      removeIndicator(id);
+      b.dataset.active = "false";
+    } else {
+      indActive.add(id);
+      applyIndicator(id);
+      b.dataset.active = "true";
+    }
+  });
 });
 
 function refreshAll() {

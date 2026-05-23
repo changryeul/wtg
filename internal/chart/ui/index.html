@@ -141,6 +141,35 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+// localStorage 설정 저장 / 복원.
+// 단일 JSON blob 으로 일관성 유지 — partial corruption 방지.
+const LS_SETTINGS = "wtg_chart_settings_v1";
+
+function loadSavedSettings() {
+  try {
+    const raw = localStorage.getItem(LS_SETTINGS);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) {
+    return null; // 손상된 JSON 은 그냥 무시 (default 로 시작).
+  }
+}
+
+function saveSettings() {
+  try {
+    const s = {
+      pair: currentPair,
+      tf: currentTF,
+      range: currentRange,
+      autoScroll: autoScroll,
+      indicators: Array.from(indActive),
+    };
+    localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
+  } catch (_) {
+    // private mode / quota — silent.
+  }
+}
+
 function setActive(group, value) {
   $$(group).forEach(b => b.dataset.active = (b.dataset.tf === value || b.dataset.range === value) ? "true" : "false");
 }
@@ -733,12 +762,14 @@ function connectWS() {
 // ───────── 컨트롤 wiring ─────────
 $("#sel-pair").addEventListener("change", (e) => {
   currentPair = e.target.value;
+  saveSettings();
   refreshAll();
 });
 $$(".tf-btn").forEach(b => {
   b.addEventListener("click", () => {
     currentTF = b.dataset.tf;
     setActive(".tf-btn", currentTF);
+    saveSettings();
     refreshAll();
   });
 });
@@ -746,6 +777,7 @@ $$(".range-btn").forEach(b => {
   b.addEventListener("click", () => {
     currentRange = b.dataset.range;
     setActive(".range-btn", currentRange);
+    saveSettings();
     loadHistorical(); // WS 는 그대로
   });
 });
@@ -753,6 +785,7 @@ $("#reload").addEventListener("click", refreshAll);
 $("#autoscroll").addEventListener("click", () => {
   autoScroll = !autoScroll;
   $("#autoscroll").dataset.active = autoScroll ? "true" : "false";
+  saveSettings();
   if (autoScroll) mainChart.timeScale().scrollToRealTime();
 });
 $$(".ind-btn").forEach(b => {
@@ -767,6 +800,7 @@ $$(".ind-btn").forEach(b => {
       applyIndicator(id);
       b.dataset.active = "true";
     }
+    saveSettings();
   });
 });
 
@@ -776,6 +810,44 @@ function refreshAll() {
 }
 
 // ───────── 초기화 ─────────
+// localStorage 복원 — UI 컨트롤 + 활성 indicator 반영. refreshAll 이전에 적용.
+(function restoreSettings() {
+  const s = loadSavedSettings();
+  if (!s) return;
+  // pair — 사전 정의 option 에 있을 때만 (custom pair 보안 차원에서).
+  if (s.pair && Array.from($("#sel-pair").options).some(o => o.value === s.pair)) {
+    currentPair = s.pair;
+    $("#sel-pair").value = s.pair;
+  }
+  // TF
+  if (s.tf && $$(".tf-btn").some(b => b.dataset.tf === s.tf)) {
+    currentTF = s.tf;
+    setActive(".tf-btn", currentTF);
+  }
+  // range
+  if (s.range && $$(".range-btn").some(b => b.dataset.range === s.range)) {
+    currentRange = s.range;
+    setActive(".range-btn", currentRange);
+  }
+  // autoScroll
+  if (typeof s.autoScroll === "boolean") {
+    autoScroll = s.autoScroll;
+    $("#autoscroll").dataset.active = autoScroll ? "true" : "false";
+  }
+  // indicators — 저장된 ID 만 활성. ind-btn 의 data-active 도 반영.
+  // applyIndicator 호출은 refreshAll 의 historical 로드 직후 recomputeAllIndicators
+  // 가 처리하므로 여기선 set + 버튼 상태만.
+  if (Array.isArray(s.indicators)) {
+    const knownIds = new Set($$(".ind-btn").map(b => b.dataset.ind));
+    for (const id of s.indicators) {
+      if (!knownIds.has(id)) continue;
+      indActive.add(id);
+      const btn = $$(".ind-btn").find(b => b.dataset.ind === id);
+      if (btn) btn.dataset.active = "true";
+    }
+  }
+})();
+
 resizeAllPanes();
 refreshAll();
 </script>

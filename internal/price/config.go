@@ -14,6 +14,7 @@ import (
 	"flag"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -98,13 +99,31 @@ type Config struct {
 
 	// ─── PricingConsumer (Profile 별 마진 적용 후 broker publish) ──────────
 	//
-	// 둘 다 채워져야 PricingConsumer 활성화. 하나라도 비어있으면 비활성 — 즉,
-	// broker FANOUT (raw) 만 동작하고 ExchangeQuote (TOPIC) 로의 publish 는 없다.
+	// 두 가지 카탈로그 소스 모드 (상호배타):
+	//   1) 정적 파일 — PricingFile + ProfilesFile (개발/소규모 운영)
+	//   2) etcd watch — EtcdEndpoints 설정 시 활성 (운영 hot reload)
+	//
+	// 둘 다 미설정 또는 SymbolMap 미존재 시 PricingConsumer 비활성 — raw fan-out 만.
 	//
 	// PricingFile : pricing.PricingTable 의 JSON 직렬화.
 	// ProfilesFile: []session.Profile 의 JSON 직렬화 (활성 Profile 카탈로그).
 	PricingFile  string
 	ProfilesFile string
+
+	// ─── etcd hot reload (옵션) ────────────────────────────────────────────
+	//
+	// 설정되면 SymbolMap / PricingTable / Profiles 가 etcd watch 로 자동 갱신된다.
+	// 정적 파일 옵션 (SymbolsFile / PricingFile / ProfilesFile) 보다 우선.
+	//
+	// etcd key 컨벤션:
+	//   <prefix>quote/symbols/<symbol>   → quote.SymbolEntry JSON
+	//   <prefix>pricing/table            → pricing.PricingTableDoc JSON (단일 key)
+	//   <prefix>price/profiles/<key>     → session.Profile JSON
+	EtcdEndpoints   []string      // 콤마 구분 → 호출자 split. 비면 정적 모드.
+	EtcdPrefix      string        // default "wtg/" — 끝에 "/" 자동 보정.
+	EtcdDialTimeout time.Duration // default 5s.
+	EtcdUsername    string
+	EtcdPassword    string
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -138,6 +157,10 @@ func DefaultConfig() Config {
 
 		PricingFile:  "",
 		ProfilesFile: "",
+
+		EtcdEndpoints:   nil,
+		EtcdPrefix:      "wtg/",
+		EtcdDialTimeout: 5 * time.Second,
 	}
 }
 
@@ -219,6 +242,18 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_PROFILES_FILE"); v != "" {
 		cfg.ProfilesFile = v
 	}
+	if v := os.Getenv("WTG_PRICE_ETCD"); v != "" {
+		cfg.EtcdEndpoints = splitCSV(v)
+	}
+	if v := os.Getenv("WTG_PRICE_ETCD_PREFIX"); v != "" {
+		cfg.EtcdPrefix = v
+	}
+	if v := os.Getenv("WTG_PRICE_ETCD_USER"); v != "" {
+		cfg.EtcdUsername = v
+	}
+	if v := os.Getenv("WTG_PRICE_ETCD_PASS"); v != "" {
+		cfg.EtcdPassword = v
+	}
 
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
@@ -248,11 +283,31 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.ArchiverFlushInterval, "arc-flush", cfg.ArchiverFlushInterval, "Archiver flush interval")
 	fs.IntVar(&cfg.ArchiverBatchMax, "arc-batch", cfg.ArchiverBatchMax, "Archiver batch INSERT 최대 행수")
 	fs.DurationVar(&cfg.AggregatorSweepInterval, "agg-sweep", cfg.AggregatorSweepInterval, "Aggregator 만료 봉 sweeper 주기")
-	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (비어있으면 PricingConsumer 비활성)")
-	fs.StringVar(&cfg.ProfilesFile, "profiles", cfg.ProfilesFile, "활성 Profile 카탈로그 JSON ([]session.Profile)")
+	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (etcd 비활성 시)")
+	fs.StringVar(&cfg.ProfilesFile, "profiles", cfg.ProfilesFile, "활성 Profile 카탈로그 JSON ([]session.Profile, etcd 비활성 시)")
+	etcdStr := strings.Join(cfg.EtcdEndpoints, ",")
+	fs.StringVar(&etcdStr, "etcd", etcdStr, "etcd endpoints 콤마 구분 (설정 시 hot reload 활성, 정적 파일 옵션 무시)")
+	fs.StringVar(&cfg.EtcdPrefix, "etcd-prefix", cfg.EtcdPrefix, "etcd key prefix (default wtg/)")
+	fs.DurationVar(&cfg.EtcdDialTimeout, "etcd-dial-timeout", cfg.EtcdDialTimeout, "etcd dial timeout")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}
+	// etcd endpoints flag → slice 재구성.
+	if etcdStr != "" {
+		cfg.EtcdEndpoints = splitCSV(etcdStr)
+	}
 	return cfg, nil
+}
+
+// splitCSV 는 콤마 구분 문자열을 trim 후 slice 로.
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

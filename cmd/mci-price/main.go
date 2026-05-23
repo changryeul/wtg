@@ -37,6 +37,7 @@ import (
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/internal/price"
 	"github.com/winwaysystems/wtg/pkg/pricing"
@@ -83,16 +84,56 @@ func main() {
 		}))
 	}
 
-	// 2) SymbolMap — 파일 로드 (옵션).
+	// 2) etcd 클라이언트 (옵션 — endpoints 있을 때만).
+	//    설정되면 SymbolMap / PricingTable / Profiles 가 watch 로 hot reload.
+	var (
+		etcdCli       *clientv3.Client
+		etcdSymWatch  *quote.EtcdSymbolWatcher
+		etcdTblWatch  *pricing.EtcdTableWatcher
+		etcdProfileSrc *price.EtcdProfileSource
+	)
+	if len(cfg.EtcdEndpoints) > 0 {
+		var err error
+		etcdCli, err = clientv3.New(clientv3.Config{
+			Endpoints:   cfg.EtcdEndpoints,
+			DialTimeout: cfg.EtcdDialTimeout,
+			Username:    cfg.EtcdUsername,
+			Password:    cfg.EtcdPassword,
+		})
+		if err != nil {
+			logger.Error("etcd dial 실패", slog.Any("error", err))
+			os.Exit(1)
+		}
+		defer etcdCli.Close()
+		logger.Info("etcd 활성",
+			slog.Any("endpoints", cfg.EtcdEndpoints),
+			slog.String("prefix", cfg.EtcdPrefix),
+		)
+	}
+
+	// 3) SymbolMap — etcd watch 우선, 없으면 파일.
 	symbols := quote.NewSymbolMap()
-	if cfg.SymbolsFile != "" {
+	if etcdCli != nil {
+		var err error
+		etcdSymWatch, err = quote.NewEtcdSymbolWatcher(ctx, quote.EtcdSymbolWatcherOptions{
+			Client: etcdCli,
+			Prefix: cfg.EtcdPrefix + "quote/symbols/",
+			M:      symbols,
+			Logger: logger,
+		})
+		if err != nil {
+			logger.Error("SymbolMap watcher 시작 실패", slog.Any("error", err))
+			os.Exit(1)
+		}
+		defer etcdSymWatch.Close()
+	} else if cfg.SymbolsFile != "" {
 		entries, err := loadSymbolEntries(cfg.SymbolsFile)
 		if err != nil {
 			logger.Error("symbols 파일 로드 실패", slog.Any("error", err))
 			os.Exit(1)
 		}
 		symbols.Replace(entries)
-		logger.Info("SymbolMap 로드 완료",
+		logger.Info("SymbolMap 파일 로드",
 			slog.String("file", cfg.SymbolsFile),
 			slog.Int("count", len(entries)),
 		)
@@ -161,12 +202,23 @@ func main() {
 		srv.AttachGRPC(grpcSrv)
 	}
 
-	// 6) PricingConsumer — PricingFile + ProfilesFile 모두 채워졌을 때만 활성.
+	// 7) PricingConsumer — etcd watch 또는 정적 파일 둘 다 지원.
 	//    broker tick → PricingTable.Apply (Profile 별) → MultiQuotePublisher
 	//        → broker (ExchangeQuote)  : 외부 audit / non-edge consumer 용
 	//        → gRPC SubscribeQuote     : mci-edge-price 로의 직접 stream
 	var pc *price.PricingConsumer
-	if cfg.PricingFile != "" && cfg.ProfilesFile != "" {
+	switch {
+	case etcdCli != nil:
+		pcInst, tblW, profSrc, err := wirePricingConsumerEtcd(ctx, cfg, symbols, srv, grpcSrv, etcdCli, logger)
+		if err != nil {
+			logger.Error("PricingConsumer (etcd) 구성 실패", slog.Any("error", err))
+			os.Exit(1)
+		}
+		pc = pcInst
+		etcdTblWatch = tblW
+		etcdProfileSrc = profSrc
+		srv.AddConsumer(price.TickConsumerFunc(pc.OnTick))
+	case cfg.PricingFile != "" && cfg.ProfilesFile != "":
 		pcInst, err := wirePricingConsumer(cfg, symbols, srv, grpcSrv, logger)
 		if err != nil {
 			logger.Error("PricingConsumer 구성 실패", slog.Any("error", err))
@@ -174,8 +226,14 @@ func main() {
 		}
 		pc = pcInst
 		srv.AddConsumer(price.TickConsumerFunc(pc.OnTick))
-	} else {
-		logger.Info("PricingConsumer 비활성 (PricingFile / ProfilesFile 둘 다 필요)")
+	default:
+		logger.Info("PricingConsumer 비활성 (etcd / 정적 파일 모두 미설정)")
+	}
+	if etcdTblWatch != nil {
+		defer etcdTblWatch.Close()
+	}
+	if etcdProfileSrc != nil {
+		defer etcdProfileSrc.Close()
 	}
 
 	// 6) Server 시작 (블로킹).
@@ -204,6 +262,61 @@ func main() {
 		)
 	}
 	logger.Info("mci-price 정상 종료")
+}
+
+// wirePricingConsumerEtcd 는 etcd watch 기반 PricingConsumer 를 구성.
+// PricingTable 과 ProfileSource 모두 etcd 에서 hot reload.
+// 반환된 watcher / source 는 호출자가 Close 책임.
+func wirePricingConsumerEtcd(
+	ctx context.Context,
+	cfg price.Config,
+	symbols *quote.SymbolMap,
+	srv *price.Server,
+	grpcSrv *price.GRPCServer,
+	cli *clientv3.Client,
+	logger *slog.Logger,
+) (*price.PricingConsumer, *pricing.EtcdTableWatcher, *price.EtcdProfileSource, error) {
+	// PricingTable etcd watcher.
+	store := pricing.NewStore()
+	tblW, err := pricing.NewEtcdTableWatcher(ctx, pricing.EtcdTableWatcherOptions{
+		Client: cli,
+		Key:    cfg.EtcdPrefix + "pricing/table",
+		Store:  store,
+		Logger: logger,
+	})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("PricingTable watcher: %w", err)
+	}
+
+	// Profile etcd watcher.
+	profSrc, err := price.NewEtcdProfileSource(ctx, price.EtcdProfileSourceOptions{
+		Client: cli,
+		Prefix: cfg.EtcdPrefix + "price/profiles/",
+		Logger: logger,
+	})
+	if err != nil {
+		_ = tblW.Close()
+		return nil, nil, nil, fmt.Errorf("ProfileSource watcher: %w", err)
+	}
+
+	publishers := []price.QuotePublisher{price.NewMymqQuotePublisher(srv)}
+	if grpcSrv != nil {
+		publishers = append(publishers, grpcSrv)
+	}
+	pc := price.NewPricingConsumer(price.PricingConsumerOptions{
+		Store:     store,
+		Symbols:   symbols,
+		Decoder:   price.JSONCookerDecoder(),
+		Publisher: price.NewMultiQuotePublisher(publishers...),
+		Profiles:  profSrc,
+		Logger:    logger,
+	})
+	logger.Info("PricingConsumer (etcd watch) 활성",
+		slog.String("table_key", cfg.EtcdPrefix+"pricing/table"),
+		slog.String("profile_prefix", cfg.EtcdPrefix+"price/profiles/"),
+		slog.Bool("grpc_publish", grpcSrv != nil),
+	)
+	return pc, tblW, profSrc, nil
 }
 
 // wirePricingConsumer 는 PricingFile/ProfilesFile 을 읽어 PricingConsumer 를 구성.

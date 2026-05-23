@@ -78,11 +78,20 @@ func PutPricingTable(deps *PricingDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "validation", "empty body")
 			return
 		}
-		// 검증 — schema 파싱.
+		// 검증 1: schema 파싱.
 		tbl, err := pricing.ParsePricingTable(body)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, "validation", err.Error())
 			return
+		}
+		// 검증 2: 정책 sanity (음수 마진 / 빈 pair / 광범위 와일드카드 등).
+		// 파싱은 통과했지만 의미상 잘못된 값을 운영 전 차단.
+		var doc pricing.PricingTableDoc
+		if perr := json.Unmarshal(body, &doc); perr == nil {
+			if verr := doc.Validate(); verr != nil {
+				writeJSONError(w, http.StatusBadRequest, "policy", verr.Error())
+				return
+			}
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()

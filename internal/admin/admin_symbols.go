@@ -132,8 +132,8 @@ func PutSymbol(deps *SymbolsDeps) http.HandlerFunc {
 		}
 		// path 우선 — 본문의 Symbol 이 비어있거나 다르면 path 로 통일.
 		e.Symbol = sym
-		if e.Pair == "" {
-			writeJSONError(w, http.StatusBadRequest, "validation", "pair 필수")
+		if err := e.Validate(); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "validation", err.Error())
 			return
 		}
 		body, err := json.Marshal(e)

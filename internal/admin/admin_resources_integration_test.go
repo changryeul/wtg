@@ -129,21 +129,27 @@ func TestAdmin_Symbols_ValidationErrors(t *testing.T) {
 	ts := httptest.NewServer(newTestMux(cli))
 	defer ts.Close()
 
-	// pair 누락 → 400.
-	req, _ := http.NewRequest("PUT", ts.URL+"/v1/admin/symbols/X", strings.NewReader(`{"symbol":"X","active":true}`))
-	r, _ := http.DefaultClient.Do(req)
-	if r.StatusCode != 400 {
-		t.Errorf("pair 누락: status=%d, want 400", r.StatusCode)
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"pair 누락", `{"symbol":"X","active":true}`, 400},
+		{"bad JSON", `not json`, 400},
+		{"pair 슬래시 없음", `{"symbol":"X","pair":"USDKRW","active":true}`, 400},
+		{"pair 슬래시 2개", `{"symbol":"X","pair":"USD/KR/W","active":true}`, 400},
+		{"pair base 빈값", `{"symbol":"X","pair":"/KRW","active":true}`, 400},
 	}
-	r.Body.Close()
-
-	// bad JSON → 400.
-	req, _ = http.NewRequest("PUT", ts.URL+"/v1/admin/symbols/X", strings.NewReader(`not json`))
-	r, _ = http.DefaultClient.Do(req)
-	if r.StatusCode != 400 {
-		t.Errorf("bad JSON: status=%d, want 400", r.StatusCode)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest("PUT", ts.URL+"/v1/admin/symbols/X", strings.NewReader(tc.body))
+			r, _ := http.DefaultClient.Do(req)
+			defer r.Body.Close()
+			if r.StatusCode != tc.want {
+				t.Errorf("status=%d, want %d", r.StatusCode, tc.want)
+			}
+		})
 	}
-	r.Body.Close()
 }
 
 func TestAdmin_PricingTable_PutGet(t *testing.T) {
@@ -195,6 +201,47 @@ func TestAdmin_PricingTable_InvalidJSON(t *testing.T) {
 	r, _ := http.DefaultClient.Do(req)
 	if r.StatusCode != 400 {
 		t.Errorf("invalid JSON: status=%d, want 400", r.StatusCode)
+	}
+	r.Body.Close()
+}
+
+// 정책 검증 — 음수 마진은 400 + code=policy.
+func TestAdmin_PricingTable_NegativeMargin(t *testing.T) {
+	cli := newEtcdClient(t)
+	ts := httptest.NewServer(newTestMux(cli))
+	defer ts.Close()
+
+	body := `{
+		"version": 1,
+		"hq_margin": [{"pair":"USD/KRW","tier":"VIP","bid_amount":-0.01,"ask_amount":0.02}]
+	}`
+	req, _ := http.NewRequest("PUT", ts.URL+"/v1/admin/pricing/table", strings.NewReader(body))
+	r, _ := http.DefaultClient.Do(req)
+	if r.StatusCode != 400 {
+		t.Errorf("음수 마진: status=%d, want 400", r.StatusCode)
+	}
+	var e map[string]string
+	_ = json.NewDecoder(r.Body).Decode(&e)
+	r.Body.Close()
+	if e["error"] != "policy" {
+		t.Errorf("error code = %q, want 'policy'", e["error"])
+	}
+}
+
+// 정책 검증 — channel/site 동시 와일드카드는 400.
+func TestAdmin_PricingTable_BroadWildcard(t *testing.T) {
+	cli := newEtcdClient(t)
+	ts := httptest.NewServer(newTestMux(cli))
+	defer ts.Close()
+
+	body := `{
+		"version": 1,
+		"site_margin": [{"pair":"USD/KRW","channel":"","site":"","bid_amount":0.1,"ask_amount":0.1}]
+	}`
+	req, _ := http.NewRequest("PUT", ts.URL+"/v1/admin/pricing/table", strings.NewReader(body))
+	r, _ := http.DefaultClient.Do(req)
+	if r.StatusCode != 400 {
+		t.Errorf("광범위 wildcard: status=%d, want 400", r.StatusCode)
 	}
 	r.Body.Close()
 }

@@ -103,6 +103,7 @@
       <button class="chip ind-btn" data-ind="bb20">BB(20,2)</button>
       <button class="chip ind-btn" data-ind="rsi14">RSI 14</button>
       <button class="chip ind-btn" data-ind="macd">MACD(12,26,9)</button>
+      <button class="chip ind-btn" data-ind="stoch">Stoch(14,3)</button>
       <button class="chip ind-btn" data-ind="vol">Volume</button>
     </div>
 
@@ -195,6 +196,8 @@ const IND_COLORS = {
   vol:   "#64748b",
   macd_line:   "#22d3ee",
   macd_signal: "#f59e0b",
+  stoch_k:     "#22d3ee",
+  stoch_d:     "#f59e0b",
 };
 
 // SMA[i] = avg(close[i-N+1..i]). 앞쪽 N-1 개는 결과 없음.
@@ -336,6 +339,36 @@ function calcMACD(candles, fast, slow, sig) {
   return out;
 }
 
+// Fast Stochastic Oscillator — %K = 100·(close - lowest_low_N) / (highest_high_N - lowest_low_N),
+// %D = SMA(%K, dPeriod). 표준 (14, 3). 0~100 oscillator.
+//
+// 봉 자체의 high/low 를 사용 — mid 캔들이므로 high_bid/ask 의 mid 임 (정확도 충분).
+function calcStoch(candles, kPeriod, dPeriod) {
+  const out = { k: [], d: [] };
+  if (candles.length < kPeriod) return out;
+
+  // %K 계산.
+  for (let i = kPeriod - 1; i < candles.length; i++) {
+    let hh = -Infinity, ll = Infinity;
+    for (let j = i - kPeriod + 1; j <= i; j++) {
+      if (candles[j].high > hh) hh = candles[j].high;
+      if (candles[j].low < ll) ll = candles[j].low;
+    }
+    const range = hh - ll;
+    const kVal = range === 0 ? 50 : 100 * (candles[i].close - ll) / range;
+    out.k.push({ time: candles[i].time, value: kVal });
+  }
+
+  // %D = SMA(dPeriod) of %K.
+  if (out.k.length < dPeriod) return out;
+  for (let i = dPeriod - 1; i < out.k.length; i++) {
+    let sum = 0;
+    for (let j = i - dPeriod + 1; j <= i; j++) sum += out.k[j].value;
+    out.d.push({ time: out.k[i].time, value: sum / dPeriod });
+  }
+  return out;
+}
+
 // Volume — tick_count 를 histogram.
 function calcVolume(candles) {
   return candles.map(c => ({
@@ -416,6 +449,26 @@ function applyIndicator(id) {
         borderVisible: false,
       });
       indSeries[id] = [m, sg, h];
+      break;
+    }
+    case "stoch": {
+      // %K (cyan) + %D (amber). RSI/MACD 와 같은 oscillator 영역 (top 0.72) — 동시 활성 시 겹침.
+      const kSer = chart.addLineSeries({
+        color: IND_COLORS.stoch_k, lineWidth: 1, priceLineVisible: false,
+        priceScaleId: "stoch",
+      });
+      const dSer = chart.addLineSeries({
+        color: IND_COLORS.stoch_d, lineWidth: 1, priceLineVisible: false,
+        priceScaleId: "stoch",
+      });
+      const c = calcStoch(candleData, 14, 3);
+      kSer.setData(c.k);
+      dSer.setData(c.d);
+      chart.priceScale("stoch").applyOptions({
+        scaleMargins: { top: 0.72, bottom: 0.04 },
+        borderVisible: false,
+      });
+      indSeries[id] = [kSer, dSer];
       break;
     }
     case "vol": {

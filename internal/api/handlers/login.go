@@ -3,9 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
@@ -22,17 +22,17 @@ import (
 // exchange/routing_key 가 비어 있으면 운영 디폴트 ("ADMIN"/"LOGON") 사용.
 // 매매 엔진의 LOGON 트랜잭션 코드가 다르면 클라이언트가 명시.
 //
-// Site/Tier 는 시세 fan-out 의 Profile 결정에 사용된다. 임시: 클라이언트가
-// 제출한 값을 그대로 신뢰. **TODO**: 매매엔진의 LOGON 응답에서 추출하거나
-// 별도 사용자 메타 트랜잭션으로 권위 있는 출처를 확보 (cookie.Coki 페이로드
-// 스펙 합의 시점). 현재는 신뢰 경계가 약하므로 운영 전 보강 필수.
+// **보안 메모**: Site/Tier 는 클라이언트 입력으로 받지 않는다 — 권위 출처
+// (deps.UserProfiles) 에서 usid 로 조회. 과거 호환을 위해 필드 자체는
+// 남기되 핸들러 내부에서 무시한다.
 type LoginRequest struct {
 	Exchange   string          `json:"exchange,omitempty"`
 	RoutingKey string          `json:"routing_key,omitempty"`
 	Channel    string          `json:"channel,omitempty"` // 세션 메타. 빈 값이면 "WEB".
-	Site       string          `json:"site,omitempty"`    // "BRANCH"/"HQ" — TODO 엔진 위임
-	Tier       string          `json:"tier,omitempty"`    // "VIP"/"GOLD"/"STD" — TODO 엔진 위임
-	Data       json.RawMessage `json:"data,omitempty"`    // 엔진이 정의한 LOGON 페이로드 (id/pw/totp 등)
+	// Deprecated: Site/Tier 는 서버가 UserProfileResolver 로 결정. 클라이언트 입력 무시.
+	Site string          `json:"site,omitempty"`
+	Tier string          `json:"tier,omitempty"`
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // LoginResponse 는 POST /v1/login 출력.
@@ -153,10 +153,25 @@ func Login(deps *Deps) http.HandlerFunc {
 			ttl = defaultSessionTTL
 		}
 		now := time.Now()
-		// Profile 도출 — 현재는 클라이언트 제출값 신뢰 (운영 보강 필요).
-		// channel 은 위에서 결정된 값 사용. Site/Tier 는 normalize 후 Profile 구성.
-		site := strings.ToUpper(strings.TrimSpace(req.Site))
-		tier := strings.ToUpper(strings.TrimSpace(req.Tier))
+		// Profile 권위 출처 — UserProfileResolver 로 usid → (Site, Tier).
+		// 클라이언트가 body 로 보낸 Site/Tier (req.Site/req.Tier) 는 무시.
+		// resolver 가 nil 이거나 미등록 usid 면 빈 값 → 시세 quote 매칭 비활성
+		// (raw broadcast 만 수신). 운영자가 mci-admin 에서 등록할 때까지 안전한
+		// degraded mode 로 동작.
+		usid := cookieUsid(reply.Cookie)
+		var site, tier string
+		if deps.UserProfiles != nil {
+			up, err := deps.UserProfiles.Resolve(r.Context(), usid)
+			if err == nil {
+				site = string(up.Site)
+				tier = string(up.Tier)
+			} else if !errors.Is(err, auth.ErrUserProfileNotFound) {
+				deps.Logger.WarnContext(r.Context(), "UserProfile Resolve 실패 — 빈 Profile 로 진행",
+					slog.String("usid", usid),
+					slog.Any("error", err),
+				)
+			}
+		}
 		profile := session.Profile{
 			Channel: session.Channel(channel),
 			Site:    session.Site(site),
@@ -164,13 +179,13 @@ func Login(deps *Deps) http.HandlerFunc {
 		}
 		sess := &auth.Session{
 			ID:        sid,
-			Usid:      cookieUsid(reply.Cookie),
+			Usid:      usid,
 			Channel:   channel,
 			Cookie:    reply.Cookie,
 			IssuedAt:  now,
 			ExpiresAt: now.Add(ttl),
 			Profile:   profile,
-			LogonID:   session.LogonID(cookieUsid(reply.Cookie)), // 임시: Usid 와 동일. broadcast prefix 가 별도면 조정.
+			LogonID:   session.LogonID(usid), // 임시: Usid 와 동일. broadcast prefix 가 별도면 조정.
 		}
 		if err := deps.Sessions.Put(r.Context(), sess); err != nil {
 			deps.Logger.ErrorContext(r.Context(), "세션 저장 실패",

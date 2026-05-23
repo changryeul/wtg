@@ -66,6 +66,11 @@ type Deps struct {
 	// /v1/refresh 핸들러도 사용 — 둘 다 nil 이면 refresh 흐름 비활성.
 	RefreshStore    auth.RefreshStore
 	RefreshTokenTTL time.Duration
+
+	// UserProfiles 는 usid → (Site, Tier) 권위 출처.
+	// nil 이거나 미등록 usid → Session.Profile.Site/Tier 빈 값 (시세 quote 매칭 X,
+	// raw broadcast 만 수신). 클라이언트가 body 로 보낸 Site/Tier 는 보안상 무시.
+	UserProfiles auth.UserProfileResolver
 }
 
 // writeJSON 은 표준 JSON 응답 헬퍼. 에러 발생 시 access log 가 캡처하므로

@@ -73,6 +73,15 @@ type Config struct {
 	EtcdTLSCAFile     string
 	EtcdTLSServerName string
 
+	// ─── 사용자 프로파일 (Site/Tier 권위 출처) ─────────────────────────────
+	//
+	// 우선순위:
+	//   1) UserProfilesPrefix 채워지면 etcd watch (운영 표준 — admin 으로 관리)
+	//   2) UserProfilesFile 채워지면 정적 JSON (dev / 단일 인스턴스)
+	//   3) 둘 다 비면 resolver 없음 → 모든 사용자가 빈 Profile (degraded — raw 시세만)
+	UserProfilesFile   string
+	UserProfilesPrefix string // default 사용 시 "wtg/auth/user-profiles/"
+
 	// Broker TLS — broker 측에 TLS listener 가 있어야 사용 가능.
 	// docs/broker-tls.md 참조. 비면 plain TCP (기존 동작).
 	BrokerTLSCertFile string
@@ -184,6 +193,12 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_API_ETCD_TLS_SNI"); v != "" {
 		cfg.EtcdTLSServerName = v
 	}
+	if v := os.Getenv("WTG_API_USER_PROFILES_FILE"); v != "" {
+		cfg.UserProfilesFile = v
+	}
+	if v := os.Getenv("WTG_API_USER_PROFILES_PREFIX"); v != "" {
+		cfg.UserProfilesPrefix = v
+	}
 	if v := os.Getenv("WTG_API_BROKER_TLS_CERT"); v != "" {
 		cfg.BrokerTLSCertFile = v
 	}
@@ -227,6 +242,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdTLSKeyFile, "etcd-tls-key", cfg.EtcdTLSKeyFile, "etcd 클라이언트 key PEM (mTLS)")
 	fs.StringVar(&cfg.EtcdTLSCAFile, "etcd-tls-ca", cfg.EtcdTLSCAFile, "etcd 서버 검증용 CA bundle")
 	fs.StringVar(&cfg.EtcdTLSServerName, "etcd-tls-sni", cfg.EtcdTLSServerName, "etcd TLS SNI / hostname")
+	fs.StringVar(&cfg.UserProfilesFile, "user-profiles", cfg.UserProfilesFile, "사용자 프로파일 JSON 파일 (정적 — etcd prefix 미설정 시)")
+	fs.StringVar(&cfg.UserProfilesPrefix, "user-profiles-prefix", cfg.UserProfilesPrefix, "사용자 프로파일 etcd prefix (default wtg/auth/user-profiles/)")
 	fs.StringVar(&cfg.BrokerTLSCertFile, "broker-tls-cert", cfg.BrokerTLSCertFile, "broker TLS 클라이언트 cert PEM")
 	fs.StringVar(&cfg.BrokerTLSKeyFile, "broker-tls-key", cfg.BrokerTLSKeyFile, "broker TLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.BrokerTLSCAFile, "broker-tls-ca", cfg.BrokerTLSCAFile, "broker TLS 서버 검증용 CA bundle")

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
+
 	"github.com/winwaysystems/wtg/internal/api/handlers"
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
@@ -41,10 +43,58 @@ type Server struct {
 	policySync  *policy.EtcdSync
 	tlsReloader *tlsutil.Reloader
 	http        *http.Server
+
+	upEtcdCli   *clientv3.Client            // user-profile etcd client (옵션)
+	upEtcdRes   *auth.EtcdUserProfileResolver
 }
 
 // SetPolicyEngine — mci-admin 과 공유 시 외부 주입.
 func (s *Server) SetPolicyEngine(e *policy.Engine) { s.policy = e }
+
+// buildUserProfileResolver 는 cfg 에 맞춰 UserProfileResolver 를 구성한다.
+// 우선순위: etcd > 정적 파일 > nil. nil 이어도 정상 (Site/Tier 빈 값으로 fallback).
+func (s *Server) buildUserProfileResolver(ctx context.Context) (auth.UserProfileResolver, error) {
+	// 1) etcd 모드 — EtcdEndpoints + (UserProfilesPrefix 또는 default).
+	if len(policy.SplitEndpoints(s.cfg.EtcdEndpoints)) > 0 && s.cfg.UserProfilesPrefix != "" {
+		tlsCfg, err := s.buildEtcdTLS()
+		if err != nil {
+			return nil, err
+		}
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   policy.SplitEndpoints(s.cfg.EtcdEndpoints),
+			DialTimeout: 5 * time.Second,
+			TLS:         tlsCfg,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("user-profile etcd dial: %w", err)
+		}
+		r, err := auth.NewEtcdUserProfileResolver(ctx, auth.EtcdUserProfileResolverOptions{
+			Client: cli,
+			Prefix: s.cfg.UserProfilesPrefix,
+			Logger: s.logger,
+		})
+		if err != nil {
+			_ = cli.Close()
+			return nil, err
+		}
+		s.upEtcdCli = cli
+		s.upEtcdRes = r
+		return r, nil
+	}
+	// 2) 정적 파일.
+	if s.cfg.UserProfilesFile != "" {
+		return auth.LoadStaticResolverFromFile(s.cfg.UserProfilesFile)
+	}
+	return nil, nil
+}
+
+// ternary — 간단 삼항.
+func ternary(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
+}
 
 // buildEtcdTLS — cfg.EtcdTLS* → *tls.Config. 모두 비어있으면 nil.
 // routing/policy 양쪽에 동일 인증서로 plumb.
@@ -198,6 +248,22 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
+	// UserProfileResolver — Site/Tier 권위 출처.
+	// etcd watch 가 있으면 그 위에서 동작 (운영 권장), 정적 파일은 dev/단일 인스턴스.
+	upResolver, err := s.buildUserProfileResolver(ctx)
+	if err != nil {
+		return fmt.Errorf("user profile resolver: %w", err)
+	}
+	if upResolver != nil {
+		s.logger.Info("UserProfileResolver 활성",
+			slog.String("source",
+				ternary(s.cfg.UserProfilesPrefix != "" || (len(s.cfg.EtcdEndpoints) > 0 && s.cfg.UserProfilesPrefix == ""),
+					"etcd", "file")),
+		)
+	} else {
+		s.logger.Warn("UserProfileResolver 비활성 — Site/Tier 모두 빈 값 (degraded mode)")
+	}
+
 	// 핸들러 dependencies.
 	deps := &handlers.Deps{
 		MQ:           mq,
@@ -208,6 +274,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Policy:       s.policy,
 		JWTIssuer:    s.jwtIss,
 		RefreshStore: s.refresh,
+		UserProfiles: upResolver,
 	}
 
 	// 라우팅 — Go 1.22+ ServeMux (method+path 패턴 지원).
@@ -337,6 +404,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if err := s.policySync.Close(); err != nil && first == nil {
 			first = err
 		}
+	}
+	if s.upEtcdRes != nil {
+		_ = s.upEtcdRes.Close()
+	}
+	if s.upEtcdCli != nil {
+		_ = s.upEtcdCli.Close()
 	}
 	if s.tlsReloader != nil {
 		s.tlsReloader.Stop()

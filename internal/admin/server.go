@@ -278,6 +278,13 @@ func (s *Server) Start(ctx context.Context) error {
 		Audit:  s.audit,
 		Hub:    s.hub,
 	}
+	userProfilesDeps := &UserProfilesDeps{
+		Cli:    s.etcdShared,
+		Prefix: s.cfg.EtcdUserProfilesPrefix,
+		Logger: s.logger,
+		Audit:  s.audit,
+		Hub:    s.hub,
+	}
 
 	// svc I/O 명세 — 부팅 시 헤더 디렉터리 일괄 인덱싱. cfg 가 비어있으면 빈
 	// registry — UI 가 안내 메시지만 표시.
@@ -336,6 +343,12 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/admin/profiles/{key}", GetProfile(profilesDeps))
 	mux.HandleFunc("PUT /v1/admin/profiles/{key}", PutProfile(profilesDeps))
 	mux.HandleFunc("DELETE /v1/admin/profiles/{key}", DeleteProfile(profilesDeps))
+
+	// 사용자 프로파일 (Site/Tier 권위 출처) — mci-api 의 Login 이 watch 로 받아 사용.
+	mux.HandleFunc("GET /v1/admin/user-profiles", ListUserProfiles(userProfilesDeps))
+	mux.HandleFunc("GET /v1/admin/user-profiles/{usid}", GetUserProfile(userProfilesDeps))
+	mux.HandleFunc("PUT /v1/admin/user-profiles/{usid}", PutUserProfile(userProfilesDeps))
+	mux.HandleFunc("DELETE /v1/admin/user-profiles/{usid}", DeleteUserProfile(userProfilesDeps))
 	// 정책 엔진 — kill switch / 정비 창 / 차단 심볼·라우팅키.
 	mux.HandleFunc("GET /v1/admin/policy", GetPolicy(policyDeps))
 	mux.HandleFunc("POST /v1/admin/policy/kill-switch", SetKillSwitch(policyDeps))

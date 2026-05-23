@@ -53,7 +53,81 @@ func newTestMux(cli *clientv3.Client) http.Handler {
 	mux.HandleFunc("GET /v1/admin/profiles/{key}", GetProfile(pfDeps))
 	mux.HandleFunc("PUT /v1/admin/profiles/{key}", PutProfile(pfDeps))
 	mux.HandleFunc("DELETE /v1/admin/profiles/{key}", DeleteProfile(pfDeps))
+
+	upDeps := &UserProfilesDeps{Cli: cli, Prefix: prefix + "auth/user-profiles/", Logger: logger, Audit: audit}
+	mux.HandleFunc("GET /v1/admin/user-profiles", ListUserProfiles(upDeps))
+	mux.HandleFunc("GET /v1/admin/user-profiles/{usid}", GetUserProfile(upDeps))
+	mux.HandleFunc("PUT /v1/admin/user-profiles/{usid}", PutUserProfile(upDeps))
+	mux.HandleFunc("DELETE /v1/admin/user-profiles/{usid}", DeleteUserProfile(upDeps))
 	return mux
+}
+
+func TestAdmin_UserProfiles_CRUD(t *testing.T) {
+	cli := newEtcdClient(t)
+	ts := httptest.NewServer(newTestMux(cli))
+	defer ts.Close()
+
+	// PUT 2건.
+	put := func(usid, site, tier string, wantStatus int) {
+		body := `{"site":"` + site + `","tier":"` + tier + `"}`
+		req, _ := http.NewRequest("PUT", ts.URL+"/v1/admin/user-profiles/"+usid, strings.NewReader(body))
+		r, _ := http.DefaultClient.Do(req)
+		defer r.Body.Close()
+		if r.StatusCode != wantStatus {
+			b, _ := io.ReadAll(r.Body)
+			t.Fatalf("PUT %s: status=%d want=%d body=%s", usid, r.StatusCode, wantStatus, b)
+		}
+	}
+	put("trader01", "BRANCH", "VIP", 200)
+	put("trader02", "HQ", "STD", 200)
+
+	// LIST.
+	r, _ := http.Get(ts.URL + "/v1/admin/user-profiles")
+	if r.StatusCode != 200 {
+		t.Fatalf("LIST status=%d", r.StatusCode)
+	}
+	var listOut struct {
+		Count int `json:"count"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&listOut)
+	r.Body.Close()
+	if listOut.Count != 2 {
+		t.Errorf("LIST count = %d, want 2", listOut.Count)
+	}
+
+	// GET 단건.
+	r, _ = http.Get(ts.URL + "/v1/admin/user-profiles/trader01")
+	if r.StatusCode != 200 {
+		t.Fatalf("GET status=%d", r.StatusCode)
+	}
+	var got struct {
+		Usid string `json:"usid"`
+		Site string `json:"site"`
+		Tier string `json:"tier"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&got)
+	r.Body.Close()
+	if got.Usid != "trader01" || got.Site != "BRANCH" || got.Tier != "VIP" {
+		t.Errorf("GET payload: %+v", got)
+	}
+
+	// 검증 — site/tier 누락 400.
+	put("trader03", "", "VIP", 400)
+	put("trader04", "BRANCH", "", 400)
+
+	// DELETE.
+	req, _ := http.NewRequest("DELETE", ts.URL+"/v1/admin/user-profiles/trader01", nil)
+	r, _ = http.DefaultClient.Do(req)
+	if r.StatusCode != 200 {
+		t.Errorf("DELETE status=%d", r.StatusCode)
+	}
+	r.Body.Close()
+	// 삭제 후 GET 404.
+	r, _ = http.Get(ts.URL + "/v1/admin/user-profiles/trader01")
+	if r.StatusCode != 404 {
+		t.Errorf("DELETE 후 GET: status=%d, want 404", r.StatusCode)
+	}
+	r.Body.Close()
 }
 
 func TestAdmin_Symbols_CRUD(t *testing.T) {

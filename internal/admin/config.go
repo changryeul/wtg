@@ -85,6 +85,10 @@ type Config struct {
 	EtcdPricingKey     string // default "wtg/pricing/table"
 	EtcdProfilesPrefix string // default "wtg/price/profiles/"
 
+	// 사용자 프로파일 (Site/Tier 권위 출처) etcd prefix.
+	// mci-api 의 EtcdUserProfileResolver 가 동일 prefix watch.
+	EtcdUserProfilesPrefix string // default "wtg/auth/user-profiles/"
+
 	// etcd 클라이언트 TLS (공유 client 용 — symbols/pricing/profiles 핸들러 dial).
 	// routing/policy 의 자체 client 는 별도 트랙에서 적용 예정.
 	EtcdTLSCertFile   string
@@ -210,6 +214,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_ADMIN_ETCD_PROFILES_PREFIX"); v != "" {
 		cfg.EtcdProfilesPrefix = v
 	}
+	if v := os.Getenv("WTG_ADMIN_ETCD_USER_PROFILES_PREFIX"); v != "" {
+		cfg.EtcdUserProfilesPrefix = v
+	}
 	if v := os.Getenv("WTG_ADMIN_ETCD_TLS_CERT"); v != "" {
 		cfg.EtcdTLSCertFile = v
 	}
@@ -271,6 +278,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdSymbolsPrefix, "etcd-symbols-prefix", cfg.EtcdSymbolsPrefix, "etcd 통화쌍 prefix (default wtg/quote/symbols/)")
 	fs.StringVar(&cfg.EtcdPricingKey, "etcd-pricing-key", cfg.EtcdPricingKey, "etcd PricingTable 단일 key (default wtg/pricing/table)")
 	fs.StringVar(&cfg.EtcdProfilesPrefix, "etcd-profiles-prefix", cfg.EtcdProfilesPrefix, "etcd 활성 Profile prefix (default wtg/price/profiles/)")
+	fs.StringVar(&cfg.EtcdUserProfilesPrefix, "etcd-user-profiles-prefix", cfg.EtcdUserProfilesPrefix, "etcd 사용자 프로파일 prefix (default wtg/auth/user-profiles/)")
 	fs.StringVar(&cfg.EtcdTLSCertFile, "etcd-tls-cert", cfg.EtcdTLSCertFile, "etcd 클라이언트 cert PEM (공유 client mTLS)")
 	fs.StringVar(&cfg.EtcdTLSKeyFile, "etcd-tls-key", cfg.EtcdTLSKeyFile, "etcd 클라이언트 key PEM (공유 client mTLS)")
 	fs.StringVar(&cfg.EtcdTLSCAFile, "etcd-tls-ca", cfg.EtcdTLSCAFile, "etcd 서버 검증용 CA bundle")

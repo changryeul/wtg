@@ -102,6 +102,7 @@
       <button class="chip ind-btn" data-ind="ema9">EMA 9</button>
       <button class="chip ind-btn" data-ind="bb20">BB(20,2)</button>
       <button class="chip ind-btn" data-ind="rsi14">RSI 14</button>
+      <button class="chip ind-btn" data-ind="macd">MACD(12,26,9)</button>
       <button class="chip ind-btn" data-ind="vol">Volume</button>
     </div>
 
@@ -192,6 +193,8 @@ const IND_COLORS = {
   bb20:  "#94a3b8",
   rsi14: "#22d3ee",
   vol:   "#64748b",
+  macd_line:   "#22d3ee",
+  macd_signal: "#f59e0b",
 };
 
 // SMA[i] = avg(close[i-N+1..i]). 앞쪽 N-1 개는 결과 없음.
@@ -270,6 +273,69 @@ function calcRSI(candles, n) {
   return out;
 }
 
+// MACD(fast, slow, signal) = (EMA_fast - EMA_slow), signal=EMA(MACD), hist=MACD-Signal.
+// 표준 (12, 26, 9). 반환 모양은 lightweight-charts 의 setData 와 호환 가능한 3개 시리즈.
+function calcMACD(candles, fast, slow, sig) {
+  const out = { macd: [], signal: [], hist: [] };
+  if (candles.length < slow + sig) return out;
+
+  // EMA 배열 — candle index 기준 (앞부분 null) 로 정렬해서 시점 align.
+  const emaArr = (n) => {
+    const arr = new Array(candles.length).fill(null);
+    if (candles.length < n) return arr;
+    const k = 2 / (n + 1);
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += candles[i].close;
+    let e = sum / n;
+    arr[n - 1] = e;
+    for (let i = n; i < candles.length; i++) {
+      e = candles[i].close * k + e * (1 - k);
+      arr[i] = e;
+    }
+    return arr;
+  };
+
+  const ef = emaArr(fast);
+  const es = emaArr(slow);
+
+  // MACD line = EMA_fast - EMA_slow (둘 다 정의된 index 부터).
+  const macdVals = new Array(candles.length).fill(null);
+  for (let i = slow - 1; i < candles.length; i++) {
+    if (ef[i] != null && es[i] != null) {
+      macdVals[i] = ef[i] - es[i];
+      out.macd.push({ time: candles[i].time, value: macdVals[i] });
+    }
+  }
+
+  // Signal = EMA(sig) of MACD line. 첫 sig 개 평균으로 seed.
+  const firstMacdIdx = slow - 1;
+  if (candles.length < firstMacdIdx + sig) return out;
+  let sigSum = 0;
+  for (let i = 0; i < sig; i++) sigSum += macdVals[firstMacdIdx + i];
+  let signalEMA = sigSum / sig;
+  const sigStart = firstMacdIdx + sig - 1;
+  out.signal.push({ time: candles[sigStart].time, value: signalEMA });
+  const k = 2 / (sig + 1);
+  for (let i = sigStart + 1; i < candles.length; i++) {
+    signalEMA = macdVals[i] * k + signalEMA * (1 - k);
+    out.signal.push({ time: candles[i].time, value: signalEMA });
+  }
+
+  // Histogram = MACD - Signal (signal 정의된 시점부터).
+  const sigMap = new Map(out.signal.map(s => [s.time, s.value]));
+  for (const m of out.macd) {
+    const sv = sigMap.get(m.time);
+    if (sv == null) continue;
+    const v = m.value - sv;
+    out.hist.push({
+      time: m.time,
+      value: v,
+      color: v >= 0 ? "rgba(16,185,129,0.5)" : "rgba(239,68,68,0.5)",
+    });
+  }
+  return out;
+}
+
 // Volume — tick_count 를 histogram.
 function calcVolume(candles) {
   return candles.map(c => ({
@@ -324,6 +390,32 @@ function applyIndicator(id) {
         borderVisible: false,
       });
       indSeries[id] = [s];
+      break;
+    }
+    case "macd": {
+      // MACD 라인 + Signal 라인 + Histogram — 모두 같은 priceScaleId="macd" 공유.
+      // RSI 와 동일 영역 (top 0.72 ~ bottom 0.04) 에 stack — 동시 활성 시 시각 겹침.
+      const m = chart.addLineSeries({
+        color: IND_COLORS.macd_line, lineWidth: 1, priceLineVisible: false,
+        priceScaleId: "macd",
+      });
+      const sg = chart.addLineSeries({
+        color: IND_COLORS.macd_signal, lineWidth: 1, priceLineVisible: false,
+        priceScaleId: "macd",
+      });
+      const h = chart.addHistogramSeries({
+        priceLineVisible: false,
+        priceScaleId: "macd",
+      });
+      const calc = calcMACD(candleData, 12, 26, 9);
+      m.setData(calc.macd);
+      sg.setData(calc.signal);
+      h.setData(calc.hist);
+      chart.priceScale("macd").applyOptions({
+        scaleMargins: { top: 0.72, bottom: 0.04 },
+        borderVisible: false,
+      });
+      indSeries[id] = [m, sg, h];
       break;
     }
     case "vol": {

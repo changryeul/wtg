@@ -17,9 +17,11 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/winwaysystems/wtg/pkg/mymq"
+	"github.com/winwaysystems/wtg/pkg/session"
 )
 
 // Session 은 로그인 한 번에 대응하는 web 세션 단위.
@@ -27,14 +29,87 @@ import (
 // auth.md §3 흐름의 6단계 — mci-api 가 LOGON 응답에서 cookie_t 를 받아
 // 이 구조체로 감싸 Store 에 저장한다. 이후 모든 요청은 SessionID 만 들고
 // 와서 cookie_t 를 복원한다.
+//
+// 시세 운영 컨텍스트:
+//
+//   - Profile 은 시세 fan-out routing-key 매칭에 사용 (Channel/Site/Tier).
+//   - LogonID 는 broker broadcast prefix 매칭에 사용.
+//   - Subscribed 는 ws 세션이 현재 구독 중인 통화쌍 집합.
+//     동시성 안전을 위해 외부에서는 Subscribe/Unsubscribe/IsSubscribed/Subscriptions
+//     메서드로만 접근한다 — 필드 직접 접근 금지.
+//
+// 1 로그인 = 1 ws 가정 (multi-tab 비지원). 새 ws 연결이 같은 세션으로 들어오면
+// 기존 ws 를 강제 종료하는 책임은 ws hub (mci-push) 에 있다.
 type Session struct {
-	ID         string       // 외부 노출용 불투명 식별자 (auth.md §6 의 sid)
-	Usid       string       // 사용자 ID (cookie.Usid 와 동일, 디버깅/감사용)
-	Channel    string       // 채널 코드 ("WEB" / "ADMIN" / "FIX" 등)
-	Cookie     *mymq.Cookie // 매매 엔진에 첨부할 cookie_t
-	IssuedAt   time.Time    // 발급 시각
-	ExpiresAt  time.Time    // 만료 시각 (auth.md §6 refresh 만료, default 8h)
-	LastSeenAt time.Time    // 마지막 사용 시각 (슬라이딩 TTL 용)
+	ID         string         // 외부 노출용 불투명 식별자 (auth.md §6 의 sid)
+	Usid       string         // 사용자 ID (cookie.Usid 와 동일, 디버깅/감사용)
+	Channel    string         // 채널 코드 ("WEB" / "ADMIN" / "FIX" 등) - legacy 필드, 신규 코드는 Profile.Channel 사용
+	Cookie     *mymq.Cookie   // 매매 엔진에 첨부할 cookie_t
+	IssuedAt   time.Time      // 발급 시각
+	ExpiresAt  time.Time      // 만료 시각 (auth.md §6 refresh 만료, default 8h)
+	LastSeenAt time.Time      // 마지막 사용 시각 (슬라이딩 TTL 용)
+
+	// 시세 fan-out 용. 로그인 시 확정되며 이후 immutable.
+	// TODO: Site/Tier 는 매매엔진 cookie_t 의 Coki 페이로드 스펙 합의 후 채움.
+	Profile session.Profile
+	LogonID session.LogonID
+
+	subMu      sync.RWMutex
+	subscribed map[session.Pair]struct{}
+}
+
+// Subscribe 는 통화쌍을 구독 집합에 추가한다.
+// added 는 새로 추가됐는지 여부 (이미 있으면 false).
+func (s *Session) Subscribe(p session.Pair) (added bool) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	if s.subscribed == nil {
+		s.subscribed = make(map[session.Pair]struct{})
+	}
+	if _, ok := s.subscribed[p]; ok {
+		return false
+	}
+	s.subscribed[p] = struct{}{}
+	return true
+}
+
+// Unsubscribe 는 통화쌍을 구독 집합에서 제거한다.
+// removed 는 실제로 제거됐는지 여부 (없었으면 false).
+func (s *Session) Unsubscribe(p session.Pair) (removed bool) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	if _, ok := s.subscribed[p]; !ok {
+		return false
+	}
+	delete(s.subscribed, p)
+	return true
+}
+
+// IsSubscribed 는 통화쌍이 현재 구독 중인지 반환한다.
+func (s *Session) IsSubscribed(p session.Pair) bool {
+	s.subMu.RLock()
+	defer s.subMu.RUnlock()
+	_, ok := s.subscribed[p]
+	return ok
+}
+
+// Subscriptions 는 현재 구독 중인 통화쌍의 snapshot 을 반환한다.
+// 반환된 slice 는 호출자 소유이며 정렬 순서는 보장하지 않는다.
+func (s *Session) Subscriptions() []session.Pair {
+	s.subMu.RLock()
+	defer s.subMu.RUnlock()
+	out := make([]session.Pair, 0, len(s.subscribed))
+	for p := range s.subscribed {
+		out = append(out, p)
+	}
+	return out
+}
+
+// ClearSubscriptions 는 모든 구독을 제거한다 (logout / ws close 시 호출).
+func (s *Session) ClearSubscriptions() {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	s.subscribed = nil
 }
 
 // Expired 는 now 기준으로 세션이 만료되었는지 반환한다.

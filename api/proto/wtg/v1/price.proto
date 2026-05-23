@@ -15,10 +15,14 @@ option go_package = "github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1";
 
 // PriceService 는 mci-price (Internal) 가 노출하는 gRPC 서비스다.
 service PriceService {
-  // Subscribe 는 edge 가 호출해서 Internal 로부터 tick stream 을 받는다.
-  // bidirectional 형태로 정의해서 edge 가 시작 시 구독 심볼/필터를 지정 가능.
-  // 1차 prototype: edge 는 빈 SubscribeRequest 만 보내고 모든 tick 수신.
+  // Subscribe 는 edge 가 호출해서 Internal 로부터 raw tick stream 을 받는다.
+  // 마진 적용 전 시세 — 디버깅 / 모니터링 / 전체 broadcast 용.
   rpc Subscribe(SubscribeRequest) returns (stream Tick);
+
+  // SubscribeQuote 는 edge 가 호출해서 Internal 로부터 마진 적용된 Profile 별
+  // CustomerQuote stream 을 받는다. mci-price 의 PricingConsumer 가 publish 하는
+  // 동일 데이터를 broker 외에 이 stream 으로도 push (이중 publish).
+  rpc SubscribeQuote(QuoteSubscribeRequest) returns (stream CustomerQuote);
 }
 
 // SubscribeRequest 는 edge 가 보내는 구독 옵션 (1차는 빈 메시지).
@@ -48,4 +52,38 @@ message Tick {
 
   // mci-price 가 디코딩한 wallclock (Unix nano). 디버깅/지연 측정용.
   int64 received_unix_nano = 8;
+}
+
+// QuoteSubscribeRequest 는 edge 가 CustomerQuote stream 을 구독할 때 보내는 옵션.
+message QuoteSubscribeRequest {
+  // edge instance 식별 (디버깅/감사용).
+  string subscriber_id = 1;
+
+  // 수신할 Profile 화이트리스트 (예: "WEB.BRANCH.VIP").
+  // 비어있으면 모든 Profile 수신 — edge 가 사용자별 분기 책임.
+  repeated string profile_keys = 2;
+
+  // 수신할 통화쌍 화이트리스트. 비어있으면 모든 pair.
+  repeated string pairs = 3;
+}
+
+// CustomerQuote 는 마진 적용된 고객 노출 시세.
+// pkg/pricing.CustomerQuote 와 1:1 대응. profile 정보는 edge fan-out 분기에 사용.
+message CustomerQuote {
+  string pair    = 1;
+  string channel = 2;  // session.Channel ("WEB"/"MOB"/"CS"/"FIX"/"ADM")
+  string site    = 3;  // session.Site ("BRANCH"/"HQ")
+  string tier    = 4;  // session.Tier ("VIP"/"GOLD"/"STD"...)
+  string tenor   = 5;  // "SPOT" / "1W" / "1M" ...
+
+  double bid = 6;
+  double ask = 7;
+
+  // 시세 wallclock (Unix nano). raw 시점 timestamp 유지.
+  int64 ts_unix_nano = 8;
+
+  // 감사·재현용 — 산출 근거가 된 raw 값과 적용된 PricingTable.Version.
+  double raw_bid       = 9;
+  double raw_ask       = 10;
+  int64  table_version = 11;
 }

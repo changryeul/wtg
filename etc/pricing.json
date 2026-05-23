@@ -1,0 +1,34 @@
+{
+  "version": 1,
+
+  "swap_point": [
+    {"pair": "USD/KRW", "tenor": "1W",  "bid_amount": 0.05,  "ask_amount": 0.07},
+    {"pair": "USD/KRW", "tenor": "1M",  "bid_amount": 0.15,  "ask_amount": 0.25},
+    {"pair": "USD/KRW", "tenor": "3M",  "bid_amount": 0.40,  "ask_amount": 0.55},
+
+    {"pair": "EUR/KRW", "tenor": "1M",  "bid_amount": 0.20,  "ask_amount": 0.32}
+  ],
+
+  "hq_margin": [
+    {"pair": "USD/KRW", "tier": "VIP",  "bid_amount": 0.02, "ask_amount": 0.02},
+    {"pair": "USD/KRW", "tier": "GOLD", "bid_amount": 0.05, "ask_amount": 0.05},
+    {"pair": "USD/KRW", "tier": "STD",  "bid_amount": 0.10, "ask_amount": 0.10},
+    {"pair": "USD/KRW", "tier": "",     "bid_amount": 0.15, "ask_amount": 0.15},
+
+    {"pair": "EUR/KRW", "tier": "VIP",  "bid_amount": 0.05, "ask_amount": 0.05},
+    {"pair": "EUR/KRW", "tier": "STD",  "bid_amount": 0.20, "ask_amount": 0.20},
+
+    {"pair": "JPY/KRW", "tier": "",     "bid_amount": 0.005, "ask_amount": 0.005}
+  ],
+
+  "site_margin": [
+    {"pair": "USD/KRW", "channel": "WEB", "site": "BRANCH", "bid_amount": 0.05, "ask_amount": 0.05},
+    {"pair": "USD/KRW", "channel": "WEB", "site": "HQ",     "bid_amount": 0.01, "ask_amount": 0.01},
+    {"pair": "USD/KRW", "channel": "MOB", "site": "BRANCH", "bid_amount": 0.07, "ask_amount": 0.07},
+    {"pair": "USD/KRW", "channel": "MOB", "site": "HQ",     "bid_amount": 0.02, "ask_amount": 0.02},
+    {"pair": "USD/KRW", "channel": "CS",  "site": "BRANCH", "bid_amount": 0.04, "ask_amount": 0.04},
+
+    {"pair": "EUR/KRW", "channel": "",    "site": "BRANCH", "bid_amount": 0.08, "ask_amount": 0.08},
+    {"pair": "EUR/KRW", "channel": "",    "site": "HQ",     "bid_amount": 0.02, "ask_amount": 0.02}
+  ]
+}

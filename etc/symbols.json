@@ -1,0 +1,12 @@
+[
+  {"symbol": "USDKRW", "pair": "USD/KRW", "active": true},
+  {"symbol": "EURKRW", "pair": "EUR/KRW", "active": true},
+  {"symbol": "JPYKRW", "pair": "JPY/KRW", "active": true},
+  {"symbol": "GBPKRW", "pair": "GBP/KRW", "active": true},
+  {"symbol": "AUDKRW", "pair": "AUD/KRW", "active": true},
+  {"symbol": "CNYKRW", "pair": "CNY/KRW", "active": true},
+  {"symbol": "EURUSD", "pair": "EUR/USD", "active": true},
+  {"symbol": "USDJPY", "pair": "USD/JPY", "active": true},
+  {"symbol": "GBPUSD", "pair": "GBP/USD", "active": true},
+  {"symbol": "AUDUSD", "pair": "AUD/USD", "active": true}
+]

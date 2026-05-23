@@ -18,6 +18,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/winwaysystems/wtg/pkg/netutil"
@@ -73,6 +74,20 @@ type Config struct {
 	// AllowCIDRs — 외부 접근 허용 CIDR 화이트리스트 (콤마 구분 → IPNet).
 	// pkg/netutil.IPAllowList 미들웨어가 사용. 비면 모두 허용.
 	AllowCIDRs []*net.IPNet
+
+	// ─── Quote stream (Profile 별 마진 적용된 시세) ───────────────────────
+	//
+	// EnableQuoteStream=true 면 PriceService.SubscribeQuote 를 추가로 호출해
+	// Profile-routed CustomerQuote 를 받고, 각 ws 세션의 Profile 과 매칭되는
+	// 항목만 fan-out 한다 (Subscriber.profileKey 기준).
+	//
+	// 기존 PriceService.Subscribe (raw tick broadcast) 도 그대로 동작 — 둘은 독립.
+	EnableQuoteStream bool
+
+	// QuoteProfileKeys — Internal 에 보낼 profile_keys 화이트리스트.
+	// 비어있으면 모든 Profile 의 quote 를 받는다 (edge 가 사용자별 분기 담당).
+	// 좁히면 broker→edge 트래픽 절감.
+	QuoteProfileKeys []string
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -92,7 +107,8 @@ func DefaultConfig() Config {
 		DialTimeout:    5 * time.Second,
 		IPRatePerSec:   100,
 		IPBurst:        200,
-		LogLevel:       "info",
+		LogLevel:          "info",
+		EnableQuoteStream: false,
 	}
 }
 
@@ -143,6 +159,17 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_EPRICE_TLS_CLIENT_CA"); v != "" {
 		cfg.TLSClientCAFile = v
 	}
+	if v := os.Getenv("WTG_EPRICE_QUOTE_STREAM"); v == "1" || v == "true" {
+		cfg.EnableQuoteStream = true
+	}
+	if v := os.Getenv("WTG_EPRICE_QUOTE_PROFILES"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				cfg.QuoteProfileKeys = append(cfg.QuoteProfileKeys, p)
+			}
+		}
+	}
 	cidrStr := os.Getenv("WTG_EPRICE_ALLOW_CIDRS")
 
 	fs := flag.NewFlagSet("mci-edge-price", flag.ContinueOnError)
@@ -163,9 +190,20 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "외부 TLS 서버 cert PEM (있으면 HTTPS)")
 	fs.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "외부 TLS 서버 key PEM")
 	fs.StringVar(&cfg.TLSClientCAFile, "tls-client-ca", cfg.TLSClientCAFile, "외부 mTLS 클라이언트 CA bundle")
+	fs.BoolVar(&cfg.EnableQuoteStream, "quote-stream", cfg.EnableQuoteStream, "PriceService.SubscribeQuote 활성 (Profile-routed CustomerQuote)")
+	quoteProfStr := strings.Join(cfg.QuoteProfileKeys, ",")
+	fs.StringVar(&quoteProfStr, "quote-profiles", quoteProfStr, "수신할 profile_keys 화이트리스트 (콤마 구분, 빈값=모두)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
+	}
+	// quoteProfStr 가 flag 로 갱신될 수 있으므로 다시 슬라이스로 변환.
+	cfg.QuoteProfileKeys = cfg.QuoteProfileKeys[:0]
+	for _, p := range strings.Split(quoteProfStr, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			cfg.QuoteProfileKeys = append(cfg.QuoteProfileKeys, p)
+		}
 	}
 	if cidrs, err := netutil.ParseCIDRs(cidrStr); err != nil {
 		return cfg, err

@@ -71,6 +71,40 @@ type Config struct {
 	BrokerTLSKeyFile  string
 	BrokerTLSCAFile   string
 	BrokerTLSSNI      string
+
+	// ─── Chart / 봉 영속화 (optional) ─────────────────────────────────────
+	//
+	// ChartDSN 이 비어있으면 Aggregator/Archiver 비활성 — broker fan-out 만 동작.
+	// 즉 1차 prototype (gRPC stream only) 모드는 그대로 사용 가능.
+	//
+	// 활성 시:
+	//   - pgxpool 생성 → PgxInserter → Archiver
+	//   - SymbolMap 로드 → Aggregator (JSONCookerDecoder)
+	//   - Server.AddConsumer(agg) — broker tick → 봉 누적 → 봉 close → DB INSERT
+	ChartDSN          string
+	ChartPoolMaxConns int
+
+	// SymbolsFile 은 JSON 으로 직렬화된 []quote.SymbolEntry.
+	// 비어있으면 SymbolMap 이 empty — Aggregator 가 모든 tick 을 drop (의도된 안전한 default).
+	SymbolsFile string
+
+	// Archiver 옵션 — 0 이면 ArchiverOptions defaults.
+	ArchiverQueueSize     int
+	ArchiverFlushInterval time.Duration
+	ArchiverBatchMax      int
+
+	// Aggregator 의 Sweeper 호출 주기 (default 1s).
+	AggregatorSweepInterval time.Duration
+
+	// ─── PricingConsumer (Profile 별 마진 적용 후 broker publish) ──────────
+	//
+	// 둘 다 채워져야 PricingConsumer 활성화. 하나라도 비어있으면 비활성 — 즉,
+	// broker FANOUT (raw) 만 동작하고 ExchangeQuote (TOPIC) 로의 publish 는 없다.
+	//
+	// PricingFile : pricing.PricingTable 의 JSON 직렬화.
+	// ProfilesFile: []session.Profile 의 JSON 직렬화 (활성 Profile 카탈로그).
+	PricingFile  string
+	ProfilesFile string
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -93,6 +127,17 @@ func DefaultConfig() Config {
 		PrintFirstN:      0,
 		DevMode:          false,
 		LogLevel:         "info",
+
+		ChartDSN:                "",
+		ChartPoolMaxConns:       5,
+		SymbolsFile:             "",
+		ArchiverQueueSize:       10000,
+		ArchiverFlushInterval:   time.Second,
+		ArchiverBatchMax:        500,
+		AggregatorSweepInterval: time.Second,
+
+		PricingFile:  "",
+		ProfilesFile: "",
 	}
 }
 
@@ -157,6 +202,23 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_BROKER_TLS_SNI"); v != "" {
 		cfg.BrokerTLSSNI = v
 	}
+	if v := os.Getenv("WTG_PRICE_CHART_DSN"); v != "" {
+		cfg.ChartDSN = v
+	}
+	if v := os.Getenv("WTG_PRICE_CHART_POOL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.ChartPoolMaxConns = n
+		}
+	}
+	if v := os.Getenv("WTG_PRICE_SYMBOLS_FILE"); v != "" {
+		cfg.SymbolsFile = v
+	}
+	if v := os.Getenv("WTG_PRICE_PRICING_FILE"); v != "" {
+		cfg.PricingFile = v
+	}
+	if v := os.Getenv("WTG_PRICE_PROFILES_FILE"); v != "" {
+		cfg.ProfilesFile = v
+	}
 
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
@@ -179,6 +241,15 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.BrokerTLSKeyFile, "broker-tls-key", cfg.BrokerTLSKeyFile, "broker TLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.BrokerTLSCAFile, "broker-tls-ca", cfg.BrokerTLSCAFile, "broker TLS 서버 검증용 CA bundle")
 	fs.StringVar(&cfg.BrokerTLSSNI, "broker-tls-sni", cfg.BrokerTLSSNI, "broker TLS SNI / hostname")
+	fs.StringVar(&cfg.ChartDSN, "chart-dsn", cfg.ChartDSN, "TimescaleDB DSN (비어있으면 봉 영속 비활성)")
+	fs.IntVar(&cfg.ChartPoolMaxConns, "chart-pool", cfg.ChartPoolMaxConns, "chart pgx pool 최대 connection")
+	fs.StringVar(&cfg.SymbolsFile, "symbols", cfg.SymbolsFile, "SymbolMap JSON 파일 경로 ([]quote.SymbolEntry)")
+	fs.IntVar(&cfg.ArchiverQueueSize, "arc-queue", cfg.ArchiverQueueSize, "Archiver in-memory 큐 크기")
+	fs.DurationVar(&cfg.ArchiverFlushInterval, "arc-flush", cfg.ArchiverFlushInterval, "Archiver flush interval")
+	fs.IntVar(&cfg.ArchiverBatchMax, "arc-batch", cfg.ArchiverBatchMax, "Archiver batch INSERT 최대 행수")
+	fs.DurationVar(&cfg.AggregatorSweepInterval, "agg-sweep", cfg.AggregatorSweepInterval, "Aggregator 만료 봉 sweeper 주기")
+	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (비어있으면 PricingConsumer 비활성)")
+	fs.StringVar(&cfg.ProfilesFile, "profiles", cfg.ProfilesFile, "활성 Profile 카탈로그 JSON ([]session.Profile)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

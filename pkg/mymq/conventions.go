@@ -101,7 +101,8 @@ func (c ChannelCode) Bytes() [4]byte {
 const (
 	ExchangeOrder  = "ORDER"  // DIRECT — 주문 트랜잭션
 	ExchangeExec   = "EXEC"   // FANOUT — 체결/주문상태
-	ExchangePrice  = "PRICE"  // FANOUT — FX 시세 (옵션 A-1)
+	ExchangePrice  = "PRICE"  // FANOUT — raw FX 시세 (cooker/quote-forwarder → mci-price)
+	ExchangeQuote  = "QUOTE"  // TOPIC  — Profile 별 마진 적용된 고객 시세 (mci-price → edge-price)
 	ExchangeAlert  = "ALERT"  // DIRECT — 시스템/리스크 알림
 	ExchangeSignal = "SIGNAL" // FANOUT — 시그널 메시지
 	ExchangeAdmin  = "ADMIN"  // DIRECT — 관리 명령
@@ -125,6 +126,41 @@ const (
 
 // EXEC, PRICE, SIGNAL, AUDIT 는 FANOUT 모드라 routing key 를 사용하지 않는다.
 // (필요하면 FrameInput.Rkey 비워두기)
+
+// ─── Quote (시세) routing key ───────────────────────────────────────────────
+//
+// 시세는 두 단계로 흐른다:
+//
+//   1. raw   : cooker / quote-forwarder → ExchangePrice (FANOUT) → mci-price
+//              모든 raw tick 이 동일하게 배포된다. routing-key 미사용.
+//   2. quote : mci-price → ExchangeQuote (TOPIC) → mci-edge-price → 고객 ws
+//              같은 raw tick 이라도 Profile (Channel.Site.Tier) 별로 마진을
+//              다르게 적용한 고객 시세가 별도 publish 된다.
+//
+// ExchangeQuote 의 routing-key 컨벤션:
+//
+//   routing_key = "<Channel>.<Site>.<Tier>"     // = session.Profile.Key()
+//                 ↑ 모두 string-enum, 점(.) 구분, ≤16 바이트 (LRkey)
+//
+//   예) "WEB.BRANCH.VIP"   "MOB.HQ.STD"   "FIX.HQ.GOLD"
+//
+// 통화쌍(pair)은 routing-key 에 포함하지 않는다 — 메시지 본문에서 식별하고
+// edge 가 세션별로 분기. 이유는 두 가지:
+//   (1) LRkey=16바이트 한도 안에 Profile + pair 까지 넣기 어려움
+//   (2) Profile 단위로 ws 라우팅하면 edge 가 받는 stream 이 자연히 통화쌍별로
+//       conflation 가능 (mci-price 의 Conflation 과 동일 패턴).
+//
+// 구독자(edge-price)는 자기 담당 Profile 의 정확한 routing-key 로 subscribe.
+
+// RKeyQuote 는 Profile key (session.Profile.Key() 의 결과) 를 ExchangeQuote 의
+// routing-key 로 그대로 사용한다. 본 함수는 식별성을 위해 노출만 한다 (no-op).
+//
+// 호출자 책임:
+//   - profileKey 는 ≤ LRkey(16) 바이트여야 한다.
+//   - 비어있으면 broker 는 메시지를 처리할 수 없다.
+func RKeyQuote(profileKey string) string {
+	return profileKey
+}
 
 // ─── Queue 이름 ─────────────────────────────────────────────────────────────
 //

@@ -33,6 +33,8 @@ func main() {
 		slog.String("upstream", cfg.UpstreamGRPC),
 		slog.String("subscriber_id", cfg.SubscriberID),
 		slog.Bool("dev", cfg.DevMode),
+		slog.Bool("quote_stream", cfg.EnableQuoteStream),
+		slog.Any("quote_profiles", cfg.QuoteProfileKeys),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

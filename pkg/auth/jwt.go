@@ -26,13 +26,28 @@ import (
 // 운영팀이 합의 후 키 로테이션, JWKS 노출 등은 별도 작업.
 
 // Claims 는 access JWT 의 payload (auth.md §6).
+//
+// Site/Tier 는 시세 fan-out 의 Profile 결정에 사용된다 (mci-edge-price 가
+// ws upgrade 시점에 Channel.Site.Tier 로 routing key 를 구성). 기존 토큰은
+// 이 필드 없이 발급되었을 수 있으므로 omitempty.
 type Claims struct {
-	SID  string `json:"sid"`           // session ID — Store 의 키
-	Usid string `json:"usid"`          // 사용자 ID (디버깅/감사용)
+	SID  string `json:"sid"`            // session ID — Store 의 키
+	Usid string `json:"usid"`           // 사용자 ID (디버깅/감사용)
 	Chan string `json:"chan,omitempty"` // 채널 코드 ("WEB" / "ADMIN" 등)
-	IAT  int64  `json:"iat"`           // 발급 시각 (Unix sec)
-	EXP  int64  `json:"exp"`           // 만료 시각 (Unix sec)
-	JTI  string `json:"jti,omitempty"` // 단일 사용 검증용
+	Site string `json:"site,omitempty"` // 거래 주체 ("BRANCH" / "HQ")
+	Tier string `json:"tier,omitempty"` // 고객 등급 ("VIP" / "GOLD" / "STD")
+	IAT  int64  `json:"iat"`            // 발급 시각 (Unix sec)
+	EXP  int64  `json:"exp"`            // 만료 시각 (Unix sec)
+	JTI  string `json:"jti,omitempty"`  // 단일 사용 검증용
+}
+
+// ProfileKey 는 Chan/Site/Tier 가 모두 채워졌을 때 시세 fan-out routing key 를
+// 반환한다 (예: "WEB.BRANCH.VIP"). 하나라도 비어있으면 빈 문자열 반환.
+func (c Claims) ProfileKey() string {
+	if c.Chan == "" || c.Site == "" || c.Tier == "" {
+		return ""
+	}
+	return c.Chan + "." + c.Site + "." + c.Tier
 }
 
 // jwtHeader 는 JOSE header. RS256 고정.

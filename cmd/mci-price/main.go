@@ -1,20 +1,34 @@
 // mci-price 는 WTG (Winway Trading Gateway) 의 FX 시세 fan-out 서비스.
 //
-// MyMQ broker 의 PRICE exchange broadcast 를 unsolicited 모드로 받아서
-// 심볼별 conflation 후 다운스트림(edge gRPC stream) 으로 fan-out 한다.
+// 흐름:
 //
-// Phase 4 1차: stdout dump TickConsumer 로 동작 검증. Phase 5 에서 gRPC
-// 스트림 consumer 로 전환.
+//	mymq broker (PRICE exchange, unsolicited)
+//	   ↓ subscribe
+//	internal/price.Server
+//	   ├→ Conflation (latest 1)
+//	   ├→ gRPC PriceService stream (mci-edge-price 향)
+//	   └→ Aggregator (옵션, ChartDSN 설정 시)
+//	         ├→ JSONCookerDecoder + SymbolMap → Quote
+//	         ├→ Bar OHLC 누적 (6 timeframe)
+//	         └→ BarCloseHandler → Archiver → TimescaleDB
 //
 // 사용 예:
 //
-//	mci-price --listen=:8082 --broker-host=10.0.0.10 --queue=mci_price \
-//	          --exchange=PRICE --print=10
+//	# 1) 기본 (broker → gRPC stream + stdout dump 처음 10건)
+//	mci-price --listen=:8082 --grpc=:8083 --broker-host=10.0.0.10 --print=10
+//
+//	# 2) 봉 영속화까지 활성 (ChartDSN + SymbolsFile)
+//	mci-price --listen=:8082 \
+//	          --broker-host=10.0.0.10 \
+//	          --chart-dsn='postgres://wtg:secret@db:5432/wtg' \
+//	          --symbols=etc/symbols.json
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -22,7 +36,12 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/winwaysystems/wtg/internal/price"
+	"github.com/winwaysystems/wtg/pkg/pricing"
+	"github.com/winwaysystems/wtg/pkg/quote"
+	"github.com/winwaysystems/wtg/pkg/session"
 )
 
 func main() {
@@ -38,12 +57,17 @@ func main() {
 		slog.String("broker", fmt.Sprintf("%s:%d", cfg.BrokerHost, cfg.BrokerPort)),
 		slog.String("queue", cfg.QueueName),
 		slog.String("exchange", cfg.ExchangeName),
+		slog.String("symbols_file", cfg.SymbolsFile),
+		slog.Bool("chart_enabled", cfg.ChartDSN != ""),
 		slog.Int("print", cfg.PrintFirstN),
 	)
 
 	srv := price.NewServer(cfg, logger)
 
-	// 1차 prototype: stdout dump consumer (처음 N 개 tick 만 출력).
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	// 1) stdout dump consumer — 1차 prototype 디버깅용.
 	if cfg.PrintFirstN > 0 {
 		var printed atomic.Int32
 		srv.AddConsumer(price.TickConsumerFunc(func(t *price.Tick) {
@@ -59,14 +83,215 @@ func main() {
 		}))
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
+	// 2) SymbolMap — 파일 로드 (옵션).
+	symbols := quote.NewSymbolMap()
+	if cfg.SymbolsFile != "" {
+		entries, err := loadSymbolEntries(cfg.SymbolsFile)
+		if err != nil {
+			logger.Error("symbols 파일 로드 실패", slog.Any("error", err))
+			os.Exit(1)
+		}
+		symbols.Replace(entries)
+		logger.Info("SymbolMap 로드 완료",
+			slog.String("file", cfg.SymbolsFile),
+			slog.Int("count", len(entries)),
+		)
+	}
 
+	// 3) Archiver + Aggregator wiring (옵션 — ChartDSN 있을 때만).
+	var (
+		pool     *pgxpool.Pool
+		archiver *price.Archiver
+		onClose  price.BarCloseHandler
+	)
+	if cfg.ChartDSN != "" {
+		poolCfg, err := pgxpool.ParseConfig(cfg.ChartDSN)
+		if err != nil {
+			logger.Error("ChartDSN 파싱 실패", slog.Any("error", err))
+			os.Exit(1)
+		}
+		poolCfg.MaxConns = int32(cfg.ChartPoolMaxConns)
+		pool, err = pgxpool.NewWithConfig(ctx, poolCfg)
+		if err != nil {
+			logger.Error("pgxpool 생성 실패", slog.Any("error", err))
+			os.Exit(1)
+		}
+		defer pool.Close()
+
+		archiver = price.NewArchiver(
+			price.NewPgxInserter(pool),
+			price.ArchiverOptions{
+				QueueSize:     cfg.ArchiverQueueSize,
+				FlushInterval: cfg.ArchiverFlushInterval,
+				BatchMax:      cfg.ArchiverBatchMax,
+				Logger:        logger,
+			},
+		)
+		go func() {
+			_ = archiver.Run(ctx)
+		}()
+		onClose = archiver.OnBarClose
+		logger.Info("Archiver 활성",
+			slog.Int("queue", cfg.ArchiverQueueSize),
+			slog.Duration("flush", cfg.ArchiverFlushInterval),
+			slog.Int("batch", cfg.ArchiverBatchMax),
+		)
+	} else {
+		// no-op — chart 비활성 시 봉이 close 되어도 아무것도 안 함.
+		onClose = func(*quote.Bar) {}
+	}
+
+	// 4) Aggregator — broker tick → 봉 누적.
+	//    SymbolMap 비어있어도 Aggregator 는 동작 (모든 tick drop). 운영 중 SymbolMap
+	//    이 채워지면 즉시 처리 시작.
+	agg := price.NewAggregator(symbols, price.JSONCookerDecoder(), onClose)
+	go agg.RunSweeper(ctx, cfg.AggregatorSweepInterval)
+	srv.AddConsumer(price.TickConsumerFunc(agg.OnTick))
+	logger.Info("Aggregator 활성 (JSONCookerDecoder)",
+		slog.Duration("sweep", cfg.AggregatorSweepInterval),
+		slog.Int("symbols", symbols.Size()),
+	)
+
+	// 5) GRPCServer 사전 생성 (옵션) — PricingConsumer 가 gRPC fan-out 의 publisher
+	//    로 직접 참조하도록. cfg.GRPCAddr 가 비어있어도 GRPCServer 만 만들어 두면
+	//    SubscribeQuote 호출은 가능 (단, Serve 는 안 함).
+	var grpcSrv *price.GRPCServer
+	if cfg.GRPCAddr != "" {
+		grpcSrv = price.NewGRPCServer(logger, cfg.GRPCBufSize)
+		srv.AttachGRPC(grpcSrv)
+	}
+
+	// 6) PricingConsumer — PricingFile + ProfilesFile 모두 채워졌을 때만 활성.
+	//    broker tick → PricingTable.Apply (Profile 별) → MultiQuotePublisher
+	//        → broker (ExchangeQuote)  : 외부 audit / non-edge consumer 용
+	//        → gRPC SubscribeQuote     : mci-edge-price 로의 직접 stream
+	var pc *price.PricingConsumer
+	if cfg.PricingFile != "" && cfg.ProfilesFile != "" {
+		pcInst, err := wirePricingConsumer(cfg, symbols, srv, grpcSrv, logger)
+		if err != nil {
+			logger.Error("PricingConsumer 구성 실패", slog.Any("error", err))
+			os.Exit(1)
+		}
+		pc = pcInst
+		srv.AddConsumer(price.TickConsumerFunc(pc.OnTick))
+	} else {
+		logger.Info("PricingConsumer 비활성 (PricingFile / ProfilesFile 둘 다 필요)")
+	}
+
+	// 6) Server 시작 (블로킹).
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("mci-price 종료", slog.Any("error", err))
 		os.Exit(1)
 	}
+
+	// 7) 최종 통계 출력.
+	if archiver != nil {
+		s := archiver.Stats()
+		logger.Info("Archiver 최종 통계",
+			slog.Uint64("enqueued", s.Enqueued),
+			slog.Uint64("inserted", s.Inserted),
+			slog.Uint64("dropped", s.Dropped),
+			slog.Uint64("failed", s.Failed),
+		)
+	}
+	if pc != nil {
+		s := pc.Stats()
+		logger.Info("PricingConsumer 최종 통계",
+			slog.Uint64("ticks_in", s.TicksIn),
+			slog.Uint64("ticks_dropped", s.TicksDropped),
+			slog.Uint64("quotes_published", s.QuotesPublished),
+			slog.Uint64("publish_errors", s.PublishErrors),
+		)
+	}
 	logger.Info("mci-price 정상 종료")
+}
+
+// wirePricingConsumer 는 PricingFile/ProfilesFile 을 읽어 PricingConsumer 를 구성.
+// Publisher 는 broker + (있으면) gRPC 둘 다로 fan-out.
+func wirePricingConsumer(cfg price.Config, symbols *quote.SymbolMap, srv *price.Server, grpcSrv *price.GRPCServer, logger *slog.Logger) (*price.PricingConsumer, error) {
+	// PricingTable 로드.
+	tblBody, err := readFile(cfg.PricingFile)
+	if err != nil {
+		return nil, fmt.Errorf("pricing 파일 읽기: %w", err)
+	}
+	tbl, err := pricing.ParsePricingTable(tblBody)
+	if err != nil {
+		return nil, fmt.Errorf("pricing 파일 파싱: %w", err)
+	}
+	store := pricing.NewStore()
+	store.Replace(tbl)
+
+	// 활성 Profile 카탈로그 로드.
+	profiles, err := loadProfiles(cfg.ProfilesFile)
+	if err != nil {
+		return nil, fmt.Errorf("profiles 파일: %w", err)
+	}
+
+	// Publisher fan-out — broker 항상, gRPC 는 옵션.
+	publishers := []price.QuotePublisher{price.NewMymqQuotePublisher(srv)}
+	if grpcSrv != nil {
+		publishers = append(publishers, grpcSrv)
+	}
+
+	pc := price.NewPricingConsumer(price.PricingConsumerOptions{
+		Store:     store,
+		Symbols:   symbols,
+		Decoder:   price.JSONCookerDecoder(),
+		Publisher: price.NewMultiQuotePublisher(publishers...),
+		Profiles:  &price.StaticProfileSource{Profiles: profiles},
+		Logger:    logger,
+	})
+	logger.Info("PricingConsumer 활성",
+		slog.String("pricing", cfg.PricingFile),
+		slog.String("profiles", cfg.ProfilesFile),
+		slog.Int64("pricing_version", tbl.Version),
+		slog.Int("profile_count", len(profiles)),
+		slog.Bool("grpc_publish", grpcSrv != nil),
+	)
+	return pc, nil
+}
+
+// loadProfiles 는 JSON 배열 ([]session.Profile) 을 읽는다.
+func loadProfiles(path string) ([]session.Profile, error) {
+	body, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []session.Profile
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("JSON parse: %w", err)
+	}
+	return out, nil
+}
+
+func readFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// loadSymbolEntries 는 JSON 배열로 직렬화된 []quote.SymbolEntry 파일을 읽는다.
+//
+// 파일 예시:
+//
+//	[
+//	  {"symbol":"USDKRW","pair":"USD/KRW","active":true},
+//	  {"symbol":"EURKRW","pair":"EUR/KRW","active":true}
+//	]
+func loadSymbolEntries(path string) ([]quote.SymbolEntry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+	var out []quote.SymbolEntry
+	if err := json.NewDecoder(f).Decode(&out); err != nil {
+		return nil, fmt.Errorf("JSON parse: %w", err)
+	}
+	return out, nil
 }
 
 func newLogger(level string) *slog.Logger {

@@ -55,6 +55,7 @@ type Server struct {
 	mq         *mymq.Client
 	conflation *Conflation
 	consumers  []TickConsumer
+	grpcSrv    *GRPCServer // 외부 주입 가능 (AttachGRPC); nil 이면 Start 가 자동 생성.
 	metrics    *metrics.Registry
 
 	totalRecv  atomic.Uint64
@@ -83,8 +84,39 @@ func (s *Server) AddConsumer(c TickConsumer) {
 	s.consumers = append(s.consumers, c)
 }
 
+// AttachGRPC 는 외부에서 생성한 GRPCServer 를 주입한다.
+//
+// 사용 패턴: main.go 가 GRPCServer 를 미리 만들어두면 PricingConsumer 등이
+// 그 인스턴스를 QuotePublisher 로 직접 참조할 수 있다. Server 는 Start 시
+// 이 인스턴스를 TickConsumer 로 등록하고 cfg.GRPCAddr 가 있으면 Serve 한다.
+//
+// 호출하지 않으면 Start 가 자동으로 GRPCServer 를 생성한다 (back-compat).
+// 중복 호출은 무시.
+func (s *Server) AttachGRPC(g *GRPCServer) {
+	if s.grpcSrv != nil || g == nil {
+		return
+	}
+	s.grpcSrv = g
+	s.AddConsumer(g)
+}
+
+// GRPCServer 는 현재 attached 된 GRPCServer 를 반환 (Start 이후 자동생성 포함).
+// nil 이면 활성화되지 않은 상태.
+func (s *Server) GRPCServer() *GRPCServer { return s.grpcSrv }
+
 // Conflation 은 외부에서 latest 시세 조회용 (모니터링/디버깅).
 func (s *Server) Conflation() *Conflation { return s.conflation }
+
+// Send 는 underlying mymq.Client 를 통해 frame 송신.
+// MymqQuotePublisher 등이 Server 를 publisher 로 사용할 수 있게 한다.
+// Server.Start 가 broker 와 connect 한 이후에만 동작한다 — 호출 시점 보장은 호출자 책임
+// (보통 broker subscribe 가 시작된 후 hot path 에서 호출됨).
+func (s *Server) Send(in *mymq.FrameInput) error {
+	if s.mq == nil {
+		return errors.New("price: Server.mq 미초기화 — Start 이전 호출 금지")
+	}
+	return s.mq.Send(in)
+}
 
 // Start 는 broker 연결 + 구독 + HTTP 서버를 가동한다 (블로킹).
 func (s *Server) Start(ctx context.Context) error {
@@ -126,10 +158,13 @@ func (s *Server) Start(ctx context.Context) error {
 		go s.statsLoop(subCtx)
 	}
 
-	// gRPC PriceService — TickConsumer 로 등록 후 Subscribe stream 노출.
+	// gRPC PriceService — TickConsumer 로 등록 후 Subscribe/SubscribeQuote stream 노출.
 	if s.cfg.GRPCAddr != "" {
-		grpcSrv := NewGRPCServer(s.logger, s.cfg.GRPCBufSize)
-		s.AddConsumer(grpcSrv)
+		if s.grpcSrv == nil {
+			// 외부에서 AttachGRPC 호출 없으면 auto-create (back-compat).
+			s.grpcSrv = NewGRPCServer(s.logger, s.cfg.GRPCBufSize)
+			s.AddConsumer(s.grpcSrv)
+		}
 
 		var grpcOpts []grpc.ServerOption
 		if s.cfg.GRPCTLSCertFile != "" && s.cfg.GRPCTLSKeyFile != "" {
@@ -149,7 +184,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 
 		go func() {
-			if err := grpcSrv.Serve(subCtx, s.cfg.GRPCAddr, grpcOpts...); err != nil {
+			if err := s.grpcSrv.Serve(subCtx, s.cfg.GRPCAddr, grpcOpts...); err != nil {
 				s.logger.Error("gRPC 서버 종료", slog.Any("error", err))
 			}
 		}()

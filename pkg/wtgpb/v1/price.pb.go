@@ -192,6 +192,199 @@ func (x *Tick) GetReceivedUnixNano() int64 {
 	return 0
 }
 
+// QuoteSubscribeRequest 는 edge 가 CustomerQuote stream 을 구독할 때 보내는 옵션.
+type QuoteSubscribeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// edge instance 식별 (디버깅/감사용).
+	SubscriberId string `protobuf:"bytes,1,opt,name=subscriber_id,json=subscriberId,proto3" json:"subscriber_id,omitempty"`
+	// 수신할 Profile 화이트리스트 (예: "WEB.BRANCH.VIP").
+	// 비어있으면 모든 Profile 수신 — edge 가 사용자별 분기 책임.
+	ProfileKeys []string `protobuf:"bytes,2,rep,name=profile_keys,json=profileKeys,proto3" json:"profile_keys,omitempty"`
+	// 수신할 통화쌍 화이트리스트. 비어있으면 모든 pair.
+	Pairs         []string `protobuf:"bytes,3,rep,name=pairs,proto3" json:"pairs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QuoteSubscribeRequest) Reset() {
+	*x = QuoteSubscribeRequest{}
+	mi := &file_wtg_v1_price_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuoteSubscribeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuoteSubscribeRequest) ProtoMessage() {}
+
+func (x *QuoteSubscribeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuoteSubscribeRequest.ProtoReflect.Descriptor instead.
+func (*QuoteSubscribeRequest) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *QuoteSubscribeRequest) GetSubscriberId() string {
+	if x != nil {
+		return x.SubscriberId
+	}
+	return ""
+}
+
+func (x *QuoteSubscribeRequest) GetProfileKeys() []string {
+	if x != nil {
+		return x.ProfileKeys
+	}
+	return nil
+}
+
+func (x *QuoteSubscribeRequest) GetPairs() []string {
+	if x != nil {
+		return x.Pairs
+	}
+	return nil
+}
+
+// CustomerQuote 는 마진 적용된 고객 노출 시세.
+// pkg/pricing.CustomerQuote 와 1:1 대응. profile 정보는 edge fan-out 분기에 사용.
+type CustomerQuote struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Pair    string                 `protobuf:"bytes,1,opt,name=pair,proto3" json:"pair,omitempty"`
+	Channel string                 `protobuf:"bytes,2,opt,name=channel,proto3" json:"channel,omitempty"` // session.Channel ("WEB"/"MOB"/"CS"/"FIX"/"ADM")
+	Site    string                 `protobuf:"bytes,3,opt,name=site,proto3" json:"site,omitempty"`       // session.Site ("BRANCH"/"HQ")
+	Tier    string                 `protobuf:"bytes,4,opt,name=tier,proto3" json:"tier,omitempty"`       // session.Tier ("VIP"/"GOLD"/"STD"...)
+	Tenor   string                 `protobuf:"bytes,5,opt,name=tenor,proto3" json:"tenor,omitempty"`     // "SPOT" / "1W" / "1M" ...
+	Bid     float64                `protobuf:"fixed64,6,opt,name=bid,proto3" json:"bid,omitempty"`
+	Ask     float64                `protobuf:"fixed64,7,opt,name=ask,proto3" json:"ask,omitempty"`
+	// 시세 wallclock (Unix nano). raw 시점 timestamp 유지.
+	TsUnixNano int64 `protobuf:"varint,8,opt,name=ts_unix_nano,json=tsUnixNano,proto3" json:"ts_unix_nano,omitempty"`
+	// 감사·재현용 — 산출 근거가 된 raw 값과 적용된 PricingTable.Version.
+	RawBid        float64 `protobuf:"fixed64,9,opt,name=raw_bid,json=rawBid,proto3" json:"raw_bid,omitempty"`
+	RawAsk        float64 `protobuf:"fixed64,10,opt,name=raw_ask,json=rawAsk,proto3" json:"raw_ask,omitempty"`
+	TableVersion  int64   `protobuf:"varint,11,opt,name=table_version,json=tableVersion,proto3" json:"table_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CustomerQuote) Reset() {
+	*x = CustomerQuote{}
+	mi := &file_wtg_v1_price_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CustomerQuote) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CustomerQuote) ProtoMessage() {}
+
+func (x *CustomerQuote) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CustomerQuote.ProtoReflect.Descriptor instead.
+func (*CustomerQuote) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *CustomerQuote) GetPair() string {
+	if x != nil {
+		return x.Pair
+	}
+	return ""
+}
+
+func (x *CustomerQuote) GetChannel() string {
+	if x != nil {
+		return x.Channel
+	}
+	return ""
+}
+
+func (x *CustomerQuote) GetSite() string {
+	if x != nil {
+		return x.Site
+	}
+	return ""
+}
+
+func (x *CustomerQuote) GetTier() string {
+	if x != nil {
+		return x.Tier
+	}
+	return ""
+}
+
+func (x *CustomerQuote) GetTenor() string {
+	if x != nil {
+		return x.Tenor
+	}
+	return ""
+}
+
+func (x *CustomerQuote) GetBid() float64 {
+	if x != nil {
+		return x.Bid
+	}
+	return 0
+}
+
+func (x *CustomerQuote) GetAsk() float64 {
+	if x != nil {
+		return x.Ask
+	}
+	return 0
+}
+
+func (x *CustomerQuote) GetTsUnixNano() int64 {
+	if x != nil {
+		return x.TsUnixNano
+	}
+	return 0
+}
+
+func (x *CustomerQuote) GetRawBid() float64 {
+	if x != nil {
+		return x.RawBid
+	}
+	return 0
+}
+
+func (x *CustomerQuote) GetRawAsk() float64 {
+	if x != nil {
+		return x.RawAsk
+	}
+	return 0
+}
+
+func (x *CustomerQuote) GetTableVersion() int64 {
+	if x != nil {
+		return x.TableVersion
+	}
+	return 0
+}
+
 var File_wtg_v1_price_proto protoreflect.FileDescriptor
 
 const file_wtg_v1_price_proto_rawDesc = "" +
@@ -208,9 +401,28 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\x04type\x18\x05 \x01(\rR\x04type\x12\x12\n" +
 	"\x04flag\x18\x06 \x01(\rR\x04flag\x12\x12\n" +
 	"\x04body\x18\a \x01(\fR\x04body\x12,\n" +
-	"\x12received_unix_nano\x18\b \x01(\x03R\x10receivedUnixNano2E\n" +
+	"\x12received_unix_nano\x18\b \x01(\x03R\x10receivedUnixNano\"u\n" +
+	"\x15QuoteSubscribeRequest\x12#\n" +
+	"\rsubscriber_id\x18\x01 \x01(\tR\fsubscriberId\x12!\n" +
+	"\fprofile_keys\x18\x02 \x03(\tR\vprofileKeys\x12\x14\n" +
+	"\x05pairs\x18\x03 \x03(\tR\x05pairs\"\x98\x02\n" +
+	"\rCustomerQuote\x12\x12\n" +
+	"\x04pair\x18\x01 \x01(\tR\x04pair\x12\x18\n" +
+	"\achannel\x18\x02 \x01(\tR\achannel\x12\x12\n" +
+	"\x04site\x18\x03 \x01(\tR\x04site\x12\x12\n" +
+	"\x04tier\x18\x04 \x01(\tR\x04tier\x12\x14\n" +
+	"\x05tenor\x18\x05 \x01(\tR\x05tenor\x12\x10\n" +
+	"\x03bid\x18\x06 \x01(\x01R\x03bid\x12\x10\n" +
+	"\x03ask\x18\a \x01(\x01R\x03ask\x12 \n" +
+	"\fts_unix_nano\x18\b \x01(\x03R\n" +
+	"tsUnixNano\x12\x17\n" +
+	"\araw_bid\x18\t \x01(\x01R\x06rawBid\x12\x17\n" +
+	"\araw_ask\x18\n" +
+	" \x01(\x01R\x06rawAsk\x12#\n" +
+	"\rtable_version\x18\v \x01(\x03R\ftableVersion2\x8f\x01\n" +
 	"\fPriceService\x125\n" +
-	"\tSubscribe\x12\x18.wtg.v1.SubscribeRequest\x1a\f.wtg.v1.Tick0\x01B3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
+	"\tSubscribe\x12\x18.wtg.v1.SubscribeRequest\x1a\f.wtg.v1.Tick0\x01\x12H\n" +
+	"\x0eSubscribeQuote\x12\x1d.wtg.v1.QuoteSubscribeRequest\x1a\x15.wtg.v1.CustomerQuote0\x01B3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
 
 var (
 	file_wtg_v1_price_proto_rawDescOnce sync.Once
@@ -224,16 +436,20 @@ func file_wtg_v1_price_proto_rawDescGZIP() []byte {
 	return file_wtg_v1_price_proto_rawDescData
 }
 
-var file_wtg_v1_price_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_wtg_v1_price_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_wtg_v1_price_proto_goTypes = []any{
-	(*SubscribeRequest)(nil), // 0: wtg.v1.SubscribeRequest
-	(*Tick)(nil),             // 1: wtg.v1.Tick
+	(*SubscribeRequest)(nil),      // 0: wtg.v1.SubscribeRequest
+	(*Tick)(nil),                  // 1: wtg.v1.Tick
+	(*QuoteSubscribeRequest)(nil), // 2: wtg.v1.QuoteSubscribeRequest
+	(*CustomerQuote)(nil),         // 3: wtg.v1.CustomerQuote
 }
 var file_wtg_v1_price_proto_depIdxs = []int32{
 	0, // 0: wtg.v1.PriceService.Subscribe:input_type -> wtg.v1.SubscribeRequest
-	1, // 1: wtg.v1.PriceService.Subscribe:output_type -> wtg.v1.Tick
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: wtg.v1.PriceService.SubscribeQuote:input_type -> wtg.v1.QuoteSubscribeRequest
+	1, // 2: wtg.v1.PriceService.Subscribe:output_type -> wtg.v1.Tick
+	3, // 3: wtg.v1.PriceService.SubscribeQuote:output_type -> wtg.v1.CustomerQuote
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -250,7 +466,7 @@ func file_wtg_v1_price_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wtg_v1_price_proto_rawDesc), len(file_wtg_v1_price_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

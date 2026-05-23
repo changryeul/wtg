@@ -26,15 +26,29 @@ const (
 	HeaderEdgeSID     = "X-WTG-SID"
 	HeaderEdgeUser    = "X-WTG-User"
 	HeaderEdgeChannel = "X-WTG-Channel"
+	HeaderEdgeSite    = "X-WTG-Site" // DevMode 전용 — JWT 도입 후엔 claim 으로 대체
+	HeaderEdgeTier    = "X-WTG-Tier" // DevMode 전용
 )
 
 // Principal 은 인증된 사용자 식별.
-// auth.md §6 의 JWT claim 에서 추출되거나, DevMode 에서는 X-WTG-User 헤더에서.
+//
+// auth.md §6 의 JWT claim 또는 SessionStore 에서 추출. 시세 fan-out 의 Profile
+// (Channel/Site/Tier) 도 함께 노출되므로 핸들러는 이로부터 즉시 ProfileKey 구성 가능.
 type Principal struct {
 	Usid      string       // 사용자 ID (cookie_t.usid 로 매핑됨)
 	Channel   string       // 채널 ("WEB" 등). 보통 ChannelWeb 고정.
+	Site      string       // 거래 주체 ("BRANCH" / "HQ"). JWT claim / Session 에서.
+	Tier      string       // 고객 등급 ("VIP" / "GOLD" / "STD"). JWT claim / Session 에서.
 	SessionID string       // SessionMode 에서만 채워짐. DevMode 는 빈 문자열.
 	Cookie    *mymq.Cookie // SessionMode 시 broker 첨부용 cookie_t. DevMode 는 nil.
+}
+
+// ProfileKey 는 시세 fan-out 매칭 키 (Chan.Site.Tier). 셋 다 채워져야 반환.
+func (p *Principal) ProfileKey() string {
+	if p == nil || p.Channel == "" || p.Site == "" || p.Tier == "" {
+		return ""
+	}
+	return p.Channel + "." + p.Site + "." + p.Tier
 }
 
 // PrincipalFromContext 는 context 에서 Principal 을 추출한다.
@@ -145,13 +159,14 @@ func authenticate(r *http.Request, cfg AuthConfig) (*Principal, error) {
 		if usid == "" {
 			return nil, errMissingUser
 		}
-		// DevMode 에서 X-WTG-Channel 헤더로 채널 spoof 가능 — 채널별 정책
-		// (kill switch scope 등) 검증 도구에서 사용. 빈 헤더면 WEB 디폴트.
 		ch := strings.ToUpper(strings.TrimSpace(r.Header.Get(HeaderEdgeChannel)))
 		if ch == "" {
 			ch = "WEB"
 		}
-		return &Principal{Usid: usid, Channel: ch}, nil
+		// DevMode 에서 Site/Tier 도 헤더 spoof. 운영 금지 — JWT claim 으로 대체.
+		site := strings.ToUpper(strings.TrimSpace(r.Header.Get(HeaderEdgeSite)))
+		tier := strings.ToUpper(strings.TrimSpace(r.Header.Get(HeaderEdgeTier)))
+		return &Principal{Usid: usid, Channel: ch, Site: site, Tier: tier}, nil
 	}
 	if cfg.TrustEdgeHeaders {
 		return authenticateEdgeHeaders(r, cfg.SessionStore)
@@ -181,12 +196,25 @@ func authenticateEdgeHeaders(r *http.Request, store auth.Store) (*Principal, err
 	if err != nil {
 		return nil, errInvalidSession
 	}
-	return &Principal{
+	return principalFromSession(sess), nil
+}
+
+// principalFromSession 은 SessionStore 에서 복원한 Session 을 Principal 로 매핑.
+// sess.Profile 이 채워져 있으면 Channel/Site/Tier 우선 사용 (신규 경로),
+// 비어있으면 sess.Channel (legacy) 사용.
+func principalFromSession(sess *auth.Session) *Principal {
+	p := &Principal{
 		Usid:      sess.Usid,
 		Channel:   sess.Channel,
 		SessionID: sess.ID,
 		Cookie:    sess.Cookie,
-	}, nil
+	}
+	if sess.Profile.Channel != "" {
+		p.Channel = string(sess.Profile.Channel)
+	}
+	p.Site = string(sess.Profile.Site)
+	p.Tier = string(sess.Profile.Tier)
+	return p
 }
 
 // authenticateJWT 는 access JWT 를 검증한다.
@@ -206,10 +234,12 @@ func authenticateJWT(r *http.Request, ver *auth.Verifier, store auth.Store) (*Pr
 		return nil, errInvalidJWT
 	}
 	if store == nil {
-		// Edge 모드 — cookie 미복원, claim 그대로 전달.
+		// Edge 모드 — cookie 미복원, claim 그대로 전달 (Site/Tier 포함).
 		return &Principal{
 			Usid:      claims.Usid,
 			Channel:   claims.Chan,
+			Site:      claims.Site,
+			Tier:      claims.Tier,
 			SessionID: claims.SID,
 		}, nil
 	}
@@ -217,12 +247,7 @@ func authenticateJWT(r *http.Request, ver *auth.Verifier, store auth.Store) (*Pr
 	if err != nil {
 		return nil, errInvalidSession
 	}
-	return &Principal{
-		Usid:      sess.Usid,
-		Channel:   sess.Channel,
-		SessionID: sess.ID,
-		Cookie:    sess.Cookie,
-	}, nil
+	return principalFromSession(sess), nil
 }
 
 // authenticateSession 은 Bearer 토큰(session_id) → SessionStore 조회.
@@ -242,12 +267,7 @@ func authenticateSession(r *http.Request, store auth.Store) (*Principal, error) 
 		}
 		return nil, err
 	}
-	return &Principal{
-		Usid:      sess.Usid,
-		Channel:   sess.Channel,
-		SessionID: sess.ID,
-		Cookie:    sess.Cookie,
-	}, nil
+	return principalFromSession(sess), nil
 }
 
 // bearerToken 은 "Authorization: Bearer <token>" 에서 token 을 추출.

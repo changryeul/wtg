@@ -94,6 +94,9 @@ func (s *Server) Start(ctx context.Context) error {
 	streamCtx, streamCancel := context.WithCancel(ctx)
 	defer streamCancel()
 	go s.subscribeLoop(streamCtx)
+	if s.cfg.EnableQuoteStream {
+		go s.subscribeQuoteLoop(streamCtx)
+	}
 
 	return s.startHTTP(ctx)
 }
@@ -149,6 +152,100 @@ func (s *Server) subscribeLoop(ctx context.Context) {
 			backoff = 10 * time.Second
 		}
 	}
+}
+
+// subscribeQuoteLoop 는 SubscribeQuote stream 을 (재)시작 + 자동 재시도.
+// EnableQuoteStream=true 인 경우에만 호출됨.
+func (s *Server) subscribeQuoteLoop(ctx context.Context) {
+	client := wtgpb.NewPriceServiceClient(s.upstream)
+	backoff := 500 * time.Millisecond
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		err := s.consumeQuoteOnce(ctx, client)
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return
+		}
+		s.logger.Warn("SubscribeQuote stream 끊김 — 재시도",
+			slog.Any("error", err),
+			slog.Duration("backoff", backoff),
+		)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > 10*time.Second {
+			backoff = 10 * time.Second
+		}
+	}
+}
+
+// consumeQuoteOnce 는 단일 SubscribeQuote stream 의 lifecycle.
+func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceServiceClient) error {
+	req := &wtgpb.QuoteSubscribeRequest{
+		SubscriberId: s.cfg.SubscriberID,
+		ProfileKeys:  s.cfg.QuoteProfileKeys,
+	}
+	stream, err := client.SubscribeQuote(ctx, req)
+	if err != nil {
+		return err
+	}
+	s.logger.Info("SubscribeQuote 시작",
+		slog.String("subscriber_id", s.cfg.SubscriberID),
+		slog.Any("profile_filter", s.cfg.QuoteProfileKeys),
+	)
+
+	for {
+		cq, err := stream.Recv()
+		if err == io.EOF {
+			return errors.New("upstream quote EOF")
+		}
+		if err != nil {
+			return err
+		}
+		payload, err := encodeCustomerQuoteJSON(cq)
+		if err != nil {
+			s.logger.Warn("customerQuote JSON 직렬화 실패", slog.Any("error", err))
+			continue
+		}
+		profKey := cq.GetChannel() + "." + cq.GetSite() + "." + cq.GetTier()
+		s.registry.SendByProfile(profKey, payload)
+	}
+}
+
+// encodeCustomerQuoteJSON 은 proto CustomerQuote → 클라이언트 JSON.
+func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
+	out := struct {
+		Type         string  `json:"type"`
+		Pair         string  `json:"pair"`
+		Channel      string  `json:"chan"`
+		Site         string  `json:"site"`
+		Tier         string  `json:"tier"`
+		Tenor        string  `json:"tenor"`
+		Bid          float64 `json:"bid"`
+		Ask          float64 `json:"ask"`
+		TSUnixNano   int64   `json:"ts_unix_nano"`
+		RawBid       float64 `json:"raw_bid,omitempty"`
+		RawAsk       float64 `json:"raw_ask,omitempty"`
+		TableVersion int64   `json:"v"`
+	}{
+		Type:         "quote",
+		Pair:         cq.GetPair(),
+		Channel:      cq.GetChannel(),
+		Site:         cq.GetSite(),
+		Tier:         cq.GetTier(),
+		Tenor:        cq.GetTenor(),
+		Bid:          cq.GetBid(),
+		Ask:          cq.GetAsk(),
+		TSUnixNano:   cq.GetTsUnixNano(),
+		RawBid:       cq.GetRawBid(),
+		RawAsk:       cq.GetRawAsk(),
+		TableVersion: cq.GetTableVersion(),
+	}
+	return json.Marshal(out)
 }
 
 // consumeOnce 는 단일 Subscribe stream 의 lifecycle.
@@ -325,13 +422,24 @@ func (s *Server) startHTTP(ctx context.Context) error {
 }
 
 // subscribeHandler 는 GET /v1/subscribe — ws upgrade + Registry 등록.
+//
+// Profile 결정 우선순위 (quote stream 활성 시):
+//   1. Principal.ProfileKey() — JWT claim (Chan/Site/Tier) 또는 Session 에서 (운영 경로)
+//   2. ?profile= 쿼리 파라미터 — dev 도구용 fallback
+//   3. 빈값 — quote 미수신 (raw broadcast 만)
 func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// 인증된 사용자만 (Auth 미들웨어 통과 가정 — 시세는 전체 broadcast 라
-		// 사용자 식별이 필수는 아니지만 운영 정책상 인증은 강제).
-		if p := middleware.PrincipalFromContext(r.Context()); p == nil || p.Usid == "" {
+		p := middleware.PrincipalFromContext(r.Context())
+		if p == nil || p.Usid == "" {
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "인증 필요")
 			return
+		}
+
+		// 1순위: Principal 의 Profile (JWT claim / Session 출처) — 위변조 불가.
+		// 2순위: ?profile= 쿼리 — DevMode 검증 도구용. 운영에서는 사용 X.
+		profileKey := p.ProfileKey()
+		if profileKey == "" {
+			profileKey = r.URL.Query().Get("profile")
 		}
 
 		ws, err := upgrader.Upgrade(w, r, nil)
@@ -342,13 +450,13 @@ func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc
 		sub := NewSubscriber(ws, SubscriberOptions{
 			SendQueueSize: s.cfg.SendQueueSize,
 			Logger:        s.logger,
+			ProfileKey:    profileKey,
 			OnClose: func(sb *Subscriber) {
 				s.registry.Remove(sb)
 			},
 		})
 		s.registry.Add(sub)
 
-		// write/read goroutine 시작.
 		go s.writeLoop(sub)
 		go s.readLoop(sub)
 	}

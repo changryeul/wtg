@@ -28,7 +28,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PriceService_Subscribe_FullMethodName = "/wtg.v1.PriceService/Subscribe"
+	PriceService_Subscribe_FullMethodName      = "/wtg.v1.PriceService/Subscribe"
+	PriceService_SubscribeQuote_FullMethodName = "/wtg.v1.PriceService/SubscribeQuote"
 )
 
 // PriceServiceClient is the client API for PriceService service.
@@ -37,10 +38,13 @@ const (
 //
 // PriceService 는 mci-price (Internal) 가 노출하는 gRPC 서비스다.
 type PriceServiceClient interface {
-	// Subscribe 는 edge 가 호출해서 Internal 로부터 tick stream 을 받는다.
-	// bidirectional 형태로 정의해서 edge 가 시작 시 구독 심볼/필터를 지정 가능.
-	// 1차 prototype: edge 는 빈 SubscribeRequest 만 보내고 모든 tick 수신.
+	// Subscribe 는 edge 가 호출해서 Internal 로부터 raw tick stream 을 받는다.
+	// 마진 적용 전 시세 — 디버깅 / 모니터링 / 전체 broadcast 용.
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Tick], error)
+	// SubscribeQuote 는 edge 가 호출해서 Internal 로부터 마진 적용된 Profile 별
+	// CustomerQuote stream 을 받는다. mci-price 의 PricingConsumer 가 publish 하는
+	// 동일 데이터를 broker 외에 이 stream 으로도 push (이중 publish).
+	SubscribeQuote(ctx context.Context, in *QuoteSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CustomerQuote], error)
 }
 
 type priceServiceClient struct {
@@ -70,16 +74,38 @@ func (c *priceServiceClient) Subscribe(ctx context.Context, in *SubscribeRequest
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PriceService_SubscribeClient = grpc.ServerStreamingClient[Tick]
 
+func (c *priceServiceClient) SubscribeQuote(ctx context.Context, in *QuoteSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CustomerQuote], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PriceService_ServiceDesc.Streams[1], PriceService_SubscribeQuote_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[QuoteSubscribeRequest, CustomerQuote]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_SubscribeQuoteClient = grpc.ServerStreamingClient[CustomerQuote]
+
 // PriceServiceServer is the server API for PriceService service.
 // All implementations must embed UnimplementedPriceServiceServer
 // for forward compatibility.
 //
 // PriceService 는 mci-price (Internal) 가 노출하는 gRPC 서비스다.
 type PriceServiceServer interface {
-	// Subscribe 는 edge 가 호출해서 Internal 로부터 tick stream 을 받는다.
-	// bidirectional 형태로 정의해서 edge 가 시작 시 구독 심볼/필터를 지정 가능.
-	// 1차 prototype: edge 는 빈 SubscribeRequest 만 보내고 모든 tick 수신.
+	// Subscribe 는 edge 가 호출해서 Internal 로부터 raw tick stream 을 받는다.
+	// 마진 적용 전 시세 — 디버깅 / 모니터링 / 전체 broadcast 용.
 	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[Tick]) error
+	// SubscribeQuote 는 edge 가 호출해서 Internal 로부터 마진 적용된 Profile 별
+	// CustomerQuote stream 을 받는다. mci-price 의 PricingConsumer 가 publish 하는
+	// 동일 데이터를 broker 외에 이 stream 으로도 push (이중 publish).
+	SubscribeQuote(*QuoteSubscribeRequest, grpc.ServerStreamingServer[CustomerQuote]) error
 	mustEmbedUnimplementedPriceServiceServer()
 }
 
@@ -92,6 +118,9 @@ type UnimplementedPriceServiceServer struct{}
 
 func (UnimplementedPriceServiceServer) Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[Tick]) error {
 	return status.Error(codes.Unimplemented, "method Subscribe not implemented")
+}
+func (UnimplementedPriceServiceServer) SubscribeQuote(*QuoteSubscribeRequest, grpc.ServerStreamingServer[CustomerQuote]) error {
+	return status.Error(codes.Unimplemented, "method SubscribeQuote not implemented")
 }
 func (UnimplementedPriceServiceServer) mustEmbedUnimplementedPriceServiceServer() {}
 func (UnimplementedPriceServiceServer) testEmbeddedByValue()                      {}
@@ -125,6 +154,17 @@ func _PriceService_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PriceService_SubscribeServer = grpc.ServerStreamingServer[Tick]
 
+func _PriceService_SubscribeQuote_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(QuoteSubscribeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(PriceServiceServer).SubscribeQuote(m, &grpc.GenericServerStream[QuoteSubscribeRequest, CustomerQuote]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_SubscribeQuoteServer = grpc.ServerStreamingServer[CustomerQuote]
+
 // PriceService_ServiceDesc is the grpc.ServiceDesc for PriceService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -136,6 +176,11 @@ var PriceService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Subscribe",
 			Handler:       _PriceService_Subscribe_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "SubscribeQuote",
+			Handler:       _PriceService_SubscribeQuote_Handler,
 			ServerStreams: true,
 		},
 	},

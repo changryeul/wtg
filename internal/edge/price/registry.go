@@ -11,18 +11,27 @@ import (
 
 // Subscriber 는 단일 ws 클라이언트의 fan-out 큐 + lifecycle.
 //
-// 시세는 broker fan-out 후 모든 web 클라이언트에 same payload 를 보내므로
-// mci-push 의 Connection 보다 단순하다 (사용자별 매핑 불필요).
+// 두 fan-out 모델 동시 지원:
+//
+//   - raw tick broadcast — profileKey 무관, 전체 송신 (Registry.Broadcast).
+//   - quote per-profile  — profileKey 매칭만 수신 (Registry.SendByProfile).
+//
+// profileKey 는 ws upgrade 시 결정되며 이후 immutable.
+// 빈값이면 quote 는 못 받고 raw broadcast 만 수신.
 type Subscriber struct {
-	id     uint64
-	conn   *websocket.Conn
-	send   chan []byte
-	closed atomic.Bool
-	closeC chan struct{}
-	logger *slog.Logger
+	id         uint64
+	profileKey string // 예: "WEB.BRANCH.VIP"; 빈값 = quote 미수신
+	conn       *websocket.Conn
+	send       chan []byte
+	closed     atomic.Bool
+	closeC     chan struct{}
+	logger     *slog.Logger
 
 	onClose func(*Subscriber)
 }
+
+// ProfileKey 는 Subscriber 가 매칭될 quote profile key (immutable).
+func (s *Subscriber) ProfileKey() string { return s.profileKey }
 
 var subIDSeq atomic.Uint64
 
@@ -37,6 +46,8 @@ type SubscriberOptions struct {
 	SendQueueSize int
 	Logger        *slog.Logger
 	OnClose       func(*Subscriber)
+	// ProfileKey 는 quote fan-out 매칭에 사용. 빈값이면 quote 미수신.
+	ProfileKey string
 }
 
 // NewSubscriber 는 Subscriber 를 구성한다 (read/write goroutine 은 caller 가 가동).
@@ -48,13 +59,14 @@ func NewSubscriber(ws *websocket.Conn, opts SubscriberOptions) *Subscriber {
 		opts.Logger = slog.Default()
 	}
 	s := &Subscriber{
-		id:      subIDSeq.Add(1),
-		conn:    ws,
-		send:    make(chan []byte, opts.SendQueueSize),
-		closeC:  make(chan struct{}),
-		onClose: opts.OnClose,
+		id:         subIDSeq.Add(1),
+		profileKey: opts.ProfileKey,
+		conn:       ws,
+		send:       make(chan []byte, opts.SendQueueSize),
+		closeC:     make(chan struct{}),
+		onClose:    opts.OnClose,
 	}
-	s.logger = opts.Logger.With(slog.Uint64("sub_id", s.id))
+	s.logger = opts.Logger.With(slog.Uint64("sub_id", s.id), slog.String("profile", s.profileKey))
 	return s
 }
 
@@ -145,6 +157,39 @@ func (r *Registry) Broadcast(p []byte) (sent, dropped int) {
 		dropped++
 		if errors.Is(err, ErrSendQueueFull) {
 			r.logger.Warn("slow consumer 격리", slog.Uint64("sub_id", s.id))
+			s.Close()
+		}
+	}
+	r.totalSent.Add(uint64(sent))
+	r.totalDrop.Add(uint64(dropped))
+	return sent, dropped
+}
+
+// SendByProfile 는 매칭 profileKey 를 가진 subscriber 에게만 송신한다.
+// profileKey 가 빈값인 subscriber 는 절대 받지 않음 (quote 미구독 의미).
+func (r *Registry) SendByProfile(profileKey string, p []byte) (sent, dropped int) {
+	if profileKey == "" {
+		return 0, 0
+	}
+	r.mu.RLock()
+	snapshot := make([]*Subscriber, 0, len(r.subs))
+	for _, s := range r.subs {
+		if s.profileKey == profileKey {
+			snapshot = append(snapshot, s)
+		}
+	}
+	r.mu.RUnlock()
+
+	for _, s := range snapshot {
+		err := s.Send(p)
+		if err == nil {
+			sent++
+			continue
+		}
+		dropped++
+		if errors.Is(err, ErrSendQueueFull) {
+			r.logger.Warn("slow quote consumer 격리",
+				slog.Uint64("sub_id", s.id), slog.String("profile", profileKey))
 			s.Close()
 		}
 	}

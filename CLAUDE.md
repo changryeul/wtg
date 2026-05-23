@@ -60,6 +60,7 @@ MYMQD_HOST=10.0.0.10 MYMQD_PORT=11217 go test -v ./test/integration/...
 | DMZ | `mci-edge-api` | 8090 | (HTTP only) | TLS termination + JWT 검증 + IP 화이트리스트 + rate-limit |
 | DMZ | `mci-edge-push` | 8084 | (gRPC client) | mci-push PushService → 외부 ws fan-out |
 | DMZ | `mci-edge-price` | 8083 | (gRPC client) | raw tick broadcast + Profile 별 quote stream (SubscribeQuote) |
+| DMZ | `mci-edge-chart` | 8087 | (HTTP/WS proxy) | TLS + 인증 + IP CIDR + rate-limit → mci-chart reverse-proxy |
 | Internal | `mci-api` | 8080 | `ChannelWeb` | `/v1/tx` `/v1/login` (Site/Tier → Session.Profile + JWT) `/v1/refresh` |
 | Internal | `mci-admin` | 9090 | `ChannelAdmin` | UI + 라우팅/정책 관리 + symbols/pricing/profiles CRUD + audit ring |
 | Internal | `mci-push` | 8081 | `ChannelWeb` (rep) | broker unsolicited 수신 → 사용자별 ws fan-out |

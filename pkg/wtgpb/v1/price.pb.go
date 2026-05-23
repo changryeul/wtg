@@ -257,6 +257,210 @@ func (x *QuoteSubscribeRequest) GetPairs() []string {
 	return nil
 }
 
+// BarSubscribeRequest 는 mci-chart 가 봉 stream 을 구독할 때 보내는 옵션.
+type BarSubscribeRequest struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	SubscriberId string                 `protobuf:"bytes,1,opt,name=subscriber_id,json=subscriberId,proto3" json:"subscriber_id,omitempty"`
+	// 수신할 timeframe 화이트리스트 (예: "1m", "5m"). 비면 모두.
+	Timeframes []string `protobuf:"bytes,2,rep,name=timeframes,proto3" json:"timeframes,omitempty"`
+	// 수신할 통화쌍 화이트리스트. 비면 모두.
+	Pairs         []string `protobuf:"bytes,3,rep,name=pairs,proto3" json:"pairs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BarSubscribeRequest) Reset() {
+	*x = BarSubscribeRequest{}
+	mi := &file_wtg_v1_price_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BarSubscribeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BarSubscribeRequest) ProtoMessage() {}
+
+func (x *BarSubscribeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BarSubscribeRequest.ProtoReflect.Descriptor instead.
+func (*BarSubscribeRequest) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *BarSubscribeRequest) GetSubscriberId() string {
+	if x != nil {
+		return x.SubscriberId
+	}
+	return ""
+}
+
+func (x *BarSubscribeRequest) GetTimeframes() []string {
+	if x != nil {
+		return x.Timeframes
+	}
+	return nil
+}
+
+func (x *BarSubscribeRequest) GetPairs() []string {
+	if x != nil {
+		return x.Pairs
+	}
+	return nil
+}
+
+// Bar 는 closed 된 OHLC 봉. quote.Bar 와 1:1 대응.
+type Bar struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Pair           string                 `protobuf:"bytes,1,opt,name=pair,proto3" json:"pair,omitempty"`
+	Tf             string                 `protobuf:"bytes,2,opt,name=tf,proto3" json:"tf,omitempty"` // "1m" / "5m" / ...
+	OpenedUnixNano int64                  `protobuf:"varint,3,opt,name=opened_unix_nano,json=openedUnixNano,proto3" json:"opened_unix_nano,omitempty"`
+	ClosedUnixNano int64                  `protobuf:"varint,4,opt,name=closed_unix_nano,json=closedUnixNano,proto3" json:"closed_unix_nano,omitempty"`
+	OpenBid        float64                `protobuf:"fixed64,5,opt,name=open_bid,json=openBid,proto3" json:"open_bid,omitempty"`
+	OpenAsk        float64                `protobuf:"fixed64,6,opt,name=open_ask,json=openAsk,proto3" json:"open_ask,omitempty"`
+	HighBid        float64                `protobuf:"fixed64,7,opt,name=high_bid,json=highBid,proto3" json:"high_bid,omitempty"`
+	HighAsk        float64                `protobuf:"fixed64,8,opt,name=high_ask,json=highAsk,proto3" json:"high_ask,omitempty"`
+	LowBid         float64                `protobuf:"fixed64,9,opt,name=low_bid,json=lowBid,proto3" json:"low_bid,omitempty"`
+	LowAsk         float64                `protobuf:"fixed64,10,opt,name=low_ask,json=lowAsk,proto3" json:"low_ask,omitempty"`
+	CloseBid       float64                `protobuf:"fixed64,11,opt,name=close_bid,json=closeBid,proto3" json:"close_bid,omitempty"`
+	CloseAsk       float64                `protobuf:"fixed64,12,opt,name=close_ask,json=closeAsk,proto3" json:"close_ask,omitempty"`
+	TickCount      int32                  `protobuf:"varint,13,opt,name=tick_count,json=tickCount,proto3" json:"tick_count,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *Bar) Reset() {
+	*x = Bar{}
+	mi := &file_wtg_v1_price_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Bar) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Bar) ProtoMessage() {}
+
+func (x *Bar) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Bar.ProtoReflect.Descriptor instead.
+func (*Bar) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Bar) GetPair() string {
+	if x != nil {
+		return x.Pair
+	}
+	return ""
+}
+
+func (x *Bar) GetTf() string {
+	if x != nil {
+		return x.Tf
+	}
+	return ""
+}
+
+func (x *Bar) GetOpenedUnixNano() int64 {
+	if x != nil {
+		return x.OpenedUnixNano
+	}
+	return 0
+}
+
+func (x *Bar) GetClosedUnixNano() int64 {
+	if x != nil {
+		return x.ClosedUnixNano
+	}
+	return 0
+}
+
+func (x *Bar) GetOpenBid() float64 {
+	if x != nil {
+		return x.OpenBid
+	}
+	return 0
+}
+
+func (x *Bar) GetOpenAsk() float64 {
+	if x != nil {
+		return x.OpenAsk
+	}
+	return 0
+}
+
+func (x *Bar) GetHighBid() float64 {
+	if x != nil {
+		return x.HighBid
+	}
+	return 0
+}
+
+func (x *Bar) GetHighAsk() float64 {
+	if x != nil {
+		return x.HighAsk
+	}
+	return 0
+}
+
+func (x *Bar) GetLowBid() float64 {
+	if x != nil {
+		return x.LowBid
+	}
+	return 0
+}
+
+func (x *Bar) GetLowAsk() float64 {
+	if x != nil {
+		return x.LowAsk
+	}
+	return 0
+}
+
+func (x *Bar) GetCloseBid() float64 {
+	if x != nil {
+		return x.CloseBid
+	}
+	return 0
+}
+
+func (x *Bar) GetCloseAsk() float64 {
+	if x != nil {
+		return x.CloseAsk
+	}
+	return 0
+}
+
+func (x *Bar) GetTickCount() int32 {
+	if x != nil {
+		return x.TickCount
+	}
+	return 0
+}
+
 // CustomerQuote 는 마진 적용된 고객 노출 시세.
 // pkg/pricing.CustomerQuote 와 1:1 대응. profile 정보는 edge fan-out 분기에 사용.
 type CustomerQuote struct {
@@ -280,7 +484,7 @@ type CustomerQuote struct {
 
 func (x *CustomerQuote) Reset() {
 	*x = CustomerQuote{}
-	mi := &file_wtg_v1_price_proto_msgTypes[3]
+	mi := &file_wtg_v1_price_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -292,7 +496,7 @@ func (x *CustomerQuote) String() string {
 func (*CustomerQuote) ProtoMessage() {}
 
 func (x *CustomerQuote) ProtoReflect() protoreflect.Message {
-	mi := &file_wtg_v1_price_proto_msgTypes[3]
+	mi := &file_wtg_v1_price_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -305,7 +509,7 @@ func (x *CustomerQuote) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CustomerQuote.ProtoReflect.Descriptor instead.
 func (*CustomerQuote) Descriptor() ([]byte, []int) {
-	return file_wtg_v1_price_proto_rawDescGZIP(), []int{3}
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CustomerQuote) GetPair() string {
@@ -405,7 +609,29 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\x15QuoteSubscribeRequest\x12#\n" +
 	"\rsubscriber_id\x18\x01 \x01(\tR\fsubscriberId\x12!\n" +
 	"\fprofile_keys\x18\x02 \x03(\tR\vprofileKeys\x12\x14\n" +
-	"\x05pairs\x18\x03 \x03(\tR\x05pairs\"\x98\x02\n" +
+	"\x05pairs\x18\x03 \x03(\tR\x05pairs\"p\n" +
+	"\x13BarSubscribeRequest\x12#\n" +
+	"\rsubscriber_id\x18\x01 \x01(\tR\fsubscriberId\x12\x1e\n" +
+	"\n" +
+	"timeframes\x18\x02 \x03(\tR\n" +
+	"timeframes\x12\x14\n" +
+	"\x05pairs\x18\x03 \x03(\tR\x05pairs\"\xf4\x02\n" +
+	"\x03Bar\x12\x12\n" +
+	"\x04pair\x18\x01 \x01(\tR\x04pair\x12\x0e\n" +
+	"\x02tf\x18\x02 \x01(\tR\x02tf\x12(\n" +
+	"\x10opened_unix_nano\x18\x03 \x01(\x03R\x0eopenedUnixNano\x12(\n" +
+	"\x10closed_unix_nano\x18\x04 \x01(\x03R\x0eclosedUnixNano\x12\x19\n" +
+	"\bopen_bid\x18\x05 \x01(\x01R\aopenBid\x12\x19\n" +
+	"\bopen_ask\x18\x06 \x01(\x01R\aopenAsk\x12\x19\n" +
+	"\bhigh_bid\x18\a \x01(\x01R\ahighBid\x12\x19\n" +
+	"\bhigh_ask\x18\b \x01(\x01R\ahighAsk\x12\x17\n" +
+	"\alow_bid\x18\t \x01(\x01R\x06lowBid\x12\x17\n" +
+	"\alow_ask\x18\n" +
+	" \x01(\x01R\x06lowAsk\x12\x1b\n" +
+	"\tclose_bid\x18\v \x01(\x01R\bcloseBid\x12\x1b\n" +
+	"\tclose_ask\x18\f \x01(\x01R\bcloseAsk\x12\x1d\n" +
+	"\n" +
+	"tick_count\x18\r \x01(\x05R\ttickCount\"\x98\x02\n" +
 	"\rCustomerQuote\x12\x12\n" +
 	"\x04pair\x18\x01 \x01(\tR\x04pair\x12\x18\n" +
 	"\achannel\x18\x02 \x01(\tR\achannel\x12\x12\n" +
@@ -419,10 +645,11 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\araw_bid\x18\t \x01(\x01R\x06rawBid\x12\x17\n" +
 	"\araw_ask\x18\n" +
 	" \x01(\x01R\x06rawAsk\x12#\n" +
-	"\rtable_version\x18\v \x01(\x03R\ftableVersion2\x8f\x01\n" +
+	"\rtable_version\x18\v \x01(\x03R\ftableVersion2\xcb\x01\n" +
 	"\fPriceService\x125\n" +
 	"\tSubscribe\x12\x18.wtg.v1.SubscribeRequest\x1a\f.wtg.v1.Tick0\x01\x12H\n" +
-	"\x0eSubscribeQuote\x12\x1d.wtg.v1.QuoteSubscribeRequest\x1a\x15.wtg.v1.CustomerQuote0\x01B3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
+	"\x0eSubscribeQuote\x12\x1d.wtg.v1.QuoteSubscribeRequest\x1a\x15.wtg.v1.CustomerQuote0\x01\x12:\n" +
+	"\fSubscribeBar\x12\x1b.wtg.v1.BarSubscribeRequest\x1a\v.wtg.v1.Bar0\x01B3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
 
 var (
 	file_wtg_v1_price_proto_rawDescOnce sync.Once
@@ -436,20 +663,24 @@ func file_wtg_v1_price_proto_rawDescGZIP() []byte {
 	return file_wtg_v1_price_proto_rawDescData
 }
 
-var file_wtg_v1_price_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_wtg_v1_price_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_wtg_v1_price_proto_goTypes = []any{
 	(*SubscribeRequest)(nil),      // 0: wtg.v1.SubscribeRequest
 	(*Tick)(nil),                  // 1: wtg.v1.Tick
 	(*QuoteSubscribeRequest)(nil), // 2: wtg.v1.QuoteSubscribeRequest
-	(*CustomerQuote)(nil),         // 3: wtg.v1.CustomerQuote
+	(*BarSubscribeRequest)(nil),   // 3: wtg.v1.BarSubscribeRequest
+	(*Bar)(nil),                   // 4: wtg.v1.Bar
+	(*CustomerQuote)(nil),         // 5: wtg.v1.CustomerQuote
 }
 var file_wtg_v1_price_proto_depIdxs = []int32{
 	0, // 0: wtg.v1.PriceService.Subscribe:input_type -> wtg.v1.SubscribeRequest
 	2, // 1: wtg.v1.PriceService.SubscribeQuote:input_type -> wtg.v1.QuoteSubscribeRequest
-	1, // 2: wtg.v1.PriceService.Subscribe:output_type -> wtg.v1.Tick
-	3, // 3: wtg.v1.PriceService.SubscribeQuote:output_type -> wtg.v1.CustomerQuote
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
+	3, // 2: wtg.v1.PriceService.SubscribeBar:input_type -> wtg.v1.BarSubscribeRequest
+	1, // 3: wtg.v1.PriceService.Subscribe:output_type -> wtg.v1.Tick
+	5, // 4: wtg.v1.PriceService.SubscribeQuote:output_type -> wtg.v1.CustomerQuote
+	4, // 5: wtg.v1.PriceService.SubscribeBar:output_type -> wtg.v1.Bar
+	3, // [3:6] is the sub-list for method output_type
+	0, // [0:3] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -466,7 +697,7 @@ func file_wtg_v1_price_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wtg_v1_price_proto_rawDesc), len(file_wtg_v1_price_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

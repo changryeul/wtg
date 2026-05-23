@@ -156,7 +156,16 @@ func main() {
 		)
 	}
 
-	// 3) Archiver + Aggregator wiring (옵션 — ChartDSN 있을 때만).
+	// 3) GRPCServer 사전 생성 (옵션) — onClose 체인과 PricingConsumer 가 fan-out
+	//    publisher 로 직접 참조. cfg.GRPCAddr 가 비어있어도 GRPCServer 만 만들어
+	//    두면 SubscribeQuote/SubscribeBar 호출은 가능 (단, Serve 는 안 함).
+	var grpcSrv *price.GRPCServer
+	if cfg.GRPCAddr != "" {
+		grpcSrv = price.NewGRPCServer(logger, cfg.GRPCBufSize)
+		srv.AttachGRPC(grpcSrv)
+	}
+
+	// 4) Archiver + Aggregator wiring (옵션 — ChartDSN 있을 때만).
 	var (
 		pool     *pgxpool.Pool
 		archiver *price.Archiver
@@ -199,6 +208,17 @@ func main() {
 		onClose = func(*quote.Bar) {}
 	}
 
+	// onClose 에 gRPC bar publish 도 chaining — mci-chart 가 SubscribeBar 로
+	// 받아 ws 라이브 갱신. GRPCServer 가 미설정이면 no-op.
+	if grpcSrvLocal := grpcSrv; grpcSrvLocal != nil {
+		baseOnClose := onClose
+		onClose = func(b *quote.Bar) {
+			baseOnClose(b)
+			grpcSrvLocal.PublishBar(b)
+		}
+		logger.Info("Bar 라이브 publish 활성 (PriceService.SubscribeBar)")
+	}
+
 	// 4) Aggregator — broker tick → 봉 누적.
 	//    SymbolMap 비어있어도 Aggregator 는 동작 (모든 tick drop). 운영 중 SymbolMap
 	//    이 채워지면 즉시 처리 시작.
@@ -210,16 +230,7 @@ func main() {
 		slog.Int("symbols", symbols.Size()),
 	)
 
-	// 5) GRPCServer 사전 생성 (옵션) — PricingConsumer 가 gRPC fan-out 의 publisher
-	//    로 직접 참조하도록. cfg.GRPCAddr 가 비어있어도 GRPCServer 만 만들어 두면
-	//    SubscribeQuote 호출은 가능 (단, Serve 는 안 함).
-	var grpcSrv *price.GRPCServer
-	if cfg.GRPCAddr != "" {
-		grpcSrv = price.NewGRPCServer(logger, cfg.GRPCBufSize)
-		srv.AttachGRPC(grpcSrv)
-	}
-
-	// 7) PricingConsumer — etcd watch 또는 정적 파일 둘 다 지원.
+	// 6) PricingConsumer — etcd watch 또는 정적 파일 둘 다 지원.
 	//    broker tick → PricingTable.Apply (Profile 별) → MultiQuotePublisher
 	//        → broker (ExchangeQuote)  : 외부 audit / non-edge consumer 용
 	//        → gRPC SubscribeQuote     : mci-edge-price 로의 직접 stream

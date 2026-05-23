@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/winwaysystems/wtg/pkg/pricing"
+	"github.com/winwaysystems/wtg/pkg/quote"
 	"github.com/winwaysystems/wtg/pkg/session"
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
@@ -36,6 +37,9 @@ type GRPCServer struct {
 	qmu              sync.RWMutex
 	quoteSubscribers map[uint64]*quoteSubscriber
 
+	bmu            sync.RWMutex
+	barSubscribers map[uint64]*barSubscriber
+
 	nextSubID atomic.Uint64
 }
 
@@ -45,6 +49,15 @@ type subscriber struct {
 	symbols map[string]struct{} // 빈 set 이면 모두 통과
 	out     chan *wtgpb.Tick    // server-side 큐
 	srvID   string              // 디버깅
+}
+
+// barSubscriber 는 단일 SubscribeBar stream 의 상태.
+type barSubscriber struct {
+	id     uint64
+	tfs    map[string]struct{} // 빈 set = 모두 통과
+	pairs  map[string]struct{}
+	out    chan *wtgpb.Bar
+	srvID  string
 }
 
 // quoteSubscriber 는 단일 SubscribeQuote stream 의 상태.
@@ -76,6 +89,7 @@ func NewGRPCServer(logger *slog.Logger, bufSize int) *GRPCServer {
 		bufSz:            bufSize,
 		subscribers:      make(map[uint64]*subscriber),
 		quoteSubscribers: make(map[uint64]*quoteSubscriber),
+		barSubscribers:   make(map[uint64]*barSubscriber),
 	}
 }
 
@@ -286,6 +300,113 @@ func (g *GRPCServer) QuoteSubscriberCount() int {
 	return len(g.quoteSubscribers)
 }
 
+// ─── Bar stream ────────────────────────────────────────────────────────────
+
+// PublishBar 는 BarCloseHandler 시그니처 — Aggregator 의 onClose 콜백으로 등록 가능.
+// 활성 bar subscriber 중 filter 통과 대상에게 fan-out (non-blocking, slow 격리).
+func (g *GRPCServer) PublishBar(b *quote.Bar) {
+	if b == nil {
+		return
+	}
+	pb := barToProto(b)
+
+	g.bmu.RLock()
+	subs := make([]*barSubscriber, 0, len(g.barSubscribers))
+	for _, s := range g.barSubscribers {
+		subs = append(subs, s)
+	}
+	g.bmu.RUnlock()
+
+	tfStr := string(b.TF)
+	pairStr := string(b.Pair)
+	for _, s := range subs {
+		if len(s.tfs) > 0 {
+			if _, ok := s.tfs[tfStr]; !ok {
+				continue
+			}
+		}
+		if len(s.pairs) > 0 {
+			if _, ok := s.pairs[pairStr]; !ok {
+				continue
+			}
+		}
+		select {
+		case s.out <- pb:
+		default:
+			g.logger.Warn("gRPC bar subscriber slow — stream 종료",
+				slog.Uint64("sub_id", s.id),
+				slog.String("subscriber_id", s.srvID),
+			)
+			close(s.out)
+			g.removeBarSubscriber(s.id)
+		}
+	}
+}
+
+// SubscribeBar 는 PriceService.SubscribeBar RPC 구현.
+func (g *GRPCServer) SubscribeBar(req *wtgpb.BarSubscribeRequest, stream wtgpb.PriceService_SubscribeBarServer) error {
+	sub := &barSubscriber{
+		id:    g.nextSubID.Add(1),
+		tfs:   make(map[string]struct{}, len(req.GetTimeframes())),
+		pairs: make(map[string]struct{}, len(req.GetPairs())),
+		out:   make(chan *wtgpb.Bar, g.bufSz),
+		srvID: req.GetSubscriberId(),
+	}
+	for _, t := range req.GetTimeframes() {
+		sub.tfs[t] = struct{}{}
+	}
+	for _, p := range req.GetPairs() {
+		sub.pairs[p] = struct{}{}
+	}
+
+	g.bmu.Lock()
+	g.barSubscribers[sub.id] = sub
+	g.bmu.Unlock()
+
+	g.logger.Info("gRPC bar 구독 시작",
+		slog.Uint64("sub_id", sub.id),
+		slog.String("subscriber_id", sub.srvID),
+		slog.Int("tf_filter", len(sub.tfs)),
+		slog.Int("pair_filter", len(sub.pairs)),
+	)
+
+	defer func() {
+		g.removeBarSubscriber(sub.id)
+		g.logger.Info("gRPC bar 구독 종료",
+			slog.Uint64("sub_id", sub.id),
+			slog.String("subscriber_id", sub.srvID),
+		)
+	}()
+
+	ctx := stream.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case b, ok := <-sub.out:
+			if !ok {
+				return errors.New("price: slow bar consumer")
+			}
+			if err := stream.Send(b); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (g *GRPCServer) removeBarSubscriber(id uint64) {
+	g.bmu.Lock()
+	delete(g.barSubscribers, id)
+	g.bmu.Unlock()
+}
+
+// BarSubscriberCount 는 현재 활성 Bar 구독자 수.
+func (g *GRPCServer) BarSubscriberCount() int {
+	g.bmu.RLock()
+	defer g.bmu.RUnlock()
+	return len(g.barSubscribers)
+}
+
 // Serve 는 별도 listener 에서 gRPC 서버를 가동한다.
 //
 // 일반 사용:
@@ -330,6 +451,25 @@ func tickToProto(t *Tick) *wtgpb.Tick {
 		Flag:             uint32(t.Flag),
 		Body:             append([]byte(nil), t.Body...),
 		ReceivedUnixNano: t.Received.UnixNano(),
+	}
+}
+
+// barToProto 는 quote.Bar 를 proto Bar 로 매핑.
+func barToProto(b *quote.Bar) *wtgpb.Bar {
+	return &wtgpb.Bar{
+		Pair:           string(b.Pair),
+		Tf:             string(b.TF),
+		OpenedUnixNano: b.OpenedAt.UnixNano(),
+		ClosedUnixNano: b.ClosedAt.UnixNano(),
+		OpenBid:        b.OpenBid,
+		OpenAsk:        b.OpenAsk,
+		HighBid:        b.HighBid,
+		HighAsk:        b.HighAsk,
+		LowBid:         b.LowBid,
+		LowAsk:         b.LowAsk,
+		CloseBid:       b.CloseBid,
+		CloseAsk:       b.CloseAsk,
+		TickCount:      int32(b.TickCount),
 	}
 }
 

@@ -2,36 +2,45 @@ package chart
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Server 는 mci-chart 의 핵심 컴포넌트.
 //
-// HTTP 흐름:
+// HTTP / WS 흐름:
 //
-//	/v1/ping        — health
-//	/v1/chart-stats — 누적 카운터
-//	/v1/chart       — 봉 조회 (Repository.QueryBars)
+//	/v1/ping           — health
+//	/v1/chart-stats    — 누적 카운터
+//	/v1/chart          — 봉 조회 (Repository.QueryBars) — historical
+//	/v1/chart/stream   — ws (Hub fan-out) — 라이브 closed 봉 (UpstreamGRPC 활성 시)
 //
-// 라이브 tick 은 mci-edge-price 의 ws 가 별도 담당. mci-chart 는 historical
-// 봉만 책임진다 (관심사 분리).
+// 라이브 봉 흐름:
+//
+//	mci-price.Aggregator → onClose → GRPCServer.PublishBar
+//	  → SubscribeBar stream → mci-chart.subscribeBarLoop
+//	  → Hub.Publish(pair, tf, JSON) → matching ws clients
 type Server struct {
 	cfg    Config
 	repo   Repository
 	pool   *pgxpool.Pool // owned by server when nil-Repository 로 시작한 경우
 	logger *slog.Logger
+	hub    *Hub
 
 	totalRequests atomic.Uint64
 	totalRows     atomic.Uint64
 	totalErrors   atomic.Uint64
+	totalBarsRecv atomic.Uint64
 
 	http *http.Server
 }
@@ -41,7 +50,11 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{cfg: cfg, logger: logger}
+	return &Server{
+		cfg:    cfg,
+		logger: logger,
+		hub:    NewHub(logger),
+	}
 }
 
 // WithRepository 는 테스트 / dev 용으로 Repository 를 주입.
@@ -78,6 +91,13 @@ func (s *Server) Start(ctx context.Context) error {
 		go s.statsLoop(ctx)
 	}
 
+	// 라이브 stream — UpstreamGRPC 가 채워진 경우만.
+	if s.cfg.UpstreamGRPC != "" {
+		go s.subscribeBarLoop(ctx)
+	} else {
+		s.logger.Info("라이브 봉 stream 비활성 (--upstream 미설정)")
+	}
+
 	return s.startHTTP(ctx)
 }
 
@@ -86,6 +106,7 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/ping", s.handlePing)
 	mux.HandleFunc("GET /v1/chart-stats", s.handleStats)
 	mux.Handle("GET /v1/chart", s.wrapMetrics(handleChart(s.repo, s.cfg.QueryMaxRows, s.logger)))
+	mux.HandleFunc("GET /v1/chart/stream", s.handleChartStream)
 
 	s.http = &http.Server{
 		Addr:         s.cfg.ListenAddr,
@@ -118,7 +139,7 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	}
 }
 
-// Shutdown 은 HTTP + (소유한 경우) DB pool 정리.
+// Shutdown 은 HTTP + (소유한 경우) DB pool + Hub 정리.
 func (s *Server) Shutdown(ctx context.Context) error {
 	var first error
 	if s.http != nil {
@@ -126,10 +147,117 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			first = err
 		}
 	}
+	if s.hub != nil {
+		s.hub.CloseAll()
+	}
 	if s.pool != nil {
 		s.pool.Close()
 	}
 	return first
+}
+
+// handleChartStream 은 GET /v1/chart/stream — ws upgrade + Hub 등록.
+//
+// 쿼리 파라미터:
+//   pairs=USD/KRW,EUR/KRW  (콤마 구분; 비면 모든 pair)
+//   tfs=1m,5m              (콤마 구분; 비면 모든 tf)
+//
+// ws 메시지 (in): {"op":"sub","pairs":[...],"tfs":[...]} — 런타임 필터 갱신.
+// ws 메시지 (out): {"type":"bar", ...} (encodeBarJSON 결과)
+func (s *Server) handleChartStream(w http.ResponseWriter, r *http.Request) {
+	upgrader := &websocket.Upgrader{
+		ReadBufferSize:  4096,
+		WriteBufferSize: 4096,
+		CheckOrigin:     nil,
+	}
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.logger.Warn("chart ws upgrade 실패", slog.Any("error", err))
+		return
+	}
+	sub := NewSubscriber(ws, SubscriberOptions{
+		SendQueueSize: s.cfg.WsSendQueueSize,
+		Logger:        s.logger,
+		OnClose: func(sb *Subscriber) {
+			s.hub.Remove(sb)
+		},
+	})
+	// 초기 필터: query 파라미터.
+	pairs := splitFilter(r.URL.Query().Get("pairs"))
+	tfs := splitFilter(r.URL.Query().Get("tfs"))
+	sub.SetFilters(pairs, tfs)
+
+	s.hub.Add(sub)
+	go s.chartWriteLoop(sub)
+	go s.chartReadLoop(sub)
+}
+
+func splitFilter(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (s *Server) chartWriteLoop(sub *Subscriber) {
+	ticker := time.NewTicker(s.cfg.WsPingInterval)
+	defer ticker.Stop()
+	defer sub.Close()
+	for {
+		select {
+		case <-sub.closeC:
+			return
+		case payload, ok := <-sub.send:
+			if !ok {
+				return
+			}
+			sub.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := sub.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+				return
+			}
+		case <-ticker.C:
+			sub.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := sub.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// chartReadLoop 는 클라이언트가 보낸 {"op":"sub", ...} 로 필터 갱신.
+func (s *Server) chartReadLoop(sub *Subscriber) {
+	defer sub.Close()
+	sub.conn.SetReadDeadline(time.Now().Add(s.cfg.WsPongTimeout))
+	sub.conn.SetPongHandler(func(string) error {
+		sub.conn.SetReadDeadline(time.Now().Add(s.cfg.WsPongTimeout))
+		return nil
+	})
+	for {
+		_, msg, err := sub.conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var in struct {
+			Op    string   `json:"op"`
+			Pairs []string `json:"pairs"`
+			Tfs   []string `json:"tfs"`
+		}
+		if err := json.Unmarshal(msg, &in); err != nil {
+			continue // 잘못된 메시지는 무시
+		}
+		if in.Op == "sub" {
+			sub.SetFilters(in.Pairs, in.Tfs)
+		}
+	}
 }
 
 // wrapMetrics 는 응답 후 카운터를 갱신한다 (간단한 inline 미들웨어).
@@ -157,14 +285,18 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		Requests: s.totalRequests.Load(),
 		Errors:   s.totalErrors.Load(),
 		Rows:     s.totalRows.Load(),
+		Bars:     s.totalBarsRecv.Load(),
+		Hub:      s.hub.Stats(),
 	})
 }
 
 // ServerStats 는 외부 노출 카운터.
 type ServerStats struct {
-	Requests uint64 `json:"requests"`
-	Errors   uint64 `json:"errors"`
-	Rows     uint64 `json:"rows"`
+	Requests uint64   `json:"requests"`
+	Errors   uint64   `json:"errors"`
+	Rows     uint64   `json:"rows"`
+	Bars     uint64   `json:"bars_received"`
+	Hub      HubStats `json:"hub"`
 }
 
 // AddRows 는 핸들러가 반환한 row 수를 누적 (현재는 wrap 외부에서 호출 안 함;

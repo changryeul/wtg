@@ -23,6 +23,11 @@ service PriceService {
   // CustomerQuote stream 을 받는다. mci-price 의 PricingConsumer 가 publish 하는
   // 동일 데이터를 broker 외에 이 stream 으로도 push (이중 publish).
   rpc SubscribeQuote(QuoteSubscribeRequest) returns (stream CustomerQuote);
+
+  // SubscribeBar 는 mci-chart 가 호출해서 봉 close 이벤트 stream 을 받는다.
+  // Aggregator 가 closed 한 봉이 Archiver(DB) 와 병렬로 이 stream 으로도 push.
+  // 클라이언트(mci-chart)는 (pair, tf) 필터를 옵션으로 지정.
+  rpc SubscribeBar(BarSubscribeRequest) returns (stream Bar);
 }
 
 // SubscribeRequest 는 edge 가 보내는 구독 옵션 (1차는 빈 메시지).
@@ -65,6 +70,35 @@ message QuoteSubscribeRequest {
 
   // 수신할 통화쌍 화이트리스트. 비어있으면 모든 pair.
   repeated string pairs = 3;
+}
+
+// BarSubscribeRequest 는 mci-chart 가 봉 stream 을 구독할 때 보내는 옵션.
+message BarSubscribeRequest {
+  string subscriber_id = 1;
+
+  // 수신할 timeframe 화이트리스트 (예: "1m", "5m"). 비면 모두.
+  repeated string timeframes = 2;
+  // 수신할 통화쌍 화이트리스트. 비면 모두.
+  repeated string pairs = 3;
+}
+
+// Bar 는 closed 된 OHLC 봉. quote.Bar 와 1:1 대응.
+message Bar {
+  string pair       = 1;
+  string tf         = 2;   // "1m" / "5m" / ...
+  int64  opened_unix_nano = 3;
+  int64  closed_unix_nano = 4;
+
+  double open_bid  = 5;
+  double open_ask  = 6;
+  double high_bid  = 7;
+  double high_ask  = 8;
+  double low_bid   = 9;
+  double low_ask   = 10;
+  double close_bid = 11;
+  double close_ask = 12;
+
+  int32 tick_count = 13;
 }
 
 // CustomerQuote 는 마진 적용된 고객 노출 시세.

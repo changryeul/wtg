@@ -297,6 +297,115 @@ func (x *MarkConsumedRequest) GetTsUnixNano() int64 {
 	return 0
 }
 
+type BatchValidateRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 검증할 QuoteID 목록. 빈 배열이면 빈 results 반환. 1000 초과시 InvalidArgument.
+	QuoteIds []string `protobuf:"bytes,1,rep,name=quote_ids,json=quoteIds,proto3" json:"quote_ids,omitempty"`
+	// Validate 와 동일한 컨텍스트 필드 — batch 전체에 적용.
+	EngineId      string `protobuf:"bytes,10,opt,name=engine_id,json=engineId,proto3" json:"engine_id,omitempty"`
+	TsUnixNano    int64  `protobuf:"varint,11,opt,name=ts_unix_nano,json=tsUnixNano,proto3" json:"ts_unix_nano,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchValidateRequest) Reset() {
+	*x = BatchValidateRequest{}
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchValidateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchValidateRequest) ProtoMessage() {}
+
+func (x *BatchValidateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchValidateRequest.ProtoReflect.Descriptor instead.
+func (*BatchValidateRequest) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *BatchValidateRequest) GetQuoteIds() []string {
+	if x != nil {
+		return x.QuoteIds
+	}
+	return nil
+}
+
+func (x *BatchValidateRequest) GetEngineId() string {
+	if x != nil {
+		return x.EngineId
+	}
+	return ""
+}
+
+func (x *BatchValidateRequest) GetTsUnixNano() int64 {
+	if x != nil {
+		return x.TsUnixNano
+	}
+	return 0
+}
+
+type BatchValidateResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// results[i] 는 request.quote_ids[i] 의 검증 결과. 길이는 입력과 동일.
+	// 개별 항목의 status 가 각 quote_id 에 대한 분기 — 일부 OK 일부 NOT_FOUND
+	// 처럼 혼재 가능.
+	Results       []*ValidateResponse `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchValidateResponse) Reset() {
+	*x = BatchValidateResponse{}
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchValidateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchValidateResponse) ProtoMessage() {}
+
+func (x *BatchValidateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchValidateResponse.ProtoReflect.Descriptor instead.
+func (*BatchValidateResponse) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *BatchValidateResponse) GetResults() []*ValidateResponse {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
 type MarkConsumedResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ConsumeResult — 원자적 결과.
@@ -319,7 +428,7 @@ type MarkConsumedResponse struct {
 
 func (x *MarkConsumedResponse) Reset() {
 	*x = MarkConsumedResponse{}
-	mi := &file_wtg_v1_quote_validation_proto_msgTypes[3]
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -331,7 +440,7 @@ func (x *MarkConsumedResponse) String() string {
 func (*MarkConsumedResponse) ProtoMessage() {}
 
 func (x *MarkConsumedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_wtg_v1_quote_validation_proto_msgTypes[3]
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -344,7 +453,7 @@ func (x *MarkConsumedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkConsumedResponse.ProtoReflect.Descriptor instead.
 func (*MarkConsumedResponse) Descriptor() ([]byte, []int) {
-	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{3}
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *MarkConsumedResponse) GetStatus() ValidationStatus {
@@ -403,7 +512,7 @@ type QuoteRecord struct {
 
 func (x *QuoteRecord) Reset() {
 	*x = QuoteRecord{}
-	mi := &file_wtg_v1_quote_validation_proto_msgTypes[4]
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -415,7 +524,7 @@ func (x *QuoteRecord) String() string {
 func (*QuoteRecord) ProtoMessage() {}
 
 func (x *QuoteRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_wtg_v1_quote_validation_proto_msgTypes[4]
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -428,7 +537,7 @@ func (x *QuoteRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuoteRecord.ProtoReflect.Descriptor instead.
 func (*QuoteRecord) Descriptor() ([]byte, []int) {
-	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{4}
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *QuoteRecord) GetQuoteId() string {
@@ -539,7 +648,15 @@ const file_wtg_v1_quote_validation_proto_rawDesc = "" +
 	"\tengine_id\x18\n" +
 	" \x01(\tR\bengineId\x12 \n" +
 	"\fts_unix_nano\x18\v \x01(\x03R\n" +
-	"tsUnixNano\"\xdd\x01\n" +
+	"tsUnixNano\"r\n" +
+	"\x14BatchValidateRequest\x12\x1b\n" +
+	"\tquote_ids\x18\x01 \x03(\tR\bquoteIds\x12\x1b\n" +
+	"\tengine_id\x18\n" +
+	" \x01(\tR\bengineId\x12 \n" +
+	"\fts_unix_nano\x18\v \x01(\x03R\n" +
+	"tsUnixNano\"K\n" +
+	"\x15BatchValidateResponse\x122\n" +
+	"\aresults\x18\x01 \x03(\v2\x18.wtg.v1.ValidateResponseR\aresults\"\xdd\x01\n" +
 	"\x14MarkConsumedResponse\x120\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x18.wtg.v1.ValidationStatusR\x06status\x12+\n" +
 	"\x06record\x18\x02 \x01(\v2\x13.wtg.v1.QuoteRecordR\x06record\x12\x1f\n" +
@@ -567,10 +684,11 @@ const file_wtg_v1_quote_validation_proto_rawDesc = "" +
 	"\x02OK\x10\x01\x12\r\n" +
 	"\tNOT_FOUND\x10\x02\x12\v\n" +
 	"\aEXPIRED\x10\x03\x12\x14\n" +
-	"\x10ALREADY_CONSUMED\x10\x042\xa2\x01\n" +
+	"\x10ALREADY_CONSUMED\x10\x042\xf0\x01\n" +
 	"\x16QuoteValidationService\x12=\n" +
 	"\bValidate\x12\x17.wtg.v1.ValidateRequest\x1a\x18.wtg.v1.ValidateResponse\x12I\n" +
-	"\fMarkConsumed\x12\x1b.wtg.v1.MarkConsumedRequest\x1a\x1c.wtg.v1.MarkConsumedResponseB3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
+	"\fMarkConsumed\x12\x1b.wtg.v1.MarkConsumedRequest\x1a\x1c.wtg.v1.MarkConsumedResponse\x12L\n" +
+	"\rBatchValidate\x12\x1c.wtg.v1.BatchValidateRequest\x1a\x1d.wtg.v1.BatchValidateResponseB3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
 
 var (
 	file_wtg_v1_quote_validation_proto_rawDescOnce sync.Once
@@ -585,29 +703,34 @@ func file_wtg_v1_quote_validation_proto_rawDescGZIP() []byte {
 }
 
 var file_wtg_v1_quote_validation_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_wtg_v1_quote_validation_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_wtg_v1_quote_validation_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_wtg_v1_quote_validation_proto_goTypes = []any{
-	(ValidationStatus)(0),        // 0: wtg.v1.ValidationStatus
-	(*ValidateRequest)(nil),      // 1: wtg.v1.ValidateRequest
-	(*ValidateResponse)(nil),     // 2: wtg.v1.ValidateResponse
-	(*MarkConsumedRequest)(nil),  // 3: wtg.v1.MarkConsumedRequest
-	(*MarkConsumedResponse)(nil), // 4: wtg.v1.MarkConsumedResponse
-	(*QuoteRecord)(nil),          // 5: wtg.v1.QuoteRecord
+	(ValidationStatus)(0),         // 0: wtg.v1.ValidationStatus
+	(*ValidateRequest)(nil),       // 1: wtg.v1.ValidateRequest
+	(*ValidateResponse)(nil),      // 2: wtg.v1.ValidateResponse
+	(*MarkConsumedRequest)(nil),   // 3: wtg.v1.MarkConsumedRequest
+	(*BatchValidateRequest)(nil),  // 4: wtg.v1.BatchValidateRequest
+	(*BatchValidateResponse)(nil), // 5: wtg.v1.BatchValidateResponse
+	(*MarkConsumedResponse)(nil),  // 6: wtg.v1.MarkConsumedResponse
+	(*QuoteRecord)(nil),           // 7: wtg.v1.QuoteRecord
 }
 var file_wtg_v1_quote_validation_proto_depIdxs = []int32{
 	0, // 0: wtg.v1.ValidateResponse.status:type_name -> wtg.v1.ValidationStatus
-	5, // 1: wtg.v1.ValidateResponse.record:type_name -> wtg.v1.QuoteRecord
-	0, // 2: wtg.v1.MarkConsumedResponse.status:type_name -> wtg.v1.ValidationStatus
-	5, // 3: wtg.v1.MarkConsumedResponse.record:type_name -> wtg.v1.QuoteRecord
-	1, // 4: wtg.v1.QuoteValidationService.Validate:input_type -> wtg.v1.ValidateRequest
-	3, // 5: wtg.v1.QuoteValidationService.MarkConsumed:input_type -> wtg.v1.MarkConsumedRequest
-	2, // 6: wtg.v1.QuoteValidationService.Validate:output_type -> wtg.v1.ValidateResponse
-	4, // 7: wtg.v1.QuoteValidationService.MarkConsumed:output_type -> wtg.v1.MarkConsumedResponse
-	6, // [6:8] is the sub-list for method output_type
-	4, // [4:6] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	7, // 1: wtg.v1.ValidateResponse.record:type_name -> wtg.v1.QuoteRecord
+	2, // 2: wtg.v1.BatchValidateResponse.results:type_name -> wtg.v1.ValidateResponse
+	0, // 3: wtg.v1.MarkConsumedResponse.status:type_name -> wtg.v1.ValidationStatus
+	7, // 4: wtg.v1.MarkConsumedResponse.record:type_name -> wtg.v1.QuoteRecord
+	1, // 5: wtg.v1.QuoteValidationService.Validate:input_type -> wtg.v1.ValidateRequest
+	3, // 6: wtg.v1.QuoteValidationService.MarkConsumed:input_type -> wtg.v1.MarkConsumedRequest
+	4, // 7: wtg.v1.QuoteValidationService.BatchValidate:input_type -> wtg.v1.BatchValidateRequest
+	2, // 8: wtg.v1.QuoteValidationService.Validate:output_type -> wtg.v1.ValidateResponse
+	6, // 9: wtg.v1.QuoteValidationService.MarkConsumed:output_type -> wtg.v1.MarkConsumedResponse
+	5, // 10: wtg.v1.QuoteValidationService.BatchValidate:output_type -> wtg.v1.BatchValidateResponse
+	8, // [8:11] is the sub-list for method output_type
+	5, // [5:8] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_wtg_v1_quote_validation_proto_init() }
@@ -621,7 +744,7 @@ func file_wtg_v1_quote_validation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wtg_v1_quote_validation_proto_rawDesc), len(file_wtg_v1_quote_validation_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

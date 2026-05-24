@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/winwaysystems/wtg/pkg/quoteid"
 	"github.com/winwaysystems/wtg/pkg/session"
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
@@ -210,6 +213,81 @@ func TestQuoteValidation_MarkConsumed_NotFound(t *testing.T) {
 	}
 	if r.GetOrdRejReason() != 5 {
 		t.Errorf("OrdRejReason=%d, want 5", r.GetOrdRejReason())
+	}
+}
+
+func TestQuoteValidation_BatchValidate(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	ts := time.Now()
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", ts, time.Hour))
+	_ = reg.Put(context.Background(), mkRegRecord("A-2", ts, time.Hour))
+	// A-3 는 MarkConsumed 로 ALREADY_CONSUMED 만들기.
+	_ = reg.Put(context.Background(), mkRegRecord("A-3", ts, time.Hour))
+	_, _ = srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId: "A-3", ConsumerId: "order-X",
+	})
+
+	resp, err := srv.BatchValidate(context.Background(), &wtgpb.BatchValidateRequest{
+		QuoteIds: []string{"A-1", "A-2", "A-3", "A-nope", ""},
+		EngineId: "test-engine",
+	})
+	if err != nil {
+		t.Fatalf("BatchValidate: %v", err)
+	}
+	results := resp.GetResults()
+	if len(results) != 5 {
+		t.Fatalf("results len=%d, want 5", len(results))
+	}
+	// 입력 순서 그대로.
+	if results[0].GetStatus() != wtgpb.ValidationStatus_OK {
+		t.Errorf("results[0] (A-1) status=%v, want OK", results[0].GetStatus())
+	}
+	if results[1].GetStatus() != wtgpb.ValidationStatus_OK {
+		t.Errorf("results[1] (A-2) status=%v, want OK", results[1].GetStatus())
+	}
+	if results[2].GetStatus() != wtgpb.ValidationStatus_ALREADY_CONSUMED {
+		t.Errorf("results[2] (A-3) status=%v, want ALREADY_CONSUMED", results[2].GetStatus())
+	}
+	if results[3].GetStatus() != wtgpb.ValidationStatus_NOT_FOUND {
+		t.Errorf("results[3] (A-nope) status=%v, want NOT_FOUND", results[3].GetStatus())
+	}
+	if results[4].GetStatus() != wtgpb.ValidationStatus_NOT_FOUND {
+		t.Errorf("results[4] (빈 QuoteID) status=%v, want NOT_FOUND", results[4].GetStatus())
+	}
+
+	s := srv.Stats()
+	if s.BatchTotal != 1 {
+		t.Errorf("BatchTotal=%d, want 1", s.BatchTotal)
+	}
+	if s.BatchItems != 5 {
+		t.Errorf("BatchItems=%d, want 5", s.BatchItems)
+	}
+}
+
+func TestQuoteValidation_BatchValidate_Empty(t *testing.T) {
+	srv, _ := mkValidationServer(t)
+	resp, err := srv.BatchValidate(context.Background(), &wtgpb.BatchValidateRequest{})
+	if err != nil {
+		t.Fatalf("BatchValidate empty: %v", err)
+	}
+	if len(resp.GetResults()) != 0 {
+		t.Errorf("빈 batch results len=%d", len(resp.GetResults()))
+	}
+}
+
+func TestQuoteValidation_BatchValidate_ExceedsMax(t *testing.T) {
+	srv, _ := mkValidationServer(t)
+	ids := make([]string, MaxBatchValidateSize+1)
+	for i := range ids {
+		ids[i] = "A-x"
+	}
+	_, err := srv.BatchValidate(context.Background(), &wtgpb.BatchValidateRequest{QuoteIds: ids})
+	if err == nil {
+		t.Fatal("상한 초과인데 error nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("error code=%v, want InvalidArgument", st.Code())
 	}
 }
 

@@ -259,8 +259,44 @@ case EXPIRED:          // last-look 도중 만료 — OrdRejReason=13
    가 자동 재연결, 로그에 reconnect 메시지.
 3. failover 동안 발행 quote 의 Put 실패율 < 1% 확인.
 
+## v1.3 — BatchValidate (commit 추가)
+
+다건 QuoteID 를 단일 RPC 로 검증. 결과는 입력과 같은 순서의 배열.
+
+### 엔진 흐름
+
+```go
+// FIX NewOrderList ('E') 같은 다건 주문의 사전 검증.
+batchResp, _ := client.BatchValidate(ctx, &BatchValidateRequest{
+    QuoteIds: []string{q1, q2, q3, ..., qN},   // 최대 1000
+})
+for i, r := range batchResp.Results {
+    switch r.Status {
+    case OK:                 // i-번째 주문 진행
+    case ALREADY_CONSUMED:   // 거절 (OrdRejReason=6)
+    case NOT_FOUND:          // 거절 (OrdRejReason=5)
+    case EXPIRED:            // 거절 (OrdRejReason=13)
+    case STATUS_UNSPECIFIED: // 일시 internal error, 재시도 권장
+    }
+}
+```
+
+### 성능
+
+서버는 goroutine fan-out — N=100 batch 가 단일 Validate 와 비슷한 wallclock.
+직렬 호출 대비 N× 개선 (Redis round-trip 병렬화).
+
+상한 1000 (운영 abuse / goroutine 폭발 방어). 초과 시 InvalidArgument.
+
+### 메트릭 추가
+
+| 키 | 의미 |
+|---|------|
+| `quote_validation.batch_total` | BatchValidate RPC 누적 |
+| `quote_validation.batch_items` | 처리된 quote_id 총합 (=총 RPC × 평균 batch 크기) |
+
 ## v2 후보
 
-- BatchValidate — 대량 주문 검증 효율.
 - HTTP 게이트웨이 — 비-Go FIX gateway 호환.
 - Redis Cluster 호환 hash tag (`{quote_id}:q` / `{quote_id}:c`).
+- BatchMarkConsumed — 다건 atomic 표시 (Lua script + EVALSHA).

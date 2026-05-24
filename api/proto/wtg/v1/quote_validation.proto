@@ -51,6 +51,17 @@ service QuoteValidationService {
   // 원자성: Memory 는 mutex, Redis 는 SET NX. 두 mci-price 가 동시에 같은
   // QuoteID 에 대해 MarkConsumed 받아도 정확히 한 호출만 OK.
   rpc MarkConsumed(MarkConsumedRequest) returns (MarkConsumedResponse);
+
+  // BatchValidate 는 여러 QuoteID 를 단일 RPC 로 검증. 결과는 입력과 같은
+  // 순서의 배열로 반환 (results[i] == quote_ids[i] 의 결과).
+  //
+  // 사용 시나리오:
+  //   - 다건 주문 (FIX NewOrderList 'E') 의 전체 사전 검증.
+  //   - 감사 / 재계산 잡의 bulk lookup.
+  //
+  // 서버는 goroutine fan-out 으로 병렬 처리 — N=100 batch 가 단일 Validate
+  // 와 비슷한 wallclock 으로 끝남. batch 크기 상한은 1000 (운영 abuse 방어).
+  rpc BatchValidate(BatchValidateRequest) returns (BatchValidateResponse);
 }
 
 message ValidateRequest {
@@ -101,6 +112,22 @@ message MarkConsumedRequest {
   // 호출자(엔진) 식별 — Validate 와 동일.
   string engine_id    = 10;
   int64  ts_unix_nano = 11;
+}
+
+message BatchValidateRequest {
+  // 검증할 QuoteID 목록. 빈 배열이면 빈 results 반환. 1000 초과시 InvalidArgument.
+  repeated string quote_ids = 1;
+
+  // Validate 와 동일한 컨텍스트 필드 — batch 전체에 적용.
+  string engine_id    = 10;
+  int64  ts_unix_nano = 11;
+}
+
+message BatchValidateResponse {
+  // results[i] 는 request.quote_ids[i] 의 검증 결과. 길이는 입력과 동일.
+  // 개별 항목의 status 가 각 quote_id 에 대한 분기 — 일부 OK 일부 NOT_FOUND
+  // 처럼 혼재 가능.
+  repeated ValidateResponse results = 1;
 }
 
 message MarkConsumedResponse {

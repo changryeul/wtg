@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,10 @@ import (
 	"github.com/winwaysystems/wtg/pkg/quoteid"
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
+
+// MaxBatchValidateSize — BatchValidate RPC 단일 호출 상한. 운영 abuse / 과도한
+// goroutine 폭발 방어. 1000 = FIX NewOrderList 의 일반적 cap.
+const MaxBatchValidateSize = 1000
 
 // FIX 4.4 OrdRejReason (tag 103) 매핑 — RFC §4.3.
 const (
@@ -49,6 +54,8 @@ type QuoteValidationServer struct {
 	consumeNotFound   atomic.Uint64
 	consumeExpired    atomic.Uint64
 	consumeInternal   atomic.Uint64
+	batchTotal        atomic.Uint64 // BatchValidate RPC 누적
+	batchItems        atomic.Uint64 // 처리된 quote_id 총합
 }
 
 // NewQuoteValidationServer — Registry 가 nil 이면 panic. logger 가 nil 이면
@@ -210,6 +217,53 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 	return resp, nil
 }
 
+// BatchValidate — 다건 QuoteID 를 병렬로 검증. 결과는 입력과 같은 순서의
+// 배열로 반환. 빈 배열이면 빈 결과. 상한 초과면 InvalidArgument.
+//
+// 내부적으로 N goroutine fan-out — 각 항목이 자체 Registry 호출. 100건 batch
+// 가 단일 Validate 와 비슷한 wallclock (Redis round-trip 병렬화).
+//
+// 한 항목이 Registry internal error 를 만나도 batch 전체는 실패 안 함 — 해당
+// index 의 ValidateResponse 만 STATUS_UNSPECIFIED + reject_text 로 표시.
+// 호출자가 per-item 분기.
+func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.BatchValidateRequest) (*wtgpb.BatchValidateResponse, error) {
+	s.batchTotal.Add(1)
+	ids := req.GetQuoteIds()
+	if len(ids) == 0 {
+		return &wtgpb.BatchValidateResponse{}, nil
+	}
+	if len(ids) > MaxBatchValidateSize {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"batch size %d exceeds max %d", len(ids), MaxBatchValidateSize)
+	}
+	s.batchItems.Add(uint64(len(ids)))
+
+	results := make([]*wtgpb.ValidateResponse, len(ids))
+	var wg sync.WaitGroup
+	wg.Add(len(ids))
+	for i := range ids {
+		i := i
+		go func() {
+			defer wg.Done()
+			resp, err := s.Validate(ctx, &wtgpb.ValidateRequest{
+				QuoteId:    ids[i],
+				EngineId:   req.GetEngineId(),
+				TsUnixNano: req.GetTsUnixNano(),
+			})
+			if err != nil || resp == nil {
+				results[i] = &wtgpb.ValidateResponse{
+					Status:     wtgpb.ValidationStatus_STATUS_UNSPECIFIED,
+					RejectText: "internal error",
+				}
+				return
+			}
+			results[i] = resp
+		}()
+	}
+	wg.Wait()
+	return &wtgpb.BatchValidateResponse{Results: results}, nil
+}
+
 // QuoteValidationStats — 누적 카운터 snapshot. 운영 모니터링용.
 type QuoteValidationStats struct {
 	// Validate RPC 카운터.
@@ -226,6 +280,9 @@ type QuoteValidationStats struct {
 	ConsumeNotFound uint64 `json:"consume_not_found"`
 	ConsumeExpired  uint64 `json:"consume_expired"`
 	ConsumeInternal uint64 `json:"consume_internal"`
+	// BatchValidate RPC 카운터.
+	BatchTotal uint64 `json:"batch_total"`
+	BatchItems uint64 `json:"batch_items"`
 }
 
 func (s *QuoteValidationServer) Stats() QuoteValidationStats {
@@ -242,6 +299,8 @@ func (s *QuoteValidationServer) Stats() QuoteValidationStats {
 		ConsumeNotFound: s.consumeNotFound.Load(),
 		ConsumeExpired:  s.consumeExpired.Load(),
 		ConsumeInternal: s.consumeInternal.Load(),
+		BatchTotal:      s.batchTotal.Load(),
+		BatchItems:      s.batchItems.Load(),
 	}
 }
 

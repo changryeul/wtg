@@ -168,6 +168,14 @@ type Config struct {
 	//   addr 2+   → "sentinel" (FailoverClient)
 	// "cluster" 로 명시하면 ClusterClient 사용 (Redis Cluster 토폴로지).
 	QuoteIDRedisMode string
+
+	// QuoteIDEnginesAllowlist — 허용 engine_id 목록 (RBAC). 빈 목록이면
+	// 검사 비활성 — 모든 caller 통과 (back-compat).
+	//
+	// caller 별 정책 분리 — mTLS CN 만으로는 부족한 경우 (예: 같은 cert 를
+	// 공유하지만 다른 매칭 엔진 인스턴스). engine_id 가 allowlist 에 없으면
+	// PermissionDenied / HTTP 403.
+	QuoteIDEnginesAllowlist []string
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -366,6 +374,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS_MODE"); v != "" {
 		cfg.QuoteIDRedisMode = v
 	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_ENGINES"); v != "" {
+		cfg.QuoteIDEnginesAllowlist = splitCSV(v)
+	}
 
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
@@ -427,6 +438,9 @@ func LoadConfig(args []string) (Config, error) {
 		"Sentinel master 이름 (다중 addr + sentinel 모드)")
 	fs.StringVar(&cfg.QuoteIDRedisMode, "quoteid-redis-mode", cfg.QuoteIDRedisMode,
 		"명시 토폴로지: direct / sentinel / cluster (빈값=auto: 1addr→direct, 2+→sentinel)")
+	enginesStr := strings.Join(cfg.QuoteIDEnginesAllowlist, ",")
+	fs.StringVar(&enginesStr, "quoteid-engines", enginesStr,
+		"허용 engine_id 콤마구분 (빈값=RBAC 비활성). 예: matching-A,matching-B")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
@@ -434,6 +448,9 @@ func LoadConfig(args []string) (Config, error) {
 	// etcd endpoints flag → slice 재구성.
 	if etcdStr != "" {
 		cfg.EtcdEndpoints = splitCSV(etcdStr)
+	}
+	if enginesStr != "" {
+		cfg.QuoteIDEnginesAllowlist = splitCSV(enginesStr)
 	}
 	return cfg, nil
 }

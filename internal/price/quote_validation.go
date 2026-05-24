@@ -44,6 +44,10 @@ type QuoteValidationServer struct {
 	logger   *slog.Logger
 	now      func() time.Time
 
+	// engineAllowlist — 비어있으면 RBAC 비활성. 채워져 있으면 모든 RPC 가
+	// engine_id 가 set 안에 있어야 통과 (그렇지 않으면 PermissionDenied).
+	engineAllowlist map[string]struct{}
+
 	// 누적 카운터 — `/v1/stats` 노출 또는 grpc interceptor 메트릭 대안.
 	callsTotal        atomic.Uint64
 	callsOK           atomic.Uint64
@@ -61,6 +65,7 @@ type QuoteValidationServer struct {
 	batchItems        atomic.Uint64 // 처리된 quote_id 총합
 	batchConsumeTotal atomic.Uint64 // BatchMarkConsumed RPC 누적
 	batchConsumeItems atomic.Uint64 // 처리된 표시 항목 총합
+	deniedEngine      atomic.Uint64 // engine_id allowlist 거절
 }
 
 // NewQuoteValidationServer — Registry 가 nil 이면 panic. logger 가 nil 이면
@@ -79,6 +84,47 @@ func NewQuoteValidationServer(registry quoteid.Registry, logger *slog.Logger) *Q
 	}
 }
 
+// SetEngineAllowlist — 허용 engine_id 목록 등록. 빈 슬라이스면 RBAC 비활성.
+// 호출은 Start 전에 1회 (atomic 갱신은 v2 후속).
+func (s *QuoteValidationServer) SetEngineAllowlist(engines []string) {
+	if len(engines) == 0 {
+		s.engineAllowlist = nil
+		return
+	}
+	m := make(map[string]struct{}, len(engines))
+	for _, e := range engines {
+		if e != "" {
+			m[e] = struct{}{}
+		}
+	}
+	if len(m) == 0 {
+		s.engineAllowlist = nil
+		return
+	}
+	s.engineAllowlist = m
+}
+
+// checkEngine — allowlist 비활성이면 true. 활성이면 engineID 가 set 에
+// 있을 때만 true.
+func (s *QuoteValidationServer) checkEngine(engineID string) bool {
+	if s.engineAllowlist == nil {
+		return true
+	}
+	_, ok := s.engineAllowlist[engineID]
+	return ok
+}
+
+// permissionDenied — 모든 핸들러가 RBAC 거절 시 공통으로 호출.
+func (s *QuoteValidationServer) permissionDenied(qid, engineID, op string) error {
+	s.deniedEngine.Add(1)
+	s.logger.Warn("quote validation: engine_id 거부",
+		slog.String("op", op),
+		slog.String("engine_id", engineID),
+		slog.String("quote_id", qid))
+	return status.Errorf(codes.PermissionDenied,
+		"engine_id %q not in allowlist", engineID)
+}
+
 // SetNow — 테스트용 시간 주입.
 func (s *QuoteValidationServer) SetNow(f func() time.Time) {
 	if f != nil {
@@ -89,6 +135,10 @@ func (s *QuoteValidationServer) SetNow(f func() time.Time) {
 // Validate 는 RFC §4.1 의 ValidateRequest 를 처리.
 func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.ValidateRequest) (*wtgpb.ValidateResponse, error) {
 	s.callsTotal.Add(1)
+
+	if !s.checkEngine(req.GetEngineId()) {
+		return nil, s.permissionDenied(req.GetQuoteId(), req.GetEngineId(), "Validate")
+	}
 
 	qid := req.GetQuoteId()
 	if qid == "" {
@@ -166,6 +216,10 @@ func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.Validat
 func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.MarkConsumedRequest) (*wtgpb.MarkConsumedResponse, error) {
 	s.consumeTotal.Add(1)
 
+	if !s.checkEngine(req.GetEngineId()) {
+		return nil, s.permissionDenied(req.GetQuoteId(), req.GetEngineId(), "MarkConsumed")
+	}
+
 	qid := req.GetQuoteId()
 	if qid == "" {
 		s.consumeNotFound.Add(1)
@@ -233,6 +287,9 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 // 호출자가 per-item 분기.
 func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.BatchValidateRequest) (*wtgpb.BatchValidateResponse, error) {
 	s.batchTotal.Add(1)
+	if !s.checkEngine(req.GetEngineId()) {
+		return nil, s.permissionDenied("", req.GetEngineId(), "BatchValidate")
+	}
 	ids := req.GetQuoteIds()
 	if len(ids) == 0 {
 		return &wtgpb.BatchValidateResponse{}, nil
@@ -279,6 +336,9 @@ func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.Ba
 // goroutine fan-out 으로 Redis round-trip 병렬화 — 100건 ≈ 단일 MarkConsumed.
 func (s *QuoteValidationServer) BatchMarkConsumed(ctx context.Context, req *wtgpb.BatchMarkConsumedRequest) (*wtgpb.BatchMarkConsumedResponse, error) {
 	s.batchConsumeTotal.Add(1)
+	if !s.checkEngine(req.GetEngineId()) {
+		return nil, s.permissionDenied("", req.GetEngineId(), "BatchMarkConsumed")
+	}
 	items := req.GetItems()
 	if len(items) == 0 {
 		return &wtgpb.BatchMarkConsumedResponse{}, nil
@@ -338,6 +398,8 @@ type QuoteValidationStats struct {
 	// BatchMarkConsumed RPC 카운터.
 	BatchConsumeTotal uint64 `json:"batch_consume_total"`
 	BatchConsumeItems uint64 `json:"batch_consume_items"`
+	// RBAC 카운터.
+	DeniedEngine uint64 `json:"denied_engine"`
 }
 
 func (s *QuoteValidationServer) Stats() QuoteValidationStats {
@@ -358,6 +420,7 @@ func (s *QuoteValidationServer) Stats() QuoteValidationStats {
 		BatchItems:        s.batchItems.Load(),
 		BatchConsumeTotal: s.batchConsumeTotal.Load(),
 		BatchConsumeItems: s.batchConsumeItems.Load(),
+		DeniedEngine:      s.deniedEngine.Load(),
 	}
 }
 

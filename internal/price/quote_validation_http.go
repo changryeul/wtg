@@ -21,11 +21,34 @@ import (
 	"log/slog"
 	"net/http"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
+
+// grpcErrToHTTP — gRPC status code 를 HTTP status code 로 매핑.
+// 핸들러가 inner srv 호출의 err 를 받았을 때 적절한 HTTP status 결정.
+func grpcErrToHTTP(err error) int {
+	st, ok := status.FromError(err)
+	if !ok {
+		return http.StatusInternalServerError
+	}
+	switch st.Code() {
+	case codes.PermissionDenied:
+		return http.StatusForbidden
+	case codes.InvalidArgument:
+		return http.StatusBadRequest
+	case codes.NotFound:
+		return http.StatusNotFound
+	case codes.Unauthenticated:
+		return http.StatusUnauthorized
+	default:
+		return http.StatusInternalServerError
+	}
+}
 
 // HTTPMaxBodyBytes — body 최대 크기. BatchValidate 1000건 × ~30byte ≈ 30KB
 // 정도지만 protojson + engine_id 등 포함 여유 잡아 256KB.
@@ -90,7 +113,7 @@ func (h *quoteValidationHTTP) handleValidate(w http.ResponseWriter, r *http.Requ
 	}
 	resp, err := h.srv.Validate(r.Context(), req)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, err.Error())
+		h.writeError(w, grpcErrToHTTP(err), err.Error())
 		return
 	}
 	h.writeProtoJSON(w, http.StatusOK, resp)
@@ -104,8 +127,7 @@ func (h *quoteValidationHTTP) handleBatchValidate(w http.ResponseWriter, r *http
 	}
 	resp, err := h.srv.BatchValidate(r.Context(), req)
 	if err != nil {
-		// BatchValidate 가 InvalidArgument 를 반환할 수 있음 — 상한 초과.
-		h.writeError(w, http.StatusBadRequest, err.Error())
+		h.writeError(w, grpcErrToHTTP(err), err.Error())
 		return
 	}
 	h.writeProtoJSON(w, http.StatusOK, resp)
@@ -119,7 +141,7 @@ func (h *quoteValidationHTTP) handleMarkConsumed(w http.ResponseWriter, r *http.
 	}
 	resp, err := h.srv.MarkConsumed(r.Context(), req)
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, err.Error())
+		h.writeError(w, grpcErrToHTTP(err), err.Error())
 		return
 	}
 	h.writeProtoJSON(w, http.StatusOK, resp)
@@ -133,8 +155,7 @@ func (h *quoteValidationHTTP) handleBatchMarkConsumed(w http.ResponseWriter, r *
 	}
 	resp, err := h.srv.BatchMarkConsumed(r.Context(), req)
 	if err != nil {
-		// 상한 초과 등 → 400.
-		h.writeError(w, http.StatusBadRequest, err.Error())
+		h.writeError(w, grpcErrToHTTP(err), err.Error())
 		return
 	}
 	h.writeProtoJSON(w, http.StatusOK, resp)

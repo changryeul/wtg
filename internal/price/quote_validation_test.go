@@ -370,6 +370,92 @@ func TestQuoteValidation_BatchMarkConsumed_ExceedsMax(t *testing.T) {
 	}
 }
 
+func TestQuoteValidation_EngineAllowlist_AllowsListed(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	srv.SetEngineAllowlist([]string{"engine-A", "engine-B"})
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))
+
+	// 허용된 engine_id — 통과.
+	resp, err := srv.Validate(context.Background(), &wtgpb.ValidateRequest{
+		QuoteId: "A-1", EngineId: "engine-A",
+	})
+	if err != nil {
+		t.Fatalf("허용된 engine: %v", err)
+	}
+	if resp.GetStatus() != wtgpb.ValidationStatus_OK {
+		t.Errorf("status=%v, want OK", resp.GetStatus())
+	}
+}
+
+func TestQuoteValidation_EngineAllowlist_DeniesUnknown(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	srv.SetEngineAllowlist([]string{"engine-A"})
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))
+
+	// 미허용 engine_id — Validate 거부.
+	_, err := srv.Validate(context.Background(), &wtgpb.ValidateRequest{
+		QuoteId: "A-1", EngineId: "engine-EVIL",
+	})
+	if err == nil {
+		t.Fatal("허용 안 된 engine 통과 — RBAC 회귀")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.PermissionDenied {
+		t.Errorf("err code=%v, want PermissionDenied", st.Code())
+	}
+
+	// 빈 engine_id (= 미지정) 도 거부.
+	_, err = srv.Validate(context.Background(), &wtgpb.ValidateRequest{
+		QuoteId: "A-1", EngineId: "",
+	})
+	if err == nil {
+		t.Fatal("빈 engine_id 통과 — RBAC 회귀")
+	}
+
+	// 모든 RPC 가 동일하게 차단.
+	_, err = srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId: "A-1", ConsumerId: "order-1", EngineId: "evil",
+	})
+	if err == nil {
+		t.Fatal("MarkConsumed: evil 통과")
+	}
+	_, err = srv.BatchValidate(context.Background(), &wtgpb.BatchValidateRequest{
+		QuoteIds: []string{"A-1"}, EngineId: "evil",
+	})
+	if err == nil {
+		t.Fatal("BatchValidate: evil 통과")
+	}
+	_, err = srv.BatchMarkConsumed(context.Background(), &wtgpb.BatchMarkConsumedRequest{
+		Items:    []*wtgpb.ConsumeItem{{QuoteId: "A-1", ConsumerId: "order-1"}},
+		EngineId: "evil",
+	})
+	if err == nil {
+		t.Fatal("BatchMarkConsumed: evil 통과")
+	}
+
+	// 카운터.
+	if got := srv.Stats().DeniedEngine; got < 5 {
+		t.Errorf("DeniedEngine=%d, want ≥5 (Validate empty + 4 RPCs)", got)
+	}
+}
+
+func TestQuoteValidation_EngineAllowlist_DisabledByEmpty(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	srv.SetEngineAllowlist([]string{}) // 빈 → RBAC 비활성
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))
+
+	// 어떤 engine_id 든 통과 — back-compat.
+	resp, err := srv.Validate(context.Background(), &wtgpb.ValidateRequest{
+		QuoteId: "A-1", EngineId: "anything",
+	})
+	if err != nil {
+		t.Fatalf("RBAC 비활성인데 거부: %v", err)
+	}
+	if resp.GetStatus() != wtgpb.ValidationStatus_OK {
+		t.Errorf("status=%v, want OK", resp.GetStatus())
+	}
+}
+
 func TestQuoteValidation_Stats(t *testing.T) {
 	srv, reg := mkValidationServer(t)
 	ts := time.Now()

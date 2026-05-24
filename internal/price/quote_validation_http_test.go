@@ -203,6 +203,26 @@ func TestQuoteValidationHTTP_BatchMarkConsumed(t *testing.T) {
 	}
 }
 
+func TestQuoteValidationHTTP_EngineAllowlist_403(t *testing.T) {
+	ts, srv := mkHTTPGateway(t)
+	srv.SetEngineAllowlist([]string{"engine-A"})
+	_ = srv.registry.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))
+
+	// 미허용 engine_id — 403.
+	code, body := post(t, ts.URL+"/v1/quoteid/validate",
+		`{"quoteId":"A-1","engineId":"evil"}`)
+	if code != 403 {
+		t.Errorf("status=%d, want 403, body=%s", code, body)
+	}
+
+	// 허용 engine_id — 200.
+	code, body = post(t, ts.URL+"/v1/quoteid/validate",
+		`{"quoteId":"A-1","engineId":"engine-A"}`)
+	if code != 200 {
+		t.Errorf("status=%d, want 200, body=%s", code, body)
+	}
+}
+
 func TestQuoteValidationHTTP_Stats(t *testing.T) {
 	ts, srv := mkHTTPGateway(t)
 	_ = srv.registry.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))

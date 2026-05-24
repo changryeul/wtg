@@ -538,8 +538,49 @@ curl --cacert /etc/wtg/wtg-ca.crt \
      -d '{"quoteId":"A-mq4b-1f"}'
 ```
 
+## v1.9 — engine_id allowlist (RBAC, commit 추가)
+
+mTLS CN 만으로는 부족한 경우 (같은 cert 를 공유하지만 다른 매칭 엔진
+인스턴스 / 환경별 권한 분리) 를 위한 추가 RBAC.
+
+### 활성
+
+```bash
+mci-price --quoteid-engines=matching-A,matching-B,audit-batch
+```
+
+또는 ENV `WTG_PRICE_QUOTEID_ENGINES=matching-A,...`.
+
+빈값 (default) 이면 RBAC 비활성 — 모든 caller 통과 (v1.0–v1.8 동작).
+
+### 검사 대상
+
+모든 RPC — `Validate` / `BatchValidate` / `MarkConsumed` /
+`BatchMarkConsumed` — 가 `engine_id` 필드를 허용 목록과 대조. 미허용 시:
+
+- gRPC: `codes.PermissionDenied` (FIX 호환 mTLS 거부와 같은 level)
+- HTTP: `403 Forbidden`
+
+빈 `engine_id` (= 미지정) 도 거부 — caller 가 반드시 자기 identity 를
+명시해야 한다.
+
+### 메트릭
+
+- `quote_validation.denied_engine` — 누적 거절 카운터. 알림 임계:
+  > 0 이면 정책 위반 또는 잘못된 엔진 설정 알림. 0 으로 유지가 정상.
+
+### 운영 시나리오
+
+* **환경별 분리** — staging 의 `matching-staging`, prod 의 `matching-A` /
+  `matching-B`. cert 만으로는 잘못된 env 의 엔진이 prod 에 호출 가능
+  (인증서 mis-deploy 시). engine_id 가 추가 봉인.
+* **운영 도구** — curl 로 디버깅할 때 별도 `engine_id` 부여 (`debug-cli`)
+  → audit 로그에서 사람-호출 vs 엔진-호출 구분.
+* **점진 출시** — canary 엔진 (`matching-A-canary`) 만 처음 허용, 안정
+  되면 전체 엔진 추가.
+
 ## v2 후보
 
-- engine_id allowlist — mTLS CN 외 추가 RBAC (caller 신원 + 권한 분리).
 - BatchMarkConsumed 도 단일 Lua 로 묶기 — 현재는 N goroutine fan-out
   으로 N RTT, hash tag 활용 시 single Lua + N pair = 1 RTT.
+- engine_id allowlist 의 atomic 갱신 (현재는 시작 시 1회) — etcd watch.

@@ -173,6 +173,11 @@ func main() {
 	defer quoteIDCloser()
 	if quoteIDReg != nil {
 		validator := price.NewQuoteValidationServer(quoteIDReg, logger)
+		if len(cfg.QuoteIDEnginesAllowlist) > 0 {
+			validator.SetEngineAllowlist(cfg.QuoteIDEnginesAllowlist)
+			logger.Info("QuoteValidationService RBAC 활성",
+				slog.Any("engines", cfg.QuoteIDEnginesAllowlist))
+		}
 		if grpcSrv != nil {
 			grpcSrv.AttachValidator(validator)
 			logger.Info("QuoteValidationService 등록 (gRPC) — 매칭 엔진이 같은 gRPC 포트로 호출")

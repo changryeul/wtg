@@ -141,24 +141,113 @@ func TestQuoteValidation_Expired(t *testing.T) {
 	}
 }
 
-func TestQuoteValidation_Stats(t *testing.T) {
+func TestQuoteValidation_ValidateAlreadyConsumed(t *testing.T) {
 	srv, reg := mkValidationServer(t)
 	ts := time.Now()
 	_ = reg.Put(context.Background(), mkRegRecord("A-1", ts, time.Hour))
 
+	// 먼저 MarkConsumed.
+	_, err := srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId:    "A-1",
+		ConsumerId: "order-1",
+	})
+	if err != nil {
+		t.Fatalf("MarkConsumed: %v", err)
+	}
+
+	// 이제 Validate 가 ALREADY_CONSUMED.
+	resp, _ := srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-1"})
+	if resp.GetStatus() != wtgpb.ValidationStatus_ALREADY_CONSUMED {
+		t.Errorf("status=%v, want ALREADY_CONSUMED", resp.GetStatus())
+	}
+	if resp.GetOrdRejReason() != 6 {
+		t.Errorf("OrdRejReason=%d, want 6 (Duplicate)", resp.GetOrdRejReason())
+	}
+	if resp.GetRecord() == nil {
+		t.Error("ALREADY_CONSUMED 인데 record 비어있음")
+	}
+}
+
+func TestQuoteValidation_MarkConsumed_FirstWins(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	ts := time.Now()
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", ts, time.Hour))
+
+	r1, err := srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId:    "A-1",
+		ConsumerId: "order-X",
+	})
+	if err != nil {
+		t.Fatalf("MarkConsumed 1: %v", err)
+	}
+	if r1.GetStatus() != wtgpb.ValidationStatus_OK {
+		t.Errorf("first: %v, want OK", r1.GetStatus())
+	}
+
+	r2, _ := srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId:    "A-1",
+		ConsumerId: "order-Y",
+	})
+	if r2.GetStatus() != wtgpb.ValidationStatus_ALREADY_CONSUMED {
+		t.Errorf("second: %v, want ALREADY_CONSUMED", r2.GetStatus())
+	}
+	if r2.GetConsumedBy() != "order-X" {
+		t.Errorf("ConsumedBy=%q, want order-X", r2.GetConsumedBy())
+	}
+	if r2.GetOrdRejReason() != 6 {
+		t.Errorf("OrdRejReason=%d, want 6", r2.GetOrdRejReason())
+	}
+}
+
+func TestQuoteValidation_MarkConsumed_NotFound(t *testing.T) {
+	srv, _ := mkValidationServer(t)
+	r, _ := srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId:    "A-nope",
+		ConsumerId: "order-1",
+	})
+	if r.GetStatus() != wtgpb.ValidationStatus_NOT_FOUND {
+		t.Errorf("status=%v, want NOT_FOUND", r.GetStatus())
+	}
+	if r.GetOrdRejReason() != 5 {
+		t.Errorf("OrdRejReason=%d, want 5", r.GetOrdRejReason())
+	}
+}
+
+func TestQuoteValidation_Stats(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	ts := time.Now()
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", ts, time.Hour))
+	_ = reg.Put(context.Background(), mkRegRecord("A-2", ts, time.Hour))
+
 	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-1"})    // OK
 	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-xxx"})  // NOT_FOUND
 	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: ""})       // NOT_FOUND (empty)
-	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-1"})    // OK
+
+	// A-2 표시 후 다시 Validate → ALREADY_CONSUMED.
+	_, _ = srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{QuoteId: "A-2", ConsumerId: "order-1"}) // ConsumeOK
+	_, _ = srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{QuoteId: "A-2", ConsumerId: "order-2"}) // AlreadyDone
+	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-2"})    // ALREADY_CONSUMED
 
 	s := srv.Stats()
 	if s.Total != 4 {
 		t.Errorf("Total=%d, want 4", s.Total)
 	}
-	if s.OK != 2 {
-		t.Errorf("OK=%d, want 2", s.OK)
+	if s.OK != 1 {
+		t.Errorf("OK=%d, want 1", s.OK)
 	}
 	if s.NotFound != 2 {
 		t.Errorf("NotFound=%d, want 2", s.NotFound)
+	}
+	if s.Consumed != 1 {
+		t.Errorf("Consumed=%d, want 1", s.Consumed)
+	}
+	if s.ConsumeTotal != 2 {
+		t.Errorf("ConsumeTotal=%d, want 2", s.ConsumeTotal)
+	}
+	if s.ConsumeOK != 1 {
+		t.Errorf("ConsumeOK=%d, want 1", s.ConsumeOK)
+	}
+	if s.ConsumeAlready != 1 {
+		t.Errorf("ConsumeAlready=%d, want 1", s.ConsumeAlready)
 	}
 }

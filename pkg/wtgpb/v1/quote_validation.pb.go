@@ -35,12 +35,14 @@ type ValidationStatus int32
 
 const (
 	ValidationStatus_STATUS_UNSPECIFIED ValidationStatus = 0
-	// 발행 기록 존재, 아직 ValidUntil 도래 X — 거래 가능 (엔진 자체 정책 통과 시).
+	// 발행 기록 존재, 아직 ValidUntil 도래 X, 아직 사용 안 됨 — 거래 가능.
 	ValidationStatus_OK ValidationStatus = 1
 	// Registry 에 없음. 한 번도 발행 안 됐거나 ValidUntil + grace 후 GC.
 	ValidationStatus_NOT_FOUND ValidationStatus = 2
 	// ValidUntil 도래 후 grace 안 (기록은 있지만 거래 불가).
 	ValidationStatus_EXPIRED ValidationStatus = 3
+	// 이미 MarkConsumed 호출됨 — 다른 주문이 이 QuoteID 를 사용했다.
+	ValidationStatus_ALREADY_CONSUMED ValidationStatus = 4
 )
 
 // Enum value maps for ValidationStatus.
@@ -50,12 +52,14 @@ var (
 		1: "OK",
 		2: "NOT_FOUND",
 		3: "EXPIRED",
+		4: "ALREADY_CONSUMED",
 	}
 	ValidationStatus_value = map[string]int32{
 		"STATUS_UNSPECIFIED": 0,
 		"OK":                 1,
 		"NOT_FOUND":          2,
 		"EXPIRED":            3,
+		"ALREADY_CONSUMED":   4,
 	}
 )
 
@@ -223,6 +227,161 @@ func (x *ValidateResponse) GetRejectText() string {
 	return ""
 }
 
+type MarkConsumedRequest struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	QuoteId string                 `protobuf:"bytes,1,opt,name=quote_id,json=quoteId,proto3" json:"quote_id,omitempty"`
+	// 누가 사용했는지 — audit. 보통 OrderID 등 엔진 내부 식별자.
+	ConsumerId string `protobuf:"bytes,2,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"`
+	// 호출자(엔진) 식별 — Validate 와 동일.
+	EngineId      string `protobuf:"bytes,10,opt,name=engine_id,json=engineId,proto3" json:"engine_id,omitempty"`
+	TsUnixNano    int64  `protobuf:"varint,11,opt,name=ts_unix_nano,json=tsUnixNano,proto3" json:"ts_unix_nano,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MarkConsumedRequest) Reset() {
+	*x = MarkConsumedRequest{}
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MarkConsumedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MarkConsumedRequest) ProtoMessage() {}
+
+func (x *MarkConsumedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MarkConsumedRequest.ProtoReflect.Descriptor instead.
+func (*MarkConsumedRequest) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *MarkConsumedRequest) GetQuoteId() string {
+	if x != nil {
+		return x.QuoteId
+	}
+	return ""
+}
+
+func (x *MarkConsumedRequest) GetConsumerId() string {
+	if x != nil {
+		return x.ConsumerId
+	}
+	return ""
+}
+
+func (x *MarkConsumedRequest) GetEngineId() string {
+	if x != nil {
+		return x.EngineId
+	}
+	return ""
+}
+
+func (x *MarkConsumedRequest) GetTsUnixNano() int64 {
+	if x != nil {
+		return x.TsUnixNano
+	}
+	return 0
+}
+
+type MarkConsumedResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ConsumeResult — 원자적 결과.
+	//
+	//	OK               : 이 호출이 처음 표시 — 체결 진행.
+	//	ALREADY_CONSUMED : 다른 호출이 먼저 표시했다 — 거절.
+	//	NOT_FOUND        : record 없음 (GC 또는 한 번도 발행 안 됨).
+	//	EXPIRED          : ValidUntil 도래 — 표시 시도해도 거래 불가.
+	Status ValidationStatus `protobuf:"varint,1,opt,name=status,proto3,enum=wtg.v1.ValidationStatus" json:"status,omitempty"`
+	// OK / ALREADY_CONSUMED 시 채워짐. NOT_FOUND 는 비어있음.
+	Record *QuoteRecord `protobuf:"bytes,2,opt,name=record,proto3" json:"record,omitempty"`
+	// ALREADY_CONSUMED 시: 먼저 표시한 consumer_id (감사용).
+	ConsumedBy string `protobuf:"bytes,3,opt,name=consumed_by,json=consumedBy,proto3" json:"consumed_by,omitempty"`
+	// FIX OrdRejReason (tag 103) 매핑.
+	OrdRejReason  int32  `protobuf:"varint,4,opt,name=ord_rej_reason,json=ordRejReason,proto3" json:"ord_rej_reason,omitempty"`
+	RejectText    string `protobuf:"bytes,5,opt,name=reject_text,json=rejectText,proto3" json:"reject_text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MarkConsumedResponse) Reset() {
+	*x = MarkConsumedResponse{}
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MarkConsumedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MarkConsumedResponse) ProtoMessage() {}
+
+func (x *MarkConsumedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MarkConsumedResponse.ProtoReflect.Descriptor instead.
+func (*MarkConsumedResponse) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *MarkConsumedResponse) GetStatus() ValidationStatus {
+	if x != nil {
+		return x.Status
+	}
+	return ValidationStatus_STATUS_UNSPECIFIED
+}
+
+func (x *MarkConsumedResponse) GetRecord() *QuoteRecord {
+	if x != nil {
+		return x.Record
+	}
+	return nil
+}
+
+func (x *MarkConsumedResponse) GetConsumedBy() string {
+	if x != nil {
+		return x.ConsumedBy
+	}
+	return ""
+}
+
+func (x *MarkConsumedResponse) GetOrdRejReason() int32 {
+	if x != nil {
+		return x.OrdRejReason
+	}
+	return 0
+}
+
+func (x *MarkConsumedResponse) GetRejectText() string {
+	if x != nil {
+		return x.RejectText
+	}
+	return ""
+}
+
 // QuoteRecord 는 pkg/quoteid.Record 의 wire 표현.
 type QuoteRecord struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
@@ -244,7 +403,7 @@ type QuoteRecord struct {
 
 func (x *QuoteRecord) Reset() {
 	*x = QuoteRecord{}
-	mi := &file_wtg_v1_quote_validation_proto_msgTypes[2]
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -256,7 +415,7 @@ func (x *QuoteRecord) String() string {
 func (*QuoteRecord) ProtoMessage() {}
 
 func (x *QuoteRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_wtg_v1_quote_validation_proto_msgTypes[2]
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -269,7 +428,7 @@ func (x *QuoteRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuoteRecord.ProtoReflect.Descriptor instead.
 func (*QuoteRecord) Descriptor() ([]byte, []int) {
-	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{2}
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *QuoteRecord) GetQuoteId() string {
@@ -372,6 +531,22 @@ const file_wtg_v1_quote_validation_proto_rawDesc = "" +
 	"\x06record\x18\x02 \x01(\v2\x13.wtg.v1.QuoteRecordR\x06record\x12$\n" +
 	"\x0eord_rej_reason\x18\x03 \x01(\x05R\fordRejReason\x12\x1f\n" +
 	"\vreject_text\x18\x04 \x01(\tR\n" +
+	"rejectText\"\x90\x01\n" +
+	"\x13MarkConsumedRequest\x12\x19\n" +
+	"\bquote_id\x18\x01 \x01(\tR\aquoteId\x12\x1f\n" +
+	"\vconsumer_id\x18\x02 \x01(\tR\n" +
+	"consumerId\x12\x1b\n" +
+	"\tengine_id\x18\n" +
+	" \x01(\tR\bengineId\x12 \n" +
+	"\fts_unix_nano\x18\v \x01(\x03R\n" +
+	"tsUnixNano\"\xdd\x01\n" +
+	"\x14MarkConsumedResponse\x120\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x18.wtg.v1.ValidationStatusR\x06status\x12+\n" +
+	"\x06record\x18\x02 \x01(\v2\x13.wtg.v1.QuoteRecordR\x06record\x12\x1f\n" +
+	"\vconsumed_by\x18\x03 \x01(\tR\n" +
+	"consumedBy\x12$\n" +
+	"\x0eord_rej_reason\x18\x04 \x01(\x05R\fordRejReason\x12\x1f\n" +
+	"\vreject_text\x18\x05 \x01(\tR\n" +
 	"rejectText\"\xc9\x02\n" +
 	"\vQuoteRecord\x12\x19\n" +
 	"\bquote_id\x18\x01 \x01(\tR\aquoteId\x12\x12\n" +
@@ -386,14 +561,16 @@ const file_wtg_v1_quote_validation_proto_rawDesc = "" +
 	"\x15valid_until_unix_nano\x18\n" +
 	" \x01(\x03R\x12validUntilUnixNano\x12\x1a\n" +
 	"\bsequence\x18\v \x01(\x04R\bsequence\x12\x16\n" +
-	"\x06issuer\x18\f \x01(\tR\x06issuer*N\n" +
+	"\x06issuer\x18\f \x01(\tR\x06issuer*d\n" +
 	"\x10ValidationStatus\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x06\n" +
 	"\x02OK\x10\x01\x12\r\n" +
 	"\tNOT_FOUND\x10\x02\x12\v\n" +
-	"\aEXPIRED\x10\x032W\n" +
+	"\aEXPIRED\x10\x03\x12\x14\n" +
+	"\x10ALREADY_CONSUMED\x10\x042\xa2\x01\n" +
 	"\x16QuoteValidationService\x12=\n" +
-	"\bValidate\x12\x17.wtg.v1.ValidateRequest\x1a\x18.wtg.v1.ValidateResponseB3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
+	"\bValidate\x12\x17.wtg.v1.ValidateRequest\x1a\x18.wtg.v1.ValidateResponse\x12I\n" +
+	"\fMarkConsumed\x12\x1b.wtg.v1.MarkConsumedRequest\x1a\x1c.wtg.v1.MarkConsumedResponseB3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
 
 var (
 	file_wtg_v1_quote_validation_proto_rawDescOnce sync.Once
@@ -408,23 +585,29 @@ func file_wtg_v1_quote_validation_proto_rawDescGZIP() []byte {
 }
 
 var file_wtg_v1_quote_validation_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_wtg_v1_quote_validation_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_wtg_v1_quote_validation_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_wtg_v1_quote_validation_proto_goTypes = []any{
-	(ValidationStatus)(0),    // 0: wtg.v1.ValidationStatus
-	(*ValidateRequest)(nil),  // 1: wtg.v1.ValidateRequest
-	(*ValidateResponse)(nil), // 2: wtg.v1.ValidateResponse
-	(*QuoteRecord)(nil),      // 3: wtg.v1.QuoteRecord
+	(ValidationStatus)(0),        // 0: wtg.v1.ValidationStatus
+	(*ValidateRequest)(nil),      // 1: wtg.v1.ValidateRequest
+	(*ValidateResponse)(nil),     // 2: wtg.v1.ValidateResponse
+	(*MarkConsumedRequest)(nil),  // 3: wtg.v1.MarkConsumedRequest
+	(*MarkConsumedResponse)(nil), // 4: wtg.v1.MarkConsumedResponse
+	(*QuoteRecord)(nil),          // 5: wtg.v1.QuoteRecord
 }
 var file_wtg_v1_quote_validation_proto_depIdxs = []int32{
 	0, // 0: wtg.v1.ValidateResponse.status:type_name -> wtg.v1.ValidationStatus
-	3, // 1: wtg.v1.ValidateResponse.record:type_name -> wtg.v1.QuoteRecord
-	1, // 2: wtg.v1.QuoteValidationService.Validate:input_type -> wtg.v1.ValidateRequest
-	2, // 3: wtg.v1.QuoteValidationService.Validate:output_type -> wtg.v1.ValidateResponse
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	5, // 1: wtg.v1.ValidateResponse.record:type_name -> wtg.v1.QuoteRecord
+	0, // 2: wtg.v1.MarkConsumedResponse.status:type_name -> wtg.v1.ValidationStatus
+	5, // 3: wtg.v1.MarkConsumedResponse.record:type_name -> wtg.v1.QuoteRecord
+	1, // 4: wtg.v1.QuoteValidationService.Validate:input_type -> wtg.v1.ValidateRequest
+	3, // 5: wtg.v1.QuoteValidationService.MarkConsumed:input_type -> wtg.v1.MarkConsumedRequest
+	2, // 6: wtg.v1.QuoteValidationService.Validate:output_type -> wtg.v1.ValidateResponse
+	4, // 7: wtg.v1.QuoteValidationService.MarkConsumed:output_type -> wtg.v1.MarkConsumedResponse
+	6, // [6:8] is the sub-list for method output_type
+	4, // [4:6] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_wtg_v1_quote_validation_proto_init() }
@@ -438,7 +621,7 @@ func file_wtg_v1_quote_validation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wtg_v1_quote_validation_proto_rawDesc), len(file_wtg_v1_quote_validation_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

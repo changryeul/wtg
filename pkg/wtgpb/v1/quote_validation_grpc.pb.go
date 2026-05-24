@@ -29,18 +29,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	QuoteValidationService_Validate_FullMethodName = "/wtg.v1.QuoteValidationService/Validate"
+	QuoteValidationService_Validate_FullMethodName     = "/wtg.v1.QuoteValidationService/Validate"
+	QuoteValidationService_MarkConsumed_FullMethodName = "/wtg.v1.QuoteValidationService/MarkConsumed"
 )
 
 // QuoteValidationServiceClient is the client API for QuoteValidationService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type QuoteValidationServiceClient interface {
-	// Validate 는 QuoteID 의 권위 데이터를 조회한다.
+	// Validate 는 QuoteID 의 권위 데이터를 read-only 로 조회한다. 멱등 — 같은
+	// QuoteID 를 여러 번 호출해도 동일 결과.
 	//
 	// WTG (mci-price) 가 담당:
 	//   - 존재 여부 (NOT_FOUND)
 	//   - 만료 여부 (EXPIRED — ValidUntil + grace 도래 후)
+	//   - 사용 여부 (ALREADY_CONSUMED — 다른 주문이 이미 체결에 사용)
 	//   - 발행 시점 가격 / Profile / Issuer echo
 	//
 	// 엔진이 담당 (본 RPC 의 응답 + 엔진 자체 정책):
@@ -50,6 +53,25 @@ type QuoteValidationServiceClient interface {
 	//   - 사용자 ↔ Profile 일치
 	//   - 잔량 / 한도
 	Validate(ctx context.Context, in *ValidateRequest, opts ...grpc.CallOption) (*ValidateResponse, error)
+	// MarkConsumed 는 QuoteID 의 "사용 완료" 를 원자적으로 표시한다.
+	//
+	// FX Global Code Principle 17 의 "use only once" 정합 — 한 QuoteID 는
+	// 단 한 번의 체결에 묶여야 한다 (replay 방지). EBS Direct / LMAX / CME FX
+	// 모두 server-side consumption tracking.
+	//
+	// 엔진 흐름:
+	//  1. Validate(quote_id) → OK + record
+	//  2. 자체 정책 검사 (slippage / side / 한도)
+	//  3. MarkConsumed(quote_id, consumer="order-N")
+	//     - result == OK         → 체결 진행
+	//     - result == ALREADY_CONSUMED → 동시에 다른 주문이 잡음, 거절
+	//     - result == NOT_FOUND  → record GC 됨 (드물게 race)
+	//     - result == EXPIRED    → ValidUntil 도래, 체결 불가
+	//  4. 체결 후 ExecutionReport.
+	//
+	// 원자성: Memory 는 mutex, Redis 는 SET NX. 두 mci-price 가 동시에 같은
+	// QuoteID 에 대해 MarkConsumed 받아도 정확히 한 호출만 OK.
+	MarkConsumed(ctx context.Context, in *MarkConsumedRequest, opts ...grpc.CallOption) (*MarkConsumedResponse, error)
 }
 
 type quoteValidationServiceClient struct {
@@ -70,15 +92,27 @@ func (c *quoteValidationServiceClient) Validate(ctx context.Context, in *Validat
 	return out, nil
 }
 
+func (c *quoteValidationServiceClient) MarkConsumed(ctx context.Context, in *MarkConsumedRequest, opts ...grpc.CallOption) (*MarkConsumedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MarkConsumedResponse)
+	err := c.cc.Invoke(ctx, QuoteValidationService_MarkConsumed_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QuoteValidationServiceServer is the server API for QuoteValidationService service.
 // All implementations must embed UnimplementedQuoteValidationServiceServer
 // for forward compatibility.
 type QuoteValidationServiceServer interface {
-	// Validate 는 QuoteID 의 권위 데이터를 조회한다.
+	// Validate 는 QuoteID 의 권위 데이터를 read-only 로 조회한다. 멱등 — 같은
+	// QuoteID 를 여러 번 호출해도 동일 결과.
 	//
 	// WTG (mci-price) 가 담당:
 	//   - 존재 여부 (NOT_FOUND)
 	//   - 만료 여부 (EXPIRED — ValidUntil + grace 도래 후)
+	//   - 사용 여부 (ALREADY_CONSUMED — 다른 주문이 이미 체결에 사용)
 	//   - 발행 시점 가격 / Profile / Issuer echo
 	//
 	// 엔진이 담당 (본 RPC 의 응답 + 엔진 자체 정책):
@@ -88,6 +122,25 @@ type QuoteValidationServiceServer interface {
 	//   - 사용자 ↔ Profile 일치
 	//   - 잔량 / 한도
 	Validate(context.Context, *ValidateRequest) (*ValidateResponse, error)
+	// MarkConsumed 는 QuoteID 의 "사용 완료" 를 원자적으로 표시한다.
+	//
+	// FX Global Code Principle 17 의 "use only once" 정합 — 한 QuoteID 는
+	// 단 한 번의 체결에 묶여야 한다 (replay 방지). EBS Direct / LMAX / CME FX
+	// 모두 server-side consumption tracking.
+	//
+	// 엔진 흐름:
+	//  1. Validate(quote_id) → OK + record
+	//  2. 자체 정책 검사 (slippage / side / 한도)
+	//  3. MarkConsumed(quote_id, consumer="order-N")
+	//     - result == OK         → 체결 진행
+	//     - result == ALREADY_CONSUMED → 동시에 다른 주문이 잡음, 거절
+	//     - result == NOT_FOUND  → record GC 됨 (드물게 race)
+	//     - result == EXPIRED    → ValidUntil 도래, 체결 불가
+	//  4. 체결 후 ExecutionReport.
+	//
+	// 원자성: Memory 는 mutex, Redis 는 SET NX. 두 mci-price 가 동시에 같은
+	// QuoteID 에 대해 MarkConsumed 받아도 정확히 한 호출만 OK.
+	MarkConsumed(context.Context, *MarkConsumedRequest) (*MarkConsumedResponse, error)
 	mustEmbedUnimplementedQuoteValidationServiceServer()
 }
 
@@ -100,6 +153,9 @@ type UnimplementedQuoteValidationServiceServer struct{}
 
 func (UnimplementedQuoteValidationServiceServer) Validate(context.Context, *ValidateRequest) (*ValidateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Validate not implemented")
+}
+func (UnimplementedQuoteValidationServiceServer) MarkConsumed(context.Context, *MarkConsumedRequest) (*MarkConsumedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MarkConsumed not implemented")
 }
 func (UnimplementedQuoteValidationServiceServer) mustEmbedUnimplementedQuoteValidationServiceServer() {
 }
@@ -141,6 +197,24 @@ func _QuoteValidationService_Validate_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _QuoteValidationService_MarkConsumed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MarkConsumedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QuoteValidationServiceServer).MarkConsumed(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: QuoteValidationService_MarkConsumed_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QuoteValidationServiceServer).MarkConsumed(ctx, req.(*MarkConsumedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // QuoteValidationService_ServiceDesc is the grpc.ServiceDesc for QuoteValidationService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -151,6 +225,10 @@ var QuoteValidationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Validate",
 			Handler:    _QuoteValidationService_Validate_Handler,
+		},
+		{
+			MethodName: "MarkConsumed",
+			Handler:    _QuoteValidationService_MarkConsumed_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

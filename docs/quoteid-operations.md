@@ -176,10 +176,62 @@ resp, err := client.Validate(ctx, &wtgpb.ValidateRequest{
   호환).
 - Redis 는 그대로 유지.
 
-## v1 미해결 / v2 후보
+## v1.1 — MarkConsumed (commit 추가)
+
+QuoteValidationService 에 `MarkConsumed` RPC 가 추가됨. 한 QuoteID 가 정확히
+한 체결에만 묶이도록 atomic 보장 (FX Global Code Principle 17 "use only once").
+
+### 엔진 흐름
+
+```go
+// 1) 검증 — read-only, 멱등
+vr, _ := client.Validate(ctx, &ValidateRequest{QuoteId: q})
+if vr.Status != OK { reject; return }
+
+// 2) 자체 정책 (slippage / side / 한도)
+
+// 3) 사용 표시 — atomic SET NX, race-safe
+mc, _ := client.MarkConsumed(ctx, &MarkConsumedRequest{
+    QuoteId:    q,
+    ConsumerId: orderID,  // 예: 엔진의 OrderID — 감사 추적용
+})
+switch mc.Status {
+case OK:               // 처음 — 체결 진행
+case ALREADY_CONSUMED: // 다른 주문이 먼저 잡음 — ExecutionReport OrdRejReason=6
+case NOT_FOUND:        // race 로 GC — OrdRejReason=5
+case EXPIRED:          // last-look 도중 만료 — OrdRejReason=13
+}
+```
+
+### 메트릭 추가 (`/v1/stats`)
+
+| 키 | 의미 | 알림 임계 |
+|---|------|-----------|
+| `quote_validation.already_consumed` | Validate 가 본 conflict | trend (replay 시도 추적) |
+| `quote_validation.consume_total` | MarkConsumed RPC 누적 | TPS 모니터링 |
+| `quote_validation.consume_ok` | 정상 표시 | OK 비율 평소 ~100% |
+| `quote_validation.consume_already` | race 충돌 | > 0.1% 이면 클라이언트 중복 주문 / 봇 의심 |
+| `quote_validation.consume_not_found` | record GC race | trend |
+| `quote_validation.consume_expired` | 만료 후 시도 | last-look 시간 정책 재검토 |
+
+### Redis 키 모델
+
+- `<prefix>:q:<quote_id>` — record JSON (Put). TTL = validity + grace.
+- `<prefix>:c:<quote_id>` — consumer_id 문자열 (MarkConsumed, SET NX). TTL 동일.
+
+두 키의 TTL 이 동일하므로 record GC 시 consumed 표시도 동반 만료 — race
+는 자연스럽게 사라짐.
+
+### SET NX 원자성 보장 범위
+
+- Redis 단일 master / Sentinel: SET NX 가 fully atomic.
+- Redis Cluster: 같은 hash tag 안의 키만 같은 slot — 우리 키 모델은 prefix
+  공통이지만 hash tag 안 씀. v2 에서 `{quote_id}:q` / `{quote_id}:c` 로
+  바꿔야 cluster 안전. (v1 은 Sentinel 권장.)
+
+## v2 후보
 
 - FailoverClient — `--quoteid-redis` 콤마 구분 sentinel 주소 지원.
 - BatchValidate — 대량 주문 검증 효율.
-- MarkConsumed — 같은 QuoteID 중복 주문 방지.
 - HTTP 게이트웨이 — 비-Go FIX gateway 호환.
-- BatchValidate / MarkConsumed 둘 다 RPC 추가 → RFC v2 에서 협의.
+- Redis Cluster 호환 hash tag (`{quote_id}:q` / `{quote_id}:c`).

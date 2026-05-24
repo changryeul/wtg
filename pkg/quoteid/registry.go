@@ -28,6 +28,54 @@ type Registry interface {
 	// Get 은 QuoteID 의 Record 를 반환. 없으면 ErrNotFound.
 	// 호출자 (매칭 엔진) 가 Record.ValidAt(now) 로 2차 정책 검증을 수행한다.
 	Get(ctx context.Context, id QuoteID) (Record, error)
+
+	// MarkConsumed 는 QuoteID 를 "사용 완료" 로 원자적으로 표시한다. 두 호출자가
+	// 동시에 같은 QuoteID 에 대해 호출해도 정확히 한 명만 ConsumeOK 를 받는다
+	// (FX Global Code Principle 17 "use only once" 보장).
+	//
+	// 반환:
+	//   ConsumeOK             — 이 호출이 처음 표시 + record echo.
+	//   ConsumeAlreadyDone    — 이미 다른 호출이 표시함 + 그 consumer 식별자.
+	//   ConsumeNotFound       — record 없음.
+	//   ConsumeExpired        — ValidUntil 도래 — 표시했더라도 거래 불가.
+	MarkConsumed(ctx context.Context, id QuoteID, consumerID string) (ConsumeResult, error)
+
+	// Consumed 는 QuoteID 가 이미 사용 완료되었는지 read-only 로 조회.
+	// 반환: 첫 인수는 먼저 표시한 consumer (없으면 빈 문자열), 두 번째는 표시 여부.
+	// Validate RPC 가 ALREADY_CONSUMED 분기를 위해 호출 — atomic write 없는 cheap path.
+	Consumed(ctx context.Context, id QuoteID) (string, bool, error)
+}
+
+// ConsumeResult — MarkConsumed 결과.
+type ConsumeResult struct {
+	Status     ConsumeStatus
+	Record     Record // ConsumeOK / ConsumeAlreadyDone 에서 채워짐
+	ConsumedBy string // ConsumeAlreadyDone 일 때 먼저 표시한 consumer
+}
+
+type ConsumeStatus int
+
+const (
+	ConsumeStatusUnknown ConsumeStatus = iota
+	ConsumeOK
+	ConsumeAlreadyDone
+	ConsumeNotFound
+	ConsumeExpired
+)
+
+func (s ConsumeStatus) String() string {
+	switch s {
+	case ConsumeOK:
+		return "OK"
+	case ConsumeAlreadyDone:
+		return "ALREADY_CONSUMED"
+	case ConsumeNotFound:
+		return "NOT_FOUND"
+	case ConsumeExpired:
+		return "EXPIRED"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 var (

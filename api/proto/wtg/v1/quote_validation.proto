@@ -15,11 +15,13 @@ package wtg.v1;
 option go_package = "github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1";
 
 service QuoteValidationService {
-  // Validate 는 QuoteID 의 권위 데이터를 조회한다.
+  // Validate 는 QuoteID 의 권위 데이터를 read-only 로 조회한다. 멱등 — 같은
+  // QuoteID 를 여러 번 호출해도 동일 결과.
   //
   // WTG (mci-price) 가 담당:
   //   - 존재 여부 (NOT_FOUND)
   //   - 만료 여부 (EXPIRED — ValidUntil + grace 도래 후)
+  //   - 사용 여부 (ALREADY_CONSUMED — 다른 주문이 이미 체결에 사용)
   //   - 발행 시점 가격 / Profile / Issuer echo
   //
   // 엔진이 담당 (본 RPC 의 응답 + 엔진 자체 정책):
@@ -29,6 +31,26 @@ service QuoteValidationService {
   //   - 사용자 ↔ Profile 일치
   //   - 잔량 / 한도
   rpc Validate(ValidateRequest) returns (ValidateResponse);
+
+  // MarkConsumed 는 QuoteID 의 "사용 완료" 를 원자적으로 표시한다.
+  //
+  // FX Global Code Principle 17 의 "use only once" 정합 — 한 QuoteID 는
+  // 단 한 번의 체결에 묶여야 한다 (replay 방지). EBS Direct / LMAX / CME FX
+  // 모두 server-side consumption tracking.
+  //
+  // 엔진 흐름:
+  //   1. Validate(quote_id) → OK + record
+  //   2. 자체 정책 검사 (slippage / side / 한도)
+  //   3. MarkConsumed(quote_id, consumer="order-N")
+  //      - result == OK         → 체결 진행
+  //      - result == ALREADY_CONSUMED → 동시에 다른 주문이 잡음, 거절
+  //      - result == NOT_FOUND  → record GC 됨 (드물게 race)
+  //      - result == EXPIRED    → ValidUntil 도래, 체결 불가
+  //   4. 체결 후 ExecutionReport.
+  //
+  // 원자성: Memory 는 mutex, Redis 는 SET NX. 두 mci-price 가 동시에 같은
+  // QuoteID 에 대해 MarkConsumed 받아도 정확히 한 호출만 OK.
+  rpc MarkConsumed(MarkConsumedRequest) returns (MarkConsumedResponse);
 }
 
 message ValidateRequest {
@@ -60,12 +82,44 @@ message ValidateResponse {
 
 enum ValidationStatus {
   STATUS_UNSPECIFIED = 0;
-  // 발행 기록 존재, 아직 ValidUntil 도래 X — 거래 가능 (엔진 자체 정책 통과 시).
+  // 발행 기록 존재, 아직 ValidUntil 도래 X, 아직 사용 안 됨 — 거래 가능.
   OK = 1;
   // Registry 에 없음. 한 번도 발행 안 됐거나 ValidUntil + grace 후 GC.
   NOT_FOUND = 2;
   // ValidUntil 도래 후 grace 안 (기록은 있지만 거래 불가).
   EXPIRED = 3;
+  // 이미 MarkConsumed 호출됨 — 다른 주문이 이 QuoteID 를 사용했다.
+  ALREADY_CONSUMED = 4;
+}
+
+message MarkConsumedRequest {
+  string quote_id = 1;
+
+  // 누가 사용했는지 — audit. 보통 OrderID 등 엔진 내부 식별자.
+  string consumer_id = 2;
+
+  // 호출자(엔진) 식별 — Validate 와 동일.
+  string engine_id    = 10;
+  int64  ts_unix_nano = 11;
+}
+
+message MarkConsumedResponse {
+  // ConsumeResult — 원자적 결과.
+  //   OK               : 이 호출이 처음 표시 — 체결 진행.
+  //   ALREADY_CONSUMED : 다른 호출이 먼저 표시했다 — 거절.
+  //   NOT_FOUND        : record 없음 (GC 또는 한 번도 발행 안 됨).
+  //   EXPIRED          : ValidUntil 도래 — 표시 시도해도 거래 불가.
+  ValidationStatus status = 1;
+
+  // OK / ALREADY_CONSUMED 시 채워짐. NOT_FOUND 는 비어있음.
+  QuoteRecord record = 2;
+
+  // ALREADY_CONSUMED 시: 먼저 표시한 consumer_id (감사용).
+  string consumed_by = 3;
+
+  // FIX OrdRejReason (tag 103) 매핑.
+  int32  ord_rej_reason = 4;
+  string reject_text    = 5;
 }
 
 // QuoteRecord 는 pkg/quoteid.Record 의 wire 표현.

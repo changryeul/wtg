@@ -24,6 +24,7 @@ import (
 const (
 	ordRejReasonNotFound int32 = 5  // Unknown order
 	ordRejReasonExpired  int32 = 13 // Stale order
+	ordRejReasonDuplicate int32 = 6 // Duplicate order — ALREADY_CONSUMED 매핑
 )
 
 // QuoteValidationServer 는 wtgpb.QuoteValidationServiceServer 구현.
@@ -36,11 +37,18 @@ type QuoteValidationServer struct {
 	now      func() time.Time
 
 	// 누적 카운터 — `/v1/stats` 노출 또는 grpc interceptor 메트릭 대안.
-	callsTotal      atomic.Uint64
-	callsOK         atomic.Uint64
-	callsNotFound   atomic.Uint64
-	callsExpired    atomic.Uint64
-	callsInternal   atomic.Uint64
+	callsTotal        atomic.Uint64
+	callsOK           atomic.Uint64
+	callsNotFound     atomic.Uint64
+	callsExpired      atomic.Uint64
+	callsConsumed     atomic.Uint64 // Validate 가 ALREADY_CONSUMED 반환
+	callsInternal     atomic.Uint64
+	consumeTotal      atomic.Uint64
+	consumeOK         atomic.Uint64
+	consumeAlready    atomic.Uint64
+	consumeNotFound   atomic.Uint64
+	consumeExpired    atomic.Uint64
+	consumeInternal   atomic.Uint64
 }
 
 // NewQuoteValidationServer — Registry 가 nil 이면 panic. logger 가 nil 이면
@@ -118,6 +126,22 @@ func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.Validat
 		}, nil
 	}
 
+	// ALREADY_CONSUMED — 이미 다른 주문이 사용. (FX Global Code Principle 17
+	// "use only once".) Consumed 는 read-only — atomic write 는 MarkConsumed.
+	if _, consumed, err := s.registry.Consumed(ctx, quoteid.QuoteID(qid)); err == nil && consumed {
+		s.callsConsumed.Add(1)
+		s.logger.Info("quote validation",
+			slog.String("quote_id", qid),
+			slog.String("engine_id", req.GetEngineId()),
+			slog.String("status", "ALREADY_CONSUMED"))
+		return &wtgpb.ValidateResponse{
+			Status:       wtgpb.ValidationStatus_ALREADY_CONSUMED,
+			Record:       recordToProto(rec),
+			OrdRejReason: ordRejReasonDuplicate,
+			RejectText:   "quote_id already consumed",
+		}, nil
+	}
+
 	s.callsOK.Add(1)
 	return &wtgpb.ValidateResponse{
 		Status: wtgpb.ValidationStatus_OK,
@@ -125,22 +149,99 @@ func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.Validat
 	}, nil
 }
 
+// MarkConsumed 는 RFC §4.1 의 두 번째 RPC. 동시 호출 atomic 보장은
+// Registry 의 책임 (Memory mutex / Redis SET NX).
+func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.MarkConsumedRequest) (*wtgpb.MarkConsumedResponse, error) {
+	s.consumeTotal.Add(1)
+
+	qid := req.GetQuoteId()
+	if qid == "" {
+		s.consumeNotFound.Add(1)
+		return &wtgpb.MarkConsumedResponse{
+			Status:       wtgpb.ValidationStatus_NOT_FOUND,
+			OrdRejReason: ordRejReasonNotFound,
+			RejectText:   "quote_id required",
+		}, nil
+	}
+
+	result, err := s.registry.MarkConsumed(ctx, quoteid.QuoteID(qid), req.GetConsumerId())
+	if err != nil {
+		s.consumeInternal.Add(1)
+		s.logger.Warn("mark consumed internal error",
+			slog.String("quote_id", qid),
+			slog.String("engine_id", req.GetEngineId()),
+			slog.Any("error", err))
+		return nil, status.Errorf(codes.Internal, "registry: %v", err)
+	}
+
+	resp := &wtgpb.MarkConsumedResponse{}
+	switch result.Status {
+	case quoteid.ConsumeOK:
+		s.consumeOK.Add(1)
+		resp.Status = wtgpb.ValidationStatus_OK
+		resp.Record = recordToProto(result.Record)
+	case quoteid.ConsumeAlreadyDone:
+		s.consumeAlready.Add(1)
+		resp.Status = wtgpb.ValidationStatus_ALREADY_CONSUMED
+		resp.Record = recordToProto(result.Record)
+		resp.ConsumedBy = result.ConsumedBy
+		resp.OrdRejReason = ordRejReasonDuplicate
+		resp.RejectText = "quote_id already consumed"
+		s.logger.Info("mark consumed conflict",
+			slog.String("quote_id", qid),
+			slog.String("requested_by", req.GetConsumerId()),
+			slog.String("consumed_by", result.ConsumedBy))
+	case quoteid.ConsumeNotFound:
+		s.consumeNotFound.Add(1)
+		resp.Status = wtgpb.ValidationStatus_NOT_FOUND
+		resp.OrdRejReason = ordRejReasonNotFound
+		resp.RejectText = "quote_id not found"
+	case quoteid.ConsumeExpired:
+		s.consumeExpired.Add(1)
+		resp.Status = wtgpb.ValidationStatus_EXPIRED
+		resp.Record = recordToProto(result.Record)
+		resp.OrdRejReason = ordRejReasonExpired
+		resp.RejectText = "quote_id expired"
+	default:
+		s.consumeInternal.Add(1)
+		resp.Status = wtgpb.ValidationStatus_STATUS_UNSPECIFIED
+		resp.RejectText = "unknown ConsumeStatus"
+	}
+	return resp, nil
+}
+
 // QuoteValidationStats — 누적 카운터 snapshot. 운영 모니터링용.
 type QuoteValidationStats struct {
+	// Validate RPC 카운터.
 	Total    uint64 `json:"total"`
 	OK       uint64 `json:"ok"`
 	NotFound uint64 `json:"not_found"`
 	Expired  uint64 `json:"expired"`
+	Consumed uint64 `json:"already_consumed"`
 	Internal uint64 `json:"internal"`
+	// MarkConsumed RPC 카운터.
+	ConsumeTotal    uint64 `json:"consume_total"`
+	ConsumeOK       uint64 `json:"consume_ok"`
+	ConsumeAlready  uint64 `json:"consume_already"`
+	ConsumeNotFound uint64 `json:"consume_not_found"`
+	ConsumeExpired  uint64 `json:"consume_expired"`
+	ConsumeInternal uint64 `json:"consume_internal"`
 }
 
 func (s *QuoteValidationServer) Stats() QuoteValidationStats {
 	return QuoteValidationStats{
-		Total:    s.callsTotal.Load(),
-		OK:       s.callsOK.Load(),
-		NotFound: s.callsNotFound.Load(),
-		Expired:  s.callsExpired.Load(),
-		Internal: s.callsInternal.Load(),
+		Total:           s.callsTotal.Load(),
+		OK:              s.callsOK.Load(),
+		NotFound:        s.callsNotFound.Load(),
+		Expired:         s.callsExpired.Load(),
+		Consumed:        s.callsConsumed.Load(),
+		Internal:        s.callsInternal.Load(),
+		ConsumeTotal:    s.consumeTotal.Load(),
+		ConsumeOK:       s.consumeOK.Load(),
+		ConsumeAlready:  s.consumeAlready.Load(),
+		ConsumeNotFound: s.consumeNotFound.Load(),
+		ConsumeExpired:  s.consumeExpired.Load(),
+		ConsumeInternal: s.consumeInternal.Load(),
 	}
 }
 

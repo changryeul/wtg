@@ -3,6 +3,7 @@ package quoteid
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -109,6 +110,97 @@ func TestMemoryRegistry_PutInvalid(t *testing.T) {
 	rec2 := mkRec("", t0, time.Second)
 	if err := reg.Put(context.Background(), rec2); !errors.Is(err, ErrInvalidRecord) {
 		t.Errorf("빈 QuoteID 거부 기대, got %v", err)
+	}
+}
+
+func TestMemoryRegistry_MarkConsumed_FirstWins(t *testing.T) {
+	reg := NewMemoryRegistry(time.Hour)
+	t0 := time.Unix(1700000000, 0)
+	reg.SetNow(func() time.Time { return t0 })
+
+	_ = reg.Put(context.Background(), mkRec("A-1", t0, time.Minute))
+
+	r1, err := reg.MarkConsumed(context.Background(), "A-1", "order-X")
+	if err != nil {
+		t.Fatalf("MarkConsumed first: %v", err)
+	}
+	if r1.Status != ConsumeOK {
+		t.Errorf("first call: %v, want ConsumeOK", r1.Status)
+	}
+
+	r2, _ := reg.MarkConsumed(context.Background(), "A-1", "order-Y")
+	if r2.Status != ConsumeAlreadyDone {
+		t.Errorf("second call: %v, want ConsumeAlreadyDone", r2.Status)
+	}
+	if r2.ConsumedBy != "order-X" {
+		t.Errorf("ConsumedBy = %q, want order-X", r2.ConsumedBy)
+	}
+
+	// Consumed read-only.
+	who, taken, _ := reg.Consumed(context.Background(), "A-1")
+	if !taken || who != "order-X" {
+		t.Errorf("Consumed: who=%q taken=%v", who, taken)
+	}
+}
+
+func TestMemoryRegistry_MarkConsumed_NotFound(t *testing.T) {
+	reg := NewMemoryRegistry(0)
+	r, _ := reg.MarkConsumed(context.Background(), "A-nope", "order-1")
+	if r.Status != ConsumeNotFound {
+		t.Errorf("status=%v, want ConsumeNotFound", r.Status)
+	}
+}
+
+func TestMemoryRegistry_MarkConsumed_Expired(t *testing.T) {
+	reg := NewMemoryRegistry(time.Hour) // grace 큼 — record 유지되지만 ValidUntil 도래.
+	t0 := time.Unix(1700000000, 0)
+	reg.SetNow(func() time.Time { return t0 })
+
+	_ = reg.Put(context.Background(), mkRec("A-1", t0, 500*time.Millisecond))
+
+	reg.SetNow(func() time.Time { return t0.Add(2 * time.Second) })
+	r, _ := reg.MarkConsumed(context.Background(), "A-1", "order-1")
+	if r.Status != ConsumeExpired {
+		t.Errorf("status=%v, want ConsumeExpired", r.Status)
+	}
+}
+
+func TestMemoryRegistry_MarkConsumed_Concurrent(t *testing.T) {
+	reg := NewMemoryRegistry(time.Hour)
+	_ = reg.Put(context.Background(), mkRec("A-race", time.Now(), time.Hour))
+
+	const N = 64
+	results := make(chan ConsumeStatus, N)
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		i := i
+		go func() {
+			defer wg.Done()
+			r, _ := reg.MarkConsumed(context.Background(), "A-race", "order-"+string(rune('A'+i%26)))
+			results <- r.Status
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	okCount := 0
+	alreadyCount := 0
+	for s := range results {
+		switch s {
+		case ConsumeOK:
+			okCount++
+		case ConsumeAlreadyDone:
+			alreadyCount++
+		default:
+			t.Errorf("예상 외 status: %v", s)
+		}
+	}
+	if okCount != 1 {
+		t.Errorf("OK 카운트 = %d, want 1 (정확히 하나만)", okCount)
+	}
+	if alreadyCount != N-1 {
+		t.Errorf("AlreadyDone 카운트 = %d, want %d", alreadyCount, N-1)
 	}
 }
 

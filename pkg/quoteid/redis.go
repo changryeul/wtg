@@ -59,6 +59,11 @@ func (r *RedisRegistry) key(id QuoteID) string {
 	return r.prefix + ":q:" + string(id)
 }
 
+// consumedKey — MarkConsumed 표시 키. SET NX 로 원자적 first-writer-wins.
+func (r *RedisRegistry) consumedKey(id QuoteID) string {
+	return r.prefix + ":c:" + string(id)
+}
+
 func (r *RedisRegistry) Put(ctx context.Context, rec Record) error {
 	if rec.ValidUntil <= rec.IssuedAt {
 		return ErrInvalidRecord
@@ -92,4 +97,57 @@ func (r *RedisRegistry) Get(ctx context.Context, id QuoteID) (Record, error) {
 		return Record{}, fmt.Errorf("quoteid: unmarshal: %w", err)
 	}
 	return rec, nil
+}
+
+// Consumed — read-only 조회. consumedKey 가 존재하면 그 value (consumer) 반환.
+func (r *RedisRegistry) Consumed(ctx context.Context, id QuoteID) (string, bool, error) {
+	v, err := r.rdb.Get(ctx, r.consumedKey(id)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("quoteid: redis get consumed: %w", err)
+	}
+	return v, true, nil
+}
+
+// MarkConsumed — Redis SET NX 로 first-writer-wins.
+//
+// 흐름:
+//
+//	1. GET q:<id> → record (없으면 NOT_FOUND).
+//	2. ValidUntil 도래 검사 → EXPIRED.
+//	3. SET NX c:<id> consumer_id EX (ValidUntil-now + grace) — 성공이면 OK.
+//	4. SET NX 실패면 GET c:<id> 로 먼저 잡은 consumer 회수 → ALREADY_CONSUMED.
+//
+// 두 mci-price 가 동시에 같은 QuoteID 를 처리해도 SET NX 의 atomicity 가
+// 정확히 한 호출만 OK 보장 (Redis 단일 instance / master 기준).
+func (r *RedisRegistry) MarkConsumed(ctx context.Context, id QuoteID, consumerID string) (ConsumeResult, error) {
+	rec, err := r.Get(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return ConsumeResult{Status: ConsumeNotFound}, nil
+	}
+	if err != nil {
+		return ConsumeResult{}, err
+	}
+	if !rec.ValidAt(r.now()) {
+		return ConsumeResult{Status: ConsumeExpired, Record: rec}, nil
+	}
+	ttl := time.Unix(0, rec.ValidUntil).Sub(r.now()) + r.grace
+	if ttl <= 0 {
+		ttl = r.grace
+	}
+	ok, err := r.rdb.SetNX(ctx, r.consumedKey(id), consumerID, ttl).Result()
+	if err != nil {
+		return ConsumeResult{}, fmt.Errorf("quoteid: setnx: %w", err)
+	}
+	if ok {
+		return ConsumeResult{Status: ConsumeOK, Record: rec}, nil
+	}
+	// 누가 먼저 잡았는지 회수 — race 후 약간 늦게 도착해도 의미 있음.
+	prev, gerr := r.rdb.Get(ctx, r.consumedKey(id)).Result()
+	if gerr != nil && !errors.Is(gerr, redis.Nil) {
+		return ConsumeResult{Status: ConsumeAlreadyDone, Record: rec}, nil
+	}
+	return ConsumeResult{Status: ConsumeAlreadyDone, Record: rec, ConsumedBy: prev}, nil
 }

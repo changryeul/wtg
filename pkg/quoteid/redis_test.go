@@ -115,6 +115,87 @@ func TestRedisRegistry_AlreadyExpiredSkipsWrite(t *testing.T) {
 	}
 }
 
+func TestRedisRegistry_MarkConsumed_FirstWins(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	rec := mkRec("A-1", now, time.Hour)
+	if err := reg.Put(ctx, rec); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	r1, err := reg.MarkConsumed(ctx, "A-1", "order-X")
+	if err != nil {
+		t.Fatalf("MarkConsumed first: %v", err)
+	}
+	if r1.Status != ConsumeOK {
+		t.Errorf("first: %v, want ConsumeOK", r1.Status)
+	}
+
+	r2, _ := reg.MarkConsumed(ctx, "A-1", "order-Y")
+	if r2.Status != ConsumeAlreadyDone {
+		t.Errorf("second: %v, want ConsumeAlreadyDone", r2.Status)
+	}
+	if r2.ConsumedBy != "order-X" {
+		t.Errorf("ConsumedBy = %q, want order-X", r2.ConsumedBy)
+	}
+}
+
+func TestRedisRegistry_MarkConsumed_NotFound(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	r, _ := reg.MarkConsumed(context.Background(), "A-nope", "order-1")
+	if r.Status != ConsumeNotFound {
+		t.Errorf("status=%v, want ConsumeNotFound", r.Status)
+	}
+}
+
+func TestRedisRegistry_MarkConsumed_Expired(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	now := time.Unix(1700000000, 0)
+	reg := NewRedisRegistry(rdb, RedisRegistryOptions{
+		Prefix: "test:qid",
+		Grace:  time.Hour, // grace 크게 — record 유지.
+		Now:    func() time.Time { return now },
+	})
+
+	_ = reg.Put(context.Background(), mkRec("A-1", now, 500*time.Millisecond))
+
+	// ValidUntil 도래 — 하지만 grace 안이라 record 는 살아있음.
+	mr.FastForward(2 * time.Second)
+	advanced := now.Add(2 * time.Second)
+	reg.now = func() time.Time { return advanced }
+
+	r, _ := reg.MarkConsumed(context.Background(), "A-1", "order-1")
+	if r.Status != ConsumeExpired {
+		t.Errorf("status=%v, want ConsumeExpired", r.Status)
+	}
+}
+
+func TestRedisRegistry_Consumed(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	ctx := context.Background()
+	rec := mkRec("A-1", time.Now(), time.Hour)
+	_ = reg.Put(ctx, rec)
+
+	// 표시 전.
+	if _, ok, _ := reg.Consumed(ctx, "A-1"); ok {
+		t.Error("MarkConsumed 호출 전인데 Consumed=true")
+	}
+
+	_, _ = reg.MarkConsumed(ctx, "A-1", "order-X")
+
+	who, ok, err := reg.Consumed(ctx, "A-1")
+	if err != nil {
+		t.Fatalf("Consumed: %v", err)
+	}
+	if !ok || who != "order-X" {
+		t.Errorf("Consumed: who=%q ok=%v", who, ok)
+	}
+}
+
 func TestRedisRegistry_PutInvalid(t *testing.T) {
 	reg, _ := newTestRedis(t)
 	now := time.Unix(1700000000, 0)

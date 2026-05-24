@@ -14,10 +14,11 @@ import (
 //
 // 메모리 leak 방지를 위해 주기적으로 Sweep() 을 호출하면 일괄 정리 가능.
 type MemoryRegistry struct {
-	mu      sync.RWMutex
-	records map[QuoteID]Record
-	now     func() time.Time
-	grace   time.Duration
+	mu       sync.RWMutex
+	records  map[QuoteID]Record
+	consumed map[QuoteID]string // QuoteID → consumer_id (먼저 MarkConsumed 한 자)
+	now      func() time.Time
+	grace    time.Duration
 }
 
 // NewMemoryRegistry — grace 는 ValidUntil 이후에도 등록을 유지하는 시간.
@@ -25,9 +26,10 @@ type MemoryRegistry struct {
 // 0 이면 grace 없이 ValidUntil 도래 즉시 만료.
 func NewMemoryRegistry(grace time.Duration) *MemoryRegistry {
 	return &MemoryRegistry{
-		records: make(map[QuoteID]Record),
-		now:     time.Now,
-		grace:   grace,
+		records:  make(map[QuoteID]Record),
+		consumed: make(map[QuoteID]string),
+		now:      time.Now,
+		grace:    grace,
 	}
 }
 
@@ -68,6 +70,45 @@ func (m *MemoryRegistry) Get(_ context.Context, id QuoteID) (Record, error) {
 	return rec, nil
 }
 
+// MarkConsumed — atomic 표시. mutex 가 race 차단.
+func (m *MemoryRegistry) MarkConsumed(_ context.Context, id QuoteID, consumerID string) (ConsumeResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rec, ok := m.records[id]
+	if !ok {
+		return ConsumeResult{Status: ConsumeNotFound}, nil
+	}
+	expireAt := time.Unix(0, rec.ValidUntil).Add(m.grace)
+	if m.now().After(expireAt) {
+		// grace 도 지났음 — record 는 곧 GC 대상. NOT_FOUND 와 동치 처리.
+		delete(m.records, id)
+		delete(m.consumed, id)
+		return ConsumeResult{Status: ConsumeNotFound}, nil
+	}
+	if !rec.ValidAt(m.now()) {
+		// ValidUntil 도래 — grace 안이라 record 는 echo 가능.
+		return ConsumeResult{Status: ConsumeExpired, Record: rec}, nil
+	}
+	if prev, taken := m.consumed[id]; taken {
+		return ConsumeResult{
+			Status:     ConsumeAlreadyDone,
+			Record:     rec,
+			ConsumedBy: prev,
+		}, nil
+	}
+	m.consumed[id] = consumerID
+	return ConsumeResult{Status: ConsumeOK, Record: rec}, nil
+}
+
+// Consumed — read-only 조회.
+func (m *MemoryRegistry) Consumed(_ context.Context, id QuoteID) (string, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	c, ok := m.consumed[id]
+	return c, ok, nil
+}
+
 // Sweep — 만료된 record 일괄 제거. 운영 인스턴스가 주기적으로 호출.
 // 반환값은 제거된 개수.
 func (m *MemoryRegistry) Sweep() int {
@@ -79,6 +120,7 @@ func (m *MemoryRegistry) Sweep() int {
 		expireAt := time.Unix(0, rec.ValidUntil).Add(m.grace)
 		if now.After(expireAt) {
 			delete(m.records, id)
+			delete(m.consumed, id) // consumed 도 동반 정리.
 			n++
 		}
 	}

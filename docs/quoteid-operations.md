@@ -883,9 +883,56 @@ etcdctl put wtg/quoteid/engines/matching-B ""
 Import 절차 (UI / provisioning) + 변수 치환 (`${DS_PROMETHEUS}`) 도 동일
 문서에 정리.
 
+## v1.17 — mci-admin UI engine_id 관리 페이지 (commit 추가)
+
+v1.15 의 etcd allowlist 를 mci-admin UI 의 "QuoteID 엔진" 탭에서 직접
+관리. etcdctl 대신 GUI — 운영자가 vi 없이 권한 / 만료 / contact 수정.
+
+### Backend
+
+`internal/admin/admin_quoteid_engines.go` — 다음 endpoint:
+
+| Method | Path | 의미 |
+|--------|------|------|
+| GET | `/v1/admin/quoteid-engines` | 전체 목록 |
+| GET | `/v1/admin/quoteid-engines/{engine_id}` | 단건 |
+| PUT | `/v1/admin/quoteid-engines/{engine_id}` | 등록 / 수정 (EngineMeta JSON) |
+| DELETE | `/v1/admin/quoteid-engines/{engine_id}` | 즉시 차단 |
+
+PUT body 검증:
+- `permissions[]` 의 각 토큰이 `validate` / `mark_consumed` 가 아니면 400.
+- `expires_at` 이 RFC3339 가 아니면 400.
+- 빈 body 도 허용 — 풀 권한 / 무기한 (v1.12 호환).
+
+### UI
+
+좌측 nav `QuoteID 엔진` 탭. 테이블:
+- engine_id (mono)
+- permissions ("(full)" 또는 콤마 구분)
+- expires_at — 만료 임박 (7일 이내) 노란색, 만료 후 빨간색
+- contact
+- 수정 / 삭제 버튼
+
+모달:
+- engine_id (수정 시 disabled — etcd key 변경 금지)
+- validate / mark_consumed 체크박스 (둘 다 끔 = 풀 권한)
+- expires_at (RFC3339, placeholder 가이드)
+- contact
+
+삭제 confirm 메시지에 "mci-price 가 hot reload" 명시 — 운영자가 영향
+인지.
+
+### 새 config
+
+```bash
+mci-admin --etcd-quoteid-engines-prefix=wtg/quoteid/engines/
+```
+또는 `WTG_ADMIN_ETCD_QUOTEID_ENGINES_PREFIX`. mci-price 의
+`--quoteid-engines-etcd` 와 동일 prefix 여야 hot reload 가 한 곳을 가리킨다.
+
 ## v2 후보
 
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
-- mci-admin UI 의 engine_id 관리 페이지 — etcdctl 대신 GUI.
 - recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
   대시보드 응답 속도 개선.
+- audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.

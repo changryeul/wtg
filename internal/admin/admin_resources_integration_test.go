@@ -59,6 +59,12 @@ func newTestMux(cli *clientv3.Client) http.Handler {
 	mux.HandleFunc("GET /v1/admin/user-profiles/{usid}", GetUserProfile(upDeps))
 	mux.HandleFunc("PUT /v1/admin/user-profiles/{usid}", PutUserProfile(upDeps))
 	mux.HandleFunc("DELETE /v1/admin/user-profiles/{usid}", DeleteUserProfile(upDeps))
+
+	qeDeps := &QuoteIDEnginesDeps{Cli: cli, Prefix: prefix + "quoteid/engines/", Logger: logger, Audit: audit}
+	mux.HandleFunc("GET /v1/admin/quoteid-engines", ListQuoteIDEngines(qeDeps))
+	mux.HandleFunc("GET /v1/admin/quoteid-engines/{engine_id}", GetQuoteIDEngine(qeDeps))
+	mux.HandleFunc("PUT /v1/admin/quoteid-engines/{engine_id}", PutQuoteIDEngine(qeDeps))
+	mux.HandleFunc("DELETE /v1/admin/quoteid-engines/{engine_id}", DeleteQuoteIDEngine(qeDeps))
 	return mux
 }
 
@@ -404,4 +410,86 @@ func boolStr(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func TestAdmin_QuoteIDEngines_CRUD(t *testing.T) {
+	cli := newEtcdClient(t)
+	ts := httptest.NewServer(newTestMux(cli))
+	defer ts.Close()
+
+	put := func(id, body string, wantStatus int) {
+		req, _ := http.NewRequest("PUT", ts.URL+"/v1/admin/quoteid-engines/"+id, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		r, _ := http.DefaultClient.Do(req)
+		defer r.Body.Close()
+		if r.StatusCode != wantStatus {
+			b, _ := io.ReadAll(r.Body)
+			t.Fatalf("PUT %s: status=%d want=%d body=%s", id, r.StatusCode, wantStatus, b)
+		}
+	}
+
+	// 풀 권한 (빈 body).
+	put("matching-A", "", 200)
+	// read-only + contact.
+	put("audit-cli", `{"permissions":["validate"],"contact":"audit@bank.com"}`, 200)
+	// 만료 시각 (future).
+	put("debug-cli", `{"permissions":["validate"],"expires_at":"2099-01-01T00:00:00Z"}`, 200)
+
+	// 잘못된 permission → 400.
+	put("bad-perm", `{"permissions":["root"]}`, 400)
+	// 잘못된 ExpiresAt → 400.
+	put("bad-date", `{"expires_at":"yesterday"}`, 400)
+
+	// LIST 3건.
+	r, _ := http.Get(ts.URL + "/v1/admin/quoteid-engines")
+	if r.StatusCode != 200 {
+		t.Fatalf("LIST status=%d", r.StatusCode)
+	}
+	var list struct {
+		Engines []map[string]any `json:"engines"`
+		Count   int              `json:"count"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&list)
+	r.Body.Close()
+	if list.Count != 3 {
+		t.Errorf("LIST count=%d, want 3", list.Count)
+	}
+
+	// GET audit-cli — permissions echo.
+	r, _ = http.Get(ts.URL + "/v1/admin/quoteid-engines/audit-cli")
+	if r.StatusCode != 200 {
+		t.Fatalf("GET audit-cli: %d", r.StatusCode)
+	}
+	var got map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&got)
+	r.Body.Close()
+	if got["contact"] != "audit@bank.com" {
+		t.Errorf("contact echo: %v", got)
+	}
+	perms, _ := got["permissions"].([]any)
+	if len(perms) != 1 || perms[0] != "validate" {
+		t.Errorf("permissions echo: %v", perms)
+	}
+
+	// GET matching-A — 빈 meta (default 풀 권한).
+	r, _ = http.Get(ts.URL + "/v1/admin/quoteid-engines/matching-A")
+	r.Body.Close()
+	if r.StatusCode != 200 {
+		t.Errorf("matching-A GET: %d", r.StatusCode)
+	}
+
+	// DELETE.
+	req, _ := http.NewRequest("DELETE", ts.URL+"/v1/admin/quoteid-engines/audit-cli", nil)
+	r, _ = http.DefaultClient.Do(req)
+	r.Body.Close()
+	if r.StatusCode != 200 {
+		t.Errorf("DELETE: %d", r.StatusCode)
+	}
+	// 재삭제 → 404.
+	req, _ = http.NewRequest("DELETE", ts.URL+"/v1/admin/quoteid-engines/audit-cli", nil)
+	r, _ = http.DefaultClient.Do(req)
+	r.Body.Close()
+	if r.StatusCode != 404 {
+		t.Errorf("재삭제: %d, want 404", r.StatusCode)
+	}
 }

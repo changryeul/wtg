@@ -128,6 +128,7 @@
       <span class="text-slate-500">활성 <span id="alert-count" class="font-mono text-slate-200">0</span></span>
       <button id="alert-add" class="chip">+ 신규</button>
       <button id="alert-toggle-list" class="chip">목록</button>
+      <button id="alert-sound" class="chip" title="알림 소리 on/off — 클릭하면 미리 듣기">🔊</button>
       <button id="alert-permission" class="chip" title="브라우저 알림 권한 요청">🔔 권한</button>
       <span id="alert-perm-state" class="text-[10px] text-slate-500 ml-1">—</span>
     </div>
@@ -171,8 +172,9 @@ function fmt(x) { return x == null ? "—" : x.toLocaleString(undefined, {maximu
 // ═════════════════════════════════════════════════════════════════════════════
 // 영속 — settings (layout + per-cell config) + alerts (전역)
 // ═════════════════════════════════════════════════════════════════════════════
-const LS_SETTINGS = "wtg_chart_settings_v2"; // v1 → v2 (cells array 추가)
-const LS_ALERTS   = "wtg_chart_alerts_v1";
+const LS_SETTINGS    = "wtg_chart_settings_v2"; // v1 → v2 (cells array 추가)
+const LS_ALERTS      = "wtg_chart_alerts_v1";
+const LS_ALERT_SOUND = "wtg_chart_alert_sound_v1";
 
 function loadSavedSettings() {
   try {
@@ -1000,6 +1002,43 @@ function fireAlert(a, val) {
     try { new Notification("WTG Chart", { body: msg }); } catch (_) {}
   }
   showAlertBanner(msg);
+  playBeep();
+}
+
+// 알림 소리 — Web Audio API 로 즉석 생성 (외부 파일 의존성 없음).
+// 첫 user gesture 전에는 AudioContext 가 suspended 상태일 수 있으므로 resume 시도.
+let alertSoundEnabled = (() => {
+  try {
+    const raw = localStorage.getItem(LS_ALERT_SOUND);
+    return raw === null ? true : raw === "1";
+  } catch (_) { return true; }
+})();
+function saveAlertSound() {
+  try { localStorage.setItem(LS_ALERT_SOUND, alertSoundEnabled ? "1" : "0"); } catch (_) {}
+}
+let audioCtx = null;
+function playBeep() {
+  if (!alertSoundEnabled) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine"; osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(0.18, t0 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t0); osc.stop(t0 + 0.25);
+  } catch (e) { console.warn("playBeep:", e); }
+}
+function refreshSoundBtn() {
+  const btn = $("#alert-sound");
+  btn.textContent = alertSoundEnabled ? "🔊" : "🔇";
+  btn.dataset.active = alertSoundEnabled ? "true" : "false";
 }
 function showAlertBanner(msg) {
   const stack = $("#alert-banners");
@@ -1045,6 +1084,12 @@ $("#alert-add").addEventListener("click", openAlertModal);
 $("#alert-toggle-list").addEventListener("click", () => {
   $("#alert-list").classList.toggle("hidden");
 });
+$("#alert-sound").addEventListener("click", () => {
+  alertSoundEnabled = !alertSoundEnabled;
+  saveAlertSound();
+  refreshSoundBtn();
+  if (alertSoundEnabled) playBeep(); // 토글 직후 미리 듣기 — user gesture 라 AudioContext 도 자동 unlock.
+});
 $("#alert-permission").addEventListener("click", async () => {
   if (!("Notification" in window)) return;
   if (Notification.permission === "default") {
@@ -1075,6 +1120,7 @@ window.addEventListener("resize", () => layoutManager.resizeAll());
 loadAlerts();
 renderAlertList();
 refreshNotificationPermissionUI();
+refreshSoundBtn();
 
 (function init() {
   const s = loadSavedSettings();

@@ -120,10 +120,12 @@ proto:
 		--go_out=pkg/wtgpb/v1 --go_opt=paths=source_relative \
 		--go_opt=Mwtg/v1/price.proto=github.com/winwaysystems/wtg/pkg/wtgpb/v1 \
 		--go_opt=Mwtg/v1/push.proto=github.com/winwaysystems/wtg/pkg/wtgpb/v1 \
+		--go_opt=Mwtg/v1/quote_validation.proto=github.com/winwaysystems/wtg/pkg/wtgpb/v1 \
 		--go-grpc_out=pkg/wtgpb/v1 --go-grpc_opt=paths=source_relative \
 		--go-grpc_opt=Mwtg/v1/price.proto=github.com/winwaysystems/wtg/pkg/wtgpb/v1 \
 		--go-grpc_opt=Mwtg/v1/push.proto=github.com/winwaysystems/wtg/pkg/wtgpb/v1 \
-		wtg/v1/price.proto wtg/v1/push.proto
+		--go-grpc_opt=Mwtg/v1/quote_validation.proto=github.com/winwaysystems/wtg/pkg/wtgpb/v1 \
+		wtg/v1/price.proto wtg/v1/push.proto wtg/v1/quote_validation.proto
 	@mv pkg/wtgpb/v1/wtg/v1/*.go pkg/wtgpb/v1/ 2>/dev/null || true
 	@rm -rf pkg/wtgpb/v1/wtg
 	@echo "==> proto 생성 완료: pkg/wtgpb/v1/"

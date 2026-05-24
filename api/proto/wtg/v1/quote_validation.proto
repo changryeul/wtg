@@ -1,0 +1,85 @@
+// QuoteValidationService — 매칭 엔진이 NewOrderSingle (FIX 'D') 의 QuoteID
+// (FIX 4.4 tag 117) 를 검증하기 위해 호출하는 RPC.
+//
+// 설계 / 정책 분담 / 호출 흐름은 docs/quoteid-validation-rfc.md 참조.
+//
+// 정합성:
+//   FIX 4.4    — tag 117 (QuoteID), tag 62 (ValidUntilTime), tag 103 (OrdRejReason)
+//   FX Global Code 2024 Principle 17 — last-look 투명성
+//   MiFID II RTS 27 — best-execution audit trail
+
+syntax = "proto3";
+
+package wtg.v1;
+
+option go_package = "github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1";
+
+service QuoteValidationService {
+  // Validate 는 QuoteID 의 권위 데이터를 조회한다.
+  //
+  // WTG (mci-price) 가 담당:
+  //   - 존재 여부 (NOT_FOUND)
+  //   - 만료 여부 (EXPIRED — ValidUntil + grace 도래 후)
+  //   - 발행 시점 가격 / Profile / Issuer echo
+  //
+  // 엔진이 담당 (본 RPC 의 응답 + 엔진 자체 정책):
+  //   - side validation (FIX tag 54: BUY=ask vs SELL=bid)
+  //   - slippage tolerance (tier별)
+  //   - last-look hold-time (FX Global Code Principle 17, tier별)
+  //   - 사용자 ↔ Profile 일치
+  //   - 잔량 / 한도
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+}
+
+message ValidateRequest {
+  // FIX tag 117 — 클라이언트 NewOrderSingle 이 들고온 QuoteID 그대로.
+  string quote_id = 1;
+
+  // 엔진 식별 — audit 로깅 / 통계용. 사전 등록된 식별자 사용 권장
+  // (예: "matching-engine-A"). RFC §10.3.
+  string engine_id = 10;
+
+  // RPC 발신 wallclock (Unix nano) — clock skew 모니터링용.
+  int64 ts_unix_nano = 11;
+}
+
+message ValidateResponse {
+  ValidationStatus status = 1;
+
+  // status == OK 일 때만 채워진다. 엔진은 record.bid / record.ask 를
+  // 자체 정책 검증의 입력으로 사용.
+  QuoteRecord record = 2;
+
+  // FIX OrdRejReason (tag 103). status != OK 일 때 채워짐.
+  // 엔진은 ExecutionReport(8) 에 그대로 전달 가능 — 감독당국 호환.
+  int32 ord_rej_reason = 3;
+
+  // 사람용 reject 설명 (감독당국 로그 / debugging 보조).
+  string reject_text = 4;
+}
+
+enum ValidationStatus {
+  STATUS_UNSPECIFIED = 0;
+  // 발행 기록 존재, 아직 ValidUntil 도래 X — 거래 가능 (엔진 자체 정책 통과 시).
+  OK = 1;
+  // Registry 에 없음. 한 번도 발행 안 됐거나 ValidUntil + grace 후 GC.
+  NOT_FOUND = 2;
+  // ValidUntil 도래 후 grace 안 (기록은 있지만 거래 불가).
+  EXPIRED = 3;
+}
+
+// QuoteRecord 는 pkg/quoteid.Record 의 wire 표현.
+message QuoteRecord {
+  string quote_id              = 1;
+  string pair                  = 2;
+  string channel               = 3;  // session.Channel
+  string site                  = 4;  // session.Site
+  string tier                  = 5;  // session.Tier
+  string tenor                 = 6;  // "SPOT" / "1W" / "1M" ...
+  double bid                   = 7;
+  double ask                   = 8;
+  int64  issued_unix_nano      = 9;
+  int64  valid_until_unix_nano = 10;
+  uint64 sequence              = 11; // 인스턴스별 monotonic (FIX MsgSeqNum 동치)
+  string issuer                = 12; // mci-price 인스턴스 prefix ("A" / "B")
+}

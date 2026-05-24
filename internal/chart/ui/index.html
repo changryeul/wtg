@@ -886,10 +886,15 @@ function renderAlertList() {
 }
 
 // 셀 단위 평가 — 셀의 WS 콜백이 호출. 셀의 pair 와 매칭되는 alert 만 평가.
+//
+// 다중 차트 환경에서 여러 셀이 동일 (pair, tf) 를 띄우면 같은 WS 봉이
+// 셀마다 도착해 alert 가 중복 평가된다. `lastEvalKey = pair|tf|time` 으로
+// 봉 단위 dedup — 한 봉에서는 첫 셀만 평가하고 나머지는 skip.
 function evaluateAlertsForCell(cell, candle) {
   if (alerts.length === 0) return;
   const active = alerts.filter(a => a.enabled && a.pair === cell.pair);
   if (active.length === 0) return;
+  const evalKey = cell.pair + "|" + cell.tf + "|" + candle.time;
 
   const needRSI = active.some(a => a.type.startsWith("rsi_"));
   const needSMA20 = active.some(a => a.type.includes("sma20") || a.type.includes("_20_"));
@@ -915,6 +920,8 @@ function evaluateAlertsForCell(cell, candle) {
 
   for (const a of alerts) {
     if (!a.enabled || a.pair !== cell.pair) continue;
+    if (a.lastEvalKey === evalKey) continue; // 다른 셀이 같은 봉을 이미 평가함.
+    a.lastEvalKey = evalKey;
     let crossed = false; let triggerVal = null;
     switch (a.type) {
       case "price_above": case "price_below":

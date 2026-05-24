@@ -55,6 +55,29 @@ type Registry interface {
 	//
 	// 결과는 입력 순서와 동일.
 	MarkConsumedMany(ctx context.Context, reqs []ConsumeRequest) ([]ConsumeResult, error)
+
+	// Lookup — record + consumed 정보를 atomic 으로 한 번에 조회 (read-only).
+	// Validate RPC 가 사용. Get + Consumed 의 두 RTT 를 1 RTT 로 압축, 동시에
+	// 두 키 사이에 race window 차단.
+	Lookup(ctx context.Context, id QuoteID) (LookupResult, error)
+
+	// LookupMany — N 항목 atomic Lookup. pipeline 으로 1 RTT 묶음. BatchValidate
+	// 가 사용.
+	LookupMany(ctx context.Context, ids []QuoteID) ([]LookupResult, error)
+}
+
+// LookupResult — Lookup / LookupMany 의 atomic snapshot.
+//
+//	Found       : record 존재 여부.
+//	Record      : Found 일 때 채워짐.
+//	Consumed    : MarkConsumed 표시 여부 (Found 무관 — Consumed=true,Found=false
+//	              는 record 가 GC 됐는데 consumed marker 만 남은 짧은 race window).
+//	ConsumedBy  : Consumed 일 때의 consumer_id.
+type LookupResult struct {
+	Found      bool
+	Record     Record
+	Consumed   bool
+	ConsumedBy string
 }
 
 // ConsumeRequest — MarkConsumedMany 단일 항목.

@@ -244,6 +244,70 @@ func TestRedisRegistry_MarkConsumed_LuaConcurrent(t *testing.T) {
 	}
 }
 
+func TestRedisRegistry_Lookup(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	ctx := context.Background()
+	now := time.Now()
+	_ = reg.Put(ctx, mkRec("A-1", now, time.Hour))
+	_ = reg.Put(ctx, mkRec("A-2", now, time.Hour))
+	_, _ = reg.MarkConsumed(ctx, "A-2", "order-X")
+
+	lr, err := reg.Lookup(ctx, "A-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lr.Found || lr.Consumed {
+		t.Errorf("A-1: %+v", lr)
+	}
+
+	lr, _ = reg.Lookup(ctx, "A-2")
+	if !lr.Found || !lr.Consumed || lr.ConsumedBy != "order-X" {
+		t.Errorf("A-2: %+v", lr)
+	}
+
+	lr, _ = reg.Lookup(ctx, "A-nope")
+	if lr.Found {
+		t.Errorf("A-nope Found=true")
+	}
+}
+
+func TestRedisRegistry_LookupMany(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	ctx := context.Background()
+	now := time.Now()
+	_ = reg.Put(ctx, mkRec("A-1", now, time.Hour))
+	_ = reg.Put(ctx, mkRec("A-2", now, time.Hour))
+	_, _ = reg.MarkConsumed(ctx, "A-2", "order-X")
+
+	out, err := reg.LookupMany(ctx, []QuoteID{"A-1", "A-2", "A-nope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 3 {
+		t.Fatalf("len=%d", len(out))
+	}
+	if !out[0].Found || out[0].Consumed {
+		t.Errorf("[0] A-1: %+v", out[0])
+	}
+	if !out[1].Found || !out[1].Consumed || out[1].ConsumedBy != "order-X" {
+		t.Errorf("[1] A-2: %+v", out[1])
+	}
+	if out[2].Found {
+		t.Errorf("[2] A-nope: %+v", out[2])
+	}
+}
+
+func TestRedisRegistry_LookupMany_Empty(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	out, err := reg.LookupMany(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != nil {
+		t.Errorf("empty result: %v", out)
+	}
+}
+
 func TestRedisRegistry_MarkConsumedMany(t *testing.T) {
 	reg, _ := newTestRedis(t)
 	ctx := context.Background()

@@ -248,6 +248,59 @@ func TestMemoryRegistry_MarkConsumedMany(t *testing.T) {
 	}
 }
 
+func TestMemoryRegistry_Lookup(t *testing.T) {
+	reg := NewMemoryRegistry(time.Hour)
+	t0 := time.Unix(1700000000, 0)
+	reg.SetNow(func() time.Time { return t0 })
+	_ = reg.Put(context.Background(), mkRec("A-1", t0, time.Hour))
+	_ = reg.Put(context.Background(), mkRec("A-2", t0, time.Hour))
+	_, _ = reg.MarkConsumed(context.Background(), "A-2", "order-X")
+
+	// Found + not consumed.
+	lr, _ := reg.Lookup(context.Background(), "A-1")
+	if !lr.Found || lr.Consumed {
+		t.Errorf("A-1: Found=%v Consumed=%v, want Found+!Consumed", lr.Found, lr.Consumed)
+	}
+
+	// Found + consumed.
+	lr, _ = reg.Lookup(context.Background(), "A-2")
+	if !lr.Found || !lr.Consumed || lr.ConsumedBy != "order-X" {
+		t.Errorf("A-2: %+v, want Found+Consumed+order-X", lr)
+	}
+
+	// Not found.
+	lr, _ = reg.Lookup(context.Background(), "A-nope")
+	if lr.Found || lr.Consumed {
+		t.Errorf("A-nope: %+v, want empty", lr)
+	}
+}
+
+func TestMemoryRegistry_LookupMany(t *testing.T) {
+	reg := NewMemoryRegistry(time.Hour)
+	t0 := time.Unix(1700000000, 0)
+	reg.SetNow(func() time.Time { return t0 })
+	_ = reg.Put(context.Background(), mkRec("A-1", t0, time.Hour))
+	_ = reg.Put(context.Background(), mkRec("A-2", t0, time.Hour))
+	_, _ = reg.MarkConsumed(context.Background(), "A-2", "order-X")
+
+	out, err := reg.LookupMany(context.Background(), []QuoteID{"A-1", "A-2", "A-nope"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 3 {
+		t.Fatalf("len=%d", len(out))
+	}
+	if !out[0].Found || out[0].Consumed {
+		t.Errorf("[0] A-1: %+v", out[0])
+	}
+	if !out[1].Found || !out[1].Consumed || out[1].ConsumedBy != "order-X" {
+		t.Errorf("[1] A-2: %+v", out[1])
+	}
+	if out[2].Found {
+		t.Errorf("[2] A-nope: %+v", out[2])
+	}
+}
+
 func TestMemoryRegistry_Sweep(t *testing.T) {
 	reg := NewMemoryRegistry(0)
 	t0 := time.Unix(1700000000, 0)

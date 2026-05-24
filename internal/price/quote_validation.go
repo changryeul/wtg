@@ -8,9 +8,7 @@ package price
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -133,6 +131,9 @@ func (s *QuoteValidationServer) SetNow(f func() time.Time) {
 }
 
 // Validate 는 RFC §4.1 의 ValidateRequest 를 처리.
+//
+// v1.11+ — Registry.Lookup 으로 record + consumed 를 atomic 1 RTT 조회.
+// 이전 (v1.6–v1.10) 의 Get + Consumed 두 RTT 경로 제거.
 func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.ValidateRequest) (*wtgpb.ValidateResponse, error) {
 	s.callsTotal.Add(1)
 
@@ -150,20 +151,8 @@ func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.Validat
 		}, nil
 	}
 
-	rec, err := s.registry.Get(ctx, quoteid.QuoteID(qid))
+	lr, err := s.registry.Lookup(ctx, quoteid.QuoteID(qid))
 	if err != nil {
-		if errors.Is(err, quoteid.ErrNotFound) {
-			s.callsNotFound.Add(1)
-			s.logger.Info("quote validation",
-				slog.String("quote_id", qid),
-				slog.String("engine_id", req.GetEngineId()),
-				slog.String("status", "NOT_FOUND"))
-			return &wtgpb.ValidateResponse{
-				Status:       wtgpb.ValidationStatus_NOT_FOUND,
-				OrdRejReason: ordRejReasonNotFound,
-				RejectText:   "quote_id not found",
-			}, nil
-		}
 		s.callsInternal.Add(1)
 		s.logger.Warn("quote validation internal error",
 			slog.String("quote_id", qid),
@@ -171,44 +160,55 @@ func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.Validat
 			slog.Any("error", err))
 		return nil, status.Errorf(codes.Internal, "registry: %v", err)
 	}
+	return s.lookupToValidateResponse(lr, qid, req.GetEngineId()), nil
+}
 
-	// Registry 가 grace 적용 후 GC 했더라도, 호출 시점 wallclock 으로 한 번 더
-	// ValidUntil 도래 여부 검사 (grace 안에 있지만 ValidUntil 후인 경우 EXPIRED).
-	if !rec.ValidAt(s.now()) {
+// lookupToValidateResponse — Lookup 결과를 Validate 응답 + 카운터 매핑.
+// BatchValidate 가 동일 경로 재사용.
+func (s *QuoteValidationServer) lookupToValidateResponse(lr quoteid.LookupResult, qid, engineID string) *wtgpb.ValidateResponse {
+	if !lr.Found {
+		s.callsNotFound.Add(1)
+		s.logger.Info("quote validation",
+			slog.String("quote_id", qid),
+			slog.String("engine_id", engineID),
+			slog.String("status", "NOT_FOUND"))
+		return &wtgpb.ValidateResponse{
+			Status:       wtgpb.ValidationStatus_NOT_FOUND,
+			OrdRejReason: ordRejReasonNotFound,
+			RejectText:   "quote_id not found",
+		}
+	}
+	if !lr.Record.ValidAt(s.now()) {
 		s.callsExpired.Add(1)
 		s.logger.Info("quote validation",
 			slog.String("quote_id", qid),
-			slog.String("engine_id", req.GetEngineId()),
+			slog.String("engine_id", engineID),
 			slog.String("status", "EXPIRED"))
 		return &wtgpb.ValidateResponse{
 			Status:       wtgpb.ValidationStatus_EXPIRED,
-			Record:       recordToProto(rec),
+			Record:       recordToProto(lr.Record),
 			OrdRejReason: ordRejReasonExpired,
 			RejectText:   "quote_id expired",
-		}, nil
+		}
 	}
-
-	// ALREADY_CONSUMED — 이미 다른 주문이 사용. (FX Global Code Principle 17
-	// "use only once".) Consumed 는 read-only — atomic write 는 MarkConsumed.
-	if _, consumed, err := s.registry.Consumed(ctx, quoteid.QuoteID(qid)); err == nil && consumed {
+	if lr.Consumed {
 		s.callsConsumed.Add(1)
 		s.logger.Info("quote validation",
 			slog.String("quote_id", qid),
-			slog.String("engine_id", req.GetEngineId()),
+			slog.String("engine_id", engineID),
 			slog.String("status", "ALREADY_CONSUMED"))
 		return &wtgpb.ValidateResponse{
 			Status:       wtgpb.ValidationStatus_ALREADY_CONSUMED,
-			Record:       recordToProto(rec),
+			Record:       recordToProto(lr.Record),
 			OrdRejReason: ordRejReasonDuplicate,
 			RejectText:   "quote_id already consumed",
-		}, nil
+		}
 	}
-
 	s.callsOK.Add(1)
 	return &wtgpb.ValidateResponse{
 		Status: wtgpb.ValidationStatus_OK,
-		Record: recordToProto(rec),
-	}, nil
+		Record: recordToProto(lr.Record),
+	}
 }
 
 // MarkConsumed 는 RFC §4.1 의 두 번째 RPC. 동시 호출 atomic 보장은
@@ -276,15 +276,11 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 	return resp, nil
 }
 
-// BatchValidate — 다건 QuoteID 를 병렬로 검증. 결과는 입력과 같은 순서의
-// 배열로 반환. 빈 배열이면 빈 결과. 상한 초과면 InvalidArgument.
+// BatchValidate — Registry.LookupMany 로 pipeline 호출. 1 RTT (direct/sentinel)
+// 또는 slot 별 1 RTT (cluster). 이전 (v1.7–v1.10) 의 goroutine fan-out 대비
+// connection pool churn / goroutine overhead 제거.
 //
-// 내부적으로 N goroutine fan-out — 각 항목이 자체 Registry 호출. 100건 batch
-// 가 단일 Validate 와 비슷한 wallclock (Redis round-trip 병렬화).
-//
-// 한 항목이 Registry internal error 를 만나도 batch 전체는 실패 안 함 — 해당
-// index 의 ValidateResponse 만 STATUS_UNSPECIFIED + reject_text 로 표시.
-// 호출자가 per-item 분기.
+// callsTotal 카운터는 per-item 누적 — 단일 Validate 호출과 정합.
 func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.BatchValidateRequest) (*wtgpb.BatchValidateResponse, error) {
 	s.batchTotal.Add(1)
 	if !s.checkEngine(req.GetEngineId()) {
@@ -300,29 +296,26 @@ func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.Ba
 	}
 	s.batchItems.Add(uint64(len(ids)))
 
-	results := make([]*wtgpb.ValidateResponse, len(ids))
-	var wg sync.WaitGroup
-	wg.Add(len(ids))
-	for i := range ids {
-		i := i
-		go func() {
-			defer wg.Done()
-			resp, err := s.Validate(ctx, &wtgpb.ValidateRequest{
-				QuoteId:    ids[i],
-				EngineId:   req.GetEngineId(),
-				TsUnixNano: req.GetTsUnixNano(),
-			})
-			if err != nil || resp == nil {
-				results[i] = &wtgpb.ValidateResponse{
-					Status:     wtgpb.ValidationStatus_STATUS_UNSPECIFIED,
-					RejectText: "internal error",
-				}
-				return
-			}
-			results[i] = resp
-		}()
+	// 빈 quote_id (= 미지정) 도 NOT_FOUND 로 처리 — 단일 Validate 와 동일.
+	// LookupMany 에 빈 문자열을 그대로 넘기면 Redis 에서 "{}:q" 키를 조회 →
+	// 보통 미존재 → Found=false. lookupToValidateResponse 가 NOT_FOUND 매핑.
+	regIDs := make([]quoteid.QuoteID, len(ids))
+	for i, id := range ids {
+		regIDs[i] = quoteid.QuoteID(id)
 	}
-	wg.Wait()
+	lookups, err := s.registry.LookupMany(ctx, regIDs)
+	if err != nil {
+		s.callsInternal.Add(1)
+		s.logger.Warn("BatchValidate registry error",
+			slog.String("engine_id", req.GetEngineId()),
+			slog.Any("error", err))
+		return nil, status.Errorf(codes.Internal, "registry: %v", err)
+	}
+	results := make([]*wtgpb.ValidateResponse, len(ids))
+	for i, lr := range lookups {
+		s.callsTotal.Add(1) // single Validate 와 정합 — per-item.
+		results[i] = s.lookupToValidateResponse(lr, ids[i], req.GetEngineId())
+	}
 	return &wtgpb.BatchValidateResponse{Results: results}, nil
 }
 

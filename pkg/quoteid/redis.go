@@ -224,6 +224,113 @@ func (r *RedisRegistry) MarkConsumed(ctx context.Context, id QuoteID, consumerID
 	}
 }
 
+// lookupScript — record + consumed 를 atomic 으로 조회.
+//
+// Validate 의 기존 2 RTT (GET q + GET c) 를 1 RTT 로 압축. 두 키 사이에
+// race window 도 차단 (이론적으로 record TTL 만료 + consumed 만 남은 짧은
+// 순간이 가능했음).
+//
+// 반환:
+//
+//	{0}                              — record 없음, consumed 없음
+//	{1, rec_json}                    — record 있음, consumed 없음
+//	{2, rec_json, consumer}          — record 있음, consumed 있음
+//	{3, "", consumer}                — record 없음 (GC), consumed marker 남음
+var lookupScript = redis.NewScript(`
+local rec = redis.call("GET", KEYS[1])
+local c   = redis.call("GET", KEYS[2])
+if not rec and not c then return {0} end
+if not rec and c       then return {3, "", c} end
+if rec and not c       then return {1, rec} end
+return {2, rec, c}
+`)
+
+// Lookup — record + consumed atomic 조회.
+func (r *RedisRegistry) Lookup(ctx context.Context, id QuoteID) (LookupResult, error) {
+	raw, err := lookupScript.Run(ctx, r.rdb,
+		[]string{r.key(id), r.consumedKey(id)},
+	).Result()
+	if err != nil {
+		return LookupResult{}, fmt.Errorf("quoteid: lookup: %w", err)
+	}
+	return decodeLookup(raw)
+}
+
+// LookupMany — pipeline 으로 N Lookup 묶음 송신.
+//
+// Note: pipeline 안에서는 Script.Run 의 EVALSHA→EVAL fallback 이 동작하지
+// 않는다 (Run 이 동기적으로 NOSCRIPT 를 못 봄). 따라서 Eval 직접 사용 —
+// 매 호출 EVAL source 송신으로 약간 더 길지만 batch 안에서 일관 동작.
+func (r *RedisRegistry) LookupMany(ctx context.Context, ids []QuoteID) ([]LookupResult, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	pipe := r.rdb.Pipeline()
+	cmds := make([]*redis.Cmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = lookupScript.Eval(ctx, pipe,
+			[]string{r.key(id), r.consumedKey(id)},
+		)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		// per-cmd 오류는 아래 루프 처리.
+		_ = err
+	}
+	out := make([]LookupResult, len(ids))
+	for i, cmd := range cmds {
+		raw, err := cmd.Result()
+		if err != nil {
+			// 미완성/장애 — Found=false 로 표시. Caller 가 후속 retry 가능.
+			out[i] = LookupResult{}
+			continue
+		}
+		lr, derr := decodeLookup(raw)
+		if derr != nil {
+			out[i] = LookupResult{}
+			continue
+		}
+		out[i] = lr
+	}
+	return out, nil
+}
+
+// decodeLookup — lookupScript 반환을 LookupResult 로.
+func decodeLookup(raw any) (LookupResult, error) {
+	arr, ok := raw.([]any)
+	if !ok || len(arr) == 0 {
+		return LookupResult{}, fmt.Errorf("quoteid: lookup 반환 형식 mismatch: %T", raw)
+	}
+	code, _ := arr[0].(int64)
+	switch code {
+	case 0:
+		return LookupResult{}, nil
+	case 1:
+		rec, err := decodeRecordFromLua(arr, 1)
+		if err != nil {
+			return LookupResult{}, err
+		}
+		return LookupResult{Found: true, Record: rec}, nil
+	case 2:
+		rec, err := decodeRecordFromLua(arr, 1)
+		if err != nil {
+			return LookupResult{}, err
+		}
+		prev := ""
+		if len(arr) > 2 {
+			prev, _ = arr[2].(string)
+		}
+		return LookupResult{Found: true, Record: rec, Consumed: true, ConsumedBy: prev}, nil
+	case 3:
+		prev := ""
+		if len(arr) > 2 {
+			prev, _ = arr[2].(string)
+		}
+		return LookupResult{Found: false, Consumed: true, ConsumedBy: prev}, nil
+	default:
+		return LookupResult{}, fmt.Errorf("quoteid: 알 수 없는 lookup code %d", code)
+	}
+}
+
 // MarkConsumedMany — 파이프라인으로 N EvalSha 묶음 송신. 1 connection grab,
 // 1 RTT (direct/sentinel). Cluster 에서는 slot 별 자동 라우팅으로 슬롯당
 // 1 RTT — 여전히 N 개별 호출보다 빠름.
@@ -248,10 +355,11 @@ func (r *RedisRegistry) MarkConsumedMany(ctx context.Context, reqs []ConsumeRequ
 	ttlStr := strconv.FormatInt(ttlSec, 10)
 
 	// 파이프라인으로 묶어 송신. ClusterClient 의 경우 slot 별로 자동 split.
+	// pipeline 에서는 EVALSHA→EVAL fallback 불가 — Eval 직접 사용 (LookupMany 와 동일).
 	pipe := r.rdb.Pipeline()
 	cmds := make([]*redis.Cmd, len(reqs))
 	for i, req := range reqs {
-		cmds[i] = markConsumedScript.Run(ctx, pipe,
+		cmds[i] = markConsumedScript.Eval(ctx, pipe,
 			[]string{r.key(req.QuoteID), r.consumedKey(req.QuoteID)},
 			req.ConsumerID, nowNanoStr, ttlStr,
 		)

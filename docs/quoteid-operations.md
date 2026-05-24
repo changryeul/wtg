@@ -624,8 +624,60 @@ type ConsumeRequest struct {
 호출자가 직접 사용 가능 — 외부 인덱서나 audit 도구가 pkg/quoteid 만
 import 해도 batch 가능.
 
+## v1.11 — Validate/BatchValidate atomic Lookup + Pipeline (commit 추가)
+
+read path 의 race window 제거 + 성능 개선:
+
+### Validate (단건)
+
+이전 (v1.7–v1.10): `Get` + `Consumed` 두 개의 Redis GET — 그 사이 record
+TTL 만료 + consumed marker 만 남는 짧은 race window (이론적이지만 grace
+경계 + GC 압박 시 재현 가능).
+
+v1.11+: 단일 `lookupScript` (Lua) 가 GET q + GET c + state 분류를 atomic
+하게 처리. 1 RTT. Redis 단일 스레드 보장.
+
+### BatchValidate (다건)
+
+이전: N goroutine fan-out, 각자 2 RTT × N items.
+
+v1.11+: `Registry.LookupMany` 가 pipeline 으로 N EVAL lookupScript 묶음
+송신. 1 RTT (direct/sentinel) / slot 별 1 RTT (cluster).
+
+### 성능
+
+| Batch | v1.10 fan-out | v1.11 pipeline |
+|-------|---------------|----------------|
+| 단건 Validate | 2 RTT | 1 RTT |
+| BatchValidate 10 | ~5-10ms | ~2ms |
+| BatchValidate 100 | ~20-40ms | ~3ms |
+| BatchValidate 1000 | ~100-200ms | ~10-20ms |
+
+### Lookup 결과 (LookupResult)
+
+```go
+type LookupResult struct {
+    Found      bool   // record 존재
+    Record     Record // Found 일 때 채워짐
+    Consumed   bool   // consumed marker 존재
+    ConsumedBy string
+}
+```
+
+`Found=false, Consumed=true` 도 가능 — record TTL 이 consumed marker
+보다 먼저 만료된 짧은 윈도우. Validate 응답에서는 NOT_FOUND 매핑
+(record 없으면 거래 불가).
+
+### Pipeline + Script 주의사항
+
+Redis go client v9 의 `Script.Run` 은 EVALSHA→EVAL fallback 이 동기. Pipeline
+안에서는 NOSCRIPT 응답을 fallback 이전에 못 보므로, MarkConsumedMany /
+LookupMany 둘 다 `Script.Eval` 직접 사용 — 매 호출 EVAL source 송신.
+실측 차이는 작음 (Redis 측 EVAL 캐시).
+
 ## v2 후보
 
-- engine_id allowlist 의 atomic 갱신 (현재는 시작 시 1회) — etcd watch.
-- BatchValidate 도 동일 pipeline 화 (현재 goroutine fan-out).
+- engine_id allowlist 의 atomic 갱신 (현재 시작 시 1회) — etcd watch.
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
+- BatchValidate / BatchMarkConsumed 의 LRU bandwidth metrics — pipeline 단위
+  latency / 처리량 모니터링.

@@ -134,6 +134,46 @@ func (m *MemoryRegistry) MarkConsumedMany(_ context.Context, reqs []ConsumeReque
 	return out, nil
 }
 
+// Lookup — record + consumed 정보를 단일 mutex 안에서 일관 조회.
+func (m *MemoryRegistry) Lookup(_ context.Context, id QuoteID) (LookupResult, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lookupLocked(id), nil
+}
+
+// LookupMany — Lookup 의 batch. 단일 RLock 안에서 N 항목 — batch 가 같은
+// snapshot 시점.
+func (m *MemoryRegistry) LookupMany(_ context.Context, ids []QuoteID) ([]LookupResult, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out := make([]LookupResult, len(ids))
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for i, id := range ids {
+		out[i] = m.lookupLocked(id)
+	}
+	return out, nil
+}
+
+// lookupLocked — mu 가 잡힌 상태에서 단일 id lookup. expiry 검사 포함.
+func (m *MemoryRegistry) lookupLocked(id QuoteID) LookupResult {
+	rec, ok := m.records[id]
+	if !ok {
+		// record 가 없어도 consumed marker 만 남았을 수 있음 — 검사.
+		c, taken := m.consumed[id]
+		return LookupResult{Found: false, Consumed: taken, ConsumedBy: c}
+	}
+	expireAt := time.Unix(0, rec.ValidUntil).Add(m.grace)
+	if m.now().After(expireAt) {
+		// 만료 — lazy evict 는 Sweep 에 양보 (RLock 안이라 write 불가).
+		c, taken := m.consumed[id]
+		return LookupResult{Found: false, Consumed: taken, ConsumedBy: c}
+	}
+	c, taken := m.consumed[id]
+	return LookupResult{Found: true, Record: rec, Consumed: taken, ConsumedBy: c}
+}
+
 // Consumed — read-only 조회.
 func (m *MemoryRegistry) Consumed(_ context.Context, id QuoteID) (string, bool, error) {
 	m.mu.RLock()

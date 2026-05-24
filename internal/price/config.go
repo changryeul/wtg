@@ -133,6 +133,25 @@ type Config struct {
 	EtcdTLSKeyFile    string
 	EtcdTLSCAFile     string
 	EtcdTLSServerName string // SNI / 호스트네임 검증
+
+	// ─── QuoteID (pkg/quoteid) ──────────────────────────────────────────────
+	// Generator + Registry 활성화. QuoteIDInstance 가 비어 있으면 quoteid
+	// 비활성 (기존 동작 유지).
+	//
+	// 운영: 두 mci-price 가 active-active 일 때 인스턴스 prefix 가 달라야 ID
+	// 충돌 없음 (예: "A" / "B"). RFC §6 참조.
+	QuoteIDInstance        string        // 빈값이면 quoteid 비활성
+	QuoteIDValidity        time.Duration // default 500ms — ValidUntil 윈도우
+	QuoteIDGrace           time.Duration // default 1s — Registry GC 유예
+	QuoteIDRegistryTimeout time.Duration // default 200ms — Put 단위 timeout
+
+	// Redis Registry — 비어 있으면 MemoryRegistry 사용 (dev / 단일 인스턴스).
+	// 운영 active-active 에서는 Sentinel/Cluster 권장. addr 콤마 구분으로
+	// FailoverClient 구성 가능 (호출자 split — wire 단계는 단일 addr 만 지원).
+	QuoteIDRedisAddr     string
+	QuoteIDRedisPassword string
+	QuoteIDRedisDB       int
+	QuoteIDRedisPrefix   string // default "wtg:quoteid"
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -175,6 +194,13 @@ func DefaultConfig() Config {
 		EtcdTLSKeyFile:    "",
 		EtcdTLSCAFile:     "",
 		EtcdTLSServerName: "",
+
+		QuoteIDInstance:        "",
+		QuoteIDValidity:        500 * time.Millisecond,
+		QuoteIDGrace:           time.Second,
+		QuoteIDRegistryTimeout: 200 * time.Millisecond,
+		QuoteIDRedisAddr:       "",
+		QuoteIDRedisPrefix:     "wtg:quoteid",
 	}
 }
 
@@ -281,6 +307,34 @@ func LoadConfig(args []string) (Config, error) {
 		cfg.EtcdTLSServerName = v
 	}
 
+	if v := os.Getenv("WTG_PRICE_QUOTEID_INSTANCE"); v != "" {
+		cfg.QuoteIDInstance = v
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_VALIDITY"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.QuoteIDValidity = d
+		}
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_GRACE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.QuoteIDGrace = d
+		}
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS"); v != "" {
+		cfg.QuoteIDRedisAddr = v
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS_PASS"); v != "" {
+		cfg.QuoteIDRedisPassword = v
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS_DB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.QuoteIDRedisDB = n
+		}
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS_PREFIX"); v != "" {
+		cfg.QuoteIDRedisPrefix = v
+	}
+
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
 	fs.StringVar(&cfg.GRPCAddr, "grpc", cfg.GRPCAddr, "gRPC PriceService listen 주소 (비어있으면 비활성)")
@@ -319,6 +373,21 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdTLSKeyFile, "etcd-tls-key", cfg.EtcdTLSKeyFile, "etcd 클라이언트 key PEM (mTLS)")
 	fs.StringVar(&cfg.EtcdTLSCAFile, "etcd-tls-ca", cfg.EtcdTLSCAFile, "etcd 서버 검증용 CA bundle")
 	fs.StringVar(&cfg.EtcdTLSServerName, "etcd-tls-sni", cfg.EtcdTLSServerName, "etcd TLS SNI / hostname")
+
+	// ── QuoteID (pkg/quoteid) ─────────────────────────────────────────────
+	fs.StringVar(&cfg.QuoteIDInstance, "quoteid-instance", cfg.QuoteIDInstance,
+		"QuoteID Generator 인스턴스 prefix (예: A / B). 빈값이면 quoteid 비활성")
+	fs.DurationVar(&cfg.QuoteIDValidity, "quoteid-validity", cfg.QuoteIDValidity,
+		"QuoteID ValidUntil 윈도우")
+	fs.DurationVar(&cfg.QuoteIDGrace, "quoteid-grace", cfg.QuoteIDGrace,
+		"Registry GC 유예 (ValidUntil 이후 추가 보존 시간)")
+	fs.DurationVar(&cfg.QuoteIDRegistryTimeout, "quoteid-reg-timeout", cfg.QuoteIDRegistryTimeout,
+		"Registry.Put 단위 timeout")
+	fs.StringVar(&cfg.QuoteIDRedisAddr, "quoteid-redis", cfg.QuoteIDRedisAddr,
+		"Redis 주소 (host:port). 비면 MemoryRegistry (dev / 단일 인스턴스)")
+	fs.StringVar(&cfg.QuoteIDRedisPassword, "quoteid-redis-pass", cfg.QuoteIDRedisPassword, "Redis 비밀번호")
+	fs.IntVar(&cfg.QuoteIDRedisDB, "quoteid-redis-db", cfg.QuoteIDRedisDB, "Redis DB index")
+	fs.StringVar(&cfg.QuoteIDRedisPrefix, "quoteid-redis-prefix", cfg.QuoteIDRedisPrefix, "Redis 키 prefix")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

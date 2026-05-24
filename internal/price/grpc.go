@@ -41,6 +41,15 @@ type GRPCServer struct {
 	barSubscribers map[uint64]*barSubscriber
 
 	nextSubID atomic.Uint64
+
+	// 선택적 QuoteValidationService — nil 이면 Serve 가 register 안 함.
+	// 같은 gRPC 서버 / 같은 listen 포트에 합쳐서 노출 (RFC §3 결정).
+	validator *QuoteValidationServer
+}
+
+// AttachValidator — Serve 호출 전에 옵션 등록.
+func (g *GRPCServer) AttachValidator(v *QuoteValidationServer) {
+	g.validator = v
 }
 
 // subscriber 는 단일 stream 의 상태.
@@ -424,6 +433,10 @@ func (g *GRPCServer) Serve(ctx context.Context, addr string, opts ...grpc.Server
 	}
 	srv := grpc.NewServer(opts...)
 	wtgpb.RegisterPriceServiceServer(srv, g)
+	if g.validator != nil {
+		wtgpb.RegisterQuoteValidationServiceServer(srv, g.validator)
+		g.logger.Info("QuoteValidationService 등록")
+	}
 
 	g.logger.Info("PriceService gRPC listen 시작", slog.String("addr", addr))
 

@@ -37,11 +37,13 @@ import (
 	"syscall"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/internal/price"
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
+	"github.com/winwaysystems/wtg/pkg/quoteid"
 	"github.com/winwaysystems/wtg/pkg/session"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
@@ -165,6 +167,15 @@ func main() {
 		srv.AttachGRPC(grpcSrv)
 	}
 
+	// QuoteID stack (pkg/quoteid) — Generator + Registry. cfg.QuoteIDInstance
+	// 가 비어 있으면 비활성 (양쪽 nil 반환 → PricingConsumer 가 fallback).
+	quoteIDGen, quoteIDReg, quoteIDCloser := wireQuoteID(cfg, logger)
+	defer quoteIDCloser()
+	if quoteIDReg != nil && grpcSrv != nil {
+		grpcSrv.AttachValidator(price.NewQuoteValidationServer(quoteIDReg, logger))
+		logger.Info("QuoteValidationService 등록 — 매칭 엔진이 같은 gRPC 포트로 호출")
+	}
+
 	// 4) Archiver + Aggregator wiring (옵션 — ChartDSN 있을 때만).
 	var (
 		pool     *pgxpool.Pool
@@ -237,7 +248,7 @@ func main() {
 	var pc *price.PricingConsumer
 	switch {
 	case etcdCli != nil:
-		pcInst, tblW, profSrc, err := wirePricingConsumerEtcd(ctx, cfg, symbols, srv, grpcSrv, etcdCli, logger)
+		pcInst, tblW, profSrc, err := wirePricingConsumerEtcd(ctx, cfg, symbols, srv, grpcSrv, etcdCli, quoteIDGen, quoteIDReg, logger)
 		if err != nil {
 			logger.Error("PricingConsumer (etcd) 구성 실패", slog.Any("error", err))
 			os.Exit(1)
@@ -247,7 +258,7 @@ func main() {
 		etcdProfileSrc = profSrc
 		srv.AddConsumer(price.TickConsumerFunc(pc.OnTick))
 	case cfg.PricingFile != "" && cfg.ProfilesFile != "":
-		pcInst, err := wirePricingConsumer(cfg, symbols, srv, grpcSrv, logger)
+		pcInst, err := wirePricingConsumer(cfg, symbols, srv, grpcSrv, quoteIDGen, quoteIDReg, logger)
 		if err != nil {
 			logger.Error("PricingConsumer 구성 실패", slog.Any("error", err))
 			os.Exit(1)
@@ -302,6 +313,8 @@ func wirePricingConsumerEtcd(
 	srv *price.Server,
 	grpcSrv *price.GRPCServer,
 	cli *clientv3.Client,
+	quoteIDGen *quoteid.Generator,
+	quoteIDReg quoteid.Registry,
 	logger *slog.Logger,
 ) (*price.PricingConsumer, *pricing.EtcdTableWatcher, *price.EtcdProfileSource, error) {
 	// PricingTable etcd watcher.
@@ -332,12 +345,16 @@ func wirePricingConsumerEtcd(
 		publishers = append(publishers, grpcSrv)
 	}
 	pc := price.NewPricingConsumer(price.PricingConsumerOptions{
-		Store:     store,
-		Symbols:   symbols,
-		Decoder:   price.JSONCookerDecoder(),
-		Publisher: price.NewMultiQuotePublisher(publishers...),
-		Profiles:  profSrc,
-		Logger:    logger,
+		Store:                  store,
+		Symbols:                symbols,
+		Decoder:                price.JSONCookerDecoder(),
+		Publisher:              price.NewMultiQuotePublisher(publishers...),
+		Profiles:               profSrc,
+		Logger:                 logger,
+		QuoteIDGen:             quoteIDGen,
+		QuoteIDRegistry:        quoteIDReg,
+		QuoteValidity:          cfg.QuoteIDValidity,
+		QuoteRegistryTimeout:   cfg.QuoteIDRegistryTimeout,
 	})
 	logger.Info("PricingConsumer (etcd watch) 활성",
 		slog.String("table_key", cfg.EtcdPrefix+"pricing/table"),
@@ -349,7 +366,7 @@ func wirePricingConsumerEtcd(
 
 // wirePricingConsumer 는 PricingFile/ProfilesFile 을 읽어 PricingConsumer 를 구성.
 // Publisher 는 broker + (있으면) gRPC 둘 다로 fan-out.
-func wirePricingConsumer(cfg price.Config, symbols *quote.SymbolMap, srv *price.Server, grpcSrv *price.GRPCServer, logger *slog.Logger) (*price.PricingConsumer, error) {
+func wirePricingConsumer(cfg price.Config, symbols *quote.SymbolMap, srv *price.Server, grpcSrv *price.GRPCServer, quoteIDGen *quoteid.Generator, quoteIDReg quoteid.Registry, logger *slog.Logger) (*price.PricingConsumer, error) {
 	// PricingTable 로드.
 	tblBody, err := readFile(cfg.PricingFile)
 	if err != nil {
@@ -375,12 +392,16 @@ func wirePricingConsumer(cfg price.Config, symbols *quote.SymbolMap, srv *price.
 	}
 
 	pc := price.NewPricingConsumer(price.PricingConsumerOptions{
-		Store:     store,
-		Symbols:   symbols,
-		Decoder:   price.JSONCookerDecoder(),
-		Publisher: price.NewMultiQuotePublisher(publishers...),
-		Profiles:  &price.StaticProfileSource{Profiles: profiles},
-		Logger:    logger,
+		Store:                  store,
+		Symbols:                symbols,
+		Decoder:                price.JSONCookerDecoder(),
+		Publisher:              price.NewMultiQuotePublisher(publishers...),
+		Profiles:               &price.StaticProfileSource{Profiles: profiles},
+		Logger:                 logger,
+		QuoteIDGen:             quoteIDGen,
+		QuoteIDRegistry:        quoteIDReg,
+		QuoteValidity:          cfg.QuoteIDValidity,
+		QuoteRegistryTimeout:   cfg.QuoteIDRegistryTimeout,
 	})
 	logger.Info("PricingConsumer 활성",
 		slog.String("pricing", cfg.PricingFile),
@@ -433,6 +454,45 @@ func loadSymbolEntries(path string) ([]quote.SymbolEntry, error) {
 		return nil, fmt.Errorf("JSON parse: %w", err)
 	}
 	return out, nil
+}
+
+// wireQuoteID — pkg/quoteid 의 Generator + Registry 를 cfg 에서 구성.
+//
+//	cfg.QuoteIDInstance == ""  → quoteid 비활성 (nil, nil, no-op closer).
+//	cfg.QuoteIDRedisAddr == "" → MemoryRegistry (dev / 단일 인스턴스).
+//	cfg.QuoteIDRedisAddr != "" → RedisRegistry (운영 active-active 공유).
+//
+// closer 는 Redis 클라이언트 lifecycle 정리 — Redis 미사용이면 no-op.
+func wireQuoteID(cfg price.Config, logger *slog.Logger) (*quoteid.Generator, quoteid.Registry, func()) {
+	if cfg.QuoteIDInstance == "" {
+		return nil, nil, func() {}
+	}
+	gen := quoteid.NewGenerator(cfg.QuoteIDInstance)
+
+	if cfg.QuoteIDRedisAddr == "" {
+		reg := quoteid.NewMemoryRegistry(cfg.QuoteIDGrace)
+		logger.Info("QuoteID 활성 (MemoryRegistry)",
+			slog.String("instance", cfg.QuoteIDInstance),
+			slog.Duration("validity", cfg.QuoteIDValidity),
+			slog.Duration("grace", cfg.QuoteIDGrace))
+		return gen, reg, func() {}
+	}
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     cfg.QuoteIDRedisAddr,
+		Password: cfg.QuoteIDRedisPassword,
+		DB:       cfg.QuoteIDRedisDB,
+	})
+	reg := quoteid.NewRedisRegistry(rdb, quoteid.RedisRegistryOptions{
+		Prefix: cfg.QuoteIDRedisPrefix,
+		Grace:  cfg.QuoteIDGrace,
+	})
+	logger.Info("QuoteID 활성 (RedisRegistry)",
+		slog.String("instance", cfg.QuoteIDInstance),
+		slog.String("redis", cfg.QuoteIDRedisAddr),
+		slog.Duration("validity", cfg.QuoteIDValidity),
+		slog.Duration("grace", cfg.QuoteIDGrace))
+	return gen, reg, func() { _ = rdb.Close() }
 }
 
 func newLogger(level string) *slog.Logger {

@@ -37,7 +37,8 @@ mci-price \
   --quoteid-grace=1s \                                # validity 후 추가 보존
   --quoteid-reg-timeout=200ms \                       # Put p99 budget
   \
-  --quoteid-redis=10.0.0.10:6379 \                    # Sentinel 주소 (또는 cluster seed)
+  --quoteid-redis=10.0.0.10:26379,10.0.0.11:26379,10.0.0.12:26379 \  # Sentinel addr 콤마구분 (v1.2+)
+  --quoteid-redis-master=wtg-quoteid-master \         # Sentinel master 이름
   --quoteid-redis-pass=$REDIS_PASSWORD \
   --quoteid-redis-prefix=wtg:quoteid \
   --quoteid-redis-db=0 \
@@ -60,8 +61,13 @@ sentinel failover-timeout wtg-quoteid-master 10000
 sentinel parallel-syncs wtg-quoteid-master 1
 ```
 
-`--quoteid-redis` 에 Sentinel 주소 콤마 구분 — 단일 addr 만 지원하는 현 wire
-한계, **TODO: FailoverClient 추가 옵션 (v1.1)**.
+`--quoteid-redis` 에 Sentinel 주소 콤마 구분 — v1.2 부터 자동으로
+`redis.NewFailoverClient` 분기. master 이름은 `--quoteid-redis-master`
+(default `wtg-quoteid-master`). master failover 시 client 가 자동
+재연결, application 단 추가 처리 불필요.
+
+단일 addr 만 주면 v1.0 처럼 직접 연결 — Sentinel 없는 dev / 1-node 운영
+시나리오 호환.
 
 ### 옵션 2 — Cluster (대규모 / 멀티 DC)
 
@@ -229,9 +235,32 @@ case EXPIRED:          // last-look 도중 만료 — OrdRejReason=13
   공통이지만 hash tag 안 씀. v2 에서 `{quote_id}:q` / `{quote_id}:c` 로
   바꿔야 cluster 안전. (v1 은 Sentinel 권장.)
 
+## v1.2 — Sentinel FailoverClient (commit 추가)
+
+`--quoteid-redis` 가 단일 addr 이면 직접 연결, 콤마 구분 다중 addr 면
+자동으로 `redis.NewFailoverClient` (Sentinel) 사용. master 이름은
+`--quoteid-redis-master` (default `wtg-quoteid-master`).
+
+### Sentinel failover 동작
+
+- master node down → Sentinel quorum 이 5초 이내 (down-after-milliseconds)
+  새 master promotion.
+- redis-go client 가 Sentinel pub/sub 으로 master change 수신 → 자동 재연결.
+- 이 과정 중 (10s 이내) Put / SetNX 가 timeout. PricingConsumer 의
+  `quote_register_errors` 가 증가하지만 publish 자체는 best-effort 계속.
+- 이 시간대 발행 quote 는 Registry 누락 → 검증 시 NOT_FOUND → 신규 주문
+  자연 거절 (fail-safe).
+
+### canary 시나리오 (운영팀 체크리스트)
+
+1. 단일 mci-price 인스턴스에 새 `--quoteid-redis=sentinel1,sentinel2,sentinel3`
+   + `--quoteid-redis-master=...` 적용 → 로그에 `redis_mode=sentinel` 확인.
+2. Sentinel master 강제 failover (`SENTINEL FAILOVER <master>`) → mci-price
+   가 자동 재연결, 로그에 reconnect 메시지.
+3. failover 동안 발행 quote 의 Put 실패율 < 1% 확인.
+
 ## v2 후보
 
-- FailoverClient — `--quoteid-redis` 콤마 구분 sentinel 주소 지원.
 - BatchValidate — 대량 주문 검증 효율.
 - HTTP 게이트웨이 — 비-Go FIX gateway 호환.
 - Redis Cluster 호환 hash tag (`{quote_id}:q` / `{quote_id}:c`).

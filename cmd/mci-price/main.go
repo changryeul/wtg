@@ -478,21 +478,51 @@ func wireQuoteID(cfg price.Config, logger *slog.Logger) (*quoteid.Generator, quo
 		return gen, reg, func() {}
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.QuoteIDRedisAddr,
-		Password: cfg.QuoteIDRedisPassword,
-		DB:       cfg.QuoteIDRedisDB,
-	})
+	addrs := splitTrim(cfg.QuoteIDRedisAddr, ",")
+	var rdb redis.UniversalClient
+	mode := "direct"
+	if len(addrs) > 1 {
+		// 다중 addr → Sentinel FailoverClient. master 자동 discover, master
+		// failover 시 client 가 자동 재연결 (HA 토폴로지의 핵심).
+		rdb = redis.NewFailoverClient(&redis.FailoverOptions{
+			MasterName:    cfg.QuoteIDRedisMaster,
+			SentinelAddrs: addrs,
+			Password:      cfg.QuoteIDRedisPassword,
+			DB:            cfg.QuoteIDRedisDB,
+		})
+		mode = "sentinel"
+	} else {
+		rdb = redis.NewClient(&redis.Options{
+			Addr:     addrs[0],
+			Password: cfg.QuoteIDRedisPassword,
+			DB:       cfg.QuoteIDRedisDB,
+		})
+	}
 	reg := quoteid.NewRedisRegistry(rdb, quoteid.RedisRegistryOptions{
 		Prefix: cfg.QuoteIDRedisPrefix,
 		Grace:  cfg.QuoteIDGrace,
 	})
 	logger.Info("QuoteID 활성 (RedisRegistry)",
 		slog.String("instance", cfg.QuoteIDInstance),
-		slog.String("redis", cfg.QuoteIDRedisAddr),
+		slog.String("redis_mode", mode),
+		slog.Any("redis_addrs", addrs),
+		slog.String("redis_master", cfg.QuoteIDRedisMaster),
 		slog.Duration("validity", cfg.QuoteIDValidity),
 		slog.Duration("grace", cfg.QuoteIDGrace))
 	return gen, reg, func() { _ = rdb.Close() }
+}
+
+// splitTrim — sep 으로 split + 각 토큰 trim, 빈 토큰 제외.
+func splitTrim(s, sep string) []string {
+	raw := strings.Split(s, sep)
+	out := make([]string, 0, len(raw))
+	for _, t := range raw {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func newLogger(level string) *slog.Logger {

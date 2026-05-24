@@ -145,13 +145,15 @@ type Config struct {
 	QuoteIDGrace           time.Duration // default 1s — Registry GC 유예
 	QuoteIDRegistryTimeout time.Duration // default 200ms — Put 단위 timeout
 
-	// Redis Registry — 비어 있으면 MemoryRegistry 사용 (dev / 단일 인스턴스).
-	// 운영 active-active 에서는 Sentinel/Cluster 권장. addr 콤마 구분으로
-	// FailoverClient 구성 가능 (호출자 split — wire 단계는 단일 addr 만 지원).
+	// Redis Registry — 비어 있으면 MemoryRegistry (dev / 단일 인스턴스).
+	// 단일 addr (host:port) → 직접 연결.
+	// 콤마 구분 addr 목록 → Sentinel FailoverClient — QuoteIDRedisMaster 필요.
 	QuoteIDRedisAddr     string
 	QuoteIDRedisPassword string
 	QuoteIDRedisDB       int
 	QuoteIDRedisPrefix   string // default "wtg:quoteid"
+	// QuoteIDRedisMaster — Sentinel 사용 시 master 이름. 단일 addr 모드면 무시.
+	QuoteIDRedisMaster string // default "wtg-quoteid-master"
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -201,6 +203,7 @@ func DefaultConfig() Config {
 		QuoteIDRegistryTimeout: 200 * time.Millisecond,
 		QuoteIDRedisAddr:       "",
 		QuoteIDRedisPrefix:     "wtg:quoteid",
+		QuoteIDRedisMaster:     "wtg-quoteid-master",
 	}
 }
 
@@ -334,6 +337,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS_PREFIX"); v != "" {
 		cfg.QuoteIDRedisPrefix = v
 	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS_MASTER"); v != "" {
+		cfg.QuoteIDRedisMaster = v
+	}
 
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
@@ -384,10 +390,12 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.QuoteIDRegistryTimeout, "quoteid-reg-timeout", cfg.QuoteIDRegistryTimeout,
 		"Registry.Put 단위 timeout")
 	fs.StringVar(&cfg.QuoteIDRedisAddr, "quoteid-redis", cfg.QuoteIDRedisAddr,
-		"Redis 주소 (host:port). 비면 MemoryRegistry (dev / 단일 인스턴스)")
+		"Redis 주소. 단일 host:port → 직접 연결. 콤마 구분 다중 → Sentinel FailoverClient. 비면 MemoryRegistry")
 	fs.StringVar(&cfg.QuoteIDRedisPassword, "quoteid-redis-pass", cfg.QuoteIDRedisPassword, "Redis 비밀번호")
 	fs.IntVar(&cfg.QuoteIDRedisDB, "quoteid-redis-db", cfg.QuoteIDRedisDB, "Redis DB index")
 	fs.StringVar(&cfg.QuoteIDRedisPrefix, "quoteid-redis-prefix", cfg.QuoteIDRedisPrefix, "Redis 키 prefix")
+	fs.StringVar(&cfg.QuoteIDRedisMaster, "quoteid-redis-master", cfg.QuoteIDRedisMaster,
+		"Sentinel master 이름 (다중 addr 일 때만 사용)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

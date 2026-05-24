@@ -58,6 +58,12 @@ type Server struct {
 	grpcSrv    *GRPCServer // 외부 주입 가능 (AttachGRPC); nil 이면 Start 가 자동 생성.
 	metrics    *metrics.Registry
 
+	// quoteValidator — HTTP gateway (POST /v1/quoteid/*) 로 외부 노출하기 위한
+	// 옵션 attach. 동일 인스턴스를 gRPC (GRPCServer.AttachValidator) 와
+	// HTTP (이 필드) 양쪽에 attach 가능 — 두 transport 가 같은 카운터 / 같은
+	// Registry 를 공유.
+	quoteValidator *QuoteValidationServer
+
 	totalRecv  atomic.Uint64
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
 	totalDrop  atomic.Uint64 // 디코딩 실패 등
@@ -98,6 +104,12 @@ func (s *Server) AttachGRPC(g *GRPCServer) {
 	}
 	s.grpcSrv = g
 	s.AddConsumer(g)
+}
+
+// AttachQuoteValidator — QuoteValidationServer 를 HTTP gateway 로도 노출.
+// nil 이면 무시. Start 전에 호출.
+func (s *Server) AttachQuoteValidator(v *QuoteValidationServer) {
+	s.quoteValidator = v
 }
 
 // GRPCServer 는 현재 attached 된 GRPCServer 를 반환 (Start 이후 자동생성 포함).
@@ -313,6 +325,13 @@ func (s *Server) startHTTP(ctx context.Context) error {
 		writeJSON(w, http.StatusOK, s.Stats())
 	})
 	mux.Handle("GET /metrics", s.metrics.Handler())
+
+	// QuoteID HTTP gateway — gRPC 와 동일한 핸들러, JSON wire.
+	if s.quoteValidator != nil {
+		RegisterQuoteValidationHTTP(mux, s.quoteValidator, s.logger)
+		s.logger.Info("QuoteValidation HTTP gateway 등록",
+			slog.String("base", "/v1/quoteid/"))
+	}
 
 	s.http = &http.Server{
 		Addr:         s.cfg.ListenAddr,

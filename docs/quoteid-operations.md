@@ -295,8 +295,58 @@ for i, r := range batchResp.Results {
 | `quote_validation.batch_total` | BatchValidate RPC 누적 |
 | `quote_validation.batch_items` | 처리된 quote_id 총합 (=총 RPC × 평균 batch 크기) |
 
+## v1.4 — HTTP gateway (commit 추가)
+
+mci-price 의 기존 HTTP 서버 (`--listen`) 에 자동으로 마운트 — 별도 binary
+없음. gRPC 와 동일 핸들러 / 동일 카운터 / 동일 Registry 인스턴스. wire 만
+JSON.
+
+### 라우트
+
+| 메서드 | 경로 | 의미 |
+|--------|------|------|
+| POST | `/v1/quoteid/validate` | 단건 검증 |
+| POST | `/v1/quoteid/batch-validate` | 다건 병렬 검증 (≤1000) |
+| POST | `/v1/quoteid/mark-consumed` | atomic 사용 표시 |
+| GET | `/v1/quoteid/stats` | 누적 카운터 |
+
+### wire 포맷
+
+protojson — proto 정의된 필드명의 camelCase. 예시:
+
+```bash
+curl -X POST http://localhost:8082/v1/quoteid/validate \
+  -H 'Content-Type: application/json' \
+  -d '{"quoteId":"A-mq4b3z-1f","engineId":"matching-engine-A"}'
+# {"status":"OK","record":{"quoteId":"A-mq4b3z-1f","pair":"USD/KRW",
+#   "channel":"WEB","site":"BRANCH","tier":"VIP","bid":1400.1,"ask":1400.15,...}}
+
+curl -X POST http://localhost:8082/v1/quoteid/mark-consumed \
+  -H 'Content-Type: application/json' \
+  -d '{"quoteId":"A-mq4b3z-1f","consumerId":"order-12345"}'
+# {"status":"OK","record":{...}}
+
+curl http://localhost:8082/v1/quoteid/stats
+# {"total":1234,"ok":1100,"not_found":50,...}
+```
+
+### 사용 시나리오
+
+- **비-Go FIX gateway** — Quickfix-CPP / OnixS C++ / Java 엔진이 별도
+  gRPC stub 생성 없이 직접 호출.
+- **운영 도구** — curl / Postman / Insomnia 로 debug.
+- **사후 감사** — bash script 로 N개 QuoteID 검증 후 csv 출력.
+
+### 보안 / 운영
+
+HTTP gateway 는 `--listen` 의 권한 모델을 그대로 따름 — 현재 plain HTTP.
+운영에서 외부 노출 시 nginx / haproxy 등 reverse proxy + mTLS 권장. v2 에서
+`--quoteid-http-cert/-key` 등 native TLS 옵션 검토.
+
+본문 크기 상한 256KB — BatchValidate 1000건 ≈ 30KB 의 여유.
+
 ## v2 후보
 
-- HTTP 게이트웨이 — 비-Go FIX gateway 호환.
 - Redis Cluster 호환 hash tag (`{quote_id}:q` / `{quote_id}:c`).
 - BatchMarkConsumed — 다건 atomic 표시 (Lua script + EVALSHA).
+- HTTP native TLS — gateway 자체 인증서 (현재는 reverse proxy 의존).

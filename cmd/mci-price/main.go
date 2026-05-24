@@ -171,9 +171,14 @@ func main() {
 	// 가 비어 있으면 비활성 (양쪽 nil 반환 → PricingConsumer 가 fallback).
 	quoteIDGen, quoteIDReg, quoteIDCloser := wireQuoteID(cfg, logger)
 	defer quoteIDCloser()
-	if quoteIDReg != nil && grpcSrv != nil {
-		grpcSrv.AttachValidator(price.NewQuoteValidationServer(quoteIDReg, logger))
-		logger.Info("QuoteValidationService 등록 — 매칭 엔진이 같은 gRPC 포트로 호출")
+	if quoteIDReg != nil {
+		validator := price.NewQuoteValidationServer(quoteIDReg, logger)
+		if grpcSrv != nil {
+			grpcSrv.AttachValidator(validator)
+			logger.Info("QuoteValidationService 등록 (gRPC) — 매칭 엔진이 같은 gRPC 포트로 호출")
+		}
+		// HTTP gateway — 비-Go FIX gateway / 운영 도구 호환.
+		srv.AttachQuoteValidator(validator)
 	}
 
 	// 4) Archiver + Aggregator wiring (옵션 — ChartDSN 있을 때만).

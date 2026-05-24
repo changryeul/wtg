@@ -73,10 +73,21 @@ cat <<EOF
 ✓ TimescaleDB 준비 완료
    DSN: $DSN
 
-다음 단계:
-   make build
-   ./build/bin/mci-chart --listen :8086 --dsn '$DSN'
+다음 단계 (라이브 봉 stream 포함 전체 dev 스택):
+   go build -o build/bin/mci-chart    ./cmd/mci-chart
+   go build -o build/bin/dev-bar-faker ./cmd/dev-bar-faker
+
+   # 가짜 PriceService gRPC publisher — 2초 주기로 봉 emit
+   ./build/bin/dev-bar-faker --listen :50051 &
+
+   # mci-chart 가 faker 의 SubscribeBar 를 호출해 WS 로 fan-out
+   ./build/bin/mci-chart --listen :8086 \\
+     --dsn '$DSN' \\
+     --upstream localhost:50051
+
    open http://localhost:8086/
+
+historical 만 확인하려면 --upstream 빼고 실행해도 됨.
 
 종료 / 초기화:
    ./scripts/dev-down.sh

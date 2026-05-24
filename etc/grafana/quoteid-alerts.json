@@ -1,0 +1,228 @@
+{
+  "apiVersion": 1,
+  "_comment": "WTG QuoteValidationService alerting rules — Grafana Unified Alerting. operations.md §v1.13 의 alert 임계를 그룹 1개로 패키지. import: Grafana → Alerting → Alert rules → Import → 이 JSON 선택. 또는 provisioning: /etc/grafana/provisioning/alerting/quoteid-alerts.json 으로 mount.",
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "wtg-quoteid",
+      "folder": "WTG",
+      "interval": "30s",
+      "rules": [
+        {
+          "uid": "wtg-quoteid-rbac-denied",
+          "title": "QuoteID RBAC denied",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "sum(rate(wtg_quoteid_op_total{status=\"denied\"}[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.01]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "1m",
+          "annotations": {
+            "summary": "QuoteID RBAC 거절률 비정상",
+            "description": "engine_id allowlist 거절이 5분 평균 0.01/s 초과. 정책 위반 또는 잘못된 engine 설정 의심.",
+            "runbook_url": "docs/quoteid-operations.md#v19-engine_id-metadata"
+          },
+          "labels": {"severity": "page", "service": "mci-price", "domain": "quoteid"}
+        },
+
+        {
+          "uid": "wtg-quoteid-consume-already",
+          "title": "QuoteID ALREADY_CONSUMED ratio (replay 의심)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "sum(rate(wtg_quoteid_op_total{status=\"consume_already\"}[5m])) / clamp_min(sum(rate(wtg_quoteid_op_total{status=~\"consume_.*\"}[5m])), 1)",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.001]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "MarkConsumed 충돌률 0.1% 초과",
+            "description": "ALREADY_CONSUMED 가 전체 consume 호출의 0.1% 이상. 클라이언트 중복 주문 / 봇 / replay 공격 의심.",
+            "runbook_url": "docs/quoteid-operations.md#v15--markconsumed"
+          },
+          "labels": {"severity": "warn", "service": "mci-price", "domain": "quoteid"}
+        },
+
+        {
+          "uid": "wtg-quoteid-batch-latency",
+          "title": "QuoteID BatchValidate p99 latency SLO",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "histogram_quantile(0.99, sum by (le) (rate(wtg_quoteid_batch_duration_seconds_bucket{op=\"batch_validate\"}[5m])))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.05]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "BatchValidate p99 가 50ms SLO 초과",
+            "description": "5분 평균 BatchValidate p99 wallclock 이 50ms (batch 100건 기준 SLO) 를 초과. Redis 응답 / 네트워크 / mci-price CPU 점검.",
+            "runbook_url": "docs/quoteid-operations.md#v110--batchmarkconsumed-pipeline"
+          },
+          "labels": {"severity": "warn", "service": "mci-price", "domain": "quoteid"}
+        },
+
+        {
+          "uid": "wtg-quoteid-internal",
+          "title": "QuoteID internal error rate",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "sum(rate(wtg_quoteid_op_total{status=\"internal\"}[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.001]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "2m",
+          "annotations": {
+            "summary": "QuoteID internal error",
+            "description": "Registry / Redis 오류로 RPC internal error 발생. mci-price 로그 / Redis 상태 즉시 확인.",
+            "runbook_url": "docs/quoteid-operations.md#배포-토폴로지"
+          },
+          "labels": {"severity": "page", "service": "mci-price", "domain": "quoteid"}
+        },
+
+        {
+          "uid": "wtg-quoteid-register-errors",
+          "title": "QuoteID Registry.Put 실패율 (audit 누수)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "sum(rate(pricing_consumer_quote_register_errors[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.01]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "PricingConsumer.Registry.Put 실패율 비정상",
+            "description": "QuoteID 발행은 계속되지만 Registry 에 등록 실패 (publish 는 best-effort 계속, 검증 시 NOT_FOUND). Redis Sentinel failover 진행 중일 수 있음.",
+            "runbook_url": "docs/quoteid-operations.md#3-redis-master-down--sentinel-failover"
+          },
+          "labels": {"severity": "warn", "service": "mci-price", "domain": "quoteid"}
+        }
+      ]
+    }
+  ]
+}

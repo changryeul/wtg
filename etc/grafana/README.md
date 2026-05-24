@@ -43,11 +43,56 @@ curl -X POST http://grafana.local/api/dashboards/db \
 | Errors | RBAC denied / Internal | 보안 / 인프라 이상 |
 | Errors | Consume conflict (already / expired / not_found) | race / 클럭 skew |
 
-### Alert 후보 (Grafana Unified Alerting)
+### Alert rules — quoteid-alerts.json (v1.16 추가)
 
-operations.md §v1.13 의 Grafana 쿼리 예제 참조. 임계값:
+Grafana Unified Alerting 그룹 1개 (`wtg-quoteid`) + 5 rule 패키지:
 
-- `wtg_quoteid_op_total{status="denied"} rate > 0.01/s` — page (RBAC 위반)
-- `wtg_quoteid_op_total{status="consume_already"} ratio > 0.001` — warn
-- `histogram_quantile(0.99, batch_duration) > 0.05s` — warn (batch 100건 기준 SLO)
-- `wtg_quoteid_op_total{status="internal"} rate > 0.001/s` — page (인프라 이상)
+| UID | severity | 조건 | for |
+|-----|----------|------|-----|
+| wtg-quoteid-rbac-denied | **page** | denied rate > 0.01/s | 1m |
+| wtg-quoteid-consume-already | warn | already_consumed ratio > 0.1% | 5m |
+| wtg-quoteid-batch-latency | warn | BatchValidate p99 > 50ms | 5m |
+| wtg-quoteid-internal | **page** | internal rate > 0.001/s | 2m |
+| wtg-quoteid-register-errors | warn | Registry.Put 실패율 > 0.01/s | 5m |
+
+#### Import — UI
+
+Grafana → Alerting → Alert rules → Import → `quoteid-alerts.json` 선택 →
+folder "WTG" 자동 생성.
+
+#### Provisioning
+
+파일을 그대로 Grafana provisioning 디렉토리에 마운트:
+
+```yaml
+# docker-compose.yml 발췌
+services:
+  grafana:
+    image: grafana/grafana:10.4
+    volumes:
+      - ./etc/grafana/quoteid-alerts.json:/etc/grafana/provisioning/alerting/quoteid-alerts.json:ro
+```
+
+또는 kubectl ConfigMap → mount.
+
+#### 변수 치환
+
+`${DS_PROMETHEUS}` 는 Grafana 의 Prometheus data source UID. import 시
+대화상자에서 선택. provisioning 시 환경변수로 (`GF_DATASOURCE_PROMETHEUS_UID`)
+또는 import 후 UI 에서 수동 매핑.
+
+#### 알림 통합
+
+각 rule 의 `labels.severity` (`page` / `warn`) 에 따라 PagerDuty /
+Slack contact point 라우팅:
+
+```yaml
+# Grafana notification policy
+matchers:
+  - severity = page
+  receiver: pagerduty-oncall
+
+matchers:
+  - severity = warn
+  receiver: slack-trading-ops
+```

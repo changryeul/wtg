@@ -864,8 +864,28 @@ etcdctl put wtg/quoteid/engines/matching-B ""
 - **비상 차단**: `etcdctl del wtg/quoteid/engines/matching-A` — 즉시 모든
   RPC 차단.
 
+## v1.16 — Grafana Unified Alerting rules JSON (commit 추가)
+
+`etc/grafana/quoteid-alerts.json` — 5 alert rules 그룹 1개.
+
+| UID | severity | 조건 | for |
+|-----|----------|------|-----|
+| `wtg-quoteid-rbac-denied` | **page** | denied rate > 0.01/s | 1m |
+| `wtg-quoteid-consume-already` | warn | already_consumed ratio > 0.1% | 5m |
+| `wtg-quoteid-batch-latency` | warn | BatchValidate p99 > 50ms | 5m |
+| `wtg-quoteid-internal` | **page** | internal rate > 0.001/s | 2m |
+| `wtg-quoteid-register-errors` | warn | Registry.Put 실패율 > 0.01/s | 5m |
+
+각 rule 은 PromQL 표현식 → Grafana threshold expression → `labels.severity`
+(page / warn) 로 라우팅. PagerDuty / Slack contact point 매핑은
+`etc/grafana/README.md` 참조.
+
+Import 절차 (UI / provisioning) + 변수 치환 (`${DS_PROMETHEUS}`) 도 동일
+문서에 정리.
+
 ## v2 후보
 
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
-- Grafana Unified Alerting rules — operations.md 의 alert 임계를 JSON 으로.
 - mci-admin UI 의 engine_id 관리 페이지 — etcdctl 대신 GUI.
+- recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
+  대시보드 응답 속도 개선.

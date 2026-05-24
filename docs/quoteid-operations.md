@@ -788,9 +788,25 @@ sum(rate(wtg_quoteid_op_total{op=~"mark_consumed|batch_mark_consumed"}[5m]))
 `QuoteValidationServer.SetMetrics(nil)` 면 collector 호출 안 함 — 단위 테스트
 경로 무시.
 
+## v1.14 — Grafana dashboard JSON (commit 추가)
+
+`etc/grafana/quoteid-dashboard.json` — 17 패널 / 23 PromQL 쿼리. v1.13 의
+모든 메트릭을 한 화면에서. import 절차는 `etc/grafana/README.md` 참조.
+
+구성:
+* Overview row — 전체 RPS / OK rate / RBAC denied (alert) /
+  ALREADY_CONSUMED ratio (yellow 0.1% red 1%).
+* Latency row — 4 RPC × p50/p95/p99.
+* Throughput row — Validate / MarkConsumed 각각 status 별 RPS.
+* Batch row — 평균 batch size + 분포 heatmap.
+* Errors row — RBAC denied / Internal + Consume conflict 추이.
+
+Variable: `$service` (default mci-price, regex 다중 인스턴스 지원),
+`$rate_window` (1m/5m/15m/1h).
+
 ## v2 후보
 
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
 - engine_id 메타데이터 — etcd value 에 권한 (예: read-only vs read-write)
   / 만료시각 / contact 등을 JSON 으로 넣어 세밀 RBAC.
-- Grafana dashboard JSON — operations.md 의 쿼리 예제 → 즉시 import 가능.
+- Grafana Unified Alerting rules — operations.md 의 alert 임계를 JSON 으로.

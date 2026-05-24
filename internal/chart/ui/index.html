@@ -383,8 +383,15 @@ class ChartCell {
     this._syncingCross = false;
 
     this.root = this.buildDOM();
-    this.buildChart();
     this.wireControls();
+    // 차트 생성은 root 가 DOM 에 attach 된 뒤 init() 으로 — clientWidth 가 0 인
+    // detached element 위에 createChart 하면 lightweight-charts 가 0-width 캔버스로
+    // 그려서 봉이 안 보임.
+  }
+
+  init() {
+    this.buildChart();
+    this.refresh();
   }
 
   snapshotConfig() {
@@ -777,12 +784,12 @@ const layoutManager = {
       const cell = new ChartCell(i, cfg);
       this.cells.push(cell);
       container.appendChild(cell.root);
+      // attach 후 차트 생성 + 데이터 로드 — clientWidth 가 정상값.
+      cell.init();
     }
     this.activeCellIdx = 0;
     this._highlightActive();
-    // 모든 셀 데이터 로드.
-    for (const c of this.cells) c.refresh();
-    // resize 한 번.
+    // 레이아웃이 grid 로 resolve 된 뒤 한 번 더 width 동기화 (CSS calc 후).
     setTimeout(() => { for (const c of this.cells) c.resize(); }, 50);
     // layout 버튼 상태.
     $$(".layout-btn").forEach(b => b.dataset.active = (b.dataset.layout === layout) ? "true" : "false");

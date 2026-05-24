@@ -154,6 +154,12 @@ type Config struct {
 	QuoteIDRedisPrefix   string // default "wtg:quoteid"
 	// QuoteIDRedisMaster — Sentinel 사용 시 master 이름. 단일 addr 모드면 무시.
 	QuoteIDRedisMaster string // default "wtg-quoteid-master"
+
+	// QuoteIDRedisMode — 명시적 토폴로지 선택. 빈값 ("") 이면 자동:
+	//   addr 1개 → "direct" (단일 인스턴스)
+	//   addr 2+   → "sentinel" (FailoverClient)
+	// "cluster" 로 명시하면 ClusterClient 사용 (Redis Cluster 토폴로지).
+	QuoteIDRedisMode string
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -340,6 +346,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS_MASTER"); v != "" {
 		cfg.QuoteIDRedisMaster = v
 	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_REDIS_MODE"); v != "" {
+		cfg.QuoteIDRedisMode = v
+	}
 
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
@@ -395,7 +404,9 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.QuoteIDRedisDB, "quoteid-redis-db", cfg.QuoteIDRedisDB, "Redis DB index")
 	fs.StringVar(&cfg.QuoteIDRedisPrefix, "quoteid-redis-prefix", cfg.QuoteIDRedisPrefix, "Redis 키 prefix")
 	fs.StringVar(&cfg.QuoteIDRedisMaster, "quoteid-redis-master", cfg.QuoteIDRedisMaster,
-		"Sentinel master 이름 (다중 addr 일 때만 사용)")
+		"Sentinel master 이름 (다중 addr + sentinel 모드)")
+	fs.StringVar(&cfg.QuoteIDRedisMode, "quoteid-redis-mode", cfg.QuoteIDRedisMode,
+		"명시 토폴로지: direct / sentinel / cluster (빈값=auto: 1addr→direct, 2+→sentinel)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

@@ -55,13 +55,22 @@ func NewRedisRegistry(rdb redis.UniversalClient, opt RedisRegistryOptions) *Redi
 	}
 }
 
+// Redis 키 형식 — hash tag `{<id>}` 안에 QuoteID 를 담아 두 키가 cluster
+// 의 same slot 으로 라우팅되도록 한다. Standalone/Sentinel 에서는 hash tag
+// 가 의미 없지만 결과 같음 — 안전한 미래 호환.
+//
+//	<prefix>:{<id>}:q  — record JSON
+//	<prefix>:{<id>}:c  — consumer_id (MarkConsumed)
+//
+// 두 키가 same slot 이므로 향후 Lua script 로 multi-key atomic 가능.
+
 func (r *RedisRegistry) key(id QuoteID) string {
-	return r.prefix + ":q:" + string(id)
+	return r.prefix + ":{" + string(id) + "}:q"
 }
 
 // consumedKey — MarkConsumed 표시 키. SET NX 로 원자적 first-writer-wins.
 func (r *RedisRegistry) consumedKey(id QuoteID) string {
-	return r.prefix + ":c:" + string(id)
+	return r.prefix + ":{" + string(id) + "}:c"
 }
 
 func (r *RedisRegistry) Put(ctx context.Context, rec Record) error {

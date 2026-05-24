@@ -398,8 +398,58 @@ for i, r := range mc.Results {
 }
 ```
 
+## v1.6 — Redis Cluster hash tag (commit 추가)
+
+키 형식 변경:
+```
+이전 (v1.0–v1.5)    : <prefix>:q:<id>   / <prefix>:c:<id>
+v1.6+               : <prefix>:{<id>}:q / <prefix>:{<id>}:c
+```
+
+`{<id>}` hash tag 안에 QuoteID 가 들어가 Redis Cluster 의 slot 계산이
+QuoteID 만 기준으로 됨 → 두 키가 same slot. Lua script / pipelining 으로
+multi-key atomic 가능 (v2 후속).
+
+Standalone / Sentinel 에서는 slot 라우팅 자체가 없으므로 동작 변화 없음.
+
+### 마이그레이션
+
+QuoteID 의 lifetime 이 ~1.5초 (validity 500ms + grace 1s) — 배포 시점에
+새 발급 ID 는 새 키 형식, 옛 ID 는 TTL 로 자연 소멸. **별도 migration
+스크립트 불필요.**
+
+### Cluster 모드 추가
+
+`--quoteid-redis-mode` flag 신설 — `direct` / `sentinel` / `cluster` 명시.
+빈값이면 auto: addr 1개 → direct, 2+ → sentinel.
+
+```bash
+mci-price \
+  --quoteid-redis-mode=cluster \
+  --quoteid-redis=10.0.0.1:6379,10.0.0.2:6379,10.0.0.3:6379,... \
+  --quoteid-redis-pass=$PW \
+  --quoteid-instance=A
+```
+
+`redis.ClusterClient` 가 자동 MOVED 처리 + slot 재계산. master 노드 down
+시 ASK / cluster failover 절차에 따라 자동 복구.
+
+### Sentinel vs Cluster 선택 가이드
+
+| 항목 | Sentinel | Cluster |
+|------|----------|---------|
+| 토폴로지 | 1 master + N replica | 16384 slot 샤딩 |
+| HA | master failover (자동) | slot reassignment (자동) |
+| 처리량 | 단일 master 의 한계 | 노드 수에 따라 확장 |
+| 운영 복잡도 | 낮음 | 높음 |
+| 권장 규모 | < 50k QPS | 50k+ QPS |
+
+v1 트래픽 (~1-10k QPS) 에서는 Sentinel 권장. Cluster 는 멀티 DC / 대형
+은행 백본 통합 시.
+
 ## v2 후보
 
-- Redis Cluster 호환 hash tag (`{quote_id}:q` / `{quote_id}:c`).
+- Lua script 기반 진정한 multi-key atomic (cluster + hash tag 둘 다 있으니
+  GET q + SETNX c 를 단일 EVALSHA 로 묶을 수 있음 — round-trip 1로 압축).
 - HTTP native TLS — gateway 자체 인증서 (현재는 reverse proxy 의존).
-- Lua script 기반 진정한 multi-key atomic (cluster 의 same-slot 보장 시).
+- engine_id allowlist — mTLS CN 외 추가 RBAC.

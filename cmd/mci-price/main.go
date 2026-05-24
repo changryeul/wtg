@@ -485,18 +485,33 @@ func wireQuoteID(cfg price.Config, logger *slog.Logger) (*quoteid.Generator, quo
 
 	addrs := splitTrim(cfg.QuoteIDRedisAddr, ",")
 	var rdb redis.UniversalClient
-	mode := "direct"
-	if len(addrs) > 1 {
-		// 다중 addr → Sentinel FailoverClient. master 자동 discover, master
-		// failover 시 client 가 자동 재연결 (HA 토폴로지의 핵심).
+	// mode 결정 — 명시 우선, 없으면 addr 수로 auto.
+	mode := strings.ToLower(cfg.QuoteIDRedisMode)
+	if mode == "" {
+		if len(addrs) > 1 {
+			mode = "sentinel"
+		} else {
+			mode = "direct"
+		}
+	}
+	switch mode {
+	case "cluster":
+		// Redis Cluster — slot 분산. pkg/quoteid 의 키는 `{<id>}` hash tag 를
+		// 써서 q / c 두 키가 same slot 으로 보장된다. ClusterClient 가 자동
+		// MOVED 처리 + slot 재계산.
+		rdb = redis.NewClusterClient(&redis.ClusterOptions{
+			Addrs:    addrs,
+			Password: cfg.QuoteIDRedisPassword,
+		})
+	case "sentinel":
+		// Sentinel FailoverClient — master failover 자동.
 		rdb = redis.NewFailoverClient(&redis.FailoverOptions{
 			MasterName:    cfg.QuoteIDRedisMaster,
 			SentinelAddrs: addrs,
 			Password:      cfg.QuoteIDRedisPassword,
 			DB:            cfg.QuoteIDRedisDB,
 		})
-		mode = "sentinel"
-	} else {
+	default: // direct
 		rdb = redis.NewClient(&redis.Options{
 			Addr:     addrs[0],
 			Password: cfg.QuoteIDRedisPassword,

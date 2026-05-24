@@ -106,8 +106,8 @@ func TestRedisRegistry_AlreadyExpiredSkipsWrite(t *testing.T) {
 	if err := reg.Put(context.Background(), rec); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	// Redis 에 쓰지 않았으므로 키 없음.
-	if mr.Exists("test:qid:q:A-stale") {
+	// Redis 에 쓰지 않았으므로 키 없음. 키 형식: <prefix>:{<id>}:q
+	if mr.Exists("test:qid:{A-stale}:q") {
 		t.Error("이미 만료된 record 는 Redis 에 쓰면 안 됨")
 	}
 	if _, err := reg.Get(context.Background(), "A-stale"); !errors.Is(err, ErrNotFound) {
@@ -193,6 +193,31 @@ func TestRedisRegistry_Consumed(t *testing.T) {
 	}
 	if !ok || who != "order-X" {
 		t.Errorf("Consumed: who=%q ok=%v", who, ok)
+	}
+}
+
+// 키 형식 검증 — Redis Cluster 의 hash tag (`{...}`) 안에 QuoteID 가
+// 있어야 두 키 (q / c) 가 same slot 으로 라우팅됨.
+func TestRedisRegistry_HashTagKeyFormat(t *testing.T) {
+	reg, mr := newTestRedis(t)
+	ctx := context.Background()
+	now := time.Now()
+	rec := mkRec("A-mq-1f", now, time.Hour)
+	_ = reg.Put(ctx, rec)
+	_, _ = reg.MarkConsumed(ctx, "A-mq-1f", "order-X")
+
+	// 두 키가 모두 `{A-mq-1f}` hash tag 를 공유해야 함.
+	wantQ := "test:qid:{A-mq-1f}:q"
+	wantC := "test:qid:{A-mq-1f}:c"
+	if !mr.Exists(wantQ) {
+		t.Errorf("q 키 형식 미준수, 기대: %s", wantQ)
+	}
+	if !mr.Exists(wantC) {
+		t.Errorf("c 키 형식 미준수, 기대: %s", wantC)
+	}
+	// 기존 flat 형식이 남아있지 않아야 함 (cluster slot 분산 차단).
+	if mr.Exists("test:qid:q:A-mq-1f") || mr.Exists("test:qid:c:A-mq-1f") {
+		t.Error("flat 키 형식이 남아있음 — cluster 호환성 깨짐")
 	}
 }
 

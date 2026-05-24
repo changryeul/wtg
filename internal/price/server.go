@@ -341,16 +341,43 @@ func (s *Server) startHTTP(ctx context.Context) error {
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
 	}
 
-	s.logger.Info("HTTP listen 시작",
-		slog.String("addr", s.cfg.ListenAddr),
-		slog.String("broker", fmt.Sprintf("%s:%d", s.cfg.BrokerHost, s.cfg.BrokerPort)),
-		slog.String("queue", s.cfg.QueueName),
-		slog.String("exchange", s.cfg.ExchangeName),
-	)
+	// HTTP TLS — cert/key 가 채워지면 https. Reloader 가 SIGHUP / 파일 watch
+	// 로 핫리로드 — 운영 cert 회전 시 무중단.
+	useTLS := s.cfg.HTTPTLSCertFile != "" && s.cfg.HTTPTLSKeyFile != ""
+	if useTLS {
+		rl, err := tlsutil.NewReloader(tlsutil.ReloaderOptions{
+			CertFile:     s.cfg.HTTPTLSCertFile,
+			KeyFile:      s.cfg.HTTPTLSKeyFile,
+			ClientCAFile: s.cfg.HTTPTLSClientCAFile,
+			Logger:       s.logger,
+		})
+		if err != nil {
+			return fmt.Errorf("HTTP TLS reloader: %w", err)
+		}
+		s.http.TLSConfig = rl.ServerConfig()
+		s.logger.Info("HTTP TLS 활성화",
+			slog.String("addr", s.cfg.ListenAddr),
+			slog.Bool("mtls", s.cfg.HTTPTLSClientCAFile != ""),
+		)
+	} else {
+		s.logger.Info("HTTP listen 시작",
+			slog.String("addr", s.cfg.ListenAddr),
+			slog.String("broker", fmt.Sprintf("%s:%d", s.cfg.BrokerHost, s.cfg.BrokerPort)),
+			slog.String("queue", s.cfg.QueueName),
+			slog.String("exchange", s.cfg.ExchangeName),
+		)
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		err := s.http.ListenAndServe()
+		var err error
+		if useTLS {
+			// ListenAndServeTLS 는 cert/key 파일 인자가 빈 문자열이면 TLSConfig
+			// 의 GetCertificate 를 사용 — Reloader 가 그 hook 점.
+			err = s.http.ListenAndServeTLS("", "")
+		} else {
+			err = s.http.ListenAndServe()
+		}
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}

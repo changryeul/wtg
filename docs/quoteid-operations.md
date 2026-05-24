@@ -494,9 +494,52 @@ Redis 단일 스레드 → Lua 실행 중 다른 명령 인터리브 없음 → 
 `TestRedisRegistry_MarkConsumed_LuaConcurrent` — 32 goroutine 이 동시에
 같은 QuoteID 에 MarkConsumed → 정확히 1 OK + 31 AlreadyDone.
 
+## v1.8 — HTTP native TLS (commit 추가)
+
+mci-price 의 `--listen` 이 native TLS termination 가능. reverse proxy
+(nginx/haproxy) 없이 mTLS 까지 직접.
+
+### 옵션
+
+```bash
+mci-price \
+  --listen=:8443 \
+  --http-tls-cert=/etc/wtg/http.crt \      # 서버 cert PEM
+  --http-tls-key=/etc/wtg/http.key \       # 서버 key PEM
+  --http-tls-client-ca=/etc/wtg/engine-ca.crt  # mTLS — 클라이언트 CA bundle
+  # ... 나머지 기존 flag
+```
+
+ENV: `WTG_PRICE_HTTP_TLS_CERT`, `WTG_PRICE_HTTP_TLS_KEY`,
+`WTG_PRICE_HTTP_TLS_CLIENT_CA`.
+
+옵션 둘 다 비면 v1.7 까지와 동일하게 plain HTTP — back-compat.
+
+### Hot reload
+
+`pkg/tlsutil.Reloader` 가 cert 핫리로드 — Let's Encrypt / cert-manager 의
+자동 회전 호환. SIGHUP 또는 파일 mtime watch (Reloader 옵션 내장). 무중단.
+
+### gRPC TLS (`--grpc-tls-*`) 와 분리
+
+- `--grpc-tls-*` — gRPC 포트의 PriceService / QuoteValidationService.
+- `--http-tls-*` — HTTP 포트 (`--listen`) 의 stats / quoteid REST.
+
+두 포트가 다른 인증서 / 다른 client CA 를 가질 수 있음 — gRPC 는 엔진
+mTLS, HTTP 는 일반 운영 도구 (curl + bearer token 등).
+
+### Curl 예제
+
+```bash
+curl --cacert /etc/wtg/wtg-ca.crt \
+     --cert /etc/wtg/engine.crt --key /etc/wtg/engine.key \
+     -X POST https://price.internal:8443/v1/quoteid/validate \
+     -H 'Content-Type: application/json' \
+     -d '{"quoteId":"A-mq4b-1f"}'
+```
+
 ## v2 후보
 
-- HTTP native TLS — gateway 자체 인증서 (현재는 reverse proxy 의존).
-- engine_id allowlist — mTLS CN 외 추가 RBAC.
+- engine_id allowlist — mTLS CN 외 추가 RBAC (caller 신원 + 권한 분리).
 - BatchMarkConsumed 도 단일 Lua 로 묶기 — 현재는 N goroutine fan-out
   으로 N RTT, hash tag 활용 시 single Lua + N pair = 1 RTT.

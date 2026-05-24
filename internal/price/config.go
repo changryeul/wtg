@@ -67,6 +67,14 @@ type Config struct {
 	GRPCTLSKeyFile      string
 	GRPCTLSClientCAFile string
 
+	// HTTP TLS — /v1/quoteid/* 및 /v1/price-stats 등 HTTP 서버 (--listen) 의
+	// 직접 TLS termination. reverse proxy 없이 native TLS 가능.
+	// CertFile/KeyFile 이 채워지면 https, ClientCAFile 도 채워지면 mTLS.
+	// pkg/tlsutil.Reloader 가 cert 핫리로드 — SIGHUP 또는 파일 watch.
+	HTTPTLSCertFile     string
+	HTTPTLSKeyFile      string
+	HTTPTLSClientCAFile string
+
 	// Broker TLS — docs/broker-tls.md 참조.
 	BrokerTLSCertFile string
 	BrokerTLSKeyFile  string
@@ -259,6 +267,15 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_GRPC_TLS_KEY"); v != "" {
 		cfg.GRPCTLSKeyFile = v
 	}
+	if v := os.Getenv("WTG_PRICE_HTTP_TLS_CERT"); v != "" {
+		cfg.HTTPTLSCertFile = v
+	}
+	if v := os.Getenv("WTG_PRICE_HTTP_TLS_KEY"); v != "" {
+		cfg.HTTPTLSKeyFile = v
+	}
+	if v := os.Getenv("WTG_PRICE_HTTP_TLS_CLIENT_CA"); v != "" {
+		cfg.HTTPTLSClientCAFile = v
+	}
 	if v := os.Getenv("WTG_PRICE_GRPC_TLS_CLIENT_CA"); v != "" {
 		cfg.GRPCTLSClientCAFile = v
 	}
@@ -367,6 +384,9 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.GRPCTLSCertFile, "grpc-tls-cert", cfg.GRPCTLSCertFile, "gRPC TLS 서버 cert PEM")
 	fs.StringVar(&cfg.GRPCTLSKeyFile, "grpc-tls-key", cfg.GRPCTLSKeyFile, "gRPC TLS 서버 key PEM")
 	fs.StringVar(&cfg.GRPCTLSClientCAFile, "grpc-tls-client-ca", cfg.GRPCTLSClientCAFile, "gRPC mTLS 클라이언트 CA bundle")
+	fs.StringVar(&cfg.HTTPTLSCertFile, "http-tls-cert", cfg.HTTPTLSCertFile, "HTTP TLS 서버 cert PEM (비면 plain HTTP)")
+	fs.StringVar(&cfg.HTTPTLSKeyFile, "http-tls-key", cfg.HTTPTLSKeyFile, "HTTP TLS 서버 key PEM")
+	fs.StringVar(&cfg.HTTPTLSClientCAFile, "http-tls-client-ca", cfg.HTTPTLSClientCAFile, "HTTP mTLS 클라이언트 CA bundle")
 	fs.StringVar(&cfg.BrokerTLSCertFile, "broker-tls-cert", cfg.BrokerTLSCertFile, "broker TLS 클라이언트 cert PEM")
 	fs.StringVar(&cfg.BrokerTLSKeyFile, "broker-tls-key", cfg.BrokerTLSKeyFile, "broker TLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.BrokerTLSCAFile, "broker-tls-ca", cfg.BrokerTLSCAFile, "broker TLS 서버 검증용 CA bundle")

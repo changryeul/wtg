@@ -88,10 +88,10 @@ func (t Timeframe) Validate() error {
 //
 // docs/chart-schema.md 의 quote_bars 테이블과 컬럼이 1:1 대응.
 type Bar struct {
-	Pair      session.Pair
-	TF        Timeframe
-	OpenedAt  time.Time // 봉 시작 (포함). Timeframe.BucketStart 결과.
-	ClosedAt  time.Time // 봉 종료 (불포함). Close() 호출 시 OpenedAt+Duration.
+	Pair     session.Pair
+	TF       Timeframe
+	OpenedAt time.Time // 봉 시작 (포함). Timeframe.BucketStart 결과.
+	ClosedAt time.Time // 봉 종료 (불포함). Close() 호출 시 OpenedAt+Duration.
 
 	OpenBid  float64
 	OpenAsk  float64

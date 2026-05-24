@@ -15,10 +15,10 @@ import (
 // access 재발급 (rotation) 에 사용된다. 단일-사용 (one-time) 정책으로 발급될
 // 때마다 새 token 을 반환하고 이전 것은 무효화 — replay 방어.
 type RefreshToken struct {
-	Token     string    // 외부 노출용 불투명 식별자
-	SID       string    // 연관된 Session.ID (cookie_t 위치)
-	Usid      string    // 사용자 ID (감사용)
-	Channel   string    // "WEB" / "ADMIN"
+	Token     string // 외부 노출용 불투명 식별자
+	SID       string // 연관된 Session.ID (cookie_t 위치)
+	Usid      string // 사용자 ID (감사용)
+	Channel   string // "WEB" / "ADMIN"
 	IssuedAt  time.Time
 	ExpiresAt time.Time
 }

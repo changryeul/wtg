@@ -157,7 +157,7 @@ func TestPricingConsumer_DropUnknownSymbol(t *testing.T) {
 
 	t0 := time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC)
 	pc.OnTick(mkEnvTick("XAUUSD", 2000, 2001, t0)) // 미등록
-	pc.OnTick(mkEnvTick("JPYKRW", 9, 10, t0))       // inactive
+	pc.OnTick(mkEnvTick("JPYKRW", 9, 10, t0))      // inactive
 
 	if len(pub.snapshot()) != 0 {
 		t.Error("미등록/inactive 가 publish 됨")

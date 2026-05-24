@@ -26,9 +26,9 @@ import (
 // (deps.UserProfiles) 에서 usid 로 조회. 과거 호환을 위해 필드 자체는
 // 남기되 핸들러 내부에서 무시한다.
 type LoginRequest struct {
-	Exchange   string          `json:"exchange,omitempty"`
-	RoutingKey string          `json:"routing_key,omitempty"`
-	Channel    string          `json:"channel,omitempty"` // 세션 메타. 빈 값이면 "WEB".
+	Exchange   string `json:"exchange,omitempty"`
+	RoutingKey string `json:"routing_key,omitempty"`
+	Channel    string `json:"channel,omitempty"` // 세션 메타. 빈 값이면 "WEB".
 	// Deprecated: Site/Tier 는 서버가 UserProfileResolver 로 결정. 클라이언트 입력 무시.
 	Site string          `json:"site,omitempty"`
 	Tier string          `json:"tier,omitempty"`

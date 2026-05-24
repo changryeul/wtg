@@ -30,22 +30,22 @@ import (
 //  2. s.Start(ctx)            — broker 연결 + HTTP listen, 블로킹
 //  3. s.Shutdown(ctx)          — 그레이스풀 종료
 type Server struct {
-	cfg        Config
-	logger     *slog.Logger
-	mq         *mymq.Client
-	metrics    *metrics.Registry
-	sessions   auth.Store
-	refresh    auth.RefreshStore
-	jwtIss     *auth.Issuer
-	jwtVer     *auth.Verifier
+	cfg         Config
+	logger      *slog.Logger
+	mq          *mymq.Client
+	metrics     *metrics.Registry
+	sessions    auth.Store
+	refresh     auth.RefreshStore
+	jwtIss      *auth.Issuer
+	jwtVer      *auth.Verifier
 	routes      routing.Registry
 	policy      *policy.Engine
 	policySync  *policy.EtcdSync
 	tlsReloader *tlsutil.Reloader
 	http        *http.Server
 
-	upEtcdCli   *clientv3.Client            // user-profile etcd client (옵션)
-	upEtcdRes   *auth.EtcdUserProfileResolver
+	upEtcdCli *clientv3.Client // user-profile etcd client (옵션)
+	upEtcdRes *auth.EtcdUserProfileResolver
 }
 
 // SetPolicyEngine — mci-admin 과 공유 시 외부 주입.

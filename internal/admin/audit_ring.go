@@ -10,11 +10,11 @@ import (
 // 운영에서는 immutable 외부 sink (7년 보관) 가 single source of truth 이고,
 // 본 ring 은 UI 의 즉시 표시 + 로컬 디버깅용 sliding window.
 type AuditEntry struct {
-	Action    string         `json:"action"`              // PUT_ROUTE / DELETE_ROUTE / SET_ROUTE_ACTIVE / 등
-	Usid      string         `json:"usid,omitempty"`      // 액션 수행 admin
-	RID       string         `json:"rid,omitempty"`       // request id
-	At        time.Time      `json:"at"`                  // 발생 시각
-	Attrs     map[string]any `json:"attrs,omitempty"`     // 액션별 상세 (alias / active / 등)
+	Action string         `json:"action"`          // PUT_ROUTE / DELETE_ROUTE / SET_ROUTE_ACTIVE / 등
+	Usid   string         `json:"usid,omitempty"`  // 액션 수행 admin
+	RID    string         `json:"rid,omitempty"`   // request id
+	At     time.Time      `json:"at"`              // 발생 시각
+	Attrs  map[string]any `json:"attrs,omitempty"` // 액션별 상세 (alias / active / 등)
 }
 
 // AuditRing 은 in-memory 고정크기 ring buffer.

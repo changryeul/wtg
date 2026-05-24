@@ -519,12 +519,12 @@ func startMetricsServer(ctx context.Context, logger *slog.Logger, addr string,
 	})
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		stat := map[string]any{
-			"uptime_sec":       time.Since(startedAt).Seconds(),
-			"received_total":   totalReceived.Load(),
-			"published_total":  totalPubOK.Load(),
-			"publish_errors":   totalPubErr.Load(),
-			"feeds":            feeds,
-			"broker":           fmt.Sprintf("%s:%d", brokerHost, brokerPort),
+			"uptime_sec":      time.Since(startedAt).Seconds(),
+			"received_total":  totalReceived.Load(),
+			"published_total": totalPubOK.Load(),
+			"publish_errors":  totalPubErr.Load(),
+			"feeds":           feeds,
+			"broker":          fmt.Sprintf("%s:%d", brokerHost, brokerPort),
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(stat)

@@ -83,11 +83,11 @@ func TestHTTPPollHandles500(t *testing.T) {
 
 func TestSanitizePollURL(t *testing.T) {
 	cases := map[string]string{
-		"":                                "",
-		"http://x/":                       "http://x",
-		"http://x///":                     "http://x",
-		"  http://x/v1/admin/policy ":     "http://x/v1/admin/policy",
-		"http://x/v1/admin/policy":        "http://x/v1/admin/policy",
+		"":                            "",
+		"http://x/":                   "http://x",
+		"http://x///":                 "http://x",
+		"  http://x/v1/admin/policy ": "http://x/v1/admin/policy",
+		"http://x/v1/admin/policy":    "http://x/v1/admin/policy",
 	}
 	for in, want := range cases {
 		if got := SanitizePollURL(in); got != want {

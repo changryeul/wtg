@@ -71,18 +71,18 @@ type Config struct {
 // DefaultConfig 는 합리적인 디폴트.
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr:       ":8081",
-		GRPCAddr:         "",
-		GRPCBufSize:      1024,
-		BrokerHost:       "127.0.0.1",
-		BrokerPort:       11217,
-		ApplName:         "mci-push",
-		Instance:         0,
+		ListenAddr:  ":8081",
+		GRPCAddr:    "",
+		GRPCBufSize: 1024,
+		BrokerHost:  "127.0.0.1",
+		BrokerPort:  11217,
+		ApplName:    "mci-push",
+		Instance:    0,
 		// queue 이름이 비어있어야 broker 가 client 를 _CLIENT_ type 으로 등록한다
 		// (publish.c:185-189 가 _CLIENT_ 만 publish 후보로 인정 — _SERVER_ 면 후보
 		// 에서 빠져 user-targeted unsolicited 가 도달하지 못함). representative
 		// receiver 로서 모든 publish 를 받으려면 빈 값이 정답.
-		QueueName: "",
+		QueueName:        "",
 		DialTimeout:      5 * time.Second,
 		HandshakeTimeout: 5 * time.Second,
 		ReadTimeout:      60 * time.Second,

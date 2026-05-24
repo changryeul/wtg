@@ -41,13 +41,13 @@ import (
 // 1 로그인 = 1 ws 가정 (multi-tab 비지원). 새 ws 연결이 같은 세션으로 들어오면
 // 기존 ws 를 강제 종료하는 책임은 ws hub (mci-push) 에 있다.
 type Session struct {
-	ID         string         // 외부 노출용 불투명 식별자 (auth.md §6 의 sid)
-	Usid       string         // 사용자 ID (cookie.Usid 와 동일, 디버깅/감사용)
-	Channel    string         // 채널 코드 ("WEB" / "ADMIN" / "FIX" 등) - legacy 필드, 신규 코드는 Profile.Channel 사용
-	Cookie     *mymq.Cookie   // 매매 엔진에 첨부할 cookie_t
-	IssuedAt   time.Time      // 발급 시각
-	ExpiresAt  time.Time      // 만료 시각 (auth.md §6 refresh 만료, default 8h)
-	LastSeenAt time.Time      // 마지막 사용 시각 (슬라이딩 TTL 용)
+	ID         string       // 외부 노출용 불투명 식별자 (auth.md §6 의 sid)
+	Usid       string       // 사용자 ID (cookie.Usid 와 동일, 디버깅/감사용)
+	Channel    string       // 채널 코드 ("WEB" / "ADMIN" / "FIX" 등) - legacy 필드, 신규 코드는 Profile.Channel 사용
+	Cookie     *mymq.Cookie // 매매 엔진에 첨부할 cookie_t
+	IssuedAt   time.Time    // 발급 시각
+	ExpiresAt  time.Time    // 만료 시각 (auth.md §6 refresh 만료, default 8h)
+	LastSeenAt time.Time    // 마지막 사용 시각 (슬라이딩 TTL 용)
 
 	// 시세 fan-out 용. 로그인 시 확정되며 이후 immutable.
 	// TODO: Site/Tier 는 매매엔진 cookie_t 의 Coki 페이로드 스펙 합의 후 채움.

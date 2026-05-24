@@ -33,8 +33,8 @@ type Reloader struct {
 	cert      atomic.Pointer[tls.Certificate]
 	clientCAs atomic.Pointer[x509.CertPool]
 
-	mu       sync.Mutex // Reload 직렬화
-	lastMod  time.Time  // 파일 watcher 용
+	mu      sync.Mutex // Reload 직렬화
+	lastMod time.Time  // 파일 watcher 용
 
 	stopOnce sync.Once
 	stopC    chan struct{}
@@ -107,7 +107,7 @@ func (r *Reloader) Reload() error {
 // GetConfigForClient 로 클라이언트마다 최신 ClientCAs 를 반영 — CA 회전도 운영 중 가능.
 func (r *Reloader) ServerConfig() *tls.Config {
 	cfg := &tls.Config{
-		MinVersion:     r.minVersion,
+		MinVersion: r.minVersion,
 		GetCertificate: func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			c := r.cert.Load()
 			if c == nil {

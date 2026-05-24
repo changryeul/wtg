@@ -106,8 +106,8 @@ type TestWireDeps struct {
 
 // testWireRequest — POST body.
 type testWireRequest struct {
-	Channel    string                 `json:"channel"`             // "WEB"/"MOB"/"HTS"/"ADM"/"EMP" 또는 빈 값
-	Exchange   string                 `json:"exchange,omitempty"`  // 명시 시 spec.code 추론 우선. alias 미사용 직접 호출.
+	Channel    string                 `json:"channel"`            // "WEB"/"MOB"/"HTS"/"ADM"/"EMP" 또는 빈 값
+	Exchange   string                 `json:"exchange,omitempty"` // 명시 시 spec.code 추론 우선. alias 미사용 직접 호출.
 	RoutingKey string                 `json:"routing_key,omitempty"`
 	Header     map[string]interface{} `json:"header,omitempty"` // 공통 헤더 (COMHDR 등) 의 필드 → 값. spec.HeaderType 이 비어있으면 무시.
 	Input      map[string]interface{} `json:"input"`            // SvcSpec.Input 필드 → 값
@@ -430,9 +430,10 @@ func isEditablePath(p string) (bool, string) {
 }
 
 // splitSvcCode — code 에서 exchange/routing_key 추정.
-//   "ECHOSVC_PING" → ("ECHOSVC", "PING")  — underscore split (dev svc 컨벤션)
-//   "W1104S01"     → ("W1104",   "S01")    — 5+나머지 (legacy W svc 컨벤션)
-//   그 외          → (code,     "")        — 호출자가 명시 권장
+//
+//	"ECHOSVC_PING" → ("ECHOSVC", "PING")  — underscore split (dev svc 컨벤션)
+//	"W1104S01"     → ("W1104",   "S01")    — 5+나머지 (legacy W svc 컨벤션)
+//	그 외          → (code,     "")        — 호출자가 명시 권장
 func splitSvcCode(code string) (string, string) {
 	if i := strings.Index(code, "_"); i > 0 {
 		return code[:i], code[i+1:]

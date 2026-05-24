@@ -88,9 +88,9 @@ func main() {
 	// 2) etcd 클라이언트 (옵션 — endpoints 있을 때만).
 	//    설정되면 SymbolMap / PricingTable / Profiles 가 watch 로 hot reload.
 	var (
-		etcdCli       *clientv3.Client
-		etcdSymWatch  *quote.EtcdSymbolWatcher
-		etcdTblWatch  *pricing.EtcdTableWatcher
+		etcdCli        *clientv3.Client
+		etcdSymWatch   *quote.EtcdSymbolWatcher
+		etcdTblWatch   *pricing.EtcdTableWatcher
 		etcdProfileSrc *price.EtcdProfileSource
 	)
 	if len(cfg.EtcdEndpoints) > 0 {

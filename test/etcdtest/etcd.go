@@ -17,8 +17,8 @@ import (
 
 // Embedded 는 띄운 embedded etcd 의 핸들 + 클라이언트 endpoint.
 type Embedded struct {
-	Server     *embed.Etcd
-	ClientURL  string // "http://127.0.0.1:NNNN"
+	Server    *embed.Etcd
+	ClientURL string // "http://127.0.0.1:NNNN"
 }
 
 // Start 는 임시 디렉토리에 embedded etcd 를 띄우고 첫 ready 까지 대기.

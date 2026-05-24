@@ -53,11 +53,11 @@ type subscriber struct {
 
 // barSubscriber 는 단일 SubscribeBar stream 의 상태.
 type barSubscriber struct {
-	id     uint64
-	tfs    map[string]struct{} // 빈 set = 모두 통과
-	pairs  map[string]struct{}
-	out    chan *wtgpb.Bar
-	srvID  string
+	id    uint64
+	tfs   map[string]struct{} // 빈 set = 모두 통과
+	pairs map[string]struct{}
+	out   chan *wtgpb.Bar
+	srvID string
 }
 
 // quoteSubscriber 는 단일 SubscribeQuote stream 의 상태.

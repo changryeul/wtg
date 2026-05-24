@@ -109,9 +109,9 @@ func (m MaintenanceWindow) active(now time.Time) bool {
 
 // 입력 검증 에러.
 var (
-	ErrAliasNotApplicable    = errors.New("policy: alias only — N/A")
-	ErrInvalidWindow         = errors.New("policy: 유효하지 않은 정비 창 (start < end 필요)")
-	ErrSymbolEmpty           = errors.New("policy: symbol 비어있음")
+	ErrAliasNotApplicable = errors.New("policy: alias only — N/A")
+	ErrInvalidWindow      = errors.New("policy: 유효하지 않은 정비 창 (start < end 필요)")
+	ErrSymbolEmpty        = errors.New("policy: symbol 비어있음")
 )
 
 // Engine 은 mutable 정책 보유 + 검사. goroutine-safe.

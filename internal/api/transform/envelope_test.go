@@ -106,7 +106,7 @@ func TestEnvelopeBuildFrameResolvesAlias(t *testing.T) {
 
 	env := &Envelope{
 		Alias:      "ORDER_NEW",
-		Exchange:   "OLD_EXCHANGE",   // 무시되어야 함
+		Exchange:   "OLD_EXCHANGE",    // 무시되어야 함
 		RoutingKey: "OLD_ROUTING_KEY", // 무시되어야 함
 	}
 	frame, err := env.BuildFrame(0, "u", reg)

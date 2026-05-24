@@ -65,11 +65,11 @@ type SvcSpec struct {
 
 // Field — Input/Output 한 칸. nested 면 Children 채워짐.
 type Field struct {
-	Name    string  `json:"name"`
-	CType   string  `json:"ctype"`             // "char" / "int" / "double" / 외부 typedef 이름
-	Size    int     `json:"size,omitempty"`    // [N] 의 N. char [10] → 10. nested 면 0
-	Repeat  int     `json:"repeat,omitempty"`  // grid 1행 (orec[1]) → 1. orec[] (가변) → -1. 그 외 0
-	Comment string  `json:"comment,omitempty"` // 한글 주석 (CP949 → UTF-8)
+	Name     string  `json:"name"`
+	CType    string  `json:"ctype"`              // "char" / "int" / "double" / 외부 typedef 이름
+	Size     int     `json:"size,omitempty"`     // [N] 의 N. char [10] → 10. nested 면 0
+	Repeat   int     `json:"repeat,omitempty"`   // grid 1행 (orec[1]) → 1. orec[] (가변) → -1. 그 외 0
+	Comment  string  `json:"comment,omitempty"`  // 한글 주석 (CP949 → UTF-8)
 	Children []Field `json:"children,omitempty"` // nested struct field
 }
 
@@ -213,7 +213,7 @@ func extractTypedefBlocks(text string) ([]typedefBlock, error) {
 		}
 		out = append(out, typedefBlock{
 			name: nm[1],
-			body: text[bodyStart : end],
+			body: text[bodyStart:end],
 		})
 		// 다음 검색 위치 — close NAME 이후로 잘라낸다.
 		text = afterClose[len(nm[0]):]

@@ -59,12 +59,12 @@ type jwtHeader struct {
 
 // JWT 검증 에러 sentinel.
 var (
-	ErrJWTMalformed       = errors.New("auth: JWT 형식 오류")
-	ErrJWTUnsupportedAlg  = errors.New("auth: JWT alg 가 RS256 이 아님")
-	ErrJWTBadSignature    = errors.New("auth: JWT 서명 검증 실패")
-	ErrJWTExpired         = errors.New("auth: JWT 만료")
-	ErrJWTNotYetValid     = errors.New("auth: JWT 가 아직 유효하지 않음 (iat 미래)")
-	ErrJWTKeyNotFound     = errors.New("auth: kid 에 해당하는 키 없음")
+	ErrJWTMalformed      = errors.New("auth: JWT 형식 오류")
+	ErrJWTUnsupportedAlg = errors.New("auth: JWT alg 가 RS256 이 아님")
+	ErrJWTBadSignature   = errors.New("auth: JWT 서명 검증 실패")
+	ErrJWTExpired        = errors.New("auth: JWT 만료")
+	ErrJWTNotYetValid    = errors.New("auth: JWT 가 아직 유효하지 않음 (iat 미래)")
+	ErrJWTKeyNotFound    = errors.New("auth: kid 에 해당하는 키 없음")
 )
 
 // KeyID 는 키 회전을 위한 식별자. 동일 키로 발급된 모든 JWT 는 동일 kid 를 갖는다.
@@ -164,15 +164,15 @@ func (m KeyMap) PublicKey(kid KeyID) (*rsa.PublicKey, error) {
 
 // Verifier 는 JWT 서명/만료 검증.
 type Verifier struct {
-	now      func() time.Time
-	keys     KeyResolver
-	skewSec  int64
+	now     func() time.Time
+	keys    KeyResolver
+	skewSec int64
 }
 
 // VerifierOptions 는 Verifier 생성 옵션.
 type VerifierOptions struct {
-	Keys     KeyResolver
-	Now      func() time.Time
+	Keys      KeyResolver
+	Now       func() time.Time
 	ClockSkew time.Duration // 시계 오차 허용 (default 30s, max 5min)
 }
 

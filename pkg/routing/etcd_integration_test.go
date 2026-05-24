@@ -62,8 +62,10 @@ func TestEtcdRegistryWatchPropagates(t *testing.T) {
 		return r
 	}
 
-	admin := mkReg(); defer admin.Close()
-	api := mkReg();   defer api.Close()
+	admin := mkReg()
+	defer admin.Close()
+	api := mkReg()
+	defer api.Close()
 
 	// admin 이 룰 등록.
 	if err := admin.Put(&routing.Rule{
@@ -96,8 +98,10 @@ func TestEtcdRegistryWatchDelete(t *testing.T) {
 		})
 		return r
 	}
-	admin := mkReg(); defer admin.Close()
-	api := mkReg();   defer api.Close()
+	admin := mkReg()
+	defer admin.Close()
+	api := mkReg()
+	defer api.Close()
 
 	admin.Put(&routing.Rule{Alias: "X", Exchange: "E", RoutingKey: "K", Active: true}, "u")
 

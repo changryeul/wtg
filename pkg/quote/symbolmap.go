@@ -9,9 +9,9 @@ import (
 // SymbolEntry 는 외부 시세 source 가 사용하는 심볼과 WTG 내부 session.Pair 의
 // 매핑 1건. Active 가 false 면 mci-price 는 해당 심볼의 tick 을 drop 한다.
 type SymbolEntry struct {
-	Symbol string       `json:"symbol"`  // 외부 표기 (예: "USDKRW")
-	Pair   session.Pair `json:"pair"`    // WTG 내부 표기 (예: "USD/KRW")
-	Active bool         `json:"active"`  // 시세 처리 활성 여부
+	Symbol string       `json:"symbol"` // 외부 표기 (예: "USDKRW")
+	Pair   session.Pair `json:"pair"`   // WTG 내부 표기 (예: "USD/KRW")
+	Active bool         `json:"active"` // 시세 처리 활성 여부
 }
 
 // SymbolMap 은 외부 심볼 ↔ session.Pair 매핑의 immutable snapshot 을 atomic

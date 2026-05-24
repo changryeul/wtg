@@ -143,8 +143,8 @@ func TestAggregator_InactiveSymbolDropped(t *testing.T) {
 	agg := NewAggregator(newSymMap(), staticDecoder(100, 100.1), onClose)
 
 	t0 := time.Date(2026, 5, 23, 12, 34, 0, 0, time.UTC)
-	agg.OnTick(mkTick("JPYKRW", t0))           // inactive
-	agg.OnTick(mkTick("XAUUSD", t0))           // 미등록
+	agg.OnTick(mkTick("JPYKRW", t0))                    // inactive
+	agg.OnTick(mkTick("XAUUSD", t0))                    // 미등록
 	agg.OnTick(mkTick("USDKRW", t0.Add(5*time.Minute))) // active
 
 	open := agg.OpenBars()

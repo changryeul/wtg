@@ -64,8 +64,8 @@ func TestPgxInserter_OnConflictDoNothing(t *testing.T) {
 
 	// row 1개 + 첫 번째 값 유지 확인.
 	var (
-		n     int
-		bid   float64
+		n   int
+		bid float64
 	)
 	if err := pool.QueryRow(ctx, "SELECT count(*), max(open_bid) FROM quote_bars WHERE pair=$1 AND tf=$2", "USD/KRW", "1m").Scan(&n, &bid); err != nil {
 		t.Fatal(err)

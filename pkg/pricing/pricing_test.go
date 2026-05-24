@@ -91,9 +91,9 @@ func TestLookupHQ_Fallback(t *testing.T) {
 func TestLookupSite_FallbackOrder(t *testing.T) {
 	tbl := &PricingTable{
 		SiteMargin: map[SiteKey]Margin{
-			{Pair: "USD/KRW", Channel: "", Site: session.SiteBranch}:                  {BidAmount: 0.20}, // site-only
-			{Pair: "USD/KRW", Channel: session.ChannelMobile, Site: ""}:               {BidAmount: 0.30}, // channel-only
-			{Pair: "USD/KRW", Channel: session.ChannelWeb, Site: session.SiteBranch}:  {BidAmount: 0.10}, // exact
+			{Pair: "USD/KRW", Channel: "", Site: session.SiteBranch}:                 {BidAmount: 0.20}, // site-only
+			{Pair: "USD/KRW", Channel: session.ChannelMobile, Site: ""}:              {BidAmount: 0.30}, // channel-only
+			{Pair: "USD/KRW", Channel: session.ChannelWeb, Site: session.SiteBranch}: {BidAmount: 0.10}, // exact
 		},
 	}
 	// exact

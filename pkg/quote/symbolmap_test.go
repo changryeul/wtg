@@ -146,6 +146,6 @@ func TestSymbolMap_ConcurrentReplaceAndLookup(t *testing.T) {
 
 	// optional safety: 이 채널을 wg 가 처리 못하면 timeout 으로 보호하고 싶지만,
 	// race detector 가 race 를 잡는 것이 목적이므로 그냥 끝까지 기다린다.
-	_ = session.Pair("")  // session import 사용 표시
+	_ = session.Pair("") // session import 사용 표시
 	wg.Wait()
 }

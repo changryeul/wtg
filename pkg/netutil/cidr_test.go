@@ -9,9 +9,9 @@ import (
 
 func TestParseCIDRs(t *testing.T) {
 	cases := []struct {
-		in       string
-		wantLen  int
-		wantErr  bool
+		in      string
+		wantLen int
+		wantErr bool
 	}{
 		{"", 0, false},
 		{"10.0.0.0/8", 1, false},

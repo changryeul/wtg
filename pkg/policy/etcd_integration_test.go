@@ -30,8 +30,10 @@ func TestEtcdSyncPropagatesPolicy(t *testing.T) {
 		return eng, sync
 	}
 
-	adminEng, adminSync := mkPair("admin"); defer adminSync.Close()
-	apiEng,   apiSync   := mkPair("api");   defer apiSync.Close()
+	adminEng, adminSync := mkPair("admin")
+	defer adminSync.Close()
+	apiEng, apiSync := mkPair("api")
+	defer apiSync.Close()
 
 	// admin 에서 kill switch 활성.
 	adminEng.SetKillSwitch(true, "admin01")

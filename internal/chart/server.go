@@ -163,8 +163,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // handleChartStream 은 GET /v1/chart/stream — ws upgrade + Hub 등록.
 //
 // 쿼리 파라미터:
-//   pairs=USD/KRW,EUR/KRW  (콤마 구분; 비면 모든 pair)
-//   tfs=1m,5m              (콤마 구분; 비면 모든 tf)
+//
+//	pairs=USD/KRW,EUR/KRW  (콤마 구분; 비면 모든 pair)
+//	tfs=1m,5m              (콤마 구분; 비면 모든 tf)
 //
 // ws 메시지 (in): {"op":"sub","pairs":[...],"tfs":[...]} — 런타임 필터 갱신.
 // ws 메시지 (out): {"type":"bar", ...} (encodeBarJSON 결과)
@@ -340,4 +341,3 @@ func (s *Server) statsLoop(ctx context.Context) {
 		}
 	}
 }
-

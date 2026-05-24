@@ -92,7 +92,7 @@ func TestJWTClockSkewAllowsBoundary(t *testing.T) {
 		ClockSkew: 60 * time.Second,
 	})
 	tok, _ := iss.Sign(Claims{EXP: now().Unix()}) // 즉시 만료
-	clock.Add(30)                                  // 30초 경과 — skew 60s 안에 있음
+	clock.Add(30)                                 // 30초 경과 — skew 60s 안에 있음
 	if _, err := ver.Verify(tok); err != nil {
 		t.Errorf("skew 안에서 만료로 처리됨: %v", err)
 	}

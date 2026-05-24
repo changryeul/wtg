@@ -13,10 +13,10 @@ import (
 // mci-admin 이 운영 콘솔에서 작성하는 JSON 도 이 형식 — etcd 에 그대로 저장하고
 // mci-price 의 watcher 가 ParsePricingTable 으로 PricingTable 을 재구성.
 type PricingTableDoc struct {
-	Version    int64           `json:"version"`
-	SwapPoint  []SwapEntryDoc  `json:"swap_point,omitempty"`
-	HQMargin   []HQEntryDoc    `json:"hq_margin,omitempty"`
-	SiteMargin []SiteEntryDoc  `json:"site_margin,omitempty"`
+	Version    int64          `json:"version"`
+	SwapPoint  []SwapEntryDoc `json:"swap_point,omitempty"`
+	HQMargin   []HQEntryDoc   `json:"hq_margin,omitempty"`
+	SiteMargin []SiteEntryDoc `json:"site_margin,omitempty"`
 }
 
 // SwapEntryDoc — 한 (pair, tenor) 의 스왑포인트.

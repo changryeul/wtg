@@ -25,15 +25,15 @@ import (
 
 // Server 는 mci-admin 의 HTTP 서버 + broker 클라이언트.
 type Server struct {
-	cfg        Config
-	logger     *slog.Logger
-	mq         *mymq.Client
-	metrics    *metrics.Registry
-	sessions   auth.Store
-	refresh    auth.RefreshStore
-	jwtIss     *auth.Issuer
-	jwtVer     *auth.Verifier
-	routes     routing.Registry
+	cfg         Config
+	logger      *slog.Logger
+	mq          *mymq.Client
+	metrics     *metrics.Registry
+	sessions    auth.Store
+	refresh     auth.RefreshStore
+	jwtIss      *auth.Issuer
+	jwtVer      *auth.Verifier
+	routes      routing.Registry
 	policy      *policy.Engine
 	policySync  *policy.EtcdSync
 	svcio       *svcio.Registry

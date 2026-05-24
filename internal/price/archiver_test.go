@@ -102,7 +102,7 @@ func TestArchiver_FlushOnInterval(t *testing.T) {
 	arc := NewArchiver(ins, ArchiverOptions{
 		QueueSize:     100,
 		FlushInterval: 20 * time.Millisecond,
-		BatchMax:     1000,
+		BatchMax:      1000,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -142,7 +142,7 @@ func TestArchiver_FlushOnBatchFull(t *testing.T) {
 	arc := NewArchiver(ins, ArchiverOptions{
 		QueueSize:     100,
 		FlushInterval: 10 * time.Second, // 거의 안 일어남
-		BatchMax:     3,
+		BatchMax:      3,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -177,7 +177,7 @@ func TestArchiver_DrainsOnShutdown(t *testing.T) {
 	arc := NewArchiver(ins, ArchiverOptions{
 		QueueSize:     100,
 		FlushInterval: 10 * time.Second,
-		BatchMax:     1000,
+		BatchMax:      1000,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -203,7 +203,7 @@ func TestArchiver_CountsFailedInserts(t *testing.T) {
 	arc := NewArchiver(ins, ArchiverOptions{
 		QueueSize:     10,
 		FlushInterval: 20 * time.Millisecond,
-		BatchMax:     1000,
+		BatchMax:      1000,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

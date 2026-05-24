@@ -424,9 +424,9 @@ func (s *Server) startHTTP(ctx context.Context) error {
 // subscribeHandler 는 GET /v1/subscribe — ws upgrade + Registry 등록.
 //
 // Profile 결정 우선순위 (quote stream 활성 시):
-//   1. Principal.ProfileKey() — JWT claim (Chan/Site/Tier) 또는 Session 에서 (운영 경로)
-//   2. ?profile= 쿼리 파라미터 — dev 도구용 fallback
-//   3. 빈값 — quote 미수신 (raw broadcast 만)
+//  1. Principal.ProfileKey() — JWT claim (Chan/Site/Tier) 또는 Session 에서 (운영 경로)
+//  2. ?profile= 쿼리 파라미터 — dev 도구용 fallback
+//  3. 빈값 — quote 미수신 (raw broadcast 만)
 func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p := middleware.PrincipalFromContext(r.Context())

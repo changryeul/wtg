@@ -224,6 +224,89 @@ func (r *RedisRegistry) MarkConsumed(ctx context.Context, id QuoteID, consumerID
 	}
 }
 
+// MarkConsumedMany — 파이프라인으로 N EvalSha 묶음 송신. 1 connection grab,
+// 1 RTT (direct/sentinel). Cluster 에서는 slot 별 자동 라우팅으로 슬롯당
+// 1 RTT — 여전히 N 개별 호출보다 빠름.
+//
+// 각 항목은 같은 Lua script (markConsumedScript) 를 사용 — per-item atomic
+// 보장은 v1.7 의 단일 호출 흐름과 동일. batch 자체는 not transaction —
+// 일부 OK 일부 EXPIRED 혼재 가능.
+func (r *RedisRegistry) MarkConsumedMany(ctx context.Context, reqs []ConsumeRequest) ([]ConsumeResult, error) {
+	if len(reqs) == 0 {
+		return nil, nil
+	}
+	now := r.now()
+	ttl := r.grace + time.Second
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	ttlSec := int64(ttl / time.Second)
+	if ttlSec < 1 {
+		ttlSec = 1
+	}
+	nowNanoStr := strconv.FormatInt(now.UnixNano(), 10)
+	ttlStr := strconv.FormatInt(ttlSec, 10)
+
+	// 파이프라인으로 묶어 송신. ClusterClient 의 경우 slot 별로 자동 split.
+	pipe := r.rdb.Pipeline()
+	cmds := make([]*redis.Cmd, len(reqs))
+	for i, req := range reqs {
+		cmds[i] = markConsumedScript.Run(ctx, pipe,
+			[]string{r.key(req.QuoteID), r.consumedKey(req.QuoteID)},
+			req.ConsumerID, nowNanoStr, ttlStr,
+		)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		// Pipeline.Exec 는 일부만 실패해도 error 반환. 개별 cmd.Err 을 검사해서
+		// 가능한 결과는 채워준다.
+		// continue — 아래 루프가 per-cmd 에러 처리.
+		_ = err
+	}
+
+	out := make([]ConsumeResult, len(reqs))
+	for i, cmd := range cmds {
+		raw, err := cmd.Result()
+		if err != nil {
+			out[i] = ConsumeResult{Status: ConsumeStatusUnknown}
+			continue
+		}
+		arr, ok := raw.([]any)
+		if !ok || len(arr) == 0 {
+			out[i] = ConsumeResult{Status: ConsumeStatusUnknown}
+			continue
+		}
+		code, _ := arr[0].(int64)
+		switch code {
+		case 1:
+			rec, perr := decodeRecordFromLua(arr, 1)
+			if perr != nil {
+				out[i] = ConsumeResult{Status: ConsumeStatusUnknown}
+				continue
+			}
+			out[i] = ConsumeResult{Status: ConsumeOK, Record: rec}
+		case 2:
+			rec, perr := decodeRecordFromLua(arr, 1)
+			if perr != nil {
+				out[i] = ConsumeResult{Status: ConsumeStatusUnknown}
+				continue
+			}
+			prev := ""
+			if len(arr) > 2 {
+				prev, _ = arr[2].(string)
+			}
+			out[i] = ConsumeResult{Status: ConsumeAlreadyDone, Record: rec, ConsumedBy: prev}
+		case 3:
+			out[i] = ConsumeResult{Status: ConsumeNotFound}
+		case 4:
+			rec, _ := decodeRecordFromLua(arr, 1)
+			out[i] = ConsumeResult{Status: ConsumeExpired, Record: rec}
+		default:
+			out[i] = ConsumeResult{Status: ConsumeStatusUnknown}
+		}
+	}
+	return out, nil
+}
+
 // decodeRecordFromLua — Lua 반환 배열의 idx 위치에서 record JSON 추출 + unmarshal.
 func decodeRecordFromLua(arr []any, idx int) (Record, error) {
 	if len(arr) <= idx {

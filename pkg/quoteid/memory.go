@@ -101,6 +101,39 @@ func (m *MemoryRegistry) MarkConsumed(_ context.Context, id QuoteID, consumerID 
 	return ConsumeResult{Status: ConsumeOK, Record: rec}, nil
 }
 
+// MarkConsumedMany — 단일 mutex 안에서 순차 처리. batch 전체가 일관 snapshot.
+func (m *MemoryRegistry) MarkConsumedMany(_ context.Context, reqs []ConsumeRequest) ([]ConsumeResult, error) {
+	out := make([]ConsumeResult, len(reqs))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	for i, req := range reqs {
+		rec, ok := m.records[req.QuoteID]
+		if !ok {
+			out[i] = ConsumeResult{Status: ConsumeNotFound}
+			continue
+		}
+		expireAt := time.Unix(0, rec.ValidUntil).Add(m.grace)
+		if now.After(expireAt) {
+			delete(m.records, req.QuoteID)
+			delete(m.consumed, req.QuoteID)
+			out[i] = ConsumeResult{Status: ConsumeNotFound}
+			continue
+		}
+		if !rec.ValidAt(now) {
+			out[i] = ConsumeResult{Status: ConsumeExpired, Record: rec}
+			continue
+		}
+		if prev, taken := m.consumed[req.QuoteID]; taken {
+			out[i] = ConsumeResult{Status: ConsumeAlreadyDone, Record: rec, ConsumedBy: prev}
+			continue
+		}
+		m.consumed[req.QuoteID] = req.ConsumerID
+		out[i] = ConsumeResult{Status: ConsumeOK, Record: rec}
+	}
+	return out, nil
+}
+
 // Consumed — read-only 조회.
 func (m *MemoryRegistry) Consumed(_ context.Context, id QuoteID) (string, bool, error) {
 	m.mu.RLock()

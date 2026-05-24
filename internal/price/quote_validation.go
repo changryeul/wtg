@@ -326,14 +326,12 @@ func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.Ba
 	return &wtgpb.BatchValidateResponse{Results: results}, nil
 }
 
-// BatchMarkConsumed — 다건 (quote_id, consumer_id) 표시. 각 항목은 독립
-// atomic — Memory mutex / Redis SET NX 가 per-key 보장.
+// BatchMarkConsumed — Registry.MarkConsumedMany 로 1 connection grab + 1 RTT
+// (direct/sentinel) 또는 slot 당 1 RTT (cluster). Per-item atomic 은 동일.
 //
 // 일부 OK 일부 ALREADY_CONSUMED 같은 혼재 결과 가능 (FIX NewOrderList 의 일부
 // leg 만 다른 주문이 잡은 경우). 호출자가 per-item 분기로 일부 fill / 일부
 // reject.
-//
-// goroutine fan-out 으로 Redis round-trip 병렬화 — 100건 ≈ 단일 MarkConsumed.
 func (s *QuoteValidationServer) BatchMarkConsumed(ctx context.Context, req *wtgpb.BatchMarkConsumedRequest) (*wtgpb.BatchMarkConsumedResponse, error) {
 	s.batchConsumeTotal.Add(1)
 	if !s.checkEngine(req.GetEngineId()) {
@@ -349,31 +347,73 @@ func (s *QuoteValidationServer) BatchMarkConsumed(ctx context.Context, req *wtgp
 	}
 	s.batchConsumeItems.Add(uint64(len(items)))
 
-	results := make([]*wtgpb.MarkConsumedResponse, len(items))
-	var wg sync.WaitGroup
-	wg.Add(len(items))
-	for i := range items {
-		i := i
-		go func() {
-			defer wg.Done()
-			resp, err := s.MarkConsumed(ctx, &wtgpb.MarkConsumedRequest{
-				QuoteId:    items[i].GetQuoteId(),
-				ConsumerId: items[i].GetConsumerId(),
-				EngineId:   req.GetEngineId(),
-				TsUnixNano: req.GetTsUnixNano(),
-			})
-			if err != nil || resp == nil {
-				results[i] = &wtgpb.MarkConsumedResponse{
-					Status:     wtgpb.ValidationStatus_STATUS_UNSPECIFIED,
-					RejectText: "internal error",
-				}
-				return
-			}
-			results[i] = resp
-		}()
+	// Registry.MarkConsumedMany 로 위임 — Memory 는 단일 mutex 안에서 직렬,
+	// Redis 는 Pipeline 으로 묶음 송신.
+	reqs := make([]quoteid.ConsumeRequest, len(items))
+	for i, it := range items {
+		reqs[i] = quoteid.ConsumeRequest{
+			QuoteID:    quoteid.QuoteID(it.GetQuoteId()),
+			ConsumerID: it.GetConsumerId(),
+		}
 	}
-	wg.Wait()
+	regResults, err := s.registry.MarkConsumedMany(ctx, reqs)
+	if err != nil {
+		s.consumeInternal.Add(1)
+		s.logger.Warn("BatchMarkConsumed registry error",
+			slog.String("engine_id", req.GetEngineId()),
+			slog.Any("error", err))
+		// 전체 실패도 per-item STATUS_UNSPECIFIED 로 회피 가능하지만, 명백한
+		// registry-wide error 는 grpc Internal 로 전파해 caller retry.
+		return nil, status.Errorf(codes.Internal, "registry: %v", err)
+	}
+
+	results := make([]*wtgpb.MarkConsumedResponse, len(items))
+	for i, r := range regResults {
+		results[i] = consumeResultToProto(r)
+		// per-item 카운터 누적 — MarkConsumed 단일 핸들러와 동일.
+		switch r.Status {
+		case quoteid.ConsumeOK:
+			s.consumeOK.Add(1)
+		case quoteid.ConsumeAlreadyDone:
+			s.consumeAlready.Add(1)
+		case quoteid.ConsumeNotFound:
+			s.consumeNotFound.Add(1)
+		case quoteid.ConsumeExpired:
+			s.consumeExpired.Add(1)
+		}
+		// consumeTotal 도 per-item — single MarkConsumed 와 정합.
+		s.consumeTotal.Add(1)
+	}
 	return &wtgpb.BatchMarkConsumedResponse{Results: results}, nil
+}
+
+// consumeResultToProto — Registry.ConsumeResult 를 proto MarkConsumedResponse 로.
+func consumeResultToProto(r quoteid.ConsumeResult) *wtgpb.MarkConsumedResponse {
+	resp := &wtgpb.MarkConsumedResponse{}
+	switch r.Status {
+	case quoteid.ConsumeOK:
+		resp.Status = wtgpb.ValidationStatus_OK
+		resp.Record = recordToProto(r.Record)
+	case quoteid.ConsumeAlreadyDone:
+		resp.Status = wtgpb.ValidationStatus_ALREADY_CONSUMED
+		resp.Record = recordToProto(r.Record)
+		resp.ConsumedBy = r.ConsumedBy
+		resp.OrdRejReason = ordRejReasonDuplicate
+		resp.RejectText = "quote_id already consumed"
+	case quoteid.ConsumeNotFound:
+		resp.Status = wtgpb.ValidationStatus_NOT_FOUND
+		resp.OrdRejReason = ordRejReasonNotFound
+		resp.RejectText = "quote_id not found"
+	case quoteid.ConsumeExpired:
+		resp.Status = wtgpb.ValidationStatus_EXPIRED
+		resp.Record = recordToProto(r.Record)
+		resp.OrdRejReason = ordRejReasonExpired
+		resp.RejectText = "quote_id expired"
+	default:
+		resp.Status = wtgpb.ValidationStatus_STATUS_UNSPECIFIED
+		resp.RejectText = "internal error"
+	}
+	return resp
 }
 
 // QuoteValidationStats — 누적 카운터 snapshot. 운영 모니터링용.

@@ -44,6 +44,23 @@ type Registry interface {
 	// 반환: 첫 인수는 먼저 표시한 consumer (없으면 빈 문자열), 두 번째는 표시 여부.
 	// Validate RPC 가 ALREADY_CONSUMED 분기를 위해 호출 — atomic write 없는 cheap path.
 	Consumed(ctx context.Context, id QuoteID) (string, bool, error)
+
+	// MarkConsumedMany — N 항목을 한 번에 표시. 각 항목은 개별 atomic — 같은
+	// QuoteID 에 동시 호출 시 정확히 한 명만 ConsumeOK.
+	//
+	// 구현 :
+	//   - Memory : 단일 mutex 안에서 직렬 처리 → batch 전체가 일관 snapshot.
+	//   - Redis  : 파이프라인으로 EvalSha 묶음 송신 → 1 connection grab.
+	//              Cluster 에서는 slot 별 자동 라우팅 (redis-go ClusterClient).
+	//
+	// 결과는 입력 순서와 동일.
+	MarkConsumedMany(ctx context.Context, reqs []ConsumeRequest) ([]ConsumeResult, error)
+}
+
+// ConsumeRequest — MarkConsumedMany 단일 항목.
+type ConsumeRequest struct {
+	QuoteID    QuoteID
+	ConsumerID string
 }
 
 // ConsumeResult — MarkConsumed 결과.

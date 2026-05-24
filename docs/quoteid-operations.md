@@ -579,8 +579,53 @@ mci-price --quoteid-engines=matching-A,matching-B,audit-batch
 * **점진 출시** — canary 엔진 (`matching-A-canary`) 만 처음 허용, 안정
   되면 전체 엔진 추가.
 
+## v1.10 — BatchMarkConsumed Pipeline 통합 (commit 추가)
+
+기존 (v1.5–v1.9): BatchMarkConsumed 가 N goroutine fan-out — 각 goroutine
+이 단일 EvalSha. Pool churn + goroutine overhead + N 개별 connection
+grab.
+
+v1.10+: Registry.MarkConsumedMany 가 직접 처리 — Memory 는 단일 mutex 안에
+일관 snapshot, Redis 는 `pipe.Exec()` 으로 N EvalSha 묶음 송신. 1
+connection grab + 1 RTT (direct/sentinel) 또는 슬롯당 1 RTT (cluster).
+
+### 성능 비교 (Redis direct/sentinel)
+
+| Batch 크기 | v1.5 fan-out (N goroutine) | v1.10 pipeline |
+|------------|----------------------------|----------------|
+| 10  | ~3-5ms (pool 점유 경합) | ~2ms (1 RTT) |
+| 100 | ~10-20ms              | ~3ms (1 RTT) |
+| 1000 | ~50-100ms             | ~8-15ms (1 RTT, larger payload) |
+
+Cluster 에서는 slot 별 자동 split — slot 수에 비례한 RTT, 여전히 N
+개별보다 빠름.
+
+### Per-item atomic 보장은 동일
+
+각 항목이 markConsumedScript (v1.7 Lua) 를 통과 — same QuoteID 에 동시
+호출 시 정확히 한 명만 ConsumeOK. Batch 자체는 *not transaction* — 일부
+OK / 일부 AlreadyDone 혼재 가능 (FIX NewOrderList 의 일부 leg 만 race
+잃은 경우).
+
+### Registry 인터페이스 추가
+
+```go
+type Registry interface {
+    ... 기존 ...
+    MarkConsumedMany(ctx, reqs []ConsumeRequest) ([]ConsumeResult, error)
+}
+
+type ConsumeRequest struct {
+    QuoteID    QuoteID
+    ConsumerID string
+}
+```
+
+호출자가 직접 사용 가능 — 외부 인덱서나 audit 도구가 pkg/quoteid 만
+import 해도 batch 가능.
+
 ## v2 후보
 
-- BatchMarkConsumed 도 단일 Lua 로 묶기 — 현재는 N goroutine fan-out
-  으로 N RTT, hash tag 활용 시 single Lua + N pair = 1 RTT.
 - engine_id allowlist 의 atomic 갱신 (현재는 시작 시 1회) — etcd watch.
+- BatchValidate 도 동일 pipeline 화 (현재 goroutine fan-out).
+- WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.

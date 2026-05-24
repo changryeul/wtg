@@ -204,6 +204,50 @@ func TestMemoryRegistry_MarkConsumed_Concurrent(t *testing.T) {
 	}
 }
 
+func TestMemoryRegistry_MarkConsumedMany(t *testing.T) {
+	reg := NewMemoryRegistry(time.Hour)
+	t0 := time.Unix(1700000000, 0)
+	reg.SetNow(func() time.Time { return t0 })
+
+	_ = reg.Put(context.Background(), mkRec("A-1", t0, time.Hour))
+	_ = reg.Put(context.Background(), mkRec("A-2", t0, time.Hour))
+	// A-3 — 이미 다른 consumer 가 표시.
+	_ = reg.Put(context.Background(), mkRec("A-3", t0, time.Hour))
+	_, _ = reg.MarkConsumed(context.Background(), "A-3", "order-pre")
+
+	results, err := reg.MarkConsumedMany(context.Background(), []ConsumeRequest{
+		{QuoteID: "A-1", ConsumerID: "order-1"},
+		{QuoteID: "A-2", ConsumerID: "order-2"},
+		{QuoteID: "A-3", ConsumerID: "order-3"}, // 충돌
+		{QuoteID: "A-nope", ConsumerID: "order-4"},
+	})
+	if err != nil {
+		t.Fatalf("MarkConsumedMany: %v", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("len=%d, want 4", len(results))
+	}
+	if results[0].Status != ConsumeOK || results[1].Status != ConsumeOK {
+		t.Errorf("A-1/A-2 status: %v / %v", results[0].Status, results[1].Status)
+	}
+	if results[2].Status != ConsumeAlreadyDone {
+		t.Errorf("A-3 status: %v, want ConsumeAlreadyDone", results[2].Status)
+	}
+	if results[2].ConsumedBy != "order-pre" {
+		t.Errorf("ConsumedBy=%q, want order-pre", results[2].ConsumedBy)
+	}
+	if results[3].Status != ConsumeNotFound {
+		t.Errorf("A-nope status: %v, want ConsumeNotFound", results[3].Status)
+	}
+
+	// Many 호출이 record 의 consumed 상태에 반영되었는지 — 후속 single
+	// MarkConsumed 가 ALREADY_CONSUMED.
+	r, _ := reg.MarkConsumed(context.Background(), "A-1", "order-late")
+	if r.Status != ConsumeAlreadyDone {
+		t.Errorf("Many 후 A-1 후속 MarkConsumed: %v, want ConsumeAlreadyDone", r.Status)
+	}
+}
+
 func TestMemoryRegistry_Sweep(t *testing.T) {
 	reg := NewMemoryRegistry(0)
 	t0 := time.Unix(1700000000, 0)

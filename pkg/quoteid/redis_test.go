@@ -244,6 +244,54 @@ func TestRedisRegistry_MarkConsumed_LuaConcurrent(t *testing.T) {
 	}
 }
 
+func TestRedisRegistry_MarkConsumedMany(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	_ = reg.Put(ctx, mkRec("A-1", now, time.Hour))
+	_ = reg.Put(ctx, mkRec("A-2", now, time.Hour))
+	// A-3 — 이미 표시.
+	_ = reg.Put(ctx, mkRec("A-3", now, time.Hour))
+	_, _ = reg.MarkConsumed(ctx, "A-3", "order-pre")
+
+	results, err := reg.MarkConsumedMany(ctx, []ConsumeRequest{
+		{QuoteID: "A-1", ConsumerID: "order-1"},
+		{QuoteID: "A-2", ConsumerID: "order-2"},
+		{QuoteID: "A-3", ConsumerID: "order-3"},
+		{QuoteID: "A-nope", ConsumerID: "order-4"},
+	})
+	if err != nil {
+		t.Fatalf("MarkConsumedMany: %v", err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("len=%d, want 4", len(results))
+	}
+	if results[0].Status != ConsumeOK || results[1].Status != ConsumeOK {
+		t.Errorf("A-1/A-2: %v / %v", results[0].Status, results[1].Status)
+	}
+	if results[2].Status != ConsumeAlreadyDone {
+		t.Errorf("A-3: %v", results[2].Status)
+	}
+	if results[2].ConsumedBy != "order-pre" {
+		t.Errorf("ConsumedBy=%q, want order-pre", results[2].ConsumedBy)
+	}
+	if results[3].Status != ConsumeNotFound {
+		t.Errorf("A-nope: %v", results[3].Status)
+	}
+}
+
+func TestRedisRegistry_MarkConsumedMany_Empty(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	results, err := reg.MarkConsumedMany(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("MarkConsumedMany empty: %v", err)
+	}
+	if results != nil {
+		t.Errorf("empty results: %v", results)
+	}
+}
+
 // 키 형식 검증 — Redis Cluster 의 hash tag (`{...}`) 안에 QuoteID 가
 // 있어야 두 키 (q / c) 가 same slot 으로 라우팅됨.
 func TestRedisRegistry_HashTagKeyFormat(t *testing.T) {

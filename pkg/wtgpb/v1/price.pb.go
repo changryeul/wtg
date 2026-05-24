@@ -475,11 +475,17 @@ type CustomerQuote struct {
 	// 시세 wallclock (Unix nano). raw 시점 timestamp 유지.
 	TsUnixNano int64 `protobuf:"varint,8,opt,name=ts_unix_nano,json=tsUnixNano,proto3" json:"ts_unix_nano,omitempty"`
 	// 감사·재현용 — 산출 근거가 된 raw 값과 적용된 PricingTable.Version.
-	RawBid        float64 `protobuf:"fixed64,9,opt,name=raw_bid,json=rawBid,proto3" json:"raw_bid,omitempty"`
-	RawAsk        float64 `protobuf:"fixed64,10,opt,name=raw_ask,json=rawAsk,proto3" json:"raw_ask,omitempty"`
-	TableVersion  int64   `protobuf:"varint,11,opt,name=table_version,json=tableVersion,proto3" json:"table_version,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RawBid       float64 `protobuf:"fixed64,9,opt,name=raw_bid,json=rawBid,proto3" json:"raw_bid,omitempty"`
+	RawAsk       float64 `protobuf:"fixed64,10,opt,name=raw_ask,json=rawAsk,proto3" json:"raw_ask,omitempty"`
+	TableVersion int64   `protobuf:"varint,11,opt,name=table_version,json=tableVersion,proto3" json:"table_version,omitempty"`
+	// QuoteID — FIX 4.4 tag 117 호환 식별자. mci-price 발행, 매칭 엔진이
+	// pkg/quoteid.Registry 로 검증 시 사용한다. 빈값이면 quoteid 비활성.
+	QuoteId string `protobuf:"bytes,12,opt,name=quote_id,json=quoteId,proto3" json:"quote_id,omitempty"`
+	// ValidUntil — 토큰 만료 wallclock (Unix nano). 이 시점 이후 엔진은
+	// 토큰을 거절해야 한다 (FX Global Code Principle 17 — last-look 한계).
+	ValidUntilUnixNano int64 `protobuf:"varint,13,opt,name=valid_until_unix_nano,json=validUntilUnixNano,proto3" json:"valid_until_unix_nano,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *CustomerQuote) Reset() {
@@ -589,6 +595,20 @@ func (x *CustomerQuote) GetTableVersion() int64 {
 	return 0
 }
 
+func (x *CustomerQuote) GetQuoteId() string {
+	if x != nil {
+		return x.QuoteId
+	}
+	return ""
+}
+
+func (x *CustomerQuote) GetValidUntilUnixNano() int64 {
+	if x != nil {
+		return x.ValidUntilUnixNano
+	}
+	return 0
+}
+
 var File_wtg_v1_price_proto protoreflect.FileDescriptor
 
 const file_wtg_v1_price_proto_rawDesc = "" +
@@ -631,7 +651,7 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\tclose_bid\x18\v \x01(\x01R\bcloseBid\x12\x1b\n" +
 	"\tclose_ask\x18\f \x01(\x01R\bcloseAsk\x12\x1d\n" +
 	"\n" +
-	"tick_count\x18\r \x01(\x05R\ttickCount\"\x98\x02\n" +
+	"tick_count\x18\r \x01(\x05R\ttickCount\"\xe6\x02\n" +
 	"\rCustomerQuote\x12\x12\n" +
 	"\x04pair\x18\x01 \x01(\tR\x04pair\x12\x18\n" +
 	"\achannel\x18\x02 \x01(\tR\achannel\x12\x12\n" +
@@ -645,7 +665,9 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\araw_bid\x18\t \x01(\x01R\x06rawBid\x12\x17\n" +
 	"\araw_ask\x18\n" +
 	" \x01(\x01R\x06rawAsk\x12#\n" +
-	"\rtable_version\x18\v \x01(\x03R\ftableVersion2\xcb\x01\n" +
+	"\rtable_version\x18\v \x01(\x03R\ftableVersion\x12\x19\n" +
+	"\bquote_id\x18\f \x01(\tR\aquoteId\x121\n" +
+	"\x15valid_until_unix_nano\x18\r \x01(\x03R\x12validUntilUnixNano2\xcb\x01\n" +
 	"\fPriceService\x125\n" +
 	"\tSubscribe\x12\x18.wtg.v1.SubscribeRequest\x1a\f.wtg.v1.Tick0\x01\x12H\n" +
 	"\x0eSubscribeQuote\x12\x1d.wtg.v1.QuoteSubscribeRequest\x1a\x15.wtg.v1.CustomerQuote0\x01\x12:\n" +

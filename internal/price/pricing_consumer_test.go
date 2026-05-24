@@ -1,6 +1,7 @@
 package price
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
@@ -11,6 +12,7 @@ import (
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
+	"github.com/winwaysystems/wtg/pkg/quoteid"
 	"github.com/winwaysystems/wtg/pkg/session"
 )
 
@@ -286,4 +288,107 @@ func findCall(calls []publishCall, profileKey string) *publishCall {
 		}
 	}
 	return nil
+}
+
+func TestPricingConsumer_AttachQuoteID(t *testing.T) {
+	pub := &fakeQuotePublisher{}
+	profiles := []session.Profile{
+		{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierStandard},
+		{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierVIP},
+	}
+
+	syms := quote.NewSymbolMap()
+	syms.Replace([]quote.SymbolEntry{{Symbol: "USDKRW", Pair: "USD/KRW", Active: true}})
+	tbl := &pricing.PricingTable{
+		Version: 7,
+		HQMargin: map[pricing.HQKey]pricing.Margin{
+			{Pair: "USD/KRW", Tier: session.TierStandard}: {BidAmount: 0.10, AskAmount: 0.10},
+			{Pair: "USD/KRW", Tier: session.TierVIP}:      {BidAmount: 0.02, AskAmount: 0.02},
+		},
+	}
+	store := pricing.NewStore()
+	store.Replace(tbl)
+
+	reg := quoteid.NewMemoryRegistry(0)
+	gen := quoteid.NewGenerator("A")
+
+	pc := NewPricingConsumer(PricingConsumerOptions{
+		Store:           store,
+		Symbols:         syms,
+		Decoder:         JSONCookerDecoder(),
+		Publisher:       pub,
+		Profiles:        &StaticProfileSource{Profiles: profiles},
+		QuoteIDGen:      gen,
+		QuoteIDRegistry: reg,
+		QuoteValidity:   30 * time.Second, // 테스트 실행 시간 안에 만료되지 않도록 여유.
+	})
+
+	// tick TS 는 현재 시각 — registry 의 lazy expiry 가 real time.Now 와 비교하므로
+	// 과거 TS 를 쓰면 ValidUntil 이 이미 지나 lookup 실패.
+	ts := time.Now()
+	pc.OnTick(mkEnvTick("USDKRW", 1400.0, 1400.05, ts))
+
+	calls := pub.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("calls=%d, want 2", len(calls))
+	}
+
+	// 각 호출이 unique QuoteID 를 가졌는지.
+	seen := map[string]struct{}{}
+	for _, c := range calls {
+		if c.CQ.QuoteID == "" {
+			t.Errorf("Profile %s: QuoteID 미부착", c.Profile.Key())
+			continue
+		}
+		if _, dup := seen[c.CQ.QuoteID]; dup {
+			t.Errorf("QuoteID 중복: %s", c.CQ.QuoteID)
+		}
+		seen[c.CQ.QuoteID] = struct{}{}
+
+		// ValidUntil = TS + Validity.
+		want := c.CQ.TS.Add(30 * time.Second)
+		if !c.CQ.ValidUntil.Equal(want) {
+			t.Errorf("ValidUntil mismatch: got %v, want %v", c.CQ.ValidUntil, want)
+		}
+
+		// Registry 에 등록되어 있고 lookup 가능.
+		rec, err := reg.Get(context.Background(), quoteid.QuoteID(c.CQ.QuoteID))
+		if err != nil {
+			t.Errorf("Registry.Get(%s): %v", c.CQ.QuoteID, err)
+			continue
+		}
+		if rec.Profile.Key() != c.Profile.Key() {
+			t.Errorf("Registry Profile mismatch: got %s, want %s", rec.Profile.Key(), c.Profile.Key())
+		}
+		if rec.Bid != c.CQ.Bid || rec.Ask != c.CQ.Ask {
+			t.Errorf("Registry bid/ask mismatch: %v/%v vs %v/%v", rec.Bid, rec.Ask, c.CQ.Bid, c.CQ.Ask)
+		}
+		if rec.Issuer != "A" {
+			t.Errorf("Issuer = %q, want A", rec.Issuer)
+		}
+	}
+	if pc.Stats().QuoteRegErrors != 0 {
+		t.Errorf("Registry 에러 발생: %d", pc.Stats().QuoteRegErrors)
+	}
+}
+
+func TestPricingConsumer_NoQuoteIDWhenDisabled(t *testing.T) {
+	pub := &fakeQuotePublisher{}
+	profiles := []session.Profile{
+		{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierStandard},
+	}
+	pc := newTestPricingConsumer(t, pub, profiles) // QuoteIDGen 미주입.
+
+	pc.OnTick(mkEnvTick("USDKRW", 1400.0, 1400.05, time.Unix(1700000000, 0)))
+
+	calls := pub.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("calls=%d", len(calls))
+	}
+	if calls[0].CQ.QuoteID != "" {
+		t.Errorf("Gen 비활성인데 QuoteID 발급됨: %q", calls[0].CQ.QuoteID)
+	}
+	if !calls[0].CQ.ValidUntil.IsZero() {
+		t.Errorf("ValidUntil 미설정 기대, got %v", calls[0].CQ.ValidUntil)
+	}
 }

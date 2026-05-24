@@ -475,7 +475,7 @@ func barToProto(b *quote.Bar) *wtgpb.Bar {
 
 // customerQuoteToProto 는 pricing.CustomerQuote 를 proto CustomerQuote 로 매핑.
 func customerQuoteToProto(profile session.Profile, cq pricing.CustomerQuote) *wtgpb.CustomerQuote {
-	return &wtgpb.CustomerQuote{
+	pb := &wtgpb.CustomerQuote{
 		Pair:         string(cq.Pair),
 		Channel:      string(profile.Channel),
 		Site:         string(profile.Site),
@@ -487,5 +487,10 @@ func customerQuoteToProto(profile session.Profile, cq pricing.CustomerQuote) *wt
 		RawBid:       cq.RawBid,
 		RawAsk:       cq.RawAsk,
 		TableVersion: cq.TableVersion,
+		QuoteId:      cq.QuoteID,
 	}
+	if !cq.ValidUntil.IsZero() {
+		pb.ValidUntilUnixNano = cq.ValidUntil.UnixNano()
+	}
+	return pb
 }

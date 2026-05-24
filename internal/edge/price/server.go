@@ -217,33 +217,39 @@ func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceService
 }
 
 // encodeCustomerQuoteJSON 은 proto CustomerQuote → 클라이언트 JSON.
+// QuoteID / ValidUntilUnixNano 는 mci-price 가 quoteid 활성일 때만 채워져
+// 오므로 omitempty 로 처리.
 func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 	out := struct {
-		Type         string  `json:"type"`
-		Pair         string  `json:"pair"`
-		Channel      string  `json:"chan"`
-		Site         string  `json:"site"`
-		Tier         string  `json:"tier"`
-		Tenor        string  `json:"tenor"`
-		Bid          float64 `json:"bid"`
-		Ask          float64 `json:"ask"`
-		TSUnixNano   int64   `json:"ts_unix_nano"`
-		RawBid       float64 `json:"raw_bid,omitempty"`
-		RawAsk       float64 `json:"raw_ask,omitempty"`
-		TableVersion int64   `json:"v"`
+		Type               string  `json:"type"`
+		Pair               string  `json:"pair"`
+		Channel            string  `json:"chan"`
+		Site               string  `json:"site"`
+		Tier               string  `json:"tier"`
+		Tenor              string  `json:"tenor"`
+		Bid                float64 `json:"bid"`
+		Ask                float64 `json:"ask"`
+		TSUnixNano         int64   `json:"ts_unix_nano"`
+		RawBid             float64 `json:"raw_bid,omitempty"`
+		RawAsk             float64 `json:"raw_ask,omitempty"`
+		TableVersion       int64   `json:"v"`
+		QuoteID            string  `json:"quote_id,omitempty"`
+		ValidUntilUnixNano int64   `json:"valid_until_unix_nano,omitempty"`
 	}{
-		Type:         "quote",
-		Pair:         cq.GetPair(),
-		Channel:      cq.GetChannel(),
-		Site:         cq.GetSite(),
-		Tier:         cq.GetTier(),
-		Tenor:        cq.GetTenor(),
-		Bid:          cq.GetBid(),
-		Ask:          cq.GetAsk(),
-		TSUnixNano:   cq.GetTsUnixNano(),
-		RawBid:       cq.GetRawBid(),
-		RawAsk:       cq.GetRawAsk(),
-		TableVersion: cq.GetTableVersion(),
+		Type:               "quote",
+		Pair:               cq.GetPair(),
+		Channel:            cq.GetChannel(),
+		Site:               cq.GetSite(),
+		Tier:               cq.GetTier(),
+		Tenor:              cq.GetTenor(),
+		Bid:                cq.GetBid(),
+		Ask:                cq.GetAsk(),
+		TSUnixNano:         cq.GetTsUnixNano(),
+		RawBid:             cq.GetRawBid(),
+		RawAsk:             cq.GetRawAsk(),
+		TableVersion:       cq.GetTableVersion(),
+		QuoteID:            cq.GetQuoteId(),
+		ValidUntilUnixNano: cq.GetValidUntilUnixNano(),
 	}
 	return json.Marshal(out)
 }

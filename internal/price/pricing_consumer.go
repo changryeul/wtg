@@ -1,6 +1,7 @@
 package price
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
+	"github.com/winwaysystems/wtg/pkg/quoteid"
 	"github.com/winwaysystems/wtg/pkg/session"
 )
 
@@ -65,10 +67,18 @@ type PricingConsumer struct {
 	tenor     pricing.Tenor // 대부분 SPOT
 	logger    *slog.Logger
 
+	// QuoteID 발행 + 등록 (선택적 — 둘 다 nil 이면 quoteid 비활성).
+	quoteIDGen      *quoteid.Generator
+	quoteIDReg      quoteid.Registry
+	quoteValidity   time.Duration
+	quoteRegCtx     context.Context
+	quoteRegTimeout time.Duration
+
 	ticksIn         atomic.Uint64
 	ticksDropped    atomic.Uint64 // sym 미등록 / inactive / decode 실패
 	quotesPublished atomic.Uint64
 	publishErrors   atomic.Uint64
+	quoteRegErrors  atomic.Uint64 // Registry.Put 실패 카운트
 }
 
 // PricingConsumerOptions 는 PricingConsumer 생성 옵션.
@@ -81,6 +91,15 @@ type PricingConsumerOptions struct {
 	// Tenor 는 publish 할 시세의 만기 컨텍스트. 0 값이면 TenorSpot.
 	Tenor  pricing.Tenor
 	Logger *slog.Logger
+
+	// QuoteIDGen / QuoteIDRegistry — quoteid 활성화. 둘 다 채워야 동작
+	// (nil 이면 quoteid 미사용 — 기존 동작). QuoteValidity 는 publish 시점부터
+	// 토큰이 유효한 wallclock 길이 (default 500ms).
+	QuoteIDGen      *quoteid.Generator
+	QuoteIDRegistry quoteid.Registry
+	QuoteValidity   time.Duration
+	// QuoteRegistryTimeout — Registry.Put 단위 timeout. default 200ms.
+	QuoteRegistryTimeout time.Duration
 }
 
 // NewPricingConsumer 는 PricingConsumer 를 구성한다.
@@ -98,14 +117,27 @@ func NewPricingConsumer(opt PricingConsumerOptions) *PricingConsumer {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	validity := opt.QuoteValidity
+	if validity <= 0 {
+		validity = 500 * time.Millisecond
+	}
+	regTimeout := opt.QuoteRegistryTimeout
+	if regTimeout <= 0 {
+		regTimeout = 200 * time.Millisecond
+	}
 	return &PricingConsumer{
-		store:     opt.Store,
-		symbols:   opt.Symbols,
-		decoder:   opt.Decoder,
-		publisher: opt.Publisher,
-		profiles:  opt.Profiles,
-		tenor:     tenor,
-		logger:    logger,
+		store:           opt.Store,
+		symbols:         opt.Symbols,
+		decoder:         opt.Decoder,
+		publisher:       opt.Publisher,
+		profiles:        opt.Profiles,
+		tenor:           tenor,
+		logger:          logger,
+		quoteIDGen:      opt.QuoteIDGen,
+		quoteIDReg:      opt.QuoteIDRegistry,
+		quoteValidity:   validity,
+		quoteRegCtx:     context.Background(),
+		quoteRegTimeout: regTimeout,
 	}
 }
 
@@ -131,6 +163,7 @@ func (c *PricingConsumer) OnTick(t *Tick) {
 	tbl := c.store.Load()
 	for _, prof := range c.profiles.ActiveProfiles() {
 		cq := tbl.Apply(raw, prof, c.tenor)
+		c.attachQuoteID(&cq, prof)
 		if err := c.publisher.PublishQuote(prof, cq); err != nil {
 			c.publishErrors.Add(1)
 			c.logger.Warn("PricingConsumer: publish 실패",
@@ -144,12 +177,47 @@ func (c *PricingConsumer) OnTick(t *Tick) {
 	}
 }
 
+// attachQuoteID — Generator + Registry 가 활성이면 QuoteID 발급 + ValidUntil
+// 부착 + Registry.Put. Registry.Put 실패는 publish 자체를 막지 않음 (감사 추적
+// best-effort) — 운영에서 quote_register_errors 메트릭으로 모니터링.
+func (c *PricingConsumer) attachQuoteID(cq *pricing.CustomerQuote, prof session.Profile) {
+	if c.quoteIDGen == nil || c.quoteIDReg == nil {
+		return
+	}
+	id := c.quoteIDGen.Next()
+	validUntil := cq.TS.Add(c.quoteValidity)
+	cq.QuoteID = string(id)
+	cq.ValidUntil = validUntil
+
+	rec := quoteid.Record{
+		QuoteID:    id,
+		Pair:       cq.Pair,
+		Profile:    prof,
+		Tenor:      string(cq.Tenor),
+		Bid:        cq.Bid,
+		Ask:        cq.Ask,
+		IssuedAt:   cq.TS.UnixNano(),
+		ValidUntil: validUntil.UnixNano(),
+		Sequence:   c.quoteIDGen.NextSequence(),
+		Issuer:     c.quoteIDGen.Instance(),
+	}
+	ctx, cancel := context.WithTimeout(c.quoteRegCtx, c.quoteRegTimeout)
+	defer cancel()
+	if err := c.quoteIDReg.Put(ctx, rec); err != nil {
+		c.quoteRegErrors.Add(1)
+		c.logger.Warn("PricingConsumer: QuoteID Registry.Put 실패",
+			slog.String("quote_id", string(id)),
+			slog.Any("error", err))
+	}
+}
+
 // PricingConsumerStats 는 누적 카운터 snapshot.
 type PricingConsumerStats struct {
 	TicksIn         uint64 `json:"ticks_in"`
 	TicksDropped    uint64 `json:"ticks_dropped"`
 	QuotesPublished uint64 `json:"quotes_published"`
 	PublishErrors   uint64 `json:"publish_errors"`
+	QuoteRegErrors  uint64 `json:"quote_register_errors"`
 }
 
 // Stats 는 누적 카운터 snapshot 을 반환.
@@ -159,6 +227,7 @@ func (c *PricingConsumer) Stats() PricingConsumerStats {
 		TicksDropped:    c.ticksDropped.Load(),
 		QuotesPublished: c.quotesPublished.Load(),
 		PublishErrors:   c.publishErrors.Load(),
+		QuoteRegErrors:  c.quoteRegErrors.Load(),
 	}
 }
 
@@ -184,7 +253,7 @@ func NewMymqQuotePublisher(c interface {
 
 // PublishQuote 는 CustomerQuote 를 ExchangeQuote 로 broker publish.
 func (p *MymqQuotePublisher) PublishQuote(profile session.Profile, cq pricing.CustomerQuote) error {
-	body, err := json.Marshal(customerQuoteDTO{
+	dto := customerQuoteDTO{
 		Pair:    string(cq.Pair),
 		Channel: string(profile.Channel),
 		Site:    string(profile.Site),
@@ -196,7 +265,12 @@ func (p *MymqQuotePublisher) PublishQuote(profile session.Profile, cq pricing.Cu
 		RawBid:  cq.RawBid,
 		RawAsk:  cq.RawAsk,
 		Version: cq.TableVersion,
-	})
+		QuoteID: cq.QuoteID,
+	}
+	if !cq.ValidUntil.IsZero() {
+		dto.ValidUntil = cq.ValidUntil.UTC().Format(time.RFC3339Nano)
+	}
+	body, err := json.Marshal(dto)
 	if err != nil {
 		return fmt.Errorf("pricing_consumer: marshal: %w", err)
 	}
@@ -242,15 +316,17 @@ func (m *MultiQuotePublisher) PublishQuote(profile session.Profile, cq pricing.C
 
 // customerQuoteDTO 는 broker publish wire JSON.
 type customerQuoteDTO struct {
-	Pair    string  `json:"pair"`
-	Channel string  `json:"chan"`
-	Site    string  `json:"site"`
-	Tier    string  `json:"tier"`
-	Tenor   string  `json:"tenor"`
-	Bid     float64 `json:"bid"`
-	Ask     float64 `json:"ask"`
-	TS      string  `json:"ts"`
-	RawBid  float64 `json:"raw_bid,omitempty"`
-	RawAsk  float64 `json:"raw_ask,omitempty"`
-	Version int64   `json:"v"`
+	Pair       string  `json:"pair"`
+	Channel    string  `json:"chan"`
+	Site       string  `json:"site"`
+	Tier       string  `json:"tier"`
+	Tenor      string  `json:"tenor"`
+	Bid        float64 `json:"bid"`
+	Ask        float64 `json:"ask"`
+	TS         string  `json:"ts"`
+	RawBid     float64 `json:"raw_bid,omitempty"`
+	RawAsk     float64 `json:"raw_ask,omitempty"`
+	Version    int64   `json:"v"`
+	QuoteID    string  `json:"quote_id,omitempty"`
+	ValidUntil string  `json:"valid_until,omitempty"` // RFC3339Nano
 }

@@ -66,4 +66,11 @@ type CustomerQuote struct {
 	RawBid       float64 // 산출 근거가 된 raw bid
 	RawAsk       float64 // 산출 근거가 된 raw ask
 	TableVersion int64   // 적용된 PricingTable.Version
+
+	// QuoteID — FIX 4.4 tag 117 호환 식별자. PricingConsumer 가 발행 직전에
+	// Generator 로 부착. 빈값이면 quoteid 미사용 (dev / 단위 테스트 경로).
+	QuoteID string
+	// ValidUntil — 토큰 만료시각. 빈 time.Time 이면 미설정 (= QuoteID 빈값과
+	// 동치). 매칭 엔진이 거래 시점에 이 시각을 넘기지 않아야 한다.
+	ValidUntil time.Time
 }

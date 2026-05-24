@@ -120,4 +120,12 @@ message CustomerQuote {
   double raw_bid       = 9;
   double raw_ask       = 10;
   int64  table_version = 11;
+
+  // QuoteID — FIX 4.4 tag 117 호환 식별자. mci-price 발행, 매칭 엔진이
+  // pkg/quoteid.Registry 로 검증 시 사용한다. 빈값이면 quoteid 비활성.
+  string quote_id = 12;
+
+  // ValidUntil — 토큰 만료 wallclock (Unix nano). 이 시점 이후 엔진은
+  // 토큰을 거절해야 한다 (FX Global Code Principle 17 — last-look 한계).
+  int64  valid_until_unix_nano = 13;
 }

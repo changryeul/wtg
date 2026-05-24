@@ -345,8 +345,61 @@ HTTP gateway 는 `--listen` 의 권한 모델을 그대로 따름 — 현재 pla
 
 본문 크기 상한 256KB — BatchValidate 1000건 ≈ 30KB 의 여유.
 
+## v1.5 — BatchMarkConsumed (commit 추가)
+
+BatchValidate 의 짝 — 다건 (quote_id, consumer_id) 쌍을 한 RPC 로 표시.
+각 항목 atomic (per-key SET NX / mutex) — 일부 OK 일부 ALREADY_CONSUMED
+혼재 가능. goroutine fan-out 으로 Redis round-trip 병렬화.
+
+### 엔진 흐름 — FIX NewOrderList ('E') 처리
+
+```go
+// 1) 전체 batch 사전 검증
+vr, _ := client.BatchValidate(ctx, &BatchValidateRequest{
+    QuoteIds: orderQuoteIDs,
+})
+okIDs := pickOKItems(vr.Results)   // 엔진 자체 정책 통과 항목
+
+// 2) 일괄 표시 — atomic per item
+mc, _ := client.BatchMarkConsumed(ctx, &BatchMarkConsumedRequest{
+    Items: makeConsumeItems(okIDs, orderIDs),
+})
+for i, r := range mc.Results {
+    switch r.Status {
+    case OK:               // i 번째 leg fill
+    case ALREADY_CONSUMED: // race 충돌 — 거절
+    case NOT_FOUND:        // race GC — 거절
+    case EXPIRED:          // 너무 늦음 — 거절
+    }
+}
+// 3) ExecutionReport 다건 송신
+```
+
+상한 1000, 초과 시 InvalidArgument. HTTP wire 도 동일.
+
+### 메트릭 추가
+
+| 키 | 의미 |
+|---|------|
+| `quote_validation.batch_consume_total` | BatchMarkConsumed RPC 누적 |
+| `quote_validation.batch_consume_items` | 처리된 (quote_id, consumer_id) 항목 총합 |
+
+### HTTP 라우트
+
+`POST /v1/quoteid/batch-mark-consumed` — protojson body:
+
+```json
+{
+  "items": [
+    {"quoteId":"A-1","consumerId":"order-1"},
+    {"quoteId":"A-2","consumerId":"order-2"}
+  ],
+  "engineId":"matching-engine-A"
+}
+```
+
 ## v2 후보
 
 - Redis Cluster 호환 hash tag (`{quote_id}:q` / `{quote_id}:c`).
-- BatchMarkConsumed — 다건 atomic 표시 (Lua script + EVALSHA).
 - HTTP native TLS — gateway 자체 인증서 (현재는 reverse proxy 의존).
+- Lua script 기반 진정한 multi-key atomic (cluster 의 same-slot 보장 시).

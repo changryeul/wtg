@@ -180,6 +180,29 @@ func TestQuoteValidationHTTP_MarkConsumed_FirstWins(t *testing.T) {
 	}
 }
 
+func TestQuoteValidationHTTP_BatchMarkConsumed(t *testing.T) {
+	ts, srv := mkHTTPGateway(t)
+	now := time.Now()
+	_ = srv.registry.Put(context.Background(), mkRegRecord("A-1", now, time.Hour))
+	_ = srv.registry.Put(context.Background(), mkRegRecord("A-2", now, time.Hour))
+
+	body := `{"items":[
+		{"quoteId":"A-1","consumerId":"order-1"},
+		{"quoteId":"A-2","consumerId":"order-2"},
+		{"quoteId":"A-nope","consumerId":"order-3"}
+	],"engineId":"e"}`
+	code, resp := post(t, ts.URL+"/v1/quoteid/batch-mark-consumed", body)
+	if code != 200 {
+		t.Fatalf("status=%d body=%s", code, resp)
+	}
+	if strings.Count(resp, `"status":"OK"`) != 2 {
+		t.Errorf("OK 카운트 mismatch: %s", resp)
+	}
+	if strings.Count(resp, `"status":"NOT_FOUND"`) != 1 {
+		t.Errorf("NOT_FOUND 카운트 mismatch: %s", resp)
+	}
+}
+
 func TestQuoteValidationHTTP_Stats(t *testing.T) {
 	ts, srv := mkHTTPGateway(t)
 	_ = srv.registry.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))

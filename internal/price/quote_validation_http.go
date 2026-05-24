@@ -4,10 +4,11 @@
 //
 // 라우트:
 //
-//	POST /v1/quoteid/validate         — wtgpb.ValidateRequest        → ValidateResponse
-//	POST /v1/quoteid/batch-validate   — wtgpb.BatchValidateRequest   → BatchValidateResponse
-//	POST /v1/quoteid/mark-consumed    — wtgpb.MarkConsumedRequest    → MarkConsumedResponse
-//	GET  /v1/quoteid/stats            — QuoteValidationStats
+//	POST /v1/quoteid/validate             — wtgpb.ValidateRequest             → ValidateResponse
+//	POST /v1/quoteid/batch-validate       — wtgpb.BatchValidateRequest        → BatchValidateResponse
+//	POST /v1/quoteid/mark-consumed        — wtgpb.MarkConsumedRequest         → MarkConsumedResponse
+//	POST /v1/quoteid/batch-mark-consumed  — wtgpb.BatchMarkConsumedRequest    → BatchMarkConsumedResponse
+//	GET  /v1/quoteid/stats                — QuoteValidationStats
 //
 // wire 는 protojson — proto-defined 필드명 (camelCase 변환). gRPC 와 동일한
 // 핸들러 / 카운터 / Registry 공유.
@@ -36,6 +37,7 @@ func RegisterQuoteValidationHTTP(mux *http.ServeMux, srv *QuoteValidationServer,
 	mux.HandleFunc("POST /v1/quoteid/validate", h.handleValidate)
 	mux.HandleFunc("POST /v1/quoteid/batch-validate", h.handleBatchValidate)
 	mux.HandleFunc("POST /v1/quoteid/mark-consumed", h.handleMarkConsumed)
+	mux.HandleFunc("POST /v1/quoteid/batch-mark-consumed", h.handleBatchMarkConsumed)
 	mux.HandleFunc("GET /v1/quoteid/stats", h.handleStats)
 }
 
@@ -118,6 +120,21 @@ func (h *quoteValidationHTTP) handleMarkConsumed(w http.ResponseWriter, r *http.
 	resp, err := h.srv.MarkConsumed(r.Context(), req)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.writeProtoJSON(w, http.StatusOK, resp)
+}
+
+func (h *quoteValidationHTTP) handleBatchMarkConsumed(w http.ResponseWriter, r *http.Request) {
+	req := &wtgpb.BatchMarkConsumedRequest{}
+	if err := h.readProtoJSON(r, req); err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := h.srv.BatchMarkConsumed(r.Context(), req)
+	if err != nil {
+		// 상한 초과 등 → 400.
+		h.writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.writeProtoJSON(w, http.StatusOK, resp)

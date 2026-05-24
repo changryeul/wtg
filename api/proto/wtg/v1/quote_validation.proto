@@ -62,6 +62,14 @@ service QuoteValidationService {
   // 서버는 goroutine fan-out 으로 병렬 처리 — N=100 batch 가 단일 Validate
   // 와 비슷한 wallclock 으로 끝남. batch 크기 상한은 1000 (운영 abuse 방어).
   rpc BatchValidate(BatchValidateRequest) returns (BatchValidateResponse);
+
+  // BatchMarkConsumed — 여러 (quote_id, consumer_id) 쌍을 한 RPC 로 표시.
+  // 각 항목은 독립적으로 atomic (Memory mutex / Redis SET NX) — partial 결과
+  // 가능 (일부 OK, 일부 ALREADY_CONSUMED). 결과는 입력 순서와 동일한 배열.
+  //
+  // FIX NewOrderList ('E') 다건 주문 fill 직전 한 번에 표시 — 직렬 호출
+  // 대비 N× wallclock 개선 (goroutine fan-out 으로 Redis round-trip 병렬화).
+  rpc BatchMarkConsumed(BatchMarkConsumedRequest) returns (BatchMarkConsumedResponse);
 }
 
 message ValidateRequest {
@@ -128,6 +136,26 @@ message BatchValidateResponse {
   // 개별 항목의 status 가 각 quote_id 에 대한 분기 — 일부 OK 일부 NOT_FOUND
   // 처럼 혼재 가능.
   repeated ValidateResponse results = 1;
+}
+
+// ConsumeItem — BatchMarkConsumed 한 항목.
+message ConsumeItem {
+  string quote_id    = 1;
+  string consumer_id = 2;
+}
+
+message BatchMarkConsumedRequest {
+  // 표시할 (quote_id, consumer_id) 항목들. 빈 배열이면 빈 results 반환.
+  // 1000 초과 시 InvalidArgument.
+  repeated ConsumeItem items = 1;
+
+  string engine_id    = 10;
+  int64  ts_unix_nano = 11;
+}
+
+message BatchMarkConsumedResponse {
+  // results[i] 는 request.items[i] 의 표시 결과. 길이는 입력과 동일.
+  repeated MarkConsumedResponse results = 1;
 }
 
 message MarkConsumedResponse {

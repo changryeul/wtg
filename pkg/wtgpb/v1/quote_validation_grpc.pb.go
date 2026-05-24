@@ -29,9 +29,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	QuoteValidationService_Validate_FullMethodName      = "/wtg.v1.QuoteValidationService/Validate"
-	QuoteValidationService_MarkConsumed_FullMethodName  = "/wtg.v1.QuoteValidationService/MarkConsumed"
-	QuoteValidationService_BatchValidate_FullMethodName = "/wtg.v1.QuoteValidationService/BatchValidate"
+	QuoteValidationService_Validate_FullMethodName          = "/wtg.v1.QuoteValidationService/Validate"
+	QuoteValidationService_MarkConsumed_FullMethodName      = "/wtg.v1.QuoteValidationService/MarkConsumed"
+	QuoteValidationService_BatchValidate_FullMethodName     = "/wtg.v1.QuoteValidationService/BatchValidate"
+	QuoteValidationService_BatchMarkConsumed_FullMethodName = "/wtg.v1.QuoteValidationService/BatchMarkConsumed"
 )
 
 // QuoteValidationServiceClient is the client API for QuoteValidationService service.
@@ -83,6 +84,13 @@ type QuoteValidationServiceClient interface {
 	// 서버는 goroutine fan-out 으로 병렬 처리 — N=100 batch 가 단일 Validate
 	// 와 비슷한 wallclock 으로 끝남. batch 크기 상한은 1000 (운영 abuse 방어).
 	BatchValidate(ctx context.Context, in *BatchValidateRequest, opts ...grpc.CallOption) (*BatchValidateResponse, error)
+	// BatchMarkConsumed — 여러 (quote_id, consumer_id) 쌍을 한 RPC 로 표시.
+	// 각 항목은 독립적으로 atomic (Memory mutex / Redis SET NX) — partial 결과
+	// 가능 (일부 OK, 일부 ALREADY_CONSUMED). 결과는 입력 순서와 동일한 배열.
+	//
+	// FIX NewOrderList ('E') 다건 주문 fill 직전 한 번에 표시 — 직렬 호출
+	// 대비 N× wallclock 개선 (goroutine fan-out 으로 Redis round-trip 병렬화).
+	BatchMarkConsumed(ctx context.Context, in *BatchMarkConsumedRequest, opts ...grpc.CallOption) (*BatchMarkConsumedResponse, error)
 }
 
 type quoteValidationServiceClient struct {
@@ -117,6 +125,16 @@ func (c *quoteValidationServiceClient) BatchValidate(ctx context.Context, in *Ba
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BatchValidateResponse)
 	err := c.cc.Invoke(ctx, QuoteValidationService_BatchValidate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *quoteValidationServiceClient) BatchMarkConsumed(ctx context.Context, in *BatchMarkConsumedRequest, opts ...grpc.CallOption) (*BatchMarkConsumedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BatchMarkConsumedResponse)
+	err := c.cc.Invoke(ctx, QuoteValidationService_BatchMarkConsumed_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -172,6 +190,13 @@ type QuoteValidationServiceServer interface {
 	// 서버는 goroutine fan-out 으로 병렬 처리 — N=100 batch 가 단일 Validate
 	// 와 비슷한 wallclock 으로 끝남. batch 크기 상한은 1000 (운영 abuse 방어).
 	BatchValidate(context.Context, *BatchValidateRequest) (*BatchValidateResponse, error)
+	// BatchMarkConsumed — 여러 (quote_id, consumer_id) 쌍을 한 RPC 로 표시.
+	// 각 항목은 독립적으로 atomic (Memory mutex / Redis SET NX) — partial 결과
+	// 가능 (일부 OK, 일부 ALREADY_CONSUMED). 결과는 입력 순서와 동일한 배열.
+	//
+	// FIX NewOrderList ('E') 다건 주문 fill 직전 한 번에 표시 — 직렬 호출
+	// 대비 N× wallclock 개선 (goroutine fan-out 으로 Redis round-trip 병렬화).
+	BatchMarkConsumed(context.Context, *BatchMarkConsumedRequest) (*BatchMarkConsumedResponse, error)
 	mustEmbedUnimplementedQuoteValidationServiceServer()
 }
 
@@ -190,6 +215,9 @@ func (UnimplementedQuoteValidationServiceServer) MarkConsumed(context.Context, *
 }
 func (UnimplementedQuoteValidationServiceServer) BatchValidate(context.Context, *BatchValidateRequest) (*BatchValidateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchValidate not implemented")
+}
+func (UnimplementedQuoteValidationServiceServer) BatchMarkConsumed(context.Context, *BatchMarkConsumedRequest) (*BatchMarkConsumedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BatchMarkConsumed not implemented")
 }
 func (UnimplementedQuoteValidationServiceServer) mustEmbedUnimplementedQuoteValidationServiceServer() {
 }
@@ -267,6 +295,24 @@ func _QuoteValidationService_BatchValidate_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _QuoteValidationService_BatchMarkConsumed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchMarkConsumedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QuoteValidationServiceServer).BatchMarkConsumed(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: QuoteValidationService_BatchMarkConsumed_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QuoteValidationServiceServer).BatchMarkConsumed(ctx, req.(*BatchMarkConsumedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // QuoteValidationService_ServiceDesc is the grpc.ServiceDesc for QuoteValidationService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -285,6 +331,10 @@ var QuoteValidationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchValidate",
 			Handler:    _QuoteValidationService_BatchValidate_Handler,
+		},
+		{
+			MethodName: "BatchMarkConsumed",
+			Handler:    _QuoteValidationService_BatchMarkConsumed_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

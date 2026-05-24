@@ -291,6 +291,85 @@ func TestQuoteValidation_BatchValidate_ExceedsMax(t *testing.T) {
 	}
 }
 
+func TestQuoteValidation_BatchMarkConsumed(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	ts := time.Now()
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", ts, time.Hour))
+	_ = reg.Put(context.Background(), mkRegRecord("A-2", ts, time.Hour))
+	_ = reg.Put(context.Background(), mkRegRecord("A-3", ts, time.Hour))
+	// A-3 는 이미 다른 consumer 가 잡음 — race 시뮬레이션.
+	_, _ = srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId: "A-3", ConsumerId: "order-pre",
+	})
+
+	resp, err := srv.BatchMarkConsumed(context.Background(), &wtgpb.BatchMarkConsumedRequest{
+		Items: []*wtgpb.ConsumeItem{
+			{QuoteId: "A-1", ConsumerId: "order-1"},
+			{QuoteId: "A-2", ConsumerId: "order-2"},
+			{QuoteId: "A-3", ConsumerId: "order-3"},
+			{QuoteId: "A-nope", ConsumerId: "order-4"},
+		},
+		EngineId: "test-engine",
+	})
+	if err != nil {
+		t.Fatalf("BatchMarkConsumed: %v", err)
+	}
+	results := resp.GetResults()
+	if len(results) != 4 {
+		t.Fatalf("results len=%d, want 4", len(results))
+	}
+	if results[0].GetStatus() != wtgpb.ValidationStatus_OK {
+		t.Errorf("results[0] (A-1) status=%v, want OK", results[0].GetStatus())
+	}
+	if results[1].GetStatus() != wtgpb.ValidationStatus_OK {
+		t.Errorf("results[1] (A-2) status=%v, want OK", results[1].GetStatus())
+	}
+	if results[2].GetStatus() != wtgpb.ValidationStatus_ALREADY_CONSUMED {
+		t.Errorf("results[2] (A-3) status=%v, want ALREADY_CONSUMED", results[2].GetStatus())
+	}
+	if results[2].GetConsumedBy() != "order-pre" {
+		t.Errorf("results[2].consumedBy=%q, want order-pre", results[2].GetConsumedBy())
+	}
+	if results[3].GetStatus() != wtgpb.ValidationStatus_NOT_FOUND {
+		t.Errorf("results[3] (A-nope) status=%v, want NOT_FOUND", results[3].GetStatus())
+	}
+
+	s := srv.Stats()
+	if s.BatchConsumeTotal != 1 {
+		t.Errorf("BatchConsumeTotal=%d, want 1", s.BatchConsumeTotal)
+	}
+	if s.BatchConsumeItems != 4 {
+		t.Errorf("BatchConsumeItems=%d, want 4", s.BatchConsumeItems)
+	}
+}
+
+func TestQuoteValidation_BatchMarkConsumed_Empty(t *testing.T) {
+	srv, _ := mkValidationServer(t)
+	resp, err := srv.BatchMarkConsumed(context.Background(), &wtgpb.BatchMarkConsumedRequest{})
+	if err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	if len(resp.GetResults()) != 0 {
+		t.Errorf("빈 batch results len=%d", len(resp.GetResults()))
+	}
+}
+
+func TestQuoteValidation_BatchMarkConsumed_ExceedsMax(t *testing.T) {
+	srv, _ := mkValidationServer(t)
+	items := make([]*wtgpb.ConsumeItem, MaxBatchConsumeSize+1)
+	for i := range items {
+		items[i] = &wtgpb.ConsumeItem{QuoteId: "A-x", ConsumerId: "c"}
+	}
+	_, err := srv.BatchMarkConsumed(context.Background(), &wtgpb.BatchMarkConsumedRequest{Items: items})
+	if err == nil {
+		t.Fatal("상한 초과인데 err nil")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Errorf("error code=%v, want InvalidArgument", st.Code())
+	}
+}
+
 func TestQuoteValidation_Stats(t *testing.T) {
 	srv, reg := mkValidationServer(t)
 	ts := time.Now()

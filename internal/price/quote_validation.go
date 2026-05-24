@@ -25,6 +25,9 @@ import (
 // goroutine 폭발 방어. 1000 = FIX NewOrderList 의 일반적 cap.
 const MaxBatchValidateSize = 1000
 
+// MaxBatchConsumeSize — BatchMarkConsumed 상한. 같은 이유로 1000.
+const MaxBatchConsumeSize = 1000
+
 // FIX 4.4 OrdRejReason (tag 103) 매핑 — RFC §4.3.
 const (
 	ordRejReasonNotFound int32 = 5  // Unknown order
@@ -56,6 +59,8 @@ type QuoteValidationServer struct {
 	consumeInternal   atomic.Uint64
 	batchTotal        atomic.Uint64 // BatchValidate RPC 누적
 	batchItems        atomic.Uint64 // 처리된 quote_id 총합
+	batchConsumeTotal atomic.Uint64 // BatchMarkConsumed RPC 누적
+	batchConsumeItems atomic.Uint64 // 처리된 표시 항목 총합
 }
 
 // NewQuoteValidationServer — Registry 가 nil 이면 panic. logger 가 nil 이면
@@ -264,6 +269,53 @@ func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.Ba
 	return &wtgpb.BatchValidateResponse{Results: results}, nil
 }
 
+// BatchMarkConsumed — 다건 (quote_id, consumer_id) 표시. 각 항목은 독립
+// atomic — Memory mutex / Redis SET NX 가 per-key 보장.
+//
+// 일부 OK 일부 ALREADY_CONSUMED 같은 혼재 결과 가능 (FIX NewOrderList 의 일부
+// leg 만 다른 주문이 잡은 경우). 호출자가 per-item 분기로 일부 fill / 일부
+// reject.
+//
+// goroutine fan-out 으로 Redis round-trip 병렬화 — 100건 ≈ 단일 MarkConsumed.
+func (s *QuoteValidationServer) BatchMarkConsumed(ctx context.Context, req *wtgpb.BatchMarkConsumedRequest) (*wtgpb.BatchMarkConsumedResponse, error) {
+	s.batchConsumeTotal.Add(1)
+	items := req.GetItems()
+	if len(items) == 0 {
+		return &wtgpb.BatchMarkConsumedResponse{}, nil
+	}
+	if len(items) > MaxBatchConsumeSize {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"batch size %d exceeds max %d", len(items), MaxBatchConsumeSize)
+	}
+	s.batchConsumeItems.Add(uint64(len(items)))
+
+	results := make([]*wtgpb.MarkConsumedResponse, len(items))
+	var wg sync.WaitGroup
+	wg.Add(len(items))
+	for i := range items {
+		i := i
+		go func() {
+			defer wg.Done()
+			resp, err := s.MarkConsumed(ctx, &wtgpb.MarkConsumedRequest{
+				QuoteId:    items[i].GetQuoteId(),
+				ConsumerId: items[i].GetConsumerId(),
+				EngineId:   req.GetEngineId(),
+				TsUnixNano: req.GetTsUnixNano(),
+			})
+			if err != nil || resp == nil {
+				results[i] = &wtgpb.MarkConsumedResponse{
+					Status:     wtgpb.ValidationStatus_STATUS_UNSPECIFIED,
+					RejectText: "internal error",
+				}
+				return
+			}
+			results[i] = resp
+		}()
+	}
+	wg.Wait()
+	return &wtgpb.BatchMarkConsumedResponse{Results: results}, nil
+}
+
 // QuoteValidationStats — 누적 카운터 snapshot. 운영 모니터링용.
 type QuoteValidationStats struct {
 	// Validate RPC 카운터.
@@ -283,6 +335,9 @@ type QuoteValidationStats struct {
 	// BatchValidate RPC 카운터.
 	BatchTotal uint64 `json:"batch_total"`
 	BatchItems uint64 `json:"batch_items"`
+	// BatchMarkConsumed RPC 카운터.
+	BatchConsumeTotal uint64 `json:"batch_consume_total"`
+	BatchConsumeItems uint64 `json:"batch_consume_items"`
 }
 
 func (s *QuoteValidationServer) Stats() QuoteValidationStats {
@@ -299,8 +354,10 @@ func (s *QuoteValidationServer) Stats() QuoteValidationStats {
 		ConsumeNotFound: s.consumeNotFound.Load(),
 		ConsumeExpired:  s.consumeExpired.Load(),
 		ConsumeInternal: s.consumeInternal.Load(),
-		BatchTotal:      s.batchTotal.Load(),
-		BatchItems:      s.batchItems.Load(),
+		BatchTotal:        s.batchTotal.Load(),
+		BatchItems:        s.batchItems.Load(),
+		BatchConsumeTotal: s.batchConsumeTotal.Load(),
+		BatchConsumeItems: s.batchConsumeItems.Load(),
 	}
 }
 

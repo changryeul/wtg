@@ -804,9 +804,68 @@ sum(rate(wtg_quoteid_op_total{op=~"mark_consumed|batch_mark_consumed"}[5m]))
 Variable: `$service` (default mci-price, regex 다중 인스턴스 지원),
 `$rate_window` (1m/5m/15m/1h).
 
+## v1.15 — engine_id metadata (commit 추가)
+
+v1.12 의 etcd allowlist value 가 단순 빈 문자열이었는데, v1.15 부터 JSON
+으로 권한 / 만료 / contact 를 담는다. backward compat — 빈 value 는 풀
+권한 / 무기한 (v1.12 동작 동일).
+
+### Schema
+
+```json
+{
+  "permissions": ["validate", "mark_consumed"],
+  "expires_at":  "2026-12-31T00:00:00Z",
+  "contact":     "trading-platform@bank.com"
+}
+```
+
+- `permissions` — `validate` (read) / `mark_consumed` (write). 빈 슬라이스
+  또는 미지정 = 풀 권한 (default).
+- `expires_at` — RFC3339. 도래 후 자동 거절. 빈 문자열 = 무기한.
+  잘못된 형식이면 fail-open (운영 안전성, 운영자가 발견 → etcd 수정).
+- `contact` — free-form 식별자. 감사 / 운영 추적용. 검사 영향 없음.
+
+### 운영 예
+
+```bash
+# audit-cli — read-only, 1년 만료.
+etcdctl put wtg/quoteid/engines/audit-cli \
+  '{"permissions":["validate"],"expires_at":"2027-05-25T00:00:00Z",
+    "contact":"audit-team@bank.com"}'
+
+# matching-A — 풀 권한 (default), 운영 contact.
+etcdctl put wtg/quoteid/engines/matching-A \
+  '{"contact":"trading-platform@bank.com"}'
+
+# 임시 디버깅 — 1시간 만료.
+etcdctl put wtg/quoteid/engines/debug-cli \
+  '{"permissions":["validate"],"expires_at":"'"$(date -u -v+1H +%Y-%m-%dT%H:%M:%SZ)"'"}'
+
+# v1.12 호환 — value 비워도 OK (풀 권한, 무기한).
+etcdctl put wtg/quoteid/engines/matching-B ""
+```
+
+### 거절 메시지 (gRPC PermissionDenied / HTTP 403)
+
+`reject_text` 예:
+- `engine_id not in allowlist`
+- `engine_id expired`
+- `engine_id lacks mark_consumed permission`
+
+운영자가 Grafana / 로그에서 사유별 분류 가능.
+
+### 운영 시나리오
+
+- **권한 분리**: audit-cli 가 실수로 MarkConsumed 호출해도 차단.
+- **자동 회수**: 임시 디버깅 토큰이 expires_at 후 자동 비활성 — 인간이
+  잊어도 보안 회수됨.
+- **감사 추적**: 사건 발생 시 etcd value 의 contact 로 즉시 운영자 식별.
+- **비상 차단**: `etcdctl del wtg/quoteid/engines/matching-A` — 즉시 모든
+  RPC 차단.
+
 ## v2 후보
 
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
-- engine_id 메타데이터 — etcd value 에 권한 (예: read-only vs read-write)
-  / 만료시각 / contact 등을 JSON 으로 넣어 세밀 RBAC.
 - Grafana Unified Alerting rules — operations.md 의 alert 임계를 JSON 으로.
+- mci-admin UI 의 engine_id 관리 페이지 — etcdctl 대신 GUI.

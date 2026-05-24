@@ -30,27 +30,27 @@ func newEtcdClient(t *testing.T) *clientv3.Client {
 // applySink — onApply callback 결과를 mutex 로 캡처.
 type applySink struct {
 	mu       sync.Mutex
-	snapshot map[string]struct{}
+	snapshot map[string]EngineMeta
 	calls    int
 }
 
-func (a *applySink) Apply(m map[string]struct{}) {
+func (a *applySink) Apply(m map[string]EngineMeta) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	cp := make(map[string]struct{}, len(m))
-	for k := range m {
-		cp[k] = struct{}{}
+	cp := make(map[string]EngineMeta, len(m))
+	for k, v := range m {
+		cp[k] = v
 	}
 	a.snapshot = cp
 	a.calls++
 }
 
-func (a *applySink) Snapshot() map[string]struct{} {
+func (a *applySink) Snapshot() map[string]EngineMeta {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	cp := make(map[string]struct{}, len(a.snapshot))
-	for k := range a.snapshot {
-		cp[k] = struct{}{}
+	cp := make(map[string]EngineMeta, len(a.snapshot))
+	for k, v := range a.snapshot {
+		cp[k] = v
 	}
 	return cp
 }
@@ -169,6 +169,86 @@ func TestEtcdAllowlistWatcher_DeleteRemovesEngine(t *testing.T) {
 	waitForCalls(t, sink, 2, 2*time.Second)
 	if _, ok := sink.Snapshot()["engine-A"]; ok {
 		t.Errorf("삭제 후에도 engine-A 남음: %v", sink.Snapshot())
+	}
+}
+
+func TestEtcdAllowlistWatcher_EngineMetaJSON(t *testing.T) {
+	cli := newEtcdClient(t)
+	sink := &applySink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	prefix := "test/quoteid/engines/"
+	// engine-A — 풀 권한 (빈 value), engine-B — read-only + contact.
+	if _, err := cli.Put(ctx, prefix+"engine-A", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cli.Put(ctx, prefix+"engine-B",
+		`{"permissions":["validate"],"contact":"audit@bank.com","expires_at":"2099-01-01T00:00:00Z"}`); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := NewEtcdAllowlistWatcher(ctx, EtcdAllowlistWatcherOptions{
+		Client:  cli,
+		Prefix:  prefix,
+		OnApply: sink.Apply,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	snap := sink.Snapshot()
+	// engine-A: default meta (empty value).
+	a, ok := snap["engine-A"]
+	if !ok {
+		t.Fatal("engine-A 누락")
+	}
+	if len(a.Permissions) != 0 {
+		t.Errorf("engine-A default 풀 권한 기대, got %v", a.Permissions)
+	}
+
+	// engine-B: read-only + meta.
+	b, ok := snap["engine-B"]
+	if !ok {
+		t.Fatal("engine-B 누락")
+	}
+	if len(b.Permissions) != 1 || b.Permissions[0] != "validate" {
+		t.Errorf("engine-B permissions=%v, want [validate]", b.Permissions)
+	}
+	if b.Contact != "audit@bank.com" {
+		t.Errorf("engine-B contact=%q", b.Contact)
+	}
+	if b.ExpiresAt != "2099-01-01T00:00:00Z" {
+		t.Errorf("engine-B expires_at=%q", b.ExpiresAt)
+	}
+}
+
+func TestEtcdAllowlistWatcher_InvalidJSONFallsBack(t *testing.T) {
+	cli := newEtcdClient(t)
+	sink := &applySink{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	prefix := "test/quoteid/engines/"
+	// 잘못된 JSON 으로 시작 — 파싱 실패해도 engine 자체는 등록 + default meta.
+	if _, err := cli.Put(ctx, prefix+"engine-X", `{"permissions": not-quoted}`); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := NewEtcdAllowlistWatcher(ctx, EtcdAllowlistWatcherOptions{
+		Client:  cli,
+		Prefix:  prefix,
+		OnApply: sink.Apply,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	snap := sink.Snapshot()
+	if _, ok := snap["engine-X"]; !ok {
+		t.Errorf("잘못된 JSON 이라도 engine 등록되어야 함 (default meta): %v", snap)
 	}
 }
 

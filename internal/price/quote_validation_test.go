@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -436,6 +437,93 @@ func TestQuoteValidation_EngineAllowlist_DeniesUnknown(t *testing.T) {
 	// 카운터.
 	if got := srv.Stats().DeniedEngine; got < 5 {
 		t.Errorf("DeniedEngine=%d, want ≥5 (Validate empty + 4 RPCs)", got)
+	}
+}
+
+func TestQuoteValidation_EngineMeta_ReadOnlyEngine(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	// audit-cli — Validate 만 허용 (read-only).
+	srv.SetEngineAllowlistMap(map[string]quoteid.EngineMeta{
+		"audit-cli": {Permissions: []string{quoteid.PermValidate}},
+		"matching":  {}, // 풀 권한 (default)
+	})
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))
+
+	// audit-cli + Validate → 허용.
+	_, err := srv.Validate(context.Background(), &wtgpb.ValidateRequest{
+		QuoteId: "A-1", EngineId: "audit-cli",
+	})
+	if err != nil {
+		t.Errorf("audit-cli Validate 거부: %v", err)
+	}
+
+	// audit-cli + MarkConsumed → 거부 (권한 없음).
+	_, err = srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId: "A-1", ConsumerId: "order-1", EngineId: "audit-cli",
+	})
+	if err == nil {
+		t.Fatal("audit-cli MarkConsumed 통과 — 권한 분리 회귀")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.PermissionDenied {
+		t.Errorf("code=%v, want PermissionDenied", st.Code())
+	}
+	if !strings.Contains(st.Message(), "mark_consumed") {
+		t.Errorf("reject_text 에 권한 누락 메시지 없음: %s", st.Message())
+	}
+
+	// matching + MarkConsumed → 허용.
+	if _, err := srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{
+		QuoteId: "A-1", ConsumerId: "order-1", EngineId: "matching",
+	}); err != nil {
+		t.Errorf("matching MarkConsumed 거부: %v", err)
+	}
+}
+
+func TestQuoteValidation_EngineMeta_Expired(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	// engine-A 가 이미 만료 (과거 timestamp).
+	srv.SetEngineAllowlistMap(map[string]quoteid.EngineMeta{
+		"engine-A": {ExpiresAt: "2020-01-01T00:00:00Z"},
+	})
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))
+
+	_, err := srv.Validate(context.Background(), &wtgpb.ValidateRequest{
+		QuoteId: "A-1", EngineId: "engine-A",
+	})
+	if err == nil {
+		t.Fatal("만료된 engine 통과 — auto-revoke 회귀")
+	}
+	st, _ := status.FromError(err)
+	if !strings.Contains(st.Message(), "expired") {
+		t.Errorf("reject_text 에 expired 누락: %s", st.Message())
+	}
+}
+
+func TestQuoteValidation_EngineMeta_FutureExpiry(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	srv.SetEngineAllowlistMap(map[string]quoteid.EngineMeta{
+		"engine-A": {ExpiresAt: "2099-01-01T00:00:00Z"},
+	})
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))
+	if _, err := srv.Validate(context.Background(), &wtgpb.ValidateRequest{
+		QuoteId: "A-1", EngineId: "engine-A",
+	}); err != nil {
+		t.Errorf("미래 만료 engine 거부: %v", err)
+	}
+}
+
+func TestQuoteValidation_EngineMeta_InvalidExpiryFailsOpen(t *testing.T) {
+	srv, reg := mkValidationServer(t)
+	// 잘못된 RFC3339 — 파싱 실패 시 운영 안전성 위해 통과 (운영자가 발견하여 수정).
+	srv.SetEngineAllowlistMap(map[string]quoteid.EngineMeta{
+		"engine-A": {ExpiresAt: "not-a-date"},
+	})
+	_ = reg.Put(context.Background(), mkRegRecord("A-1", time.Now(), time.Hour))
+	if _, err := srv.Validate(context.Background(), &wtgpb.ValidateRequest{
+		QuoteId: "A-1", EngineId: "engine-A",
+	}); err != nil {
+		t.Errorf("잘못된 expires_at 으로 거부 — fail-open 회귀: %v", err)
 	}
 }
 

@@ -50,7 +50,10 @@ type QuoteValidationServer struct {
 	// engineAllowlist — atomic.Pointer 로 hot swap 가능. nil 이면 RBAC 비활성.
 	// 정적 설정 (SetEngineAllowlist) 과 동적 (etcd watcher) 모두 같은 필드에
 	// store — 둘 중 하나만 활성 권장 (마지막 set 이 이긴다).
-	engineAllowlist atomic.Pointer[map[string]struct{}]
+	//
+	// 값에 EngineMeta 가 동봉 — permissions[] / expires_at / contact. 빈
+	// meta 는 풀 권한 + 무기한 (v1.12 backward compat).
+	engineAllowlist atomic.Pointer[map[string]quoteid.EngineMeta]
 
 	// metrics — optional. nil 이면 Prometheus 미발행 (단위 테스트 호환).
 	metrics *metrics.Registry
@@ -126,16 +129,16 @@ func statusLabelForValidation(st wtgpb.ValidationStatus) string {
 }
 
 // SetEngineAllowlist — 허용 engine_id 슬라이스 → 내부 set 으로. 빈 입력이면
-// RBAC 비활성 (clear). atomic — 운영 중 hot swap 가능.
+// RBAC 비활성. 각 engine 은 풀 권한 + 무기한 default meta.
 func (s *QuoteValidationServer) SetEngineAllowlist(engines []string) {
 	if len(engines) == 0 {
 		s.engineAllowlist.Store(nil)
 		return
 	}
-	m := make(map[string]struct{}, len(engines))
+	m := make(map[string]quoteid.EngineMeta, len(engines))
 	for _, e := range engines {
 		if e != "" {
-			m[e] = struct{}{}
+			m[e] = quoteid.EngineMeta{} // 풀 권한 default
 		}
 	}
 	if len(m) == 0 {
@@ -145,40 +148,84 @@ func (s *QuoteValidationServer) SetEngineAllowlist(engines []string) {
 	s.engineAllowlist.Store(&m)
 }
 
-// SetEngineAllowlistMap — etcd watcher 가 직접 호출. nil/빈 map 이면 RBAC 비활성.
-func (s *QuoteValidationServer) SetEngineAllowlistMap(m map[string]struct{}) {
+// SetEngineAllowlistMap — etcd watcher 가 직접 호출. EngineMeta 동봉.
+// nil/빈 map 이면 RBAC 비활성.
+func (s *QuoteValidationServer) SetEngineAllowlistMap(m map[string]quoteid.EngineMeta) {
 	if len(m) == 0 {
 		s.engineAllowlist.Store(nil)
 		return
 	}
-	// 호출자가 같은 map 을 mutate 하지 않도록 copy.
-	cp := make(map[string]struct{}, len(m))
-	for k := range m {
-		cp[k] = struct{}{}
+	cp := make(map[string]quoteid.EngineMeta, len(m))
+	for k, v := range m {
+		cp[k] = v
 	}
 	s.engineAllowlist.Store(&cp)
 }
 
-// checkEngine — allowlist 비활성이면 true. 활성이면 engineID 가 set 에
-// 있을 때만 true. atomic.Pointer.Load 라 lock 없음.
-func (s *QuoteValidationServer) checkEngine(engineID string) bool {
+// checkEngine — engineID 가 allowlist 에 있고 op 권한이 있고 만료 안 됐는지.
+// RBAC 비활성 (nil allowlist) 이면 항상 true (backward compat).
+//
+// 반환의 두번째 값은 거절 사유 — observability 와 reject_text 매핑용.
+func (s *QuoteValidationServer) checkEngine(engineID, op string) (bool, string) {
 	mp := s.engineAllowlist.Load()
 	if mp == nil {
+		return true, ""
+	}
+	meta, ok := (*mp)[engineID]
+	if !ok {
+		return false, "engine_id not in allowlist"
+	}
+	if meta.ExpiresAt != "" {
+		// EngineMeta.expiredAt 은 내부 메서드라 직접 비교 불가 — 동일 로직 inline.
+		if expired := isMetaExpired(meta, s.now()); expired {
+			return false, "engine_id expired"
+		}
+	}
+	if !metaHasPermission(meta, op) {
+		return false, "engine_id lacks " + op + " permission"
+	}
+	return true, ""
+}
+
+// metaHasPermission — quoteid.EngineMeta 의 hasPermission 은 unexported.
+// 동일 로직: Permissions 비어있으면 풀 권한.
+func metaHasPermission(m quoteid.EngineMeta, op string) bool {
+	if len(m.Permissions) == 0 {
 		return true
 	}
-	_, ok := (*mp)[engineID]
-	return ok
+	for _, p := range m.Permissions {
+		if p == op {
+			return true
+		}
+	}
+	return false
+}
+
+// isMetaExpired — ExpiresAt 파싱 + 비교. parse 실패는 fail-open
+// (잘못된 JSON 으로 운영 중단 회피, 운영자가 etcd 값 수정).
+func isMetaExpired(m quoteid.EngineMeta, now time.Time) bool {
+	if m.ExpiresAt == "" {
+		return false
+	}
+	exp, err := time.Parse(time.RFC3339, m.ExpiresAt)
+	if err != nil {
+		return false
+	}
+	return !now.Before(exp)
 }
 
 // permissionDenied — 모든 핸들러가 RBAC 거절 시 공통으로 호출.
-func (s *QuoteValidationServer) permissionDenied(qid, engineID, op string) error {
+func (s *QuoteValidationServer) permissionDenied(qid, engineID, op, reason string) error {
 	s.deniedEngine.Add(1)
 	s.logger.Warn("quote validation: engine_id 거부",
 		slog.String("op", op),
 		slog.String("engine_id", engineID),
-		slog.String("quote_id", qid))
-	return status.Errorf(codes.PermissionDenied,
-		"engine_id %q not in allowlist", engineID)
+		slog.String("quote_id", qid),
+		slog.String("reason", reason))
+	if reason == "" {
+		reason = "engine_id rejected"
+	}
+	return status.Errorf(codes.PermissionDenied, "%s", reason)
 }
 
 // SetNow — 테스트용 시간 주입.
@@ -196,9 +243,9 @@ func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.Validat
 	start := time.Now()
 	s.callsTotal.Add(1)
 
-	if !s.checkEngine(req.GetEngineId()) {
+	if ok, reason := s.checkEngine(req.GetEngineId(), quoteid.PermValidate); !ok {
 		s.observeOp("validate", "denied", time.Since(start))
-		return nil, s.permissionDenied(req.GetQuoteId(), req.GetEngineId(), "Validate")
+		return nil, s.permissionDenied(req.GetQuoteId(), req.GetEngineId(), "Validate", reason)
 	}
 
 	qid := req.GetQuoteId()
@@ -281,9 +328,9 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 	start := time.Now()
 	s.consumeTotal.Add(1)
 
-	if !s.checkEngine(req.GetEngineId()) {
+	if ok, reason := s.checkEngine(req.GetEngineId(), quoteid.PermMarkConsumed); !ok {
 		s.observeOp("mark_consumed", "denied", time.Since(start))
-		return nil, s.permissionDenied(req.GetQuoteId(), req.GetEngineId(), "MarkConsumed")
+		return nil, s.permissionDenied(req.GetQuoteId(), req.GetEngineId(), "MarkConsumed", reason)
 	}
 
 	qid := req.GetQuoteId()
@@ -357,9 +404,9 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.BatchValidateRequest) (*wtgpb.BatchValidateResponse, error) {
 	start := time.Now()
 	s.batchTotal.Add(1)
-	if !s.checkEngine(req.GetEngineId()) {
+	if ok, reason := s.checkEngine(req.GetEngineId(), quoteid.PermValidate); !ok {
 		s.observeBatch("batch_validate", 0, time.Since(start))
-		return nil, s.permissionDenied("", req.GetEngineId(), "BatchValidate")
+		return nil, s.permissionDenied("", req.GetEngineId(), "BatchValidate", reason)
 	}
 	ids := req.GetQuoteIds()
 	if len(ids) == 0 {
@@ -408,9 +455,9 @@ func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.Ba
 func (s *QuoteValidationServer) BatchMarkConsumed(ctx context.Context, req *wtgpb.BatchMarkConsumedRequest) (*wtgpb.BatchMarkConsumedResponse, error) {
 	start := time.Now()
 	s.batchConsumeTotal.Add(1)
-	if !s.checkEngine(req.GetEngineId()) {
+	if ok, reason := s.checkEngine(req.GetEngineId(), quoteid.PermMarkConsumed); !ok {
 		s.observeBatch("batch_mark_consumed", 0, time.Since(start))
-		return nil, s.permissionDenied("", req.GetEngineId(), "BatchMarkConsumed")
+		return nil, s.permissionDenied("", req.GetEngineId(), "BatchMarkConsumed", reason)
 	}
 	items := req.GetItems()
 	if len(items) == 0 {

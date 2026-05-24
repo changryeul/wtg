@@ -1,15 +1,13 @@
 # WTG (Winway Trading Gateway) — CI 워크플로우
 #
 # PR / main 푸시 시점에 다음을 검증한다:
-#   - go fmt 가 모든 파일에 적용되어 있는지
-#   - go vet 클린
-#   - staticcheck 클린
-#   - govulncheck (의존성 CVE)
-#   - 단위/통합 테스트 (race detector + coverage)
-#   - 모든 cmd/ 빌드 성공
+#   - lint (gofmt + go vet + staticcheck) + govulncheck
+#   - 단위 테스트 (race + coverage) — Go 1.23 / 1.25 matrix
+#   - 통합 테스트 — testcontainers (TimescaleDB) + embedded etcd
+#   - 모든 cmd/ 빌드 + artifact 업로드
 #
-# CI 와 로컬 Makefile 이 동일한 명령을 사용하므로, 개발자가 commit 전에
-# `make ci` 로 같은 결과를 재현할 수 있다.
+# CI 가 모두 Makefile target 을 호출하므로 `make ci` 로 로컬에서 동일하게 재현 가능.
+# Go 1.25 가 기본 (go.mod) 이지만 1.23 호환도 검증 — CLAUDE.md 정책.
 
 name: CI
 
@@ -36,58 +34,67 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
+          # 1.23 을 canary — 1.24+ 전용 API 도입 시 fmt/vet 단계에서 잡힘.
           go-version: '1.23'
           cache: true
 
-      - name: gofmt 차이 확인
-        run: |
-          diff=$(gofmt -l .)
-          if [ -n "$diff" ]; then
-            echo "다음 파일들이 gofmt 미적용 상태입니다:"
-            echo "$diff"
-            exit 1
-          fi
+      - name: make lint (fmt-check + vet + staticcheck)
+        run: make lint
 
-      - name: go vet
-        run: go vet ./...
-
-      - name: staticcheck
-        uses: dominikh/staticcheck-action@v1
-        with:
-          version: '2024.1.1'
-          install-go: false
-
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+      - name: make vulncheck (govulncheck)
+        run: make vulncheck
 
   test:
-    name: Test
+    name: Test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.23', '1.25']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: go mod download
+        run: go mod download
+
+      - name: make test-race
+        run: make test-race
+
+      - name: 커버리지 요약
+        run: go tool cover -func=coverage.out | tail -20
+
+      # 커버리지는 canary (1.23) 결과만 보관 — matrix 중복 방지.
+      - name: 커버리지 artifact 업로드
+        if: matrix.go == '1.23'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
+
+  integration:
+    name: Integration (testcontainers + embedded etcd)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
           cache: true
 
       - name: go mod download
         run: go mod download
 
-      - name: 단위/통합 테스트 (race + coverage)
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: 커버리지 요약
-        run: go tool cover -func=coverage.out | tail -20
-
-      - name: 커버리지 artifact 업로드
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage.out
-          retention-days: 7
+      # ubuntu-latest 는 Docker 데몬 active — testcontainers 가 TimescaleDB 컨테이너를
+      # 자동 생성. embedded etcd 는 in-process 라 외부 의존성 없음.
+      - name: make test-integration
+        run: make test-integration
 
   build:
     name: Build
@@ -100,7 +107,7 @@ jobs:
           go-version: '1.23'
           cache: true
 
-      - name: 모든 cmd/ 빌드
+      - name: make build
         run: make build
 
       - name: 빌드 결과물 artifact

@@ -34,6 +34,10 @@ type Registry struct {
 	brokerCallTotal  *prometheus.CounterVec
 	brokerCallLat    *prometheus.HistogramVec
 	subscriberCount  *prometheus.GaugeVec
+	quoteIDOpTotal   *prometheus.CounterVec
+	quoteIDOpLat     *prometheus.HistogramVec
+	quoteIDBatchSize *prometheus.HistogramVec
+	quoteIDBatchLat  *prometheus.HistogramVec
 	customCollectors []prometheus.Collector
 }
 
@@ -99,6 +103,40 @@ func NewRegistry() *Registry {
 		[]string{"service", "kind"},
 	)
 
+	// QuoteID RPC metrics — op ∈ {validate, batch_validate, mark_consumed,
+	// batch_mark_consumed}. batch_* 만 batch_size / batch_duration 채워짐.
+	r.quoteIDOpTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_quoteid_op_total",
+			Help: "QuoteID RPC 총 건수 (per-item; batch 의 N 항목은 N 건).",
+		},
+		[]string{"service", "op", "status"},
+	)
+	r.quoteIDOpLat = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "wtg_quoteid_op_duration_seconds",
+			Help:    "QuoteID 단일 RPC (or batch 의 wallclock) 처리 시간.",
+			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 16), // 100us..3.3s
+		},
+		[]string{"service", "op"},
+	)
+	r.quoteIDBatchSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "wtg_quoteid_batch_size",
+			Help:    "Batch RPC 의 항목 수.",
+			Buckets: []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000},
+		},
+		[]string{"service", "op"},
+	)
+	r.quoteIDBatchLat = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "wtg_quoteid_batch_duration_seconds",
+			Help:    "Batch RPC wallclock — 전체 batch 처리 시간.",
+			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 16),
+		},
+		[]string{"service", "op"},
+	)
+
 	r.reg.MustRegister(
 		r.httpReqTotal,
 		r.httpReqDuration,
@@ -106,8 +144,28 @@ func NewRegistry() *Registry {
 		r.brokerCallTotal,
 		r.brokerCallLat,
 		r.subscriberCount,
+		r.quoteIDOpTotal,
+		r.quoteIDOpLat,
+		r.quoteIDBatchSize,
+		r.quoteIDBatchLat,
 	)
 	return r
+}
+
+// ObserveQuoteIDOp — 단일 RPC 또는 batch 안의 per-item 결과 카운터.
+// status: "ok" / "not_found" / "expired" / "already_consumed" / "denied" /
+//        "internal" / "consume_ok" / "consume_already" ...
+func (r *Registry) ObserveQuoteIDOp(service, op, status string, latency time.Duration) {
+	r.quoteIDOpTotal.WithLabelValues(service, op, status).Inc()
+	if latency > 0 {
+		r.quoteIDOpLat.WithLabelValues(service, op).Observe(latency.Seconds())
+	}
+}
+
+// ObserveQuoteIDBatch — Batch RPC wallclock + 항목 수.
+func (r *Registry) ObserveQuoteIDBatch(service, op string, size int, latency time.Duration) {
+	r.quoteIDBatchSize.WithLabelValues(service, op).Observe(float64(size))
+	r.quoteIDBatchLat.WithLabelValues(service, op).Observe(latency.Seconds())
 }
 
 // Register 는 외부 collector 를 추가 등록.

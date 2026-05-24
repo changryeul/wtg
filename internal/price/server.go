@@ -112,6 +112,9 @@ func (s *Server) AttachQuoteValidator(v *QuoteValidationServer) {
 	s.quoteValidator = v
 }
 
+// Metrics — Prometheus Registry 노출. main.go 가 validator 에 주입 시 사용.
+func (s *Server) Metrics() *metrics.Registry { return s.metrics }
+
 // GRPCServer 는 현재 attached 된 GRPCServer 를 반환 (Start 이후 자동생성 포함).
 // nil 이면 활성화되지 않은 상태.
 func (s *Server) GRPCServer() *GRPCServer { return s.grpcSrv }

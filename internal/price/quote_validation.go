@@ -15,9 +15,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/quoteid"
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
+
+// metricsService — Prometheus label `service` 값. 모든 quoteid 메트릭에
+// 적용해서 mci-price 와 다른 서비스의 메트릭이 혼동되지 않도록.
+const metricsService = "mci-price"
 
 // MaxBatchValidateSize — BatchValidate RPC 단일 호출 상한. 운영 abuse / 과도한
 // goroutine 폭발 방어. 1000 = FIX NewOrderList 의 일반적 cap.
@@ -46,6 +51,9 @@ type QuoteValidationServer struct {
 	// 정적 설정 (SetEngineAllowlist) 과 동적 (etcd watcher) 모두 같은 필드에
 	// store — 둘 중 하나만 활성 권장 (마지막 set 이 이긴다).
 	engineAllowlist atomic.Pointer[map[string]struct{}]
+
+	// metrics — optional. nil 이면 Prometheus 미발행 (단위 테스트 호환).
+	metrics *metrics.Registry
 
 	// 누적 카운터 — `/v1/stats` 노출 또는 grpc interceptor 메트릭 대안.
 	callsTotal        atomic.Uint64
@@ -80,6 +88,40 @@ func NewQuoteValidationServer(registry quoteid.Registry, logger *slog.Logger) *Q
 		registry: registry,
 		logger:   logger,
 		now:      time.Now,
+	}
+}
+
+// SetMetrics — Prometheus Registry 주입. nil 이면 메트릭 미발행.
+func (s *QuoteValidationServer) SetMetrics(m *metrics.Registry) { s.metrics = m }
+
+// observeOp / observeBatch — metrics 가 nil 일 때 no-op.
+func (s *QuoteValidationServer) observeOp(op, statusLabel string, latency time.Duration) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.ObserveQuoteIDOp(metricsService, op, statusLabel, latency)
+}
+
+func (s *QuoteValidationServer) observeBatch(op string, size int, latency time.Duration) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.ObserveQuoteIDBatch(metricsService, op, size, latency)
+}
+
+// statusLabelForValidation — proto ValidationStatus → metrics label.
+func statusLabelForValidation(st wtgpb.ValidationStatus) string {
+	switch st {
+	case wtgpb.ValidationStatus_OK:
+		return "ok"
+	case wtgpb.ValidationStatus_NOT_FOUND:
+		return "not_found"
+	case wtgpb.ValidationStatus_EXPIRED:
+		return "expired"
+	case wtgpb.ValidationStatus_ALREADY_CONSUMED:
+		return "already_consumed"
+	default:
+		return "internal"
 	}
 }
 
@@ -151,15 +193,18 @@ func (s *QuoteValidationServer) SetNow(f func() time.Time) {
 // v1.11+ — Registry.Lookup 으로 record + consumed 를 atomic 1 RTT 조회.
 // 이전 (v1.6–v1.10) 의 Get + Consumed 두 RTT 경로 제거.
 func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.ValidateRequest) (*wtgpb.ValidateResponse, error) {
+	start := time.Now()
 	s.callsTotal.Add(1)
 
 	if !s.checkEngine(req.GetEngineId()) {
+		s.observeOp("validate", "denied", time.Since(start))
 		return nil, s.permissionDenied(req.GetQuoteId(), req.GetEngineId(), "Validate")
 	}
 
 	qid := req.GetQuoteId()
 	if qid == "" {
 		s.callsNotFound.Add(1)
+		s.observeOp("validate", "not_found", time.Since(start))
 		return &wtgpb.ValidateResponse{
 			Status:       wtgpb.ValidationStatus_NOT_FOUND,
 			OrdRejReason: ordRejReasonNotFound,
@@ -170,13 +215,16 @@ func (s *QuoteValidationServer) Validate(ctx context.Context, req *wtgpb.Validat
 	lr, err := s.registry.Lookup(ctx, quoteid.QuoteID(qid))
 	if err != nil {
 		s.callsInternal.Add(1)
+		s.observeOp("validate", "internal", time.Since(start))
 		s.logger.Warn("quote validation internal error",
 			slog.String("quote_id", qid),
 			slog.String("engine_id", req.GetEngineId()),
 			slog.Any("error", err))
 		return nil, status.Errorf(codes.Internal, "registry: %v", err)
 	}
-	return s.lookupToValidateResponse(lr, qid, req.GetEngineId()), nil
+	resp := s.lookupToValidateResponse(lr, qid, req.GetEngineId())
+	s.observeOp("validate", statusLabelForValidation(resp.GetStatus()), time.Since(start))
+	return resp, nil
 }
 
 // lookupToValidateResponse — Lookup 결과를 Validate 응답 + 카운터 매핑.
@@ -230,9 +278,11 @@ func (s *QuoteValidationServer) lookupToValidateResponse(lr quoteid.LookupResult
 // MarkConsumed 는 RFC §4.1 의 두 번째 RPC. 동시 호출 atomic 보장은
 // Registry 의 책임 (Memory mutex / Redis SET NX).
 func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.MarkConsumedRequest) (*wtgpb.MarkConsumedResponse, error) {
+	start := time.Now()
 	s.consumeTotal.Add(1)
 
 	if !s.checkEngine(req.GetEngineId()) {
+		s.observeOp("mark_consumed", "denied", time.Since(start))
 		return nil, s.permissionDenied(req.GetQuoteId(), req.GetEngineId(), "MarkConsumed")
 	}
 
@@ -249,6 +299,7 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 	result, err := s.registry.MarkConsumed(ctx, quoteid.QuoteID(qid), req.GetConsumerId())
 	if err != nil {
 		s.consumeInternal.Add(1)
+		s.observeOp("mark_consumed", "internal", time.Since(start))
 		s.logger.Warn("mark consumed internal error",
 			slog.String("quote_id", qid),
 			slog.String("engine_id", req.GetEngineId()),
@@ -257,11 +308,13 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 	}
 
 	resp := &wtgpb.MarkConsumedResponse{}
+	statusLabel := "internal"
 	switch result.Status {
 	case quoteid.ConsumeOK:
 		s.consumeOK.Add(1)
 		resp.Status = wtgpb.ValidationStatus_OK
 		resp.Record = recordToProto(result.Record)
+		statusLabel = "consume_ok"
 	case quoteid.ConsumeAlreadyDone:
 		s.consumeAlready.Add(1)
 		resp.Status = wtgpb.ValidationStatus_ALREADY_CONSUMED
@@ -269,6 +322,7 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 		resp.ConsumedBy = result.ConsumedBy
 		resp.OrdRejReason = ordRejReasonDuplicate
 		resp.RejectText = "quote_id already consumed"
+		statusLabel = "consume_already"
 		s.logger.Info("mark consumed conflict",
 			slog.String("quote_id", qid),
 			slog.String("requested_by", req.GetConsumerId()),
@@ -278,17 +332,20 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 		resp.Status = wtgpb.ValidationStatus_NOT_FOUND
 		resp.OrdRejReason = ordRejReasonNotFound
 		resp.RejectText = "quote_id not found"
+		statusLabel = "consume_not_found"
 	case quoteid.ConsumeExpired:
 		s.consumeExpired.Add(1)
 		resp.Status = wtgpb.ValidationStatus_EXPIRED
 		resp.Record = recordToProto(result.Record)
 		resp.OrdRejReason = ordRejReasonExpired
 		resp.RejectText = "quote_id expired"
+		statusLabel = "consume_expired"
 	default:
 		s.consumeInternal.Add(1)
 		resp.Status = wtgpb.ValidationStatus_STATUS_UNSPECIFIED
 		resp.RejectText = "unknown ConsumeStatus"
 	}
+	s.observeOp("mark_consumed", statusLabel, time.Since(start))
 	return resp, nil
 }
 
@@ -298,12 +355,15 @@ func (s *QuoteValidationServer) MarkConsumed(ctx context.Context, req *wtgpb.Mar
 //
 // callsTotal 카운터는 per-item 누적 — 단일 Validate 호출과 정합.
 func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.BatchValidateRequest) (*wtgpb.BatchValidateResponse, error) {
+	start := time.Now()
 	s.batchTotal.Add(1)
 	if !s.checkEngine(req.GetEngineId()) {
+		s.observeBatch("batch_validate", 0, time.Since(start))
 		return nil, s.permissionDenied("", req.GetEngineId(), "BatchValidate")
 	}
 	ids := req.GetQuoteIds()
 	if len(ids) == 0 {
+		s.observeBatch("batch_validate", 0, time.Since(start))
 		return &wtgpb.BatchValidateResponse{}, nil
 	}
 	if len(ids) > MaxBatchValidateSize {
@@ -331,7 +391,11 @@ func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.Ba
 	for i, lr := range lookups {
 		s.callsTotal.Add(1) // single Validate 와 정합 — per-item.
 		results[i] = s.lookupToValidateResponse(lr, ids[i], req.GetEngineId())
+		// per-item Prometheus 카운터 — wallclock 은 batch 단위라 latency 인자
+		// 는 0 (batch_duration 에 별도 기록).
+		s.observeOp("batch_validate", statusLabelForValidation(results[i].GetStatus()), 0)
 	}
+	s.observeBatch("batch_validate", len(ids), time.Since(start))
 	return &wtgpb.BatchValidateResponse{Results: results}, nil
 }
 
@@ -342,12 +406,15 @@ func (s *QuoteValidationServer) BatchValidate(ctx context.Context, req *wtgpb.Ba
 // leg 만 다른 주문이 잡은 경우). 호출자가 per-item 분기로 일부 fill / 일부
 // reject.
 func (s *QuoteValidationServer) BatchMarkConsumed(ctx context.Context, req *wtgpb.BatchMarkConsumedRequest) (*wtgpb.BatchMarkConsumedResponse, error) {
+	start := time.Now()
 	s.batchConsumeTotal.Add(1)
 	if !s.checkEngine(req.GetEngineId()) {
+		s.observeBatch("batch_mark_consumed", 0, time.Since(start))
 		return nil, s.permissionDenied("", req.GetEngineId(), "BatchMarkConsumed")
 	}
 	items := req.GetItems()
 	if len(items) == 0 {
+		s.observeBatch("batch_mark_consumed", 0, time.Since(start))
 		return &wtgpb.BatchMarkConsumedResponse{}, nil
 	}
 	if len(items) > MaxBatchConsumeSize {
@@ -380,19 +447,27 @@ func (s *QuoteValidationServer) BatchMarkConsumed(ctx context.Context, req *wtgp
 	for i, r := range regResults {
 		results[i] = consumeResultToProto(r)
 		// per-item 카운터 누적 — MarkConsumed 단일 핸들러와 동일.
+		var statusLabel string
 		switch r.Status {
 		case quoteid.ConsumeOK:
 			s.consumeOK.Add(1)
+			statusLabel = "consume_ok"
 		case quoteid.ConsumeAlreadyDone:
 			s.consumeAlready.Add(1)
+			statusLabel = "consume_already"
 		case quoteid.ConsumeNotFound:
 			s.consumeNotFound.Add(1)
+			statusLabel = "consume_not_found"
 		case quoteid.ConsumeExpired:
 			s.consumeExpired.Add(1)
+			statusLabel = "consume_expired"
+		default:
+			statusLabel = "internal"
 		}
-		// consumeTotal 도 per-item — single MarkConsumed 와 정합.
 		s.consumeTotal.Add(1)
+		s.observeOp("batch_mark_consumed", statusLabel, 0)
 	}
+	s.observeBatch("batch_mark_consumed", len(items), time.Since(start))
 	return &wtgpb.BatchMarkConsumedResponse{Results: results}, nil
 }
 

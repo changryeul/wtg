@@ -173,6 +173,7 @@ func main() {
 	defer quoteIDCloser()
 	if quoteIDReg != nil {
 		validator := price.NewQuoteValidationServer(quoteIDReg, logger)
+		validator.SetMetrics(srv.Metrics())
 		if len(cfg.QuoteIDEnginesAllowlist) > 0 {
 			validator.SetEngineAllowlist(cfg.QuoteIDEnginesAllowlist)
 			logger.Info("QuoteValidationService RBAC 활성 (정적)",

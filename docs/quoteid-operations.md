@@ -737,10 +737,60 @@ watch 채널이 끊기면 자동 재등록 (compaction / 네트워크 끊김 대
 두 옵션 다 채워지면 etcd 가 정적을 덮어쓴다 (마지막 set 이긴다, 보통
 etcd 의 초기 로드 결과).
 
+## v1.13 — Pipeline latency metrics (commit 추가)
+
+mci-price 의 `/metrics` (Prometheus) 에 quoteid 전용 4개 collector 추가.
+
+### 새 메트릭
+
+| Metric | Type | Labels | 의미 |
+|--------|------|--------|------|
+| `wtg_quoteid_op_total` | Counter | `service, op, status` | per-item 호출 (batch 의 N 항목은 N 건) |
+| `wtg_quoteid_op_duration_seconds` | Histogram | `service, op` | 단일 RPC wallclock (validate / mark_consumed) |
+| `wtg_quoteid_batch_size` | Histogram | `service, op` | batch 항목 수 분포 |
+| `wtg_quoteid_batch_duration_seconds` | Histogram | `service, op` | batch 전체 wallclock |
+
+`op` 값: `validate` / `batch_validate` / `mark_consumed` / `batch_mark_consumed`
+
+`status` 값:
+- Validate 계열: `ok` / `not_found` / `expired` / `already_consumed` / `denied` / `internal`
+- MarkConsumed 계열: `consume_ok` / `consume_already` / `consume_not_found` / `consume_expired` / `denied` / `internal`
+
+### Grafana 쿼리 예제
+
+p99 BatchValidate latency:
+```promql
+histogram_quantile(0.99,
+  rate(wtg_quoteid_batch_duration_seconds_bucket{op="batch_validate"}[5m]))
+```
+
+Batch 평균 크기:
+```promql
+rate(wtg_quoteid_batch_size_sum[5m]) / rate(wtg_quoteid_batch_size_count[5m])
+```
+
+RBAC 거절 비율 (alert 후보 — 평소 0 이어야):
+```promql
+sum(rate(wtg_quoteid_op_total{status="denied"}[5m]))
+```
+
+체결 표시 / 충돌 비율:
+```promql
+sum(rate(wtg_quoteid_op_total{status="consume_already"}[5m])) /
+sum(rate(wtg_quoteid_op_total{op=~"mark_consumed|batch_mark_consumed"}[5m]))
+```
+
+높은 값이면 클라이언트 중복 주문 / 봇 의심 (v1.5 의 already_consumed 운영
+임계 0.1% 와 동일 신호).
+
+### Optional 비활성
+
+`QuoteValidationServer.SetMetrics(nil)` 면 collector 호출 안 함 — 단위 테스트
+경로 무시.
+
 ## v2 후보
 
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
-- BatchValidate / BatchMarkConsumed 의 LRU bandwidth metrics — pipeline 단위
-  latency / 처리량 모니터링.
 - engine_id 메타데이터 — etcd value 에 권한 (예: read-only vs read-write)
   / 만료시각 / contact 등을 JSON 으로 넣어 세밀 RBAC.
+- Grafana dashboard JSON — operations.md 의 쿼리 예제 → 즉시 import 가능.

@@ -447,9 +447,56 @@ mci-price \
 v1 트래픽 (~1-10k QPS) 에서는 Sentinel 권장. Cluster 는 멀티 DC / 대형
 은행 백본 통합 시.
 
+## v1.7 — Lua script multi-key atomic (commit 추가)
+
+`MarkConsumed` 가 단일 round-trip + 진정한 atomic 으로 동작.
+
+### 이전 (v1.5–v1.6) — 2 RTT 의 race window
+
+```
+[Client]                [Redis]
+   |  GET q:<id>          |   → record
+   |←─────────────────────|     (ValidUntil 미래)
+   |                      |     ⚠️ 이 사이에 record TTL 만료 가능
+   |  SET NX c:<id>       |   → OK (consumed!)
+   |←─────────────────────|     하지만 ValidUntil 은 이미 과거
+```
+
+이론적 race 였지만 cap 가 grace-edge 직전 호출 + Redis 메모리 압박에서
+재현 가능. consumed=true 인데 record EXPIRED 인 정합성 깨짐 상태 발생.
+
+### v1.7+ — Lua 단일 EVAL
+
+```lua
+-- KEYS[1]=q, KEYS[2]=c, ARGV[1]=consumer, ARGV[2]=now_nano, ARGV[3]=ttl_s
+local rec_json = redis.call("GET", KEYS[1])
+if not rec_json then return {3} end                -- ConsumeNotFound
+local rec = cjson.decode(rec_json)
+if now >= rec.valid_until_unix_nano then
+  return {4, rec_json}                              -- ConsumeExpired
+end
+local ok = redis.call("SET", KEYS[2], consumer, "EX", ttl, "NX")
+if ok then return {1, rec_json} end                 -- ConsumeOK
+return {2, rec_json, redis.call("GET", KEYS[2]))    -- ConsumeAlreadyDone
+```
+
+Redis 단일 스레드 → Lua 실행 중 다른 명령 인터리브 없음 → 진정한 atomic.
+모든 키가 hash tag `{<id>}` 안 (v1.6) 이라 Cluster slot 동일 — EVAL 가능.
+
+### 성능
+
+- 1 RTT 대신 2 RTT 절약 → p99 ~1ms 단축
+- EVALSHA 캐시는 redis-go 가 자동 — 첫 호출 후 script SHA1 로 호출
+- ClusterClient + EVAL: same-slot 보장이라 redirect 없음
+
+### 검증
+
+`TestRedisRegistry_MarkConsumed_LuaConcurrent` — 32 goroutine 이 동시에
+같은 QuoteID 에 MarkConsumed → 정확히 1 OK + 31 AlreadyDone.
+
 ## v2 후보
 
-- Lua script 기반 진정한 multi-key atomic (cluster + hash tag 둘 다 있으니
-  GET q + SETNX c 를 단일 EVALSHA 로 묶을 수 있음 — round-trip 1로 압축).
 - HTTP native TLS — gateway 자체 인증서 (현재는 reverse proxy 의존).
 - engine_id allowlist — mTLS CN 외 추가 RBAC.
+- BatchMarkConsumed 도 단일 Lua 로 묶기 — 현재는 N goroutine fan-out
+  으로 N RTT, hash tag 활용 시 single Lua + N pair = 1 RTT.

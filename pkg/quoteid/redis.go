@@ -5,10 +5,46 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// markConsumedScript — MarkConsumed 를 단일 round-trip atomic 으로 처리.
+//
+// 기존 (v1.5 까지): GET q + SET NX c — 두 RTT, 그 사이에 race window
+// (record 가 expire 되었으나 SETNX 만 성공할 수 있음).
+//
+// v1.7+ (Lua): GET q → cjson.decode → ValidUntil 검사 → SET NX c 가 한
+// Lua 실행 안에서 결정. Redis 단일 스레드라 다른 명령과 인터리브 없음.
+// 모든 키가 hash tag `{<id>}` 안에 있어 Cluster slot 동일 — EVAL 가능.
+//
+// 반환 (table):
+//
+//	{1, record_json}              — ConsumeOK (지금 막 표시함)
+//	{2, record_json, prev_consumer} — ConsumeAlreadyDone
+//	{3}                            — ConsumeNotFound
+//	{4, record_json}               — ConsumeExpired
+var markConsumedScript = redis.NewScript(`
+local rec_json = redis.call("GET", KEYS[1])
+if not rec_json then
+  return {3}
+end
+local rec = cjson.decode(rec_json)
+local valid_until = tonumber(rec["valid_until_unix_nano"])
+local now = tonumber(ARGV[2])
+if not valid_until or now >= valid_until then
+  return {4, rec_json}
+end
+local ok = redis.call("SET", KEYS[2], ARGV[1], "EX", ARGV[3], "NX")
+if ok then
+  return {1, rec_json}
+end
+local prev = redis.call("GET", KEYS[2])
+if not prev then prev = "" end
+return {2, rec_json, prev}
+`)
 
 // RedisRegistry 는 Redis 기반 Registry — 운영 active-active mci-price 가
 // 공유. 두 인스턴스가 발급한 QuoteID 가 동일 Redis 에 누적되어 매칭 엔진의
@@ -120,43 +156,86 @@ func (r *RedisRegistry) Consumed(ctx context.Context, id QuoteID) (string, bool,
 	return v, true, nil
 }
 
-// MarkConsumed — Redis SET NX 로 first-writer-wins.
+// MarkConsumed — Lua script 로 단일 round-trip atomic. v1.7 도입.
 //
-// 흐름:
+// 기존 GET + SETNX 는 사이에 race window 가 있어 record 가 grace-edge 시점
+// 에 만료될 때 SETNX 만 성공할 수 있었음 (consumed=true 인데 record 는
+// EXPIRED — 정합성 깨짐). markConsumedScript 가 GET → ValidUntil 검사 →
+// SETNX 를 한 Lua 실행 안에서 처리해 인터리브 차단.
 //
-//	1. GET q:<id> → record (없으면 NOT_FOUND).
-//	2. ValidUntil 도래 검사 → EXPIRED.
-//	3. SET NX c:<id> consumer_id EX (ValidUntil-now + grace) — 성공이면 OK.
-//	4. SET NX 실패면 GET c:<id> 로 먼저 잡은 consumer 회수 → ALREADY_CONSUMED.
-//
-// 두 mci-price 가 동시에 같은 QuoteID 를 처리해도 SET NX 의 atomicity 가
-// 정확히 한 호출만 OK 보장 (Redis 단일 instance / master 기준).
+// Cluster 호환: 모든 키가 hash tag `{<id>}` 안에 있어 same slot 보장 — EVAL
+// 가능. ClusterClient 가 자동 routing.
 func (r *RedisRegistry) MarkConsumed(ctx context.Context, id QuoteID, consumerID string) (ConsumeResult, error) {
-	rec, err := r.Get(ctx, id)
-	if errors.Is(err, ErrNotFound) {
-		return ConsumeResult{Status: ConsumeNotFound}, nil
-	}
-	if err != nil {
-		return ConsumeResult{}, err
-	}
-	if !rec.ValidAt(r.now()) {
-		return ConsumeResult{Status: ConsumeExpired, Record: rec}, nil
-	}
-	ttl := time.Unix(0, rec.ValidUntil).Sub(r.now()) + r.grace
+	// TTL — script 가 SET EX 에 쓰는 seconds 단위. 보존 윈도우 (ValidUntil
+	// 까지 남은 + grace). 음수 / 0 은 안 됨 (Redis 가 reject).
+	now := r.now()
+	// ValidUntil 은 record 안에 있어 script 가 본다. 그래도 클라이언트가
+	// 미리 정한 grace 를 SETNX TTL 로 써야 record GC 후 한참 뒤 SETNX 가
+	// 남는 일을 막는다. 안전한 상한 = grace + 1s (validity 평균 cap).
+	ttl := r.grace + time.Second
 	if ttl <= 0 {
-		ttl = r.grace
+		ttl = time.Second
 	}
-	ok, err := r.rdb.SetNX(ctx, r.consumedKey(id), consumerID, ttl).Result()
+	ttlSec := int64(ttl / time.Second)
+	if ttlSec < 1 {
+		ttlSec = 1
+	}
+	raw, err := markConsumedScript.Run(ctx, r.rdb,
+		[]string{r.key(id), r.consumedKey(id)},
+		consumerID,
+		strconv.FormatInt(now.UnixNano(), 10),
+		strconv.FormatInt(ttlSec, 10),
+	).Result()
 	if err != nil {
-		return ConsumeResult{}, fmt.Errorf("quoteid: setnx: %w", err)
+		return ConsumeResult{}, fmt.Errorf("quoteid: eval markConsumed: %w", err)
 	}
-	if ok {
+	arr, ok := raw.([]any)
+	if !ok || len(arr) == 0 {
+		return ConsumeResult{}, fmt.Errorf("quoteid: script 반환 형식 mismatch: %T", raw)
+	}
+	code, _ := arr[0].(int64)
+	switch code {
+	case 1: // ConsumeOK
+		rec, perr := decodeRecordFromLua(arr, 1)
+		if perr != nil {
+			return ConsumeResult{}, perr
+		}
 		return ConsumeResult{Status: ConsumeOK, Record: rec}, nil
+	case 2: // ConsumeAlreadyDone
+		rec, perr := decodeRecordFromLua(arr, 1)
+		if perr != nil {
+			return ConsumeResult{}, perr
+		}
+		prev := ""
+		if len(arr) > 2 {
+			prev, _ = arr[2].(string)
+		}
+		return ConsumeResult{Status: ConsumeAlreadyDone, Record: rec, ConsumedBy: prev}, nil
+	case 3: // ConsumeNotFound
+		return ConsumeResult{Status: ConsumeNotFound}, nil
+	case 4: // ConsumeExpired
+		rec, perr := decodeRecordFromLua(arr, 1)
+		if perr != nil {
+			return ConsumeResult{}, perr
+		}
+		return ConsumeResult{Status: ConsumeExpired, Record: rec}, nil
+	default:
+		return ConsumeResult{}, fmt.Errorf("quoteid: 알 수 없는 script code %d", code)
 	}
-	// 누가 먼저 잡았는지 회수 — race 후 약간 늦게 도착해도 의미 있음.
-	prev, gerr := r.rdb.Get(ctx, r.consumedKey(id)).Result()
-	if gerr != nil && !errors.Is(gerr, redis.Nil) {
-		return ConsumeResult{Status: ConsumeAlreadyDone, Record: rec}, nil
+}
+
+// decodeRecordFromLua — Lua 반환 배열의 idx 위치에서 record JSON 추출 + unmarshal.
+func decodeRecordFromLua(arr []any, idx int) (Record, error) {
+	if len(arr) <= idx {
+		return Record{}, fmt.Errorf("quoteid: script 결과에 record 누락")
 	}
-	return ConsumeResult{Status: ConsumeAlreadyDone, Record: rec, ConsumedBy: prev}, nil
+	s, ok := arr[idx].(string)
+	if !ok {
+		return Record{}, fmt.Errorf("quoteid: script record 타입 mismatch: %T", arr[idx])
+	}
+	var rec Record
+	if err := json.Unmarshal([]byte(s), &rec); err != nil {
+		return Record{}, fmt.Errorf("quoteid: script record unmarshal: %w", err)
+	}
+	return rec, nil
 }

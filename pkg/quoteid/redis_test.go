@@ -3,6 +3,8 @@ package quoteid
 import (
 	"context"
 	"errors"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -193,6 +195,52 @@ func TestRedisRegistry_Consumed(t *testing.T) {
 	}
 	if !ok || who != "order-X" {
 		t.Errorf("Consumed: who=%q ok=%v", who, ok)
+	}
+}
+
+// Lua script 의 race-free 보장 — N goroutine 이 동시에 같은 QuoteID 에
+// MarkConsumed → 정확히 한 명만 OK.
+func TestRedisRegistry_MarkConsumed_LuaConcurrent(t *testing.T) {
+	reg, _ := newTestRedis(t)
+	ctx := context.Background()
+	_ = reg.Put(ctx, mkRec("A-race", time.Now(), time.Hour))
+
+	const N = 32
+	results := make(chan ConsumeStatus, N)
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		i := i
+		go func() {
+			defer wg.Done()
+			r, err := reg.MarkConsumed(ctx, "A-race", "order-"+strconv.Itoa(i))
+			if err != nil {
+				t.Errorf("MarkConsumed: %v", err)
+				return
+			}
+			results <- r.Status
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	okCount := 0
+	alreadyCount := 0
+	for s := range results {
+		switch s {
+		case ConsumeOK:
+			okCount++
+		case ConsumeAlreadyDone:
+			alreadyCount++
+		default:
+			t.Errorf("예상 외 status: %v", s)
+		}
+	}
+	if okCount != 1 {
+		t.Errorf("OK 카운트 = %d, want 1", okCount)
+	}
+	if alreadyCount != N-1 {
+		t.Errorf("AlreadyDone 카운트 = %d, want %d", alreadyCount, N-1)
 	}
 }
 

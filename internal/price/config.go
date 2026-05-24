@@ -175,7 +175,15 @@ type Config struct {
 	// caller 별 정책 분리 — mTLS CN 만으로는 부족한 경우 (예: 같은 cert 를
 	// 공유하지만 다른 매칭 엔진 인스턴스). engine_id 가 allowlist 에 없으면
 	// PermissionDenied / HTTP 403.
+	//
+	// 정적 (이 슬라이스) 와 동적 (etcd watcher) 둘 중 하나만 활성. etcd 가
+	// active 이고 prefix 가 채워지면 정적은 초기 seed 로만 쓰이고 etcd watcher 가
+	// 최종 결정.
 	QuoteIDEnginesAllowlist []string
+
+	// QuoteIDEnginesEtcdPrefix — etcd watch 활성 prefix. 빈값이면 etcd 갱신
+	// 비활성 (정적 슬라이스만 사용). 일반: cfg.EtcdPrefix + "quoteid/engines/".
+	QuoteIDEnginesEtcdPrefix string
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -377,6 +385,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_QUOTEID_ENGINES"); v != "" {
 		cfg.QuoteIDEnginesAllowlist = splitCSV(v)
 	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_ENGINES_ETCD"); v != "" {
+		cfg.QuoteIDEnginesEtcdPrefix = v
+	}
 
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
@@ -441,6 +452,8 @@ func LoadConfig(args []string) (Config, error) {
 	enginesStr := strings.Join(cfg.QuoteIDEnginesAllowlist, ",")
 	fs.StringVar(&enginesStr, "quoteid-engines", enginesStr,
 		"허용 engine_id 콤마구분 (빈값=RBAC 비활성). 예: matching-A,matching-B")
+	fs.StringVar(&cfg.QuoteIDEnginesEtcdPrefix, "quoteid-engines-etcd", cfg.QuoteIDEnginesEtcdPrefix,
+		"etcd watch prefix (예: wtg/quoteid/engines/) — 채우면 hot reload, 빈값=정적만")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

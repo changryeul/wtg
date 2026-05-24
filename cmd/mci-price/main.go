@@ -175,8 +175,24 @@ func main() {
 		validator := price.NewQuoteValidationServer(quoteIDReg, logger)
 		if len(cfg.QuoteIDEnginesAllowlist) > 0 {
 			validator.SetEngineAllowlist(cfg.QuoteIDEnginesAllowlist)
-			logger.Info("QuoteValidationService RBAC 활성",
+			logger.Info("QuoteValidationService RBAC 활성 (정적)",
 				slog.Any("engines", cfg.QuoteIDEnginesAllowlist))
+		}
+		// etcd watch — 정적 슬라이스를 덮어쓰며 hot reload.
+		if etcdCli != nil && cfg.QuoteIDEnginesEtcdPrefix != "" {
+			w, err := quoteid.NewEtcdAllowlistWatcher(ctx, quoteid.EtcdAllowlistWatcherOptions{
+				Client:  etcdCli,
+				Prefix:  cfg.QuoteIDEnginesEtcdPrefix,
+				OnApply: validator.SetEngineAllowlistMap,
+				Logger:  logger,
+			})
+			if err != nil {
+				logger.Error("EngineAllowlist etcd watcher 구성 실패", slog.Any("error", err))
+				os.Exit(1)
+			}
+			defer w.Close()
+			logger.Info("QuoteValidationService RBAC 활성 (etcd hot reload)",
+				slog.String("prefix", cfg.QuoteIDEnginesEtcdPrefix))
 		}
 		if grpcSrv != nil {
 			grpcSrv.AttachValidator(validator)

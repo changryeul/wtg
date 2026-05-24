@@ -42,9 +42,10 @@ type QuoteValidationServer struct {
 	logger   *slog.Logger
 	now      func() time.Time
 
-	// engineAllowlist — 비어있으면 RBAC 비활성. 채워져 있으면 모든 RPC 가
-	// engine_id 가 set 안에 있어야 통과 (그렇지 않으면 PermissionDenied).
-	engineAllowlist map[string]struct{}
+	// engineAllowlist — atomic.Pointer 로 hot swap 가능. nil 이면 RBAC 비활성.
+	// 정적 설정 (SetEngineAllowlist) 과 동적 (etcd watcher) 모두 같은 필드에
+	// store — 둘 중 하나만 활성 권장 (마지막 set 이 이긴다).
+	engineAllowlist atomic.Pointer[map[string]struct{}]
 
 	// 누적 카운터 — `/v1/stats` 노출 또는 grpc interceptor 메트릭 대안.
 	callsTotal        atomic.Uint64
@@ -82,11 +83,11 @@ func NewQuoteValidationServer(registry quoteid.Registry, logger *slog.Logger) *Q
 	}
 }
 
-// SetEngineAllowlist — 허용 engine_id 목록 등록. 빈 슬라이스면 RBAC 비활성.
-// 호출은 Start 전에 1회 (atomic 갱신은 v2 후속).
+// SetEngineAllowlist — 허용 engine_id 슬라이스 → 내부 set 으로. 빈 입력이면
+// RBAC 비활성 (clear). atomic — 운영 중 hot swap 가능.
 func (s *QuoteValidationServer) SetEngineAllowlist(engines []string) {
 	if len(engines) == 0 {
-		s.engineAllowlist = nil
+		s.engineAllowlist.Store(nil)
 		return
 	}
 	m := make(map[string]struct{}, len(engines))
@@ -96,19 +97,34 @@ func (s *QuoteValidationServer) SetEngineAllowlist(engines []string) {
 		}
 	}
 	if len(m) == 0 {
-		s.engineAllowlist = nil
+		s.engineAllowlist.Store(nil)
 		return
 	}
-	s.engineAllowlist = m
+	s.engineAllowlist.Store(&m)
+}
+
+// SetEngineAllowlistMap — etcd watcher 가 직접 호출. nil/빈 map 이면 RBAC 비활성.
+func (s *QuoteValidationServer) SetEngineAllowlistMap(m map[string]struct{}) {
+	if len(m) == 0 {
+		s.engineAllowlist.Store(nil)
+		return
+	}
+	// 호출자가 같은 map 을 mutate 하지 않도록 copy.
+	cp := make(map[string]struct{}, len(m))
+	for k := range m {
+		cp[k] = struct{}{}
+	}
+	s.engineAllowlist.Store(&cp)
 }
 
 // checkEngine — allowlist 비활성이면 true. 활성이면 engineID 가 set 에
-// 있을 때만 true.
+// 있을 때만 true. atomic.Pointer.Load 라 lock 없음.
 func (s *QuoteValidationServer) checkEngine(engineID string) bool {
-	if s.engineAllowlist == nil {
+	mp := s.engineAllowlist.Load()
+	if mp == nil {
 		return true
 	}
-	_, ok := s.engineAllowlist[engineID]
+	_, ok := (*mp)[engineID]
 	return ok
 }
 

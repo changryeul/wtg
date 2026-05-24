@@ -675,9 +675,72 @@ Redis go client v9 의 `Script.Run` 은 EVALSHA→EVAL fallback 이 동기. Pipe
 LookupMany 둘 다 `Script.Eval` 직접 사용 — 매 호출 EVAL source 송신.
 실측 차이는 작음 (Redis 측 EVAL 캐시).
 
+## v1.12 — engine_id allowlist etcd hot reload (commit 추가)
+
+v1.9 의 정적 allowlist 를 etcd watch 로 동적 갱신. 엔진 추가/제거 시
+mci-price 재시작 불필요 — 실 운영에서 canary 출시 / 긴급 차단 즉시 반영.
+
+### 활성
+
+```bash
+mci-price \
+  --etcd=etcd1:2379,etcd2:2379,etcd3:2379 \
+  --etcd-prefix=wtg/ \
+  --quoteid-engines-etcd=wtg/quoteid/engines/ \
+  ...
+```
+
+또는 ENV `WTG_PRICE_QUOTEID_ENGINES_ETCD=wtg/quoteid/engines/`.
+
+빈값이면 etcd watch 비활성 — 정적 `--quoteid-engines` 만 사용.
+
+### etcd 키 모델
+
+```
+wtg/quoteid/engines/matching-A    (value 무시 — presence = allow)
+wtg/quoteid/engines/matching-B
+wtg/quoteid/engines/audit-cli
+```
+
+운영자 추가/제거 (etcdctl 또는 mci-admin UI 가 미래):
+
+```bash
+# 엔진 추가 — 즉시 활성화
+etcdctl put wtg/quoteid/engines/matching-C ""
+
+# 엔진 차단 — 즉시 거부
+etcdctl del wtg/quoteid/engines/matching-A
+
+# 현재 active 목록 조회
+etcdctl get wtg/quoteid/engines/ --prefix --keys-only
+```
+
+### 동작 흐름
+
+1. 시작 시 prefix Get → 모든 engine_id 추출 → atomic.Pointer 갱신.
+2. 백그라운드 watch goroutine 이 PUT/DELETE 이벤트 → set 갱신 → 콜백 →
+   `QuoteValidationServer.SetEngineAllowlistMap` 호출.
+3. 모든 RPC handler 의 `checkEngine` 이 `atomic.Pointer.Load` — lock 없음,
+   hot path 영향 0.
+
+watch 채널이 끊기면 자동 재등록 (compaction / 네트워크 끊김 대비).
+
+### 정적 vs etcd
+
+| | 정적 (`--quoteid-engines`) | etcd (`--quoteid-engines-etcd`) |
+|--|---------------------------|--------------------------------|
+| 갱신 | mci-price 재시작 | etcd PUT/DELETE 즉시 |
+| 운영 도구 | systemd unit / chef-puppet | etcdctl, mci-admin |
+| 의존성 | 없음 | etcd cluster |
+| 추천 | dev / 단일 인스턴스 | 운영 multi-instance |
+
+두 옵션 다 채워지면 etcd 가 정적을 덮어쓴다 (마지막 set 이긴다, 보통
+etcd 의 초기 로드 결과).
+
 ## v2 후보
 
-- engine_id allowlist 의 atomic 갱신 (현재 시작 시 1회) — etcd watch.
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
 - BatchValidate / BatchMarkConsumed 의 LRU bandwidth metrics — pipeline 단위
   latency / 처리량 모니터링.
+- engine_id 메타데이터 — etcd value 에 권한 (예: read-only vs read-write)
+  / 만료시각 / contact 등을 JSON 으로 넣어 세밀 RBAC.

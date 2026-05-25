@@ -35,6 +35,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -540,18 +541,45 @@ func wireQuoteID(cfg price.Config, logger *slog.Logger) (*quoteid.Generator, quo
 			DB:       cfg.QuoteIDRedisDB,
 		})
 	}
-	reg := quoteid.NewRedisRegistry(rdb, quoteid.RedisRegistryOptions{
+	var reg quoteid.Registry = quoteid.NewRedisRegistry(rdb, quoteid.RedisRegistryOptions{
 		Prefix: cfg.QuoteIDRedisPrefix,
 		Grace:  cfg.QuoteIDGrace,
 	})
+
+	closeAsync := func(_ context.Context) error { return nil }
+	// AsyncRegistry — Redis 모드에서만 의미 (Memory 는 RTT 없음).
+	if cfg.QuoteIDAsyncQueue > 0 {
+		async := quoteid.NewAsyncRegistry(reg, quoteid.AsyncRegistryOptions{
+			QueueSize:     cfg.QuoteIDAsyncQueue,
+			FlushInterval: cfg.QuoteIDAsyncFlush,
+			BatchMax:      cfg.QuoteIDAsyncBatchMax,
+			PutTimeout:    cfg.QuoteIDAsyncTimeout,
+			Logger:        logger,
+		})
+		reg = async
+		closeAsync = async.Close
+		logger.Info("QuoteID Async wrapper 활성 (Put 비동기 batch)",
+			slog.Int("queue", cfg.QuoteIDAsyncQueue),
+			slog.Duration("flush", cfg.QuoteIDAsyncFlush),
+			slog.Int("batch_max", cfg.QuoteIDAsyncBatchMax),
+			slog.Duration("put_timeout", cfg.QuoteIDAsyncTimeout))
+	}
+
 	logger.Info("QuoteID 활성 (RedisRegistry)",
 		slog.String("instance", cfg.QuoteIDInstance),
 		slog.String("redis_mode", mode),
 		slog.Any("redis_addrs", addrs),
 		slog.String("redis_master", cfg.QuoteIDRedisMaster),
 		slog.Duration("validity", cfg.QuoteIDValidity),
-		slog.Duration("grace", cfg.QuoteIDGrace))
-	return gen, reg, func() { _ = rdb.Close() }
+		slog.Duration("grace", cfg.QuoteIDGrace),
+		slog.Bool("async", cfg.QuoteIDAsyncQueue > 0))
+	return gen, reg, func() {
+		// graceful drain — 1초 안에 남은 batch flush, 못 비우면 손실.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = closeAsync(ctx)
+		_ = rdb.Close()
+	}
 }
 
 // splitTrim — sep 으로 split + 각 토큰 trim, 빈 토큰 제외.

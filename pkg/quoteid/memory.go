@@ -53,6 +53,23 @@ func (m *MemoryRegistry) Put(_ context.Context, rec Record) error {
 	return nil
 }
 
+// PutMany — N records 를 단일 mutex 안에서. 일부 record 가 invalid 면 그 항목만
+// skip 하고 나머지는 등록. 전체 실패 (반환 err) 는 없음.
+func (m *MemoryRegistry) PutMany(_ context.Context, recs []Record) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, rec := range recs {
+		if rec.ValidUntil <= rec.IssuedAt || rec.QuoteID == "" {
+			continue
+		}
+		m.records[rec.QuoteID] = rec
+	}
+	return nil
+}
+
 func (m *MemoryRegistry) Get(_ context.Context, id QuoteID) (Record, error) {
 	m.mu.RLock()
 	rec, ok := m.records[id]

@@ -930,9 +930,85 @@ mci-admin --etcd-quoteid-engines-prefix=wtg/quoteid/engines/
 또는 `WTG_ADMIN_ETCD_QUOTEID_ENGINES_PREFIX`. mci-price 의
 `--quoteid-engines-etcd` 와 동일 prefix 여야 hot reload 가 한 곳을 가리킨다.
 
+## v1.18 — AsyncRegistry (Put 비동기 batch, commit 추가)
+
+v1.17 까지는 `PricingConsumer.OnTick` 이 Profile 마다 동기 `Registry.Put` 호출 —
+Redis RTT × N 프로파일이 hot path 를 블록. tick 처리량 한계가 Redis 응답속도에
+직접 비례했음.
+
+v1.18+ : `AsyncRegistry` wrapper 가 Put 을 채널로 큐잉 → 백그라운드 worker
+goroutine 이 batch + `PutMany` (Redis Pipeline) 으로 송신. **읽기 path
+(Lookup / MarkConsumed) 는 sync 유지** — 검증/체결 latency 보장.
+
+### 활성
+
+```bash
+mci-price \
+  --quoteid-redis=...        # Redis 모드 (Memory 는 의미 없음)
+  --quoteid-async-queue=10000 \   # >0 → 비동기 활성. default 0 = 동기
+  --quoteid-async-flush=5ms \     # batch 미만이어도 flush 주기
+  --quoteid-async-batch=200 \     # batch 최대
+  --quoteid-async-timeout=200ms   # 단일 PutMany ctx timeout
+```
+
+ENV: `WTG_PRICE_QUOTEID_ASYNC_{QUEUE,FLUSH,BATCH,TIMEOUT}`.
+
+### 흐름
+
+```
+[OnTick (hot path)]
+   ↓ Apply (margin) × N profiles
+   ↓ attachQuoteID
+   ↓ AsyncRegistry.Put(rec)        ← 즉시 반환 (채널 send only)
+   ↓ Publisher.PublishQuote
+       broker JSON
+       gRPC SubscribeQuote
+
+[worker goroutine (background)]
+   ←─ channel ─┐
+   ↓ 배치 누적  │
+   ↓ flush trigger:
+     - batch size ≥ BatchMax
+     - 또는 FlushInterval 도래
+   ↓ inner.PutMany(ctx, batch)     ← Redis Pipeline 1 RTT
+   ↓ written / failed 카운터
+```
+
+### Trade-off
+
+- **장점**: tick 처리량 (Redis RTT 와 무관 — 채널 send 만). 100 ticks/sec ×
+  10 profiles = 1000 Put/sec 부하가 hot path 에서 사라짐.
+- **단점**: queue 가득 시 **drop** (best-effort audit). At-least-once 보장
+  안 함. drop 된 record 의 QuoteID 는 Registry 에 없어 검증 시 NOT_FOUND →
+  자연스럽게 신규 주문 거절 (fail-safe).
+- **shutdown**: SIGTERM 후 1초 안에 남은 batch flush — 시간 초과 시 손실.
+
+### 메트릭
+
+`AsyncRegistry.Stats()` 노출 (TODO: Prometheus collector 추가):
+
+| 키 | 의미 |
+|---|------|
+| `enqueued` | 채널 send 성공 |
+| `dropped` | queue full → drop (audit 누락) |
+| `written` | worker 가 PutMany 성공 |
+| `failed` | PutMany err (네트워크 / Redis 장애) |
+| `queue_len` | 현재 채널 잔여 |
+| `queue_cap` | 채널 버퍼 크기 |
+
+운영 임계:
+- `dropped` > 0 — queue 부족 → `--quoteid-async-queue` 증가 또는 Redis 응답속도 점검
+- `failed` > 0 — Redis Sentinel failover / 네트워크 이상
+
+### 메모리 모드는 의미 없음
+
+`--quoteid-redis` 비어있으면 (Memory) RTT 없어 async 가 오히려 overhead.
+main.go 가 Redis 활성일 때만 wrapper 적용 — Memory 면 wrapper 안 만듦.
+
 ## v2 후보
 
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
 - recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
   대시보드 응답 속도 개선.
 - audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.
+- AsyncRegistry 의 Prometheus collector (현재 Stats() 만 노출).

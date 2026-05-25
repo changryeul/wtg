@@ -25,6 +25,10 @@ type Registry interface {
 	// 정상 흐름에서는 발생하지 않지만 멱등성 보장.
 	Put(ctx context.Context, rec Record) error
 
+	// PutMany — N records 를 한 번에. AsyncRegistry 의 worker 가 batch 효율을
+	// 위해 사용. Memory 는 단일 mutex, Redis 는 pipeline 으로 1 RTT.
+	PutMany(ctx context.Context, recs []Record) error
+
 	// Get 은 QuoteID 의 Record 를 반환. 없으면 ErrNotFound.
 	// 호출자 (매칭 엔진) 가 Record.ValidAt(now) 로 2차 정책 검증을 수행한다.
 	Get(ctx context.Context, id QuoteID) (Record, error)

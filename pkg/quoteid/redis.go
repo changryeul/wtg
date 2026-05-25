@@ -129,6 +129,42 @@ func (r *RedisRegistry) Put(ctx context.Context, rec Record) error {
 	return r.rdb.Set(ctx, r.key(rec.QuoteID), body, remaining).Err()
 }
 
+// PutMany — N records 를 redis.Pipeline 으로 묶음 송신. 1 connection grab + 1 RTT
+// (direct/sentinel). Cluster 에서는 slot 별 자동 분산.
+//
+// 일부 record 가 만료 / invalid 면 skip. 전체 pipeline 실패 (네트워크 등) 만
+// err 로 반환 — AsyncRegistry worker 가 metric 누적 + retry 정책 결정.
+func (r *RedisRegistry) PutMany(ctx context.Context, recs []Record) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	now := r.now()
+	pipe := r.rdb.Pipeline()
+	staged := 0
+	for _, rec := range recs {
+		if rec.ValidUntil <= rec.IssuedAt || rec.QuoteID == "" {
+			continue
+		}
+		body, err := json.Marshal(rec)
+		if err != nil {
+			continue
+		}
+		remaining := time.Unix(0, rec.ValidUntil).Sub(now) + r.grace
+		if remaining <= 0 {
+			continue
+		}
+		pipe.Set(ctx, r.key(rec.QuoteID), body, remaining)
+		staged++
+	}
+	if staged == 0 {
+		return nil
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("quoteid: pipeline Put: %w", err)
+	}
+	return nil
+}
+
 func (r *RedisRegistry) Get(ctx context.Context, id QuoteID) (Record, error) {
 	body, err := r.rdb.Get(ctx, r.key(id)).Bytes()
 	if errors.Is(err, redis.Nil) {

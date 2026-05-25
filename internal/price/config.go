@@ -184,6 +184,18 @@ type Config struct {
 	// QuoteIDEnginesEtcdPrefix — etcd watch 활성 prefix. 빈값이면 etcd 갱신
 	// 비활성 (정적 슬라이스만 사용). 일반: cfg.EtcdPrefix + "quoteid/engines/".
 	QuoteIDEnginesEtcdPrefix string
+
+	// ─── QuoteID async Put (hot path 비블록) ──────────────────────────────
+	// AsyncRegistry wrapper 활성 — QuoteIDAsyncQueue > 0 일 때만.
+	// PricingConsumer.OnTick 의 Registry.Put 호출이 채널로 즉시 반환 →
+	// 백그라운드 worker 가 batch + Pipeline 으로 Redis 송신.
+	//
+	// trade-off : at-least-once 아님 (queue 가득 시 drop). 운영 best-effort
+	// audit 정책상 허용. drop 률은 quoteid_async_dropped 메트릭으로 감시.
+	QuoteIDAsyncQueue    int           // default 0 = 동기 (이전 동작)
+	QuoteIDAsyncFlush    time.Duration // default 5ms
+	QuoteIDAsyncBatchMax int           // default 200
+	QuoteIDAsyncTimeout  time.Duration // default 200ms — 단일 PutMany 의 ctx timeout
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -388,6 +400,26 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_QUOTEID_ENGINES_ETCD"); v != "" {
 		cfg.QuoteIDEnginesEtcdPrefix = v
 	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_ASYNC_QUEUE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.QuoteIDAsyncQueue = n
+		}
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_ASYNC_FLUSH"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.QuoteIDAsyncFlush = d
+		}
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_ASYNC_BATCH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.QuoteIDAsyncBatchMax = n
+		}
+	}
+	if v := os.Getenv("WTG_PRICE_QUOTEID_ASYNC_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.QuoteIDAsyncTimeout = d
+		}
+	}
 
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
@@ -454,6 +486,14 @@ func LoadConfig(args []string) (Config, error) {
 		"허용 engine_id 콤마구분 (빈값=RBAC 비활성). 예: matching-A,matching-B")
 	fs.StringVar(&cfg.QuoteIDEnginesEtcdPrefix, "quoteid-engines-etcd", cfg.QuoteIDEnginesEtcdPrefix,
 		"etcd watch prefix (예: wtg/quoteid/engines/) — 채우면 hot reload, 빈값=정적만")
+	fs.IntVar(&cfg.QuoteIDAsyncQueue, "quoteid-async-queue", cfg.QuoteIDAsyncQueue,
+		"AsyncRegistry queue size. >0 면 Put 비동기 batch (hot path 비블록). 0 = 동기")
+	fs.DurationVar(&cfg.QuoteIDAsyncFlush, "quoteid-async-flush", cfg.QuoteIDAsyncFlush,
+		"AsyncRegistry flush interval (default 5ms)")
+	fs.IntVar(&cfg.QuoteIDAsyncBatchMax, "quoteid-async-batch", cfg.QuoteIDAsyncBatchMax,
+		"AsyncRegistry batch 최대 (default 200)")
+	fs.DurationVar(&cfg.QuoteIDAsyncTimeout, "quoteid-async-timeout", cfg.QuoteIDAsyncTimeout,
+		"AsyncRegistry 단일 PutMany ctx timeout (default 200ms)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

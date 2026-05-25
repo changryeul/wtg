@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
@@ -67,53 +66,13 @@ func AdminCmd(deps *HandlerDeps) http.HandlerFunc {
 	}
 }
 
-// shortcut endpoint들 — broker 의 흔한 admin 명령에 시멘틱 URL 매핑.
-
-func GetStatus(deps *HandlerDeps) http.HandlerFunc {
-	return shortcut(deps, mymq.SubGetStatus)
-}
-
-func GetClients(deps *HandlerDeps) http.HandlerFunc {
-	return shortcut(deps, mymq.SubGetClient)
-}
-
-func GetExchanges(deps *HandlerDeps) http.HandlerFunc {
-	return shortcut(deps, mymq.SubGetExchange)
-}
-
-func GetUsers(deps *HandlerDeps) http.HandlerFunc {
-	return shortcut(deps, mymq.SubGetUsers)
-}
-
-// GetWhois — 사용자 추적. ?usid=trader01 query 받음.
-func GetWhois(deps *HandlerDeps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		usid := strings.TrimSpace(r.URL.Query().Get("usid"))
-		if usid == "" {
-			writeJSONError(w, http.StatusBadRequest, "validation", "usid query 필요")
-			return
-		}
-		body, _ := json.Marshal(map[string]string{"usid": usid})
-		reply, err := callAdmin(r.Context(), r, deps, mymq.SubGetWhois, body)
-		if err != nil {
-			writeBrokerError(w, deps.Logger, r, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, replyToEnvelope(reply))
-	}
-}
-
-// shortcut 은 단순한 query-string 없는 admin command 헬퍼.
-func shortcut(deps *HandlerDeps, subc mymq.Subc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		reply, err := callAdmin(r.Context(), r, deps, subc, nil)
-		if err != nil {
-			writeBrokerError(w, deps.Logger, r, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, replyToEnvelope(reply))
-	}
-}
+// shortcut endpoint들은 모두 admin_*.go 파일로 이전됨 (placeholder body +
+// binary 응답 디코드 패턴 적용).
+//   - GetStatus    → admin_status.go
+//   - GetExchanges → admin_exchanges.go
+//   - GetClients   → admin_clients.go
+//   - GetUsers     → admin_users.go
+//   - GetWhois     → admin_whois.go (broker 시멘틱 — xchg/rkey/qnam 검색)
 
 // callAdmin 은 admin 명령 RPC 의 공통 코드.
 //

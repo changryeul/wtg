@@ -99,65 +99,8 @@ func TestAdminCmdBadJSON(t *testing.T) {
 	}
 }
 
-func TestShortcuts(t *testing.T) {
-	cases := []struct {
-		name     string
-		handler  func(*HandlerDeps) http.HandlerFunc
-		wantSubc mymq.Subc
-		path     string
-	}{
-		{"status", GetStatus, mymq.SubGetStatus, "/v1/admin/status"},
-		{"clients", GetClients, mymq.SubGetClient, "/v1/admin/clients"},
-		{"exchanges", GetExchanges, mymq.SubGetExchange, "/v1/admin/exchanges"},
-		{"users", GetUsers, mymq.SubGetUsers, "/v1/admin/users"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			caller := &fakeCaller{
-				reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
-					if in.Subc != c.wantSubc {
-						t.Errorf("Subc: %d, want %d", in.Subc, c.wantSubc)
-					}
-					return &mymq.Reply{Body: []byte(`{"ok":true}`)}, nil
-				},
-			}
-			rr := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, c.path, nil)
-			c.handler(newDeps(caller))(rr, req)
-			if rr.Code != http.StatusOK {
-				t.Errorf("status: %d", rr.Code)
-			}
-		})
-	}
-}
-
-func TestGetWhoisRequiresUsid(t *testing.T) {
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/admin/whois", nil) // usid 없음
-	GetWhois(newDeps(&fakeCaller{}))(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("status: %d, want 400", rr.Code)
-	}
-}
-
-func TestGetWhoisForwardsUsid(t *testing.T) {
-	caller := &fakeCaller{
-		reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
-			var got map[string]string
-			_ = json.Unmarshal(in.Body, &got)
-			if got["usid"] != "trader01" {
-				t.Errorf("body.usid: %v", got["usid"])
-			}
-			return &mymq.Reply{Body: []byte(`{"chan":"WEB","ip":"1.2.3.4"}`)}, nil
-		},
-	}
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/admin/whois?usid=trader01", nil)
-	GetWhois(newDeps(caller))(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Errorf("status: %d", rr.Code)
-	}
-}
+// shortcut 5개 (Status/Clients/Exchanges/Users/Whois) 모두 placeholder body +
+// binary 응답 디코드 패턴으로 이전됨. 각자 별도 _test.go 에서 검증.
 
 func TestBrokerErrorMapping(t *testing.T) {
 	cases := []struct {

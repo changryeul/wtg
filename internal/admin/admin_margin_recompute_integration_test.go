@@ -23,20 +23,29 @@ import (
 func TestAdmin_MarginRecompute_Override(t *testing.T) {
 	pool := pgxtest.StartTimescale(t)
 
-	// quote_bars seed — 1시간치 1m 봉, USD/KRW.
+	// quote_bars seed — 1시간치 1m 봉, USD/KRW. OHLC 의 high/low 가 open/close
+	// 와 다르도록 약간 다르게 (실 시장 봉 모사).
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	now := time.Now().UTC().Truncate(time.Minute)
 	for i := 0; i < 60; i++ {
 		opened := now.Add(-time.Duration(60-i) * time.Minute)
 		closed := opened.Add(time.Minute)
-		raw := 1400.00 + float64(i)*0.01
+		openMid := 1400.00 + float64(i)*0.01
+		closeMid := openMid + 0.005
+		highMid := openMid + 0.02
+		lowMid := openMid - 0.02
+		spread := 0.05
 		_, err := pool.Exec(ctx, `
 			INSERT INTO quote_bars (pair, tf, opened_at, closed_at,
 				open_bid, open_ask, high_bid, high_ask, low_bid, low_ask,
 				close_bid, close_ask, tick_count)
-			VALUES ($1, '1m', $2, $3, $4, $5, $4, $5, $4, $5, $4, $5, 20)
-		`, "USD/KRW", opened, closed, raw, raw+0.05)
+			VALUES ($1, '1m', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 20)
+		`, "USD/KRW", opened, closed,
+			openMid, openMid+spread,
+			highMid, highMid+spread,
+			lowMid, lowMid+spread,
+			closeMid, closeMid+spread)
 		if err != nil {
 			t.Fatalf("seed bar %d: %v", i, err)
 		}
@@ -109,6 +118,26 @@ func TestAdmin_MarginRecompute_Override(t *testing.T) {
 		if s.CustomerAsk <= s.RawAsk {
 			t.Errorf("[%d] CustomerAsk (%v) < RawAsk (%v) — ask 는 더 높아야",
 				i, s.CustomerAsk, s.RawAsk)
+		}
+		// v2 — OHLC 전체 검증. 모든 4 점 (O/H/L/C) 에 동일 마진 적용.
+		if got := s.Customer.OpenBid - s.Raw.OpenBid; got > 0 || got < -0.15 {
+			t.Errorf("[%d] Open bid margin=%v, want ~-0.10", i, got)
+		}
+		if got := s.Customer.HighAsk - s.Raw.HighAsk; got < 0 || got > 0.15 {
+			t.Errorf("[%d] High ask margin=%v, want ~+0.10", i, got)
+		}
+		if got := s.Customer.LowBid - s.Raw.LowBid; got > 0 || got < -0.15 {
+			t.Errorf("[%d] Low bid margin=%v, want ~-0.10", i, got)
+		}
+		// OHLC 의 상대적 순서 보존 — high >= close >= open / low <= open 등이
+		// 적용 후에도 깨지지 않아야.
+		if s.Customer.HighBid < s.Customer.CloseBid {
+			t.Errorf("[%d] customer high < close: %v vs %v",
+				i, s.Customer.HighBid, s.Customer.CloseBid)
+		}
+		if s.Customer.LowBid > s.Customer.OpenBid {
+			t.Errorf("[%d] customer low > open: %v vs %v",
+				i, s.Customer.LowBid, s.Customer.OpenBid)
 		}
 	}
 }

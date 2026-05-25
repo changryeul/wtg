@@ -102,11 +102,41 @@ Content-Type: application/json
 `bid_margin` / `ask_margin` = customer 가격 - raw 가격. bid 는 보통 ≤ 0
 (고객에게 더 낮은 매도 호가), ask 는 ≥ 0 (더 높은 매수 호가).
 
+## OHLC 전체 (v2)
+
+샘플 응답의 `raw` / `customer` 객체에 봉의 4 점 (open/high/low/close × bid/ask)
+모두 포함. 통계 (`stats.*`) 는 close 기준 — 분쟁 분석의 표준 (체결 직전
+quote = close).
+
+```json
+"samples": [{
+  "opened_at": "2026-05-01T00:00:00Z",
+  "raw": {
+    "open_bid":  1400.0000, "open_ask":  1400.0500,
+    "high_bid":  1400.0200, "high_ask":  1400.0700,
+    "low_bid":   1399.9800, "low_ask":   1400.0300,
+    "close_bid": 1400.0050, "close_ask": 1400.0550
+  },
+  "customer": {
+    "open_bid":  1399.9000, "open_ask":  1400.1500,
+    "high_bid":  1399.9200, "high_ask":  1400.1700,
+    "low_bid":   1399.8800, "low_ask":   1400.1300,
+    "close_bid": 1399.9050, "close_ask": 1400.1550
+  },
+  "raw_bid":      1400.0050,  // legacy (== raw.close_bid)
+  "raw_ask":      1400.0550,
+  "customer_bid": 1399.9050,
+  "customer_ask": 1400.1550,
+  "bid_margin":   -0.1000,
+  "ask_margin":    0.1000
+}]
+```
+
+UI 의 결과 테이블은 토글 — "Close only" (legacy 7 컬럼) / "OHLC 전체" (8 점 bid).
+
 ## 한계
 
 - **1m 봉만** — 더 정밀한 (1s / tick 단위) 재계산은 raw tick 저장 안 함.
-- **close_bid/close_ask 만** — OHLC 의 close 점만 사용. open/high/low 별
-  재계산은 v2.
 - **봉 상한 10000** — 단일 호출 abuse 차단. 더 큰 기간은 호출자가 분할.
 - **timeout 30s** — 1만 봉 + 1 profile 기준 충분, 더 큰 시나리오는 async
   job (v2 후속).
@@ -135,7 +165,6 @@ mci-admin 좌측 nav 의 "마진 재계산" 클릭 → 폼 + 결과 화면.
 
 - **Async job 모드** — `POST /v1/admin/margin/jobs` → job_id 반환,
   `GET /v1/admin/margin/jobs/{id}` 로 polling. 1년+ / 100k+ 봉 시나리오.
-- **OHLC 전체 재계산** — close 외 4 points 모두.
 - **CSV / parquet export** — 정산용 다운로드.
 - **Profile multi-select** — 한 호출에 N profile 비교.
 - **차트 시각화** — 결과를 lightweight-charts 로 raw vs customer 선 비교.

@@ -52,14 +52,30 @@ type marginRecomputeRequest struct {
 	SampleLimit   int                      `json:"sample_limit,omitempty"`
 }
 
+// marginOHLC — 봉 1개의 OHLC bid/ask (raw 또는 customer).
+type marginOHLC struct {
+	OpenBid  float64 `json:"open_bid"`
+	OpenAsk  float64 `json:"open_ask"`
+	HighBid  float64 `json:"high_bid"`
+	HighAsk  float64 `json:"high_ask"`
+	LowBid   float64 `json:"low_bid"`
+	LowAsk   float64 `json:"low_ask"`
+	CloseBid float64 `json:"close_bid"`
+	CloseAsk float64 `json:"close_ask"`
+}
+
 type marginRecomputeSample struct {
-	OpenedAt    time.Time `json:"opened_at"`
-	RawBid      float64   `json:"raw_bid"`
-	RawAsk      float64   `json:"raw_ask"`
-	CustomerBid float64   `json:"customer_bid"`
-	CustomerAsk float64   `json:"customer_ask"`
-	BidMargin   float64   `json:"bid_margin"` // customer_bid - raw_bid (보통 ≤ 0)
-	AskMargin   float64   `json:"ask_margin"` // customer_ask - raw_ask (보통 ≥ 0)
+	OpenedAt time.Time `json:"opened_at"`
+	// Legacy v1 close 기준 필드 (UI 의 close-only 보기와 backward 호환).
+	RawBid      float64 `json:"raw_bid"`
+	RawAsk      float64 `json:"raw_ask"`
+	CustomerBid float64 `json:"customer_bid"`
+	CustomerAsk float64 `json:"customer_ask"`
+	BidMargin   float64 `json:"bid_margin"` // customer_bid - raw_bid (close, 보통 ≤ 0)
+	AskMargin   float64 `json:"ask_margin"` // customer_ask - raw_ask (close, 보통 ≥ 0)
+	// v2 — OHLC 전체. 차트 시각화 / 봉 export 용.
+	Raw      marginOHLC `json:"raw"`
+	Customer marginOHLC `json:"customer"`
 }
 
 type marginRecomputeStats struct {
@@ -128,11 +144,15 @@ func PostMarginRecompute(deps *MarginRecomputeDeps) http.HandlerFunc {
 			return
 		}
 
-		// 2) quote_bars 조회.
+		// 2) quote_bars 조회 — OHLC 전체.
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		rows, err := deps.Pool.Query(ctx, `
-			SELECT opened_at, close_bid, close_ask
+			SELECT opened_at,
+			       open_bid, open_ask,
+			       high_bid, high_ask,
+			       low_bid,  low_ask,
+			       close_bid, close_ask
 			FROM quote_bars
 			WHERE pair = $1
 			  AND tf   = '1m'
@@ -159,22 +179,35 @@ func PostMarginRecompute(deps *MarginRecomputeDeps) http.HandlerFunc {
 		count := 0
 		sampleStride := 0
 
+		// applyPoint — bid/ask 점 1개에 PricingTable.Apply.
+		applyPoint := func(bid, ask float64, ts time.Time) (float64, float64) {
+			cq := tbl.Apply(quote.Quote{Pair: req.Pair, Bid: bid, Ask: ask, TS: ts},
+				req.Profile, pricing.TenorSpot)
+			return cq.Bid, cq.Ask
+		}
+
 		for rows.Next() {
 			var openedAt time.Time
-			var closeBid, closeAsk float64
-			if err := rows.Scan(&openedAt, &closeBid, &closeAsk); err != nil {
+			var raw marginOHLC
+			if err := rows.Scan(&openedAt,
+				&raw.OpenBid, &raw.OpenAsk,
+				&raw.HighBid, &raw.HighAsk,
+				&raw.LowBid, &raw.LowAsk,
+				&raw.CloseBid, &raw.CloseAsk,
+			); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, "scan", err.Error())
 				return
 			}
-			cq := tbl.Apply(quote.Quote{
-				Pair: req.Pair,
-				Bid:  closeBid,
-				Ask:  closeAsk,
-				TS:   openedAt,
-			}, req.Profile, pricing.TenorSpot)
-			bidDiff := cq.Bid - closeBid
-			askDiff := cq.Ask - closeAsk
+			// OHLC 4 점 모두 PricingTable.Apply.
+			var cust marginOHLC
+			cust.OpenBid, cust.OpenAsk = applyPoint(raw.OpenBid, raw.OpenAsk, openedAt)
+			cust.HighBid, cust.HighAsk = applyPoint(raw.HighBid, raw.HighAsk, openedAt)
+			cust.LowBid, cust.LowAsk = applyPoint(raw.LowBid, raw.LowAsk, openedAt)
+			cust.CloseBid, cust.CloseAsk = applyPoint(raw.CloseBid, raw.CloseAsk, openedAt)
 
+			// 통계는 close 기준 — 운영 분쟁 분석 표준 (체결 직전 quote 가 close).
+			bidDiff := cust.CloseBid - raw.CloseBid
+			askDiff := cust.CloseAsk - raw.CloseAsk
 			bidSum += bidDiff
 			askSum += askDiff
 			if bidDiff > stats.BidMarginMax {
@@ -198,12 +231,14 @@ func PostMarginRecompute(deps *MarginRecomputeDeps) http.HandlerFunc {
 			if len(samples) < sampleLimit && count%sampleStride == 0 {
 				samples = append(samples, marginRecomputeSample{
 					OpenedAt:    openedAt,
-					RawBid:      closeBid,
-					RawAsk:      closeAsk,
-					CustomerBid: cq.Bid,
-					CustomerAsk: cq.Ask,
+					RawBid:      raw.CloseBid,
+					RawAsk:      raw.CloseAsk,
+					CustomerBid: cust.CloseBid,
+					CustomerAsk: cust.CloseAsk,
 					BidMargin:   bidDiff,
 					AskMargin:   askDiff,
+					Raw:         raw,
+					Customer:    cust,
 				})
 			}
 		}

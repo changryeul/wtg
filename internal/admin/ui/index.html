@@ -141,6 +141,10 @@
   [data-theme="dark"] .nav-btn[data-active="true"] { color: #67e8f9; }
 
   /* 테마 토글 버튼 — 활성 상태. */
+  .mr-view-btn[data-active="true"] {
+    background: rgba(34,211,238,0.15);
+    color: #67e8f9;
+  }
   .theme-btn[data-active="true"] {
     background: linear-gradient(135deg, rgba(34,211,238,0.18), rgba(99,102,241,0.18));
     color: #67e8f9;
@@ -1061,7 +1065,14 @@
               </div>
             </div>
             <div class="border-gradient rounded-2xl overflow-hidden">
-              <table class="w-full text-xs">
+              <div class="flex items-center justify-between px-3 py-2 bg-ink-850/40 text-xs">
+                <span class="text-slate-400">샘플 봉</span>
+                <div class="flex gap-1">
+                  <button id="mr-view-close" class="mr-view-btn px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-active="true">Close only</button>
+                  <button id="mr-view-ohlc" class="mr-view-btn px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700">OHLC 전체</button>
+                </div>
+              </div>
+              <table class="w-full text-xs" id="mr-table-close">
                 <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
                   <tr class="border-b border-ink-700/60">
                     <th class="text-left px-3 py-2 font-medium">시각</th>
@@ -1074,6 +1085,26 @@
                   </tr>
                 </thead>
                 <tbody id="mr-tbody"></tbody>
+              </table>
+              <table class="w-full text-xs hidden" id="mr-table-ohlc">
+                <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                  <tr class="border-b border-ink-700/60">
+                    <th class="text-left px-3 py-2 font-medium" rowspan="2">시각</th>
+                    <th class="text-center px-3 py-1 font-medium border-l border-ink-700/40" colspan="4">raw (open/high/low/close)</th>
+                    <th class="text-center px-3 py-1 font-medium border-l border-ink-700/40" colspan="4">customer</th>
+                  </tr>
+                  <tr class="border-b border-ink-700/60 text-[10px]">
+                    <th class="text-right px-2 py-1 border-l border-ink-700/40">O</th>
+                    <th class="text-right px-2 py-1">H</th>
+                    <th class="text-right px-2 py-1">L</th>
+                    <th class="text-right px-2 py-1">C</th>
+                    <th class="text-right px-2 py-1 border-l border-ink-700/40">O</th>
+                    <th class="text-right px-2 py-1">H</th>
+                    <th class="text-right px-2 py-1">L</th>
+                    <th class="text-right px-2 py-1">C</th>
+                  </tr>
+                </thead>
+                <tbody id="mr-tbody-ohlc"></tbody>
               </table>
             </div>
           </div>
@@ -2726,6 +2757,16 @@ function initMarginRecompute() {
     $("#mr-override-row").classList.toggle("hidden", !$("#mr-use-override").checked);
   };
   $("#mr-run").onclick = runMarginRecompute;
+  $("#mr-view-close").onclick = () => setMarginView("close");
+  $("#mr-view-ohlc").onclick = () => setMarginView("ohlc");
+}
+
+function setMarginView(mode) {
+  const close = mode === "close";
+  $("#mr-view-close").dataset.active = close ? "true" : "false";
+  $("#mr-view-ohlc").dataset.active = close ? "false" : "true";
+  $("#mr-table-close").classList.toggle("hidden", !close);
+  $("#mr-table-ohlc").classList.toggle("hidden", close);
 }
 
 // datetime-local 의 value 는 local-time 으로 표시 — UTC 라고 라벨링했지만
@@ -2795,16 +2836,23 @@ function renderMarginResult(r) {
   $("#mr-ask-max").textContent = fmt(r.stats.ask_margin_max);
   $("#mr-ask-min").textContent = fmt(r.stats.ask_margin_min);
 
+  // Close-only 테이블.
   const tb = $("#mr-tbody");
   tb.replaceChildren();
+  const tbOHLC = $("#mr-tbody-ohlc");
+  tbOHLC.replaceChildren();
+
   if (!r.samples || !r.samples.length) {
     tb.appendChild(h("tr", null,
       h("td", { class: "px-3 py-3 text-center text-slate-500", colspan: "7", text: "샘플 없음" })));
+    tbOHLC.appendChild(h("tr", null,
+      h("td", { class: "px-3 py-3 text-center text-slate-500", colspan: "9", text: "샘플 없음" })));
     return;
   }
   for (const s of r.samples) {
     const ts = s.opened_at.replace(/\.\d+Z?$/, "Z");
-    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+    // Close 모드.
+    tb.appendChild(h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
       h("td", { class: "px-3 py-2 font-mono text-slate-300", text: ts }),
       h("td", { class: "px-3 py-2 text-right font-mono", text: fmt(s.raw_bid) }),
       h("td", { class: "px-3 py-2 text-right font-mono", text: fmt(s.raw_ask) }),
@@ -2812,8 +2860,20 @@ function renderMarginResult(r) {
       h("td", { class: "px-3 py-2 text-right font-mono text-cyan-300", text: fmt(s.customer_ask) }),
       h("td", { class: "px-3 py-2 text-right font-mono text-bad", text: fmt(s.bid_margin) }),
       h("td", { class: "px-3 py-2 text-right font-mono text-good", text: fmt(s.ask_margin) }),
-    );
-    tb.appendChild(tr);
+    ));
+    // OHLC 모드 — bid 만 표시 (시각화 단순화, ask 는 같은 패턴이라 생략).
+    // bid 의 O/H/L/C, raw 와 customer.
+    tbOHLC.appendChild(h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+      h("td", { class: "px-3 py-2 font-mono text-slate-300", text: ts }),
+      h("td", { class: "px-2 py-2 text-right font-mono border-l border-ink-700/40", text: fmt(s.raw.open_bid) }),
+      h("td", { class: "px-2 py-2 text-right font-mono",                              text: fmt(s.raw.high_bid) }),
+      h("td", { class: "px-2 py-2 text-right font-mono",                              text: fmt(s.raw.low_bid) }),
+      h("td", { class: "px-2 py-2 text-right font-mono",                              text: fmt(s.raw.close_bid) }),
+      h("td", { class: "px-2 py-2 text-right font-mono text-cyan-300 border-l border-ink-700/40", text: fmt(s.customer.open_bid) }),
+      h("td", { class: "px-2 py-2 text-right font-mono text-cyan-300",                            text: fmt(s.customer.high_bid) }),
+      h("td", { class: "px-2 py-2 text-right font-mono text-cyan-300",                            text: fmt(s.customer.low_bid) }),
+      h("td", { class: "px-2 py-2 text-right font-mono text-cyan-300",                            text: fmt(s.customer.close_bid) }),
+    ));
   }
 }
 

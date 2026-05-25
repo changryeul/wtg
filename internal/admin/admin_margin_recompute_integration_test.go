@@ -176,8 +176,8 @@ func TestAdmin_MarginRecompute_MultiProfile(t *testing.T) {
 	override := pricing.PricingTableDoc{
 		Version: 77,
 		HQMargin: []pricing.HQEntryDoc{
-			{Pair: "USD/KRW", Tier: session.TierVIP,      BidAmount: 0.02, AskAmount: 0.02},
-			{Pair: "USD/KRW", Tier: session.TierGold,     BidAmount: 0.05, AskAmount: 0.05},
+			{Pair: "USD/KRW", Tier: session.TierVIP, BidAmount: 0.02, AskAmount: 0.02},
+			{Pair: "USD/KRW", Tier: session.TierGold, BidAmount: 0.05, AskAmount: 0.05},
 			{Pair: "USD/KRW", Tier: session.TierStandard, BidAmount: 0.10, AskAmount: 0.10},
 		},
 	}

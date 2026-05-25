@@ -37,11 +37,11 @@ const (
 
 // MarginRecomputeDeps — 핸들러 의존성.
 type MarginRecomputeDeps struct {
-	Cli       *clientv3.Client // etcd — PricingTable 현재값 조회
-	Pool      *pgxpool.Pool    // TimescaleDB — quote_bars
-	EtcdKey   string           // default "wtg/pricing/table"
-	Logger    *slog.Logger
-	Audit     *AuditRing
+	Cli     *clientv3.Client // etcd — PricingTable 현재값 조회
+	Pool    *pgxpool.Pool    // TimescaleDB — quote_bars
+	EtcdKey string           // default "wtg/pricing/table"
+	Logger  *slog.Logger
+	Audit   *AuditRing
 }
 
 type marginRecomputeRequest struct {
@@ -99,12 +99,12 @@ type marginProfileResult struct {
 }
 
 type marginRecomputeResponse struct {
-	BarsProcessed int                  `json:"bars_processed"`
-	TableVersion  int64                `json:"table_version"`
-	TableSource   string               `json:"table_source"` // "etcd" / "override"
-	Pair          session.Pair         `json:"pair"`
-	From          time.Time            `json:"from"`
-	To            time.Time            `json:"to"`
+	BarsProcessed int                   `json:"bars_processed"`
+	TableVersion  int64                 `json:"table_version"`
+	TableSource   string                `json:"table_source"` // "etcd" / "override"
+	Pair          session.Pair          `json:"pair"`
+	From          time.Time             `json:"from"`
+	To            time.Time             `json:"to"`
 	Results       []marginProfileResult `json:"results"`
 
 	// Legacy v1 backward compat — results 길이 1 일 때만 채움.

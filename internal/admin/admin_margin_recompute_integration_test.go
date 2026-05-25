@@ -142,6 +142,99 @@ func TestAdmin_MarginRecompute_Override(t *testing.T) {
 	}
 }
 
+// 다중 profile 시나리오 — 한 호출에 VIP / GOLD / STD 비교.
+// PricingTable 의 HQ margin 이 tier 별로 다르게 — 각 결과의 stats 가 다른 값.
+func TestAdmin_MarginRecompute_MultiProfile(t *testing.T) {
+	pool := pgxtest.StartTimescale(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	now := time.Now().UTC().Truncate(time.Minute)
+	for i := 0; i < 30; i++ {
+		opened := now.Add(-time.Duration(30-i) * time.Minute)
+		closed := opened.Add(time.Minute)
+		mid := 1400.00 + float64(i)*0.01
+		spread := 0.05
+		_, err := pool.Exec(ctx, `
+			INSERT INTO quote_bars (pair, tf, opened_at, closed_at,
+				open_bid, open_ask, high_bid, high_ask, low_bid, low_ask,
+				close_bid, close_ask, tick_count)
+			VALUES ($1, '1m', $2, $3, $4, $5, $4, $5, $4, $5, $4, $5, 20)
+		`, "USD/KRW", opened, closed, mid, mid+spread)
+		if err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	deps := &MarginRecomputeDeps{Pool: pool, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/admin/margin/recompute", PostMarginRecompute(deps))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// tier 별 마진 — VIP 0.02, GOLD 0.05, STD 0.10.
+	override := pricing.PricingTableDoc{
+		Version: 77,
+		HQMargin: []pricing.HQEntryDoc{
+			{Pair: "USD/KRW", Tier: session.TierVIP,      BidAmount: 0.02, AskAmount: 0.02},
+			{Pair: "USD/KRW", Tier: session.TierGold,     BidAmount: 0.05, AskAmount: 0.05},
+			{Pair: "USD/KRW", Tier: session.TierStandard, BidAmount: 0.10, AskAmount: 0.10},
+		},
+	}
+	req := marginRecomputeRequest{
+		From: now.Add(-time.Hour),
+		To:   now,
+		Pair: "USD/KRW",
+		Profiles: []session.Profile{
+			{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierVIP},
+			{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierGold},
+			{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierStandard},
+		},
+		TableOverride: &override,
+		SampleLimit:   3,
+	}
+	body, _ := json.Marshal(req)
+	resp, _ := http.Post(ts.URL+"/v1/admin/margin/recompute",
+		"application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, b)
+	}
+	var out marginRecomputeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.BarsProcessed != 30 {
+		t.Errorf("bars=%d, want 30", out.BarsProcessed)
+	}
+	if len(out.Results) != 3 {
+		t.Fatalf("results=%d, want 3", len(out.Results))
+	}
+	// 각 profile 의 평균 마진 (close 기준) 이 table 값 일치.
+	wantMargin := map[session.Tier]float64{
+		session.TierVIP:      0.02,
+		session.TierGold:     0.05,
+		session.TierStandard: 0.10,
+	}
+	for i, r := range out.Results {
+		want := wantMargin[r.Profile.Tier]
+		if got := -r.Stats.BidMarginAvg; got < want-0.005 || got > want+0.005 {
+			t.Errorf("[%d] %s bid margin ≈ %v, want %v", i, r.Profile.Tier, -r.Stats.BidMarginAvg, want)
+		}
+		if got := r.Stats.AskMarginAvg; got < want-0.005 || got > want+0.005 {
+			t.Errorf("[%d] %s ask margin ≈ %v, want %v", i, r.Profile.Tier, r.Stats.AskMarginAvg, want)
+		}
+		if len(r.Samples) != 3 {
+			t.Errorf("[%d] samples=%d, want 3", i, len(r.Samples))
+		}
+	}
+	// Legacy top-level 은 single profile 모드일 때만 채워짐 — 여기선 비어있어야.
+	if out.Stats != nil || out.Profile != nil {
+		t.Errorf("multi-profile mode 에서 legacy top-level 채워짐")
+	}
+}
+
 // validation 시나리오 — 잘못된 입력.
 func TestAdmin_MarginRecompute_Validation(t *testing.T) {
 	pool := pgxtest.StartTimescale(t)

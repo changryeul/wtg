@@ -1022,12 +1022,12 @@
                 </select>
               </div>
               <div>
-                <label class="text-xs text-slate-400">Tier</label>
-                <select id="mr-tier" class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
-                  <option value="VIP">VIP</option>
-                  <option value="GOLD">GOLD</option>
-                  <option value="STD">STD</option>
-                </select>
+                <label class="text-xs text-slate-400">Tier (다중 비교는 체크박스)</label>
+                <div class="flex gap-3 px-1 py-2">
+                  <label class="flex items-center gap-1 text-xs"><input type="checkbox" class="mr-tier accent-accent-500" value="VIP" checked />VIP</label>
+                  <label class="flex items-center gap-1 text-xs"><input type="checkbox" class="mr-tier accent-accent-500" value="GOLD" />GOLD</label>
+                  <label class="flex items-center gap-1 text-xs"><input type="checkbox" class="mr-tier accent-accent-500" value="STD" />STD</label>
+                </div>
               </div>
               <div>
                 <label class="text-xs text-slate-400">샘플 수 (1~200)</label>
@@ -1054,21 +1054,31 @@
           <div id="mr-result" class="hidden space-y-3">
             <div class="border-gradient rounded-2xl p-4">
               <div class="flex items-baseline justify-between mb-2">
-                <h4 class="text-sm font-semibold">통계</h4>
+                <h4 class="text-sm font-semibold">통계 (close 기준 마진 차이)</h4>
                 <span id="mr-meta" class="text-xs text-slate-400 font-mono"></span>
               </div>
-              <div class="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
-                <div><div class="text-slate-500">bid 평균</div><div id="mr-bid-avg" class="font-mono text-base text-bad"></div></div>
-                <div><div class="text-slate-500">bid 최대</div><div id="mr-bid-max" class="font-mono text-base text-slate-200"></div></div>
-                <div><div class="text-slate-500">bid 최소</div><div id="mr-bid-min" class="font-mono text-base text-bad"></div></div>
-                <div><div class="text-slate-500">ask 평균</div><div id="mr-ask-avg" class="font-mono text-base text-good"></div></div>
-                <div><div class="text-slate-500">ask 최대</div><div id="mr-ask-max" class="font-mono text-base text-good"></div></div>
-                <div><div class="text-slate-500">ask 최소</div><div id="mr-ask-min" class="font-mono text-base text-slate-200"></div></div>
-              </div>
+              <!-- multi-profile stats table -->
+              <table class="w-full text-xs">
+                <thead class="text-[10px] uppercase tracking-widest text-slate-400">
+                  <tr class="border-b border-ink-700/60">
+                    <th class="text-left px-2 py-2">Profile</th>
+                    <th class="text-right px-2 py-2 text-bad">bid 평균</th>
+                    <th class="text-right px-2 py-2">bid 최대</th>
+                    <th class="text-right px-2 py-2 text-bad">bid 최소</th>
+                    <th class="text-right px-2 py-2 text-good">ask 평균</th>
+                    <th class="text-right px-2 py-2 text-good">ask 최대</th>
+                    <th class="text-right px-2 py-2">ask 최소</th>
+                  </tr>
+                </thead>
+                <tbody id="mr-stats-tbody"></tbody>
+              </table>
             </div>
             <div class="border-gradient rounded-2xl overflow-hidden">
-              <div class="flex items-center justify-between px-3 py-2 bg-ink-850/40 text-xs">
-                <span class="text-slate-400">샘플 봉</span>
+              <div class="flex items-center justify-between px-3 py-2 bg-ink-850/40 text-xs gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-slate-400">샘플 봉</span>
+                  <select id="mr-profile-select" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 font-mono text-xs"></select>
+                </div>
                 <div class="flex gap-1">
                   <button id="mr-view-close" class="mr-view-btn px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-active="true">Close only</button>
                   <button id="mr-view-ohlc" class="mr-view-btn px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700">OHLC 전체</button>
@@ -2781,7 +2791,9 @@ function setMarginView(mode) {
   $("#mr-table-ohlc").classList.toggle("hidden", mode !== "ohlc");
   $("#mr-chart-wrap").classList.toggle("hidden", mode !== "chart");
   if (mode === "chart" && marginLastResult) {
-    drawMarginChart(marginLastResult);
+    const idx = parseInt($("#mr-profile-select").value || "0", 10);
+    const rr = marginLastResult.results?.[idx];
+    drawMarginChart({ samples: rr ? rr.samples : [] });
   }
 }
 
@@ -2860,15 +2872,18 @@ async function runMarginRecompute() {
     toast("from / to 필수", "err");
     return;
   }
+  const channel = $("#mr-channel").value;
+  const site = $("#mr-site").value;
+  const tiers = $$(".mr-tier:checked").map(cb => cb.value);
+  if (!tiers.length) {
+    toast("Tier 1개 이상 선택", "err");
+    return;
+  }
   const body = {
     from:    fromStr + ":00Z",
     to:      toStr   + ":00Z",
     pair:    $("#mr-pair").value,
-    profile: {
-      Channel: $("#mr-channel").value,
-      Site:    $("#mr-site").value,
-      Tier:    $("#mr-tier").value,
-    },
+    profiles: tiers.map(t => ({ Channel: channel, Site: site, Tier: t })),
     sample_limit: parseInt($("#mr-samples").value, 10) || 10,
   };
   if ($("#mr-use-override").checked) {
@@ -2900,33 +2915,66 @@ async function runMarginRecompute() {
   }
 }
 
+function profileLabel(p) { return `${p.Channel}.${p.Site}.${p.Tier}`; }
+
 function renderMarginResult(r) {
   marginLastResult = r;
   $("#mr-result").classList.remove("hidden");
-  const meta = `${r.bars_processed} 봉 · table v${r.table_version} (${r.table_source}) · ${r.pair} · ${r.profile.Channel}.${r.profile.Site}.${r.profile.Tier}`;
-  $("#mr-meta").textContent = meta;
   const fmt = (v) => v == null ? "—" : v.toFixed(5);
-  $("#mr-bid-avg").textContent = fmt(r.stats.bid_margin_avg);
-  $("#mr-bid-max").textContent = fmt(r.stats.bid_margin_max);
-  $("#mr-bid-min").textContent = fmt(r.stats.bid_margin_min);
-  $("#mr-ask-avg").textContent = fmt(r.stats.ask_margin_avg);
-  $("#mr-ask-max").textContent = fmt(r.stats.ask_margin_max);
-  $("#mr-ask-min").textContent = fmt(r.stats.ask_margin_min);
+  const profKeys = r.results.map(rr => profileLabel(rr.profile)).join(", ");
+  $("#mr-meta").textContent = `${r.bars_processed} 봉 · table v${r.table_version} (${r.table_source}) · ${r.pair} · [${profKeys}]`;
 
+  // multi-profile stats table.
+  const tbs = $("#mr-stats-tbody");
+  tbs.replaceChildren();
+  for (const rr of r.results) {
+    tbs.appendChild(h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+      h("td", { class: "px-2 py-2 font-mono text-cyan-300", text: profileLabel(rr.profile) }),
+      h("td", { class: "px-2 py-2 text-right font-mono text-bad",    text: fmt(rr.stats.bid_margin_avg) }),
+      h("td", { class: "px-2 py-2 text-right font-mono",             text: fmt(rr.stats.bid_margin_max) }),
+      h("td", { class: "px-2 py-2 text-right font-mono text-bad",    text: fmt(rr.stats.bid_margin_min) }),
+      h("td", { class: "px-2 py-2 text-right font-mono text-good",   text: fmt(rr.stats.ask_margin_avg) }),
+      h("td", { class: "px-2 py-2 text-right font-mono text-good",   text: fmt(rr.stats.ask_margin_max) }),
+      h("td", { class: "px-2 py-2 text-right font-mono",             text: fmt(rr.stats.ask_margin_min) }),
+    ));
+  }
+
+  // Profile selector — 어느 profile 의 sample/chart 를 보여줄지.
+  const sel = $("#mr-profile-select");
+  const prevSelected = sel.value;
+  sel.replaceChildren();
+  for (let i = 0; i < r.results.length; i++) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = profileLabel(r.results[i].profile);
+    sel.appendChild(opt);
+  }
+  if (prevSelected && prevSelected < r.results.length) sel.value = prevSelected;
+  sel.onchange = () => renderSelectedProfile(r, parseInt(sel.value, 10));
+
+  renderSelectedProfile(r, parseInt(sel.value || "0", 10));
+}
+
+// 선택된 profile 의 sample table / chart 갱신.
+function renderSelectedProfile(r, idx) {
+  const fmt = (v) => v == null ? "—" : v.toFixed(5);
+  const rr = r.results[idx];
+  const samples = rr ? rr.samples : [];
   // Close-only 테이블.
   const tb = $("#mr-tbody");
   tb.replaceChildren();
   const tbOHLC = $("#mr-tbody-ohlc");
   tbOHLC.replaceChildren();
 
-  if (!r.samples || !r.samples.length) {
+  if (!samples.length) {
     tb.appendChild(h("tr", null,
       h("td", { class: "px-3 py-3 text-center text-slate-500", colspan: "7", text: "샘플 없음" })));
     tbOHLC.appendChild(h("tr", null,
       h("td", { class: "px-3 py-3 text-center text-slate-500", colspan: "9", text: "샘플 없음" })));
+    if ($("#mr-view-chart").dataset.active === "true") drawMarginChart({ samples: [] });
     return;
   }
-  for (const s of r.samples) {
+  for (const s of samples) {
     const ts = s.opened_at.replace(/\.\d+Z?$/, "Z");
     // Close 모드.
     tb.appendChild(h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
@@ -2952,9 +3000,9 @@ function renderMarginResult(r) {
       h("td", { class: "px-2 py-2 text-right font-mono text-cyan-300",                            text: fmt(s.customer.close_bid) }),
     ));
   }
-  // 현재 차트 모드 보고 있으면 즉시 갱신.
+  // 현재 차트 모드 보고 있으면 즉시 갱신 — 선택된 profile 의 samples.
   if ($("#mr-view-chart").dataset.active === "true") {
-    drawMarginChart(r);
+    drawMarginChart({ samples });
   }
 }
 

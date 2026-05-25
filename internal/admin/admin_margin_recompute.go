@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -44,10 +45,13 @@ type MarginRecomputeDeps struct {
 }
 
 type marginRecomputeRequest struct {
-	From          time.Time                `json:"from"`
-	To            time.Time                `json:"to"`
-	Pair          session.Pair             `json:"pair"`
-	Profile       session.Profile          `json:"profile"`
+	From time.Time    `json:"from"`
+	To   time.Time    `json:"to"`
+	Pair session.Pair `json:"pair"`
+	// Profile (legacy v1) / Profiles (v3 — 다중 비교).
+	// 둘 다 있으면 Profiles 우선. 둘 다 비면 400.
+	Profile       session.Profile          `json:"profile,omitempty"`
+	Profiles      []session.Profile        `json:"profiles,omitempty"`
 	TableOverride *pricing.PricingTableDoc `json:"table_override,omitempty"`
 	SampleLimit   int                      `json:"sample_limit,omitempty"`
 }
@@ -87,16 +91,26 @@ type marginRecomputeStats struct {
 	AskMarginMin float64 `json:"ask_margin_min"`
 }
 
+// marginProfileResult — Profile 1개의 통계 + 샘플.
+type marginProfileResult struct {
+	Profile session.Profile         `json:"profile"`
+	Stats   marginRecomputeStats    `json:"stats"`
+	Samples []marginRecomputeSample `json:"samples"`
+}
+
 type marginRecomputeResponse struct {
-	BarsProcessed int                     `json:"bars_processed"`
-	TableVersion  int64                   `json:"table_version"`
-	TableSource   string                  `json:"table_source"` // "etcd" / "override"
-	Profile       session.Profile         `json:"profile"`
-	Pair          session.Pair            `json:"pair"`
-	From          time.Time               `json:"from"`
-	To            time.Time               `json:"to"`
-	Stats         marginRecomputeStats    `json:"stats"`
-	Samples       []marginRecomputeSample `json:"samples"`
+	BarsProcessed int                  `json:"bars_processed"`
+	TableVersion  int64                `json:"table_version"`
+	TableSource   string               `json:"table_source"` // "etcd" / "override"
+	Pair          session.Pair         `json:"pair"`
+	From          time.Time            `json:"from"`
+	To            time.Time            `json:"to"`
+	Results       []marginProfileResult `json:"results"`
+
+	// Legacy v1 backward compat — results 길이 1 일 때만 채움.
+	Profile *session.Profile        `json:"profile,omitempty"`
+	Stats   *marginRecomputeStats   `json:"stats,omitempty"`
+	Samples []marginRecomputeSample `json:"samples,omitempty"`
 }
 
 // PostMarginRecompute — POST /v1/admin/margin/recompute.
@@ -124,9 +138,26 @@ func PostMarginRecompute(deps *MarginRecomputeDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "validation", "pair 필수")
 			return
 		}
-		if req.Profile.Channel == "" || req.Profile.Site == "" {
+		// Profile / Profiles 정규화 — 항상 1+ 개의 profile 배열.
+		profiles := req.Profiles
+		if len(profiles) == 0 {
+			if req.Profile.Channel == "" || req.Profile.Site == "" {
+				writeJSONError(w, http.StatusBadRequest, "validation",
+					"profile 또는 profiles 필수 (channel / site / tier)")
+				return
+			}
+			profiles = []session.Profile{req.Profile}
+		}
+		for i, p := range profiles {
+			if p.Channel == "" || p.Site == "" {
+				writeJSONError(w, http.StatusBadRequest, "validation",
+					fmt.Sprintf("profiles[%d] channel / site 필수", i))
+				return
+			}
+		}
+		if len(profiles) > 10 {
 			writeJSONError(w, http.StatusBadRequest, "validation",
-				"profile (channel / site / tier) 필수")
+				"profiles 최대 10 개")
 			return
 		}
 		sampleLimit := req.SampleLimit
@@ -167,22 +198,34 @@ func PostMarginRecompute(deps *MarginRecomputeDeps) http.HandlerFunc {
 		}
 		defer rows.Close()
 
-		// 3) 적용 + 통계.
-		stats := marginRecomputeStats{
-			BidMarginMax: math.Inf(-1),
-			BidMarginMin: math.Inf(+1),
-			AskMarginMax: math.Inf(-1),
-			AskMarginMin: math.Inf(+1),
+		// 3) 적용 + 통계 — profile 별 누적기.
+		type accum struct {
+			profile      session.Profile
+			stats        marginRecomputeStats
+			bidSum       float64
+			askSum       float64
+			samples      []marginRecomputeSample
+			sampleStride int
 		}
-		var bidSum, askSum float64
-		samples := make([]marginRecomputeSample, 0, sampleLimit)
+		accs := make([]*accum, len(profiles))
+		for i, p := range profiles {
+			accs[i] = &accum{
+				profile: p,
+				stats: marginRecomputeStats{
+					BidMarginMax: math.Inf(-1),
+					BidMarginMin: math.Inf(+1),
+					AskMarginMax: math.Inf(-1),
+					AskMarginMin: math.Inf(+1),
+				},
+				samples: make([]marginRecomputeSample, 0, sampleLimit),
+			}
+		}
 		count := 0
-		sampleStride := 0
 
-		// applyPoint — bid/ask 점 1개에 PricingTable.Apply.
-		applyPoint := func(bid, ask float64, ts time.Time) (float64, float64) {
+		// applyPoint — profile 별 bid/ask 점에 PricingTable.Apply.
+		applyPoint := func(p session.Profile, bid, ask float64, ts time.Time) (float64, float64) {
 			cq := tbl.Apply(quote.Quote{Pair: req.Pair, Bid: bid, Ask: ask, TS: ts},
-				req.Profile, pricing.TenorSpot)
+				p, pricing.TenorSpot)
 			return cq.Bid, cq.Ask
 		}
 
@@ -198,59 +241,71 @@ func PostMarginRecompute(deps *MarginRecomputeDeps) http.HandlerFunc {
 				writeJSONError(w, http.StatusInternalServerError, "scan", err.Error())
 				return
 			}
-			// OHLC 4 점 모두 PricingTable.Apply.
-			var cust marginOHLC
-			cust.OpenBid, cust.OpenAsk = applyPoint(raw.OpenBid, raw.OpenAsk, openedAt)
-			cust.HighBid, cust.HighAsk = applyPoint(raw.HighBid, raw.HighAsk, openedAt)
-			cust.LowBid, cust.LowAsk = applyPoint(raw.LowBid, raw.LowAsk, openedAt)
-			cust.CloseBid, cust.CloseAsk = applyPoint(raw.CloseBid, raw.CloseAsk, openedAt)
-
-			// 통계는 close 기준 — 운영 분쟁 분석 표준 (체결 직전 quote 가 close).
-			bidDiff := cust.CloseBid - raw.CloseBid
-			askDiff := cust.CloseAsk - raw.CloseAsk
-			bidSum += bidDiff
-			askSum += askDiff
-			if bidDiff > stats.BidMarginMax {
-				stats.BidMarginMax = bidDiff
-			}
-			if bidDiff < stats.BidMarginMin {
-				stats.BidMarginMin = bidDiff
-			}
-			if askDiff > stats.AskMarginMax {
-				stats.AskMarginMax = askDiff
-			}
-			if askDiff < stats.AskMarginMin {
-				stats.AskMarginMin = askDiff
-			}
 			count++
 
-			// 샘플 stride — 전체에서 sampleLimit 개 고르게.
-			if sampleStride == 0 {
-				sampleStride = 1
-			}
-			if len(samples) < sampleLimit && count%sampleStride == 0 {
-				samples = append(samples, marginRecomputeSample{
-					OpenedAt:    openedAt,
-					RawBid:      raw.CloseBid,
-					RawAsk:      raw.CloseAsk,
-					CustomerBid: cust.CloseBid,
-					CustomerAsk: cust.CloseAsk,
-					BidMargin:   bidDiff,
-					AskMargin:   askDiff,
-					Raw:         raw,
-					Customer:    cust,
-				})
+			for _, a := range accs {
+				// OHLC 4 점 PricingTable.Apply (profile 별).
+				var cust marginOHLC
+				cust.OpenBid, cust.OpenAsk = applyPoint(a.profile, raw.OpenBid, raw.OpenAsk, openedAt)
+				cust.HighBid, cust.HighAsk = applyPoint(a.profile, raw.HighBid, raw.HighAsk, openedAt)
+				cust.LowBid, cust.LowAsk = applyPoint(a.profile, raw.LowBid, raw.LowAsk, openedAt)
+				cust.CloseBid, cust.CloseAsk = applyPoint(a.profile, raw.CloseBid, raw.CloseAsk, openedAt)
+
+				bidDiff := cust.CloseBid - raw.CloseBid
+				askDiff := cust.CloseAsk - raw.CloseAsk
+				a.bidSum += bidDiff
+				a.askSum += askDiff
+				if bidDiff > a.stats.BidMarginMax {
+					a.stats.BidMarginMax = bidDiff
+				}
+				if bidDiff < a.stats.BidMarginMin {
+					a.stats.BidMarginMin = bidDiff
+				}
+				if askDiff > a.stats.AskMarginMax {
+					a.stats.AskMarginMax = askDiff
+				}
+				if askDiff < a.stats.AskMarginMin {
+					a.stats.AskMarginMin = askDiff
+				}
+				if a.sampleStride == 0 {
+					a.sampleStride = 1
+				}
+				if len(a.samples) < sampleLimit && count%a.sampleStride == 0 {
+					a.samples = append(a.samples, marginRecomputeSample{
+						OpenedAt:    openedAt,
+						RawBid:      raw.CloseBid,
+						RawAsk:      raw.CloseAsk,
+						CustomerBid: cust.CloseBid,
+						CustomerAsk: cust.CloseAsk,
+						BidMargin:   bidDiff,
+						AskMargin:   askDiff,
+						Raw:         raw,
+						Customer:    cust,
+					})
+				}
 			}
 		}
 		if rows.Err() != nil {
 			writeJSONError(w, http.StatusInternalServerError, "rows", rows.Err().Error())
 			return
 		}
-		if count == 0 {
-			stats = marginRecomputeStats{} // Inf 정리.
-		} else {
-			stats.BidMarginAvg = bidSum / float64(count)
-			stats.AskMarginAvg = askSum / float64(count)
+
+		// 누적기 → response.
+		results := make([]marginProfileResult, len(accs))
+		profileKeys := make([]string, len(accs))
+		for i, a := range accs {
+			if count == 0 {
+				a.stats = marginRecomputeStats{}
+			} else {
+				a.stats.BidMarginAvg = a.bidSum / float64(count)
+				a.stats.AskMarginAvg = a.askSum / float64(count)
+			}
+			results[i] = marginProfileResult{
+				Profile: a.profile,
+				Stats:   a.stats,
+				Samples: a.samples,
+			}
+			profileKeys[i] = a.profile.Key()
 		}
 
 		// audit.
@@ -258,23 +313,29 @@ func PostMarginRecompute(deps *MarginRecomputeDeps) http.HandlerFunc {
 			rd := &RoutingDeps{Logger: deps.Logger, Audit: deps.Audit}
 			auditLog(rd, r, "MARGIN_RECOMPUTE",
 				slog.String("pair", string(req.Pair)),
-				slog.String("profile", req.Profile.Key()),
+				slog.Any("profiles", profileKeys),
 				slog.Int("bars", count),
 				slog.String("source", tableSource),
 			)
 		}
 
-		writeJSON(w, http.StatusOK, marginRecomputeResponse{
+		resp := marginRecomputeResponse{
 			BarsProcessed: count,
 			TableVersion:  tbl.Version,
 			TableSource:   tableSource,
-			Profile:       req.Profile,
 			Pair:          req.Pair,
 			From:          req.From,
 			To:            req.To,
-			Stats:         stats,
-			Samples:       samples,
-		})
+			Results:       results,
+		}
+		// Legacy v1 backward compat — 단일 profile 일 때 top-level field 도 채움.
+		if len(results) == 1 {
+			p := results[0].Profile
+			resp.Profile = &p
+			resp.Stats = &results[0].Stats
+			resp.Samples = results[0].Samples
+		}
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 

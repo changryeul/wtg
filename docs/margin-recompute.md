@@ -41,15 +41,17 @@ Content-Type: application/json
   "from": "2026-05-01T00:00:00Z",
   "to":   "2026-05-01T23:59:59Z",
   "pair": "USD/KRW",
-  "profile": {
-    "Channel": "WEB",
-    "Site":    "BRANCH",
-    "Tier":    "VIP"
-  },
+  "profiles": [
+    {"Channel":"WEB","Site":"BRANCH","Tier":"VIP"},
+    {"Channel":"WEB","Site":"BRANCH","Tier":"GOLD"},
+    {"Channel":"WEB","Site":"BRANCH","Tier":"STD"}
+  ],
   "table_override": {
     "version": 99,
     "hq_margin": [
-      {"pair":"USD/KRW","tier":"VIP","bid_amount":0.10,"ask_amount":0.10}
+      {"pair":"USD/KRW","tier":"VIP","bid_amount":0.02,"ask_amount":0.02},
+      {"pair":"USD/KRW","tier":"GOLD","bid_amount":0.05,"ask_amount":0.05},
+      {"pair":"USD/KRW","tier":"STD","bid_amount":0.10,"ask_amount":0.10}
     ]
   },
   "sample_limit": 10
@@ -59,11 +61,11 @@ Content-Type: application/json
 필드:
 - `from / to` (필수) — 시간 범위 `[from, to)`. tf=1m 봉 대상.
 - `pair` (필수) — 통화쌍.
-- `profile` (필수) — Channel / Site / Tier 모두 채워야.
+- `profile` (legacy v1, single) **또는** `profiles` (v3, array max 10) —
+  둘 중 하나 필수. 둘 다 있으면 `profiles` 우선.
 - `table_override` (선택) — `pricing.PricingTableDoc` JSON. 없으면 etcd 의
   현재 `wtg/pricing/table` 키 값.
-- `sample_limit` (선택, default 10, max 200) — 응답에 포함할 샘플 봉 수.
-  stride 로 전체에서 고르게 선택.
+- `sample_limit` (선택, default 10, max 200) — 각 profile 별 샘플 수.
 
 ### Response
 
@@ -72,27 +74,19 @@ Content-Type: application/json
   "bars_processed": 1440,
   "table_version":  99,
   "table_source":   "override",
-  "profile":        { "Channel": "WEB", "Site": "BRANCH", "Tier": "VIP" },
   "pair":           "USD/KRW",
   "from":           "2026-05-01T00:00:00Z",
   "to":             "2026-05-01T23:59:59Z",
-  "stats": {
-    "bid_margin_avg": -0.1023,
-    "bid_margin_max":  0.0000,
-    "bid_margin_min": -0.1500,
-    "ask_margin_avg":  0.1015,
-    "ask_margin_max":  0.1500,
-    "ask_margin_min":  0.0000
-  },
-  "samples": [
+  "results": [
     {
-      "opened_at":    "2026-05-01T00:00:00Z",
-      "raw_bid":      1400.0000,
-      "raw_ask":      1400.0500,
-      "customer_bid": 1399.9000,
-      "customer_ask": 1400.1500,
-      "bid_margin":   -0.1000,
-      "ask_margin":    0.1000
+      "profile": { "Channel": "WEB", "Site": "BRANCH", "Tier": "VIP" },
+      "stats":   { "bid_margin_avg": -0.02, ... },
+      "samples": [ ... ]
+    },
+    {
+      "profile": { "Channel": "WEB", "Site": "BRANCH", "Tier": "GOLD" },
+      "stats":   { "bid_margin_avg": -0.05, ... },
+      "samples": [ ... ]
     },
     ...
   ]
@@ -101,6 +95,9 @@ Content-Type: application/json
 
 `bid_margin` / `ask_margin` = customer 가격 - raw 가격. bid 는 보통 ≤ 0
 (고객에게 더 낮은 매도 호가), ask 는 ≥ 0 (더 높은 매수 호가).
+
+단일 profile (legacy v1) 호출 시 응답에 top-level `profile` / `stats` /
+`samples` 도 함께 채워짐 — backward compat.
 
 ## OHLC 전체 (v2)
 
@@ -158,14 +155,16 @@ mci-admin 좌측 nav 의 "마진 재계산" 클릭 → 폼 + 결과 화면.
 - Pair (USD/KRW / EUR/KRW / JPY/KRW / GBP/KRW / AUD/KRW / CNY/KRW)
 - Channel (WEB / MOB / CS / FIX)
 - Site (BRANCH / HQ)
-- Tier (VIP / GOLD / STD)
+- Tier **체크박스 (VIP / GOLD / STD)** — 여러 개 선택 시 한 호출에 비교
 - 샘플 수 (1~200, default 10)
 - 체크박스 `table_override JSON 사용` — 켜면 textarea 표시. PricingTableDoc
   JSON 직접 입력. 안 켜면 etcd 의 현재 키 (`wtg/pricing/table`) 사용.
 
 결과:
-- 통계 (bid 평균/최대/최소, ask 평균/최대/최소) 6 셀
-- 샘플 테이블 (시각 / raw bid·ask / customer bid·ask / bid Δ / ask Δ)
+- **통계 테이블** — profile 별 row, 각 row 에 bid 평균/max/min · ask 평균/max/min.
+  Tier 1개면 1 row, 다중 비교면 N row.
+- **샘플 / 차트** — profile dropdown 으로 어느 profile 의 detail 을 볼지 선택.
+  변경 시 같은 데이터 안에서 즉시 다시 그림 (재요청 X).
 
 브라우저에서 즉시 시각화 — 분쟁 응대 시 운영자가 GUI 로 빠르게 확인.
 
@@ -174,4 +173,3 @@ mci-admin 좌측 nav 의 "마진 재계산" 클릭 → 폼 + 결과 화면.
 - **Async job 모드** — `POST /v1/admin/margin/jobs` → job_id 반환,
   `GET /v1/admin/margin/jobs/{id}` 로 polling. 1년+ / 100k+ 봉 시나리오.
 - **CSV / parquet export** — 정산용 다운로드.
-- **Profile multi-select** — 한 호출에 N profile 비교.

@@ -48,6 +48,48 @@ curl -X POST http://grafana.local/api/dashboards/db \
 | AsyncRegistry | Enqueue / Write / Drop / Fail throughput | 시계열 비교 |
 | AsyncRegistry | Queue length over time | 백로그 추세 (saturation 진행 추적) |
 
+### Recording rules — quoteid-recording-rules.yml (v1.25 추가)
+
+자주 쓰는 PromQL 을 Prometheus 측에서 미리 계산해 `wtg:*` 시계열로 저장.
+Grafana panel / alert rule 이 무거운 `histogram_quantile` / `rate / clamp_min`
+재계산 없이 사전 결과만 lookup.
+
+#### 설치 (Prometheus side)
+
+```yaml
+# prometheus.yml
+rule_files:
+  - "/etc/prometheus/rules/quoteid-recording-rules.yml"
+```
+
+또는 k8s `kubectl create configmap quoteid-recording-rules
+--from-file=quoteid-recording-rules.yml` 로 mount.
+
+#### 4 group / 15 rule
+
+| Group | rules | 의도 |
+|-------|-------|------|
+| `wtg-quoteid-latency` | 6 (p99 × 4 ops + p95 × 2) | dashboard 의 무거운 quantile 제거 |
+| `wtg-quoteid-ratios` | 3 (ALREADY_CONSUMED ratio / OK ratio / denied rate) | alert / health 게이지 base |
+| `wtg-quoteid-async` | 3 (drop ratio / lag / queue max) | backpressure 지표 |
+| `wtg-quoteid-throughput` | 3 (validate / mark / total rate) | 처리량 추세 |
+
+#### 사용 예 — alert 가 recorded series 참조
+
+이전 (raw expression):
+```promql
+sum(rate(wtg_quoteid_op_total{status="consume_already"}[5m])) /
+clamp_min(sum(rate(wtg_quoteid_op_total{status=~"consume_.*"}[5m])), 1) > 0.001
+```
+
+v1.25 이후 (recording rule 사용):
+```promql
+wtg:quoteid_already_consumed:ratio > 0.001
+```
+
+Alert 가 매 평가마다 raw rate 두 번 + clamp_min + division 안 함 — Prometheus
+부하 ↓.
+
 ### Alert rules — quoteid-alerts.json (v1.16 추가)
 
 Grafana Unified Alerting 그룹 1개 (`wtg-quoteid`) + 5 rule 패키지:

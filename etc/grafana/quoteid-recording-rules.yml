@@ -1,0 +1,155 @@
+# Prometheus recording rules — WTG QuoteValidationService.
+#
+# 자주 사용되는 PromQL 쿼리를 미리 계산해 별도 시계열로 저장. 효과:
+#   - Grafana 대시보드 응답 속도 ↑ (histogram_quantile 등 무거운 쿼리 제거)
+#   - Alert rule 평가 부하 ↓
+#   - 동일 표현식의 여러 alert / panel 이 같은 사전 계산 공유
+#
+# 명명 규칙 (Prometheus 권장): `<namespace>:<resource>:<aggregation>`
+#   - namespace : "wtg"
+#   - resource  : "quoteid_validate" / "quoteid_consume" / "quoteid_async" / ...
+#   - aggregation : "p99" / "rate5m" / "ratio" 등
+#
+# 설치:
+#   - Prometheus 설정의 rule_files 에 이 파일 추가:
+#       rule_files:
+#         - "/etc/prometheus/rules/quoteid-recording-rules.yml"
+#   - 또는 k8s ConfigMap mount.
+#
+# 평가 주기 (interval) 30s — alert rule 평가 주기와 정렬해 stale window 최소.
+
+groups:
+  # ─── Latency p99 (4 ops) ────────────────────────────────────────────────
+  - name: wtg-quoteid-latency
+    interval: 30s
+    rules:
+      - record: wtg:quoteid_validate:p99
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, service) (
+              rate(wtg_quoteid_op_duration_seconds_bucket{op="validate"}[5m])
+            )
+          )
+
+      - record: wtg:quoteid_mark_consumed:p99
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, service) (
+              rate(wtg_quoteid_op_duration_seconds_bucket{op="mark_consumed"}[5m])
+            )
+          )
+
+      - record: wtg:quoteid_batch_validate:p99
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, service) (
+              rate(wtg_quoteid_batch_duration_seconds_bucket{op="batch_validate"}[5m])
+            )
+          )
+
+      - record: wtg:quoteid_batch_mark_consumed:p99
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, service) (
+              rate(wtg_quoteid_batch_duration_seconds_bucket{op="batch_mark_consumed"}[5m])
+            )
+          )
+
+      # p95 도 함께 — Grafana 위주 통계 (p95 + p99 추세 비교).
+      - record: wtg:quoteid_validate:p95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le, service) (
+              rate(wtg_quoteid_op_duration_seconds_bucket{op="validate"}[5m])
+            )
+          )
+
+      - record: wtg:quoteid_mark_consumed:p95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le, service) (
+              rate(wtg_quoteid_op_duration_seconds_bucket{op="mark_consumed"}[5m])
+            )
+          )
+
+  # ─── 비즈니스 비율 (ratio) ──────────────────────────────────────────────
+  - name: wtg-quoteid-ratios
+    interval: 30s
+    rules:
+      # ALREADY_CONSUMED 비율 — operations.md §v1.5 의 운영 임계 0.1% 와
+      # 비교. alert rule `wtg-quoteid-consume-already` 가 이 시계열 사용.
+      - record: wtg:quoteid_already_consumed:ratio
+        expr: |
+          sum by (service) (
+            rate(wtg_quoteid_op_total{status="consume_already"}[5m])
+          )
+          /
+          clamp_min(sum by (service) (
+            rate(wtg_quoteid_op_total{status=~"consume_.*"}[5m])
+          ), 1)
+
+      # 전체 OK 비율 — health 게이지.
+      - record: wtg:quoteid_ok:ratio
+        expr: |
+          sum by (service) (
+            rate(wtg_quoteid_op_total{status=~"ok|consume_ok"}[5m])
+          )
+          /
+          clamp_min(sum by (service) (
+            rate(wtg_quoteid_op_total[5m])
+          ), 1)
+
+      # RBAC 거절율 — 보안 alert 의 base.
+      - record: wtg:quoteid_denied:rate5m
+        expr: |
+          sum by (service) (
+            rate(wtg_quoteid_op_total{status="denied"}[5m])
+          )
+
+  # ─── AsyncRegistry 비율 ─────────────────────────────────────────────────
+  - name: wtg-quoteid-async
+    interval: 30s
+    rules:
+      # drop / enqueue 비율 — backpressure 지표.
+      - record: wtg:quoteid_async_drop:ratio
+        expr: |
+          sum by (service) (
+            rate(wtg_quoteid_async_dropped_total[5m])
+          )
+          /
+          clamp_min(sum by (service) (
+            rate(wtg_quoteid_async_enqueued_total[5m])
+          ), 1)
+
+      # 처리 lag — enqueue 대비 write 차이 (적분 상에서 negative 면 catching up).
+      - record: wtg:quoteid_async_lag:rate5m
+        expr: |
+          sum by (service) (rate(wtg_quoteid_async_enqueued_total[5m]))
+          -
+          sum by (service) (rate(wtg_quoteid_async_written_total[5m]))
+
+      # queue 점유율 — config 의 queue size 가 메트릭에 안 박혀 있어
+      # 절대값만 — 점유율은 dashboard 에서 직접 계산.
+      - record: wtg:quoteid_async_queue:max5m
+        expr: |
+          max_over_time(wtg_quoteid_async_queue_len[5m])
+
+  # ─── 처리량 (throughput) ────────────────────────────────────────────────
+  - name: wtg-quoteid-throughput
+    interval: 30s
+    rules:
+      - record: wtg:quoteid_validate:rate5m
+        expr: |
+          sum by (service) (
+            rate(wtg_quoteid_op_total{op=~"validate|batch_validate"}[5m])
+          )
+
+      - record: wtg:quoteid_mark_consumed:rate5m
+        expr: |
+          sum by (service) (
+            rate(wtg_quoteid_op_total{op=~"mark_consumed|batch_mark_consumed"}[5m])
+          )
+
+      - record: wtg:quoteid:rate5m
+        expr: |
+          sum by (service) (rate(wtg_quoteid_op_total[5m]))

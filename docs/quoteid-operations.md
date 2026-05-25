@@ -1311,8 +1311,39 @@ test_async:
   qid_async_in_flight{service="test-async"} 0
 ```
 
+## v1.25 — Prometheus recording rules (commit 추가)
+
+자주 쓰는 PromQL 을 Prometheus 측에서 미리 계산해 `wtg:*` 시계열로 저장.
+Grafana panel / alert 가 무거운 `histogram_quantile` / `clamp_min` 재계산
+없이 사전 결과만 lookup → 응답 속도 ↑, 평가 부하 ↓.
+
+### 4 group / 15 rule (`etc/grafana/quoteid-recording-rules.yml`)
+
+| Group | rules | 의도 |
+|-------|-------|------|
+| `wtg-quoteid-latency` | p99 × 4 ops + p95 × 2 | dashboard 의 quantile 사전 계산 |
+| `wtg-quoteid-ratios` | ALREADY_CONSUMED ratio / OK ratio / denied rate | alert / health 게이지 base |
+| `wtg-quoteid-async` | drop ratio / lag / queue max | backpressure 지표 |
+| `wtg-quoteid-throughput` | validate / mark / total rate | 처리량 추세 |
+
+### 명명 규칙 (Prometheus 권장)
+
+`<namespace>:<resource>:<aggregation>` — 예 `wtg:quoteid_validate:p99`,
+`wtg:quoteid_async_drop:ratio`. dashboard / alert 가 사용.
+
+### Prometheus 측 설치
+
+```yaml
+# prometheus.yml
+rule_files:
+  - "/etc/prometheus/rules/quoteid-recording-rules.yml"
+```
+
+### Alert / dashboard 갱신 (선택)
+
+v1.16 의 alert rules 와 v1.14 의 dashboard 가 raw expression 사용 중 — 점진적으로
+recording series 로 교체 권장 (별도 commit).
+
 ## v2 후보
 
-- recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
-  대시보드 응답 속도 개선.
-- audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.
+- audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림 (UI).

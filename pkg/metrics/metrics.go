@@ -38,6 +38,12 @@ type Registry struct {
 	quoteIDOpLat     *prometheus.HistogramVec
 	quoteIDBatchSize *prometheus.HistogramVec
 	quoteIDBatchLat  *prometheus.HistogramVec
+
+	// AsyncRegistry 카운터 — v1.19.
+	asyncEnqueued *prometheus.CounterVec
+	asyncDropped  *prometheus.CounterVec
+	asyncWritten  *prometheus.CounterVec
+	asyncFailed   *prometheus.CounterVec
 	customCollectors []prometheus.Collector
 }
 
@@ -137,6 +143,36 @@ func NewRegistry() *Registry {
 		[]string{"service", "op"},
 	)
 
+	// AsyncRegistry 카운터 — Put 비동기 batch path.
+	r.asyncEnqueued = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_quoteid_async_enqueued_total",
+			Help: "AsyncRegistry: Put 이 채널에 enqueue 성공한 횟수.",
+		},
+		[]string{"service"},
+	)
+	r.asyncDropped = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_quoteid_async_dropped_total",
+			Help: "AsyncRegistry: queue full 로 drop 된 record 수.",
+		},
+		[]string{"service"},
+	)
+	r.asyncWritten = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_quoteid_async_written_total",
+			Help: "AsyncRegistry: worker 가 inner.PutMany 성공한 record 수.",
+		},
+		[]string{"service"},
+	)
+	r.asyncFailed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_quoteid_async_failed_total",
+			Help: "AsyncRegistry: worker PutMany 실패 record 수.",
+		},
+		[]string{"service"},
+	)
+
 	r.reg.MustRegister(
 		r.httpReqTotal,
 		r.httpReqDuration,
@@ -148,8 +184,47 @@ func NewRegistry() *Registry {
 		r.quoteIDOpLat,
 		r.quoteIDBatchSize,
 		r.quoteIDBatchLat,
+		r.asyncEnqueued,
+		r.asyncDropped,
+		r.asyncWritten,
+		r.asyncFailed,
 	)
 	return r
+}
+
+// IncQuoteIDAsync — AsyncRegistry 이벤트 카운터 증가.
+// kind: "enqueued" / "dropped" / "written" / "failed". n 은 written/failed 시
+// batch 항목 수, enqueued/dropped 는 보통 1.
+func (r *Registry) IncQuoteIDAsync(service, kind string, n uint64) {
+	if n == 0 {
+		return
+	}
+	v := float64(n)
+	switch kind {
+	case "enqueued":
+		r.asyncEnqueued.WithLabelValues(service).Add(v)
+	case "dropped":
+		r.asyncDropped.WithLabelValues(service).Add(v)
+	case "written":
+		r.asyncWritten.WithLabelValues(service).Add(v)
+	case "failed":
+		r.asyncFailed.WithLabelValues(service).Add(v)
+	}
+}
+
+// RegisterAsyncQueueGauge — 호출 시점마다 queue 잔여를 보고하는 GaugeFunc 등록.
+// 운영자가 wtg_quoteid_async_queue_len{service} 로 현재 backlog 모니터링.
+// callback 은 scrape 마다 호출 — atomic.Load 같은 cheap operation 만 권장.
+func (r *Registry) RegisterAsyncQueueGauge(service string, fn func() float64) error {
+	g := prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name:        "wtg_quoteid_async_queue_len",
+			Help:        "AsyncRegistry 현재 채널 잔여 (scrape 시점).",
+			ConstLabels: prometheus.Labels{"service": service},
+		},
+		fn,
+	)
+	return r.reg.Register(g)
 }
 
 // ObserveQuoteIDOp — 단일 RPC 또는 batch 안의 per-item 결과 카운터.

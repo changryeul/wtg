@@ -1005,10 +1005,72 @@ ENV: `WTG_PRICE_QUOTEID_ASYNC_{QUEUE,FLUSH,BATCH,TIMEOUT}`.
 `--quoteid-redis` 비어있으면 (Memory) RTT 없어 async 가 오히려 overhead.
 main.go 가 Redis 활성일 때만 wrapper 적용 — Memory 면 wrapper 안 만듦.
 
+## v1.19 — AsyncRegistry Prometheus 통합 (commit 추가)
+
+v1.18 의 AsyncRegistry 가 `Stats()` 메서드로만 카운터를 노출했는데,
+운영 모니터링 / 알림으로 못 잡혀 사실상 black box 였음. v1.19+ 는 4개
+counter + 1 gauge 를 `/metrics` 에 발행.
+
+### 새 메트릭
+
+| Metric | Type | Labels | 의미 |
+|--------|------|--------|------|
+| `wtg_quoteid_async_enqueued_total` | Counter | service | 채널 send 성공 |
+| `wtg_quoteid_async_dropped_total` | Counter | service | queue full → drop (audit 누락) |
+| `wtg_quoteid_async_written_total` | Counter | service | worker PutMany 성공 record 수 |
+| `wtg_quoteid_async_failed_total` | Counter | service | worker PutMany 실패 record 수 |
+| `wtg_quoteid_async_queue_len` | Gauge | service | scrape 시점 채널 잔여 |
+
+queue_len 은 `GaugeFunc` — scrape 마다 `len(channel)` cheap call.
+
+### Grafana 쿼리 예제
+
+drop 발생률 (alert 후보 — 평소 0 이어야):
+```promql
+rate(wtg_quoteid_async_dropped_total[5m])
+```
+
+queue 점유율 (capacity 대비):
+```promql
+wtg_quoteid_async_queue_len / 10000  # --quoteid-async-queue 와 같은 값
+```
+
+처리량 (written 와 enqueued 의 차이는 in-flight + dropped):
+```promql
+rate(wtg_quoteid_async_written_total[5m])
+```
+
+### Alert 후보 (operations.md 의 v1.16 패턴 따라)
+
+```yaml
+- title: AsyncRegistry drop 발생
+  expr: rate(wtg_quoteid_async_dropped_total[5m]) > 0
+  for: 1m
+  severity: page    # audit 누락은 보안 / 컴플라이언스 즉시 알림
+
+- title: AsyncRegistry queue 가득 임박
+  expr: wtg_quoteid_async_queue_len > 0.8 * 10000  # 80%
+  for: 5m
+  severity: warn    # --quoteid-async-queue 증가 또는 Redis 점검
+
+- title: AsyncRegistry PutMany 실패 비율
+  expr: rate(wtg_quoteid_async_failed_total[5m]) /
+        rate(wtg_quoteid_async_enqueued_total[5m]) > 0.001
+  for: 5m
+  severity: warn    # Redis Sentinel failover / 네트워크 이상
+```
+
+### Lifecycle
+
+- main.go 의 `wireQuoteID` 가 `srv.Metrics()` 전달 → AsyncRegistry 생성 시
+  Hook + GaugeFunc 등록.
+- async 비활성 시 (--quoteid-async-queue=0) 이 코드는 실행 안 됨 — 메트릭
+  시계열도 안 생김 (Prometheus rate query 가 빈 시리즈 처리).
+
 ## v2 후보
 
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
 - recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
   대시보드 응답 속도 개선.
 - audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.
-- AsyncRegistry 의 Prometheus collector (현재 Stats() 만 노출).
+- Grafana dashboard 에 AsyncRegistry row 추가 (drop / queue_len / written rate).

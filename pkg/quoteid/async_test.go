@@ -264,6 +264,60 @@ func TestAsyncRegistry_FailureCounters(t *testing.T) {
 	}
 }
 
+func TestAsyncRegistry_MetricsHook(t *testing.T) {
+	inner := &fakeRegistry{}
+	a := NewAsyncRegistry(inner, AsyncRegistryOptions{
+		QueueSize:     2,
+		FlushInterval: 5 * time.Millisecond,
+		BatchMax:      1, // 즉시 flush — written 카운터 빠르게 채움.
+		Logger:        quietAsyncLogger(),
+	})
+	defer func() {
+		ctx, c := context.WithTimeout(context.Background(), time.Second)
+		defer c()
+		_ = a.Close(ctx)
+	}()
+
+	var enq, drop, wrote, fail atomic.Uint64
+	a.SetMetricsHook(AsyncMetricsHook{
+		Enqueued: func(n uint64) { enq.Add(n) },
+		Dropped:  func(n uint64) { drop.Add(n) },
+		Written:  func(n uint64) { wrote.Add(n) },
+		Failed:   func(n uint64) { fail.Add(n) },
+	})
+
+	now := time.Now()
+	// 3 enqueue — queue size 2 + worker drain 으로 1개 drop 가능.
+	for i := 0; i < 3; i++ {
+		_ = a.Put(context.Background(), mkAsyncRec(i, now))
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if enq.Load()+drop.Load() == 3 && wrote.Load() >= enq.Load() {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if enq.Load()+drop.Load() != 3 {
+		t.Errorf("enq+drop=%d (enq=%d drop=%d), want 3",
+			enq.Load()+drop.Load(), enq.Load(), drop.Load())
+	}
+	if wrote.Load() != enq.Load() {
+		t.Errorf("wrote=%d enq=%d (worker 가 enqueued 전부 처리 못함)",
+			wrote.Load(), enq.Load())
+	}
+	if fail.Load() != 0 {
+		t.Errorf("fail=%d, want 0", fail.Load())
+	}
+
+	// QueueLen — 모두 flush 후 0.
+	if a.QueueLen() != 0 {
+		t.Errorf("QueueLen=%d, want 0", a.QueueLen())
+	}
+}
+
 func mkAsyncRec(i int, ts time.Time) Record {
 	idBytes := []byte("A-")
 	idBytes = append(idBytes, byte('0'+i/10))

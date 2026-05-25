@@ -43,9 +43,37 @@ type AsyncRegistry struct {
 	written  atomic.Uint64
 	failed   atomic.Uint64 // PutMany error
 
+	// metrics hook — main.go 가 SetMetricsHook 으로 주입. 빈 시 no-op.
+	mEnqueued func(uint64)
+	mDropped  func(uint64)
+	mWritten  func(uint64)
+	mFailed   func(uint64)
+
 	stopOnce sync.Once
 	doneC    chan struct{}
 }
+
+// AsyncMetricsHook — Prometheus 발행 콜백. main.go 가 pkg/metrics.Registry
+// 의 IncQuoteIDAsync 를 4개 함수로 묶어 주입.
+type AsyncMetricsHook struct {
+	Enqueued func(uint64)
+	Dropped  func(uint64)
+	Written  func(uint64)
+	Failed   func(uint64)
+}
+
+// SetMetricsHook — Prometheus 카운터 발행 콜백 주입. nil 함수는 no-op.
+// Stats() 메서드는 그대로 — 두 path 양립.
+func (a *AsyncRegistry) SetMetricsHook(h AsyncMetricsHook) {
+	a.mEnqueued = h.Enqueued
+	a.mDropped = h.Dropped
+	a.mWritten = h.Written
+	a.mFailed = h.Failed
+}
+
+// QueueLen — Prometheus GaugeFunc callback. atomic.Load 만큼 cheap 한
+// len(channel) 호출.
+func (a *AsyncRegistry) QueueLen() int { return len(a.queue) }
 
 // AsyncRegistryOptions — AsyncRegistry 생성 옵션.
 type AsyncRegistryOptions struct {
@@ -111,8 +139,14 @@ func (a *AsyncRegistry) Put(_ context.Context, rec Record) error {
 	select {
 	case a.queue <- rec:
 		a.enqueued.Add(1)
+		if a.mEnqueued != nil {
+			a.mEnqueued(1)
+		}
 	default:
 		a.dropped.Add(1)
+		if a.mDropped != nil {
+			a.mDropped(1)
+		}
 		// rate-limit 된 log 는 운영 정책 — 여기선 누적 카운터만.
 	}
 	return nil
@@ -158,13 +192,20 @@ func (a *AsyncRegistry) run() {
 		ctx, cancel := context.WithTimeout(context.Background(), a.putTimeout)
 		err := a.inner.PutMany(ctx, batch)
 		cancel()
+		n := uint64(len(batch))
 		if err != nil {
-			a.failed.Add(uint64(len(batch)))
+			a.failed.Add(n)
+			if a.mFailed != nil {
+				a.mFailed(n)
+			}
 			a.logger.Warn("AsyncRegistry: PutMany 실패",
 				slog.Int("batch", len(batch)),
 				slog.Any("error", err))
 		} else {
-			a.written.Add(uint64(len(batch)))
+			a.written.Add(n)
+			if a.mWritten != nil {
+				a.mWritten(n)
+			}
 		}
 		batch = batch[:0]
 	}

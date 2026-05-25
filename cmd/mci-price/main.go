@@ -42,6 +42,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/internal/price"
+	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
 	"github.com/winwaysystems/wtg/pkg/quoteid"
@@ -170,7 +171,7 @@ func main() {
 
 	// QuoteID stack (pkg/quoteid) — Generator + Registry. cfg.QuoteIDInstance
 	// 가 비어 있으면 비활성 (양쪽 nil 반환 → PricingConsumer 가 fallback).
-	quoteIDGen, quoteIDReg, quoteIDCloser := wireQuoteID(cfg, logger)
+	quoteIDGen, quoteIDReg, quoteIDCloser := wireQuoteID(cfg, srv.Metrics(), logger)
 	defer quoteIDCloser()
 	if quoteIDReg != nil {
 		validator := price.NewQuoteValidationServer(quoteIDReg, logger)
@@ -491,7 +492,7 @@ func loadSymbolEntries(path string) ([]quote.SymbolEntry, error) {
 //	cfg.QuoteIDRedisAddr != "" → RedisRegistry (운영 active-active 공유).
 //
 // closer 는 Redis 클라이언트 lifecycle 정리 — Redis 미사용이면 no-op.
-func wireQuoteID(cfg price.Config, logger *slog.Logger) (*quoteid.Generator, quoteid.Registry, func()) {
+func wireQuoteID(cfg price.Config, mreg *metrics.Registry, logger *slog.Logger) (*quoteid.Generator, quoteid.Registry, func()) {
 	if cfg.QuoteIDInstance == "" {
 		return nil, nil, func() {}
 	}
@@ -556,6 +557,20 @@ func wireQuoteID(cfg price.Config, logger *slog.Logger) (*quoteid.Generator, quo
 			PutTimeout:    cfg.QuoteIDAsyncTimeout,
 			Logger:        logger,
 		})
+		// Prometheus hook — async 카운터 + queue_len gauge.
+		if mreg != nil {
+			async.SetMetricsHook(quoteid.AsyncMetricsHook{
+				Enqueued: func(n uint64) { mreg.IncQuoteIDAsync("mci-price", "enqueued", n) },
+				Dropped:  func(n uint64) { mreg.IncQuoteIDAsync("mci-price", "dropped", n) },
+				Written:  func(n uint64) { mreg.IncQuoteIDAsync("mci-price", "written", n) },
+				Failed:   func(n uint64) { mreg.IncQuoteIDAsync("mci-price", "failed", n) },
+			})
+			if err := mreg.RegisterAsyncQueueGauge("mci-price", func() float64 {
+				return float64(async.QueueLen())
+			}); err != nil {
+				logger.Warn("async queue gauge 등록 실패", slog.Any("error", err))
+			}
+		}
 		reg = async
 		closeAsync = async.Close
 		logger.Info("QuoteID Async wrapper 활성 (Put 비동기 batch)",

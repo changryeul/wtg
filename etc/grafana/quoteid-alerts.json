@@ -181,6 +181,92 @@
         },
 
         {
+          "uid": "wtg-quoteid-async-dropped",
+          "title": "QuoteID AsyncRegistry drop 발생 (audit 누락)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "sum(rate(wtg_quoteid_async_dropped_total[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "1m",
+          "annotations": {
+            "summary": "AsyncRegistry 가 record 를 drop 중 (audit 누락)",
+            "description": "queue 가 가득 차 quote record 가 Registry 에 등록되지 않음. drop 된 quote 는 검증 시 NOT_FOUND → 신규 주문 자연 거절. --quoteid-async-queue 증가 또는 Redis 응답속도 점검.",
+            "runbook_url": "docs/quoteid-operations.md#v118--asyncregistry-put-비동기-batch"
+          },
+          "labels": {"severity": "page", "service": "mci-price", "domain": "quoteid"}
+        },
+
+        {
+          "uid": "wtg-quoteid-async-queue-saturation",
+          "title": "QuoteID AsyncRegistry queue 80% 점유",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "wtg_quoteid_async_queue_len",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [8000]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "AsyncRegistry queue 가득 임박",
+            "description": "queue 점유 > 8000 (default 10000 의 80%). 곧 drop 발생 위험. --quoteid-async-queue 증가 또는 Redis 응답 속도 점검.",
+            "runbook_url": "docs/quoteid-operations.md#v118--asyncregistry-put-비동기-batch"
+          },
+          "labels": {"severity": "warn", "service": "mci-price", "domain": "quoteid"}
+        },
+
+        {
           "uid": "wtg-quoteid-register-errors",
           "title": "QuoteID Registry.Put 실패율 (audit 누수)",
           "condition": "C",

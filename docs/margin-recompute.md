@@ -111,6 +111,26 @@ Content-Type: application/json
 - **timeout 30s** — 1만 봉 + 1 profile 기준 충분, 더 큰 시나리오는 async
   job (v2 후속).
 
+## mci-admin UI 탭
+
+mci-admin 좌측 nav 의 "마진 재계산" 클릭 → 폼 + 결과 화면.
+
+폼 항목:
+- From / To (UTC datetime-local, default 최근 1시간)
+- Pair (USD/KRW / EUR/KRW / JPY/KRW / GBP/KRW / AUD/KRW / CNY/KRW)
+- Channel (WEB / MOB / CS / FIX)
+- Site (BRANCH / HQ)
+- Tier (VIP / GOLD / STD)
+- 샘플 수 (1~200, default 10)
+- 체크박스 `table_override JSON 사용` — 켜면 textarea 표시. PricingTableDoc
+  JSON 직접 입력. 안 켜면 etcd 의 현재 키 (`wtg/pricing/table`) 사용.
+
+결과:
+- 통계 (bid 평균/최대/최소, ask 평균/최대/최소) 6 셀
+- 샘플 테이블 (시각 / raw bid·ask / customer bid·ask / bid Δ / ask Δ)
+
+브라우저에서 즉시 시각화 — 분쟁 응대 시 운영자가 GUI 로 빠르게 확인.
+
 ## v2 후보
 
 - **Async job 모드** — `POST /v1/admin/margin/jobs` → job_id 반환,
@@ -118,4 +138,4 @@ Content-Type: application/json
 - **OHLC 전체 재계산** — close 외 4 points 모두.
 - **CSV / parquet export** — 정산용 다운로드.
 - **Profile multi-select** — 한 호출에 N profile 비교.
-- **mci-admin UI 탭** — REST 대신 GUI 로 시간 / pair / profile / table 선택.
+- **차트 시각화** — 결과를 lightweight-charts 로 raw vs customer 선 비교.

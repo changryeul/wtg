@@ -12,6 +12,7 @@ import (
 
 	apihandlers "github.com/winwaysystems/wtg/internal/api/handlers"
 	"github.com/winwaysystems/wtg/internal/api/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/pkg/auth"
@@ -45,6 +46,9 @@ type Server struct {
 	// 신규 자원 (symbols/pricing/profiles) 용 공유 etcd 클라이언트.
 	// EtcdEndpoints 가 비어있으면 nil — 핸들러는 503 반환.
 	etcdShared *clientv3.Client
+
+	// TimescaleDB pgx pool — cfg.ChartDSN 활성 시. 마진 재계산 endpoint 가 사용.
+	chartPool *pgxpool.Pool
 }
 
 // SetPolicyEngine — 외부에서 정책 엔진 주입 (mci-api 와 공유 가능).
@@ -257,6 +261,25 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		s.etcdShared = cli
 	}
+	// TimescaleDB pool — 마진 재계산 endpoint 활성 시.
+	if s.cfg.ChartDSN != "" && s.chartPool == nil {
+		poolCfg, perr := pgxpool.ParseConfig(s.cfg.ChartDSN)
+		if perr != nil {
+			return fmt.Errorf("admin chart DSN 파싱: %w", perr)
+		}
+		max := s.cfg.ChartPoolMaxConns
+		if max <= 0 {
+			max = 5
+		}
+		poolCfg.MaxConns = int32(max)
+		pool, perr := pgxpool.NewWithConfig(ctx, poolCfg)
+		if perr != nil {
+			return fmt.Errorf("admin chart pool: %w", perr)
+		}
+		s.chartPool = pool
+		s.logger.Info("admin TimescaleDB pool 활성 (마진 재계산)",
+			slog.Int("max_conns", max))
+	}
 	symbolsDeps = &SymbolsDeps{
 		Cli:    s.etcdShared,
 		Prefix: s.cfg.EtcdSymbolsPrefix,
@@ -291,6 +314,13 @@ func (s *Server) Start(ctx context.Context) error {
 		Logger: s.logger,
 		Audit:  s.audit,
 		Hub:    s.hub,
+	}
+	marginDeps := &MarginRecomputeDeps{
+		Cli:     s.etcdShared,
+		Pool:    s.chartPool,
+		EtcdKey: s.cfg.EtcdPricingKey,
+		Logger:  s.logger,
+		Audit:   s.audit,
 	}
 
 	// svc I/O 명세 — 부팅 시 헤더 디렉터리 일괄 인덱싱. cfg 가 비어있으면 빈
@@ -361,6 +391,8 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/admin/quoteid-engines/{engine_id}", GetQuoteIDEngine(quoteIDEnginesDeps))
 	mux.HandleFunc("PUT /v1/admin/quoteid-engines/{engine_id}", PutQuoteIDEngine(quoteIDEnginesDeps))
 	mux.HandleFunc("DELETE /v1/admin/quoteid-engines/{engine_id}", DeleteQuoteIDEngine(quoteIDEnginesDeps))
+
+	mux.HandleFunc("POST /v1/admin/margin/recompute", PostMarginRecompute(marginDeps))
 	// 정책 엔진 — kill switch / 정비 창 / 차단 심볼·라우팅키.
 	mux.HandleFunc("GET /v1/admin/policy", GetPolicy(policyDeps))
 	mux.HandleFunc("POST /v1/admin/policy/kill-switch", SetKillSwitch(policyDeps))
@@ -529,6 +561,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if err := s.etcdShared.Close(); err != nil && first == nil {
 			first = err
 		}
+	}
+	if s.chartPool != nil {
+		s.chartPool.Close()
 	}
 	if s.hub != nil {
 		s.hub.Close()

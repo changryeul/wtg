@@ -14,6 +14,7 @@ import (
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/policy"
+	"github.com/winwaysystems/wtg/pkg/routing"
 	"github.com/winwaysystems/wtg/pkg/svcio"
 )
 
@@ -96,6 +97,7 @@ func GetSvcIO(reg *svcio.Registry) http.HandlerFunc {
 // TestWireDeps — TestWireSvc 핸들러의 의존성. server.go 가 채움.
 type TestWireDeps struct {
 	Registry    *svcio.Registry
+	Routes      routing.Registry // svc code → exchange/routing_key alias lookup
 	MQ          Caller
 	Policy      *policy.Engine
 	Audit       *AuditRing
@@ -178,10 +180,25 @@ func TestWireSvc(deps *TestWireDeps) http.HandlerFunc {
 			channel = strings.ToUpper(strings.TrimSpace(r.Header.Get(middleware.HeaderEdgeChannel)))
 		}
 
-		// exchange / routing_key 결정. 명시 안 하면 code 의 split 추정 (5+나머지).
+		// exchange / routing_key 결정 — 우선순위:
+		//   1. 요청 본문의 명시적 값 (alias 우회 + 직접 broker 호출)
+		//   2. routing.Registry 의 alias = code 매핑
+		//   3. 그 외 — 422. 잘못된 휴리스틱(splitSvcCode 의 5+나머지) 으로 broker
+		//      에 잘못 라우팅된 transaction 을 보내는 사고 방지.
 		exchange, rkey := req.Exchange, req.RoutingKey
 		if exchange == "" && rkey == "" {
-			exchange, rkey = splitSvcCode(code)
+			if deps.Routes == nil {
+				writeJSONError(w, http.StatusUnprocessableEntity, "no_routing",
+					"라우팅 미결정 — routing.Registry 미설정. 요청 본문에 exchange/routing_key 명시 필요")
+				return
+			}
+			rule, err := routing.Resolve(deps.Routes, code)
+			if err != nil {
+				writeJSONError(w, http.StatusUnprocessableEntity, "unknown_alias",
+					"라우팅 미결정 — alias 미등록: "+code+". /v1/admin/routes 로 등록하거나 요청 본문에 exchange/routing_key 명시 필요. 진짜 매핑은 /v1/admin/whois?argv1="+code+" 로 broker 에 직접 조회 가능")
+				return
+			}
+			exchange, rkey = rule.Exchange, rule.RoutingKey
 		}
 
 		// 정책 검사 — kill switch / blocked rkeys 등.
@@ -429,17 +446,13 @@ func isEditablePath(p string) (bool, string) {
 	return false, "운영 헤더 디렉터리는 read-only — dev svc-headers/ 만 편집 가능"
 }
 
-// splitSvcCode — code 에서 exchange/routing_key 추정.
+// splitSvcCode 휴리스틱은 제거됨 — broker 의 진짜 매핑과 자주 안 맞아서
+// 잘못 라우팅된 transaction 이 도달하는 사고 발생 (예: W1101S01 의 진짜 매핑은
+// xchg=ECHOSVC/rkey=W1101S01 인데 휴리스틱은 xchg=W1101/rkey=S01 로 split).
 //
-//	"ECHOSVC_PING" → ("ECHOSVC", "PING")  — underscore split (dev svc 컨벤션)
-//	"W1104S01"     → ("W1104",   "S01")    — 5+나머지 (legacy W svc 컨벤션)
-//	그 외          → (code,     "")        — 호출자가 명시 권장
-func splitSvcCode(code string) (string, string) {
-	if i := strings.Index(code, "_"); i > 0 {
-		return code[:i], code[i+1:]
-	}
-	if len(code) >= 8 {
-		return code[:5], code[5:]
-	}
-	return code, ""
-}
+// 대신 TestWireSvc 가 다음 순서로 결정:
+//   1. 요청 본문의 명시적 exchange/routing_key
+//   2. routing.Registry 의 alias = code 매핑
+//   3. 그 외 422 — 운영자가 alias 를 명시 등록해야 함.
+//
+// 진짜 매핑을 broker 에 직접 물어보는 도구는 scripts/import-svc-routes.sh 참조.

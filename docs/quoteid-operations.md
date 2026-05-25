@@ -1344,6 +1344,51 @@ rule_files:
 v1.16 의 alert rules 와 v1.14 의 dashboard 가 raw expression 사용 중 — 점진적으로
 recording series 로 교체 권장 (별도 commit).
 
+## v1.26 — mci-admin UI 실시간 동기화 (commit 추가)
+
+v1.21 backend 의 `Hub.Broadcast("quoteid_engine", ...)` 는 등록되어 있었지만
+UI 의 `handleStreamEvent` switch 가 quoteid_engine 케이스를 무시 — 다른
+운영자가 etcdctl 또는 다른 mci-admin 세션에서 변경해도 내 화면은 stale.
+
+v1.26+ : 5개 broadcast (`quoteid_engine` / `user_profile` / `profile` / `symbol`
+/ `pricing`) 를 UI 에서 처리. 다른 운영자가 변경하면:
+- 같은 페이지 보고 있으면 → toast (info) + 즉시 reload
+- 다른 페이지면 → toast 만 (background tab 안내)
+
+### 흐름
+
+```
+[운영자 A] mci-admin UI 또는 etcdctl
+   ↓ PUT /v1/admin/quoteid-engines/audit-cli
+mci-admin server
+   ↓ Hub.Broadcast("quoteid_engine", {action:"put", engine_id:"audit-cli", ...})
+   ↓ /v1/admin/stream ws
+[운영자 B] 다른 mci-admin 세션
+   ↓ handleStreamEvent("quoteid_engine")
+   ↓ "QuoteID 엔진" 탭 보고 있으면 → loadQEngines() + toast
+   ↓ 다른 탭이면 → toast 만
+```
+
+### 헬퍼
+
+`handleRemoteChange(kind, data, pageSel, reloader, labelFn)` — 5종 broadcast
+공통 처리. 새 broadcast 추가 시 1 줄로 case 추가 가능.
+
+### toast info kind 추가
+
+기존 toast 는 ok / warn / bad 3종. info (accent 색) 추가 — 다른 운영자
+알림은 본인 actions (ok / err) 과 시각적 분리.
+
+### 다중 운영자 시나리오
+
+- 야간 운영 — 한 명이 변경 시 다른 운영자가 같은 시점에 봐도 즉시 갱신.
+- 비상 차단 — 한 운영자가 "QuoteID 엔진" 에서 `matching-EVIL` 삭제하면
+  같은 화면 보던 다른 운영자도 즉시 사라짐을 확인 (synchronization).
+- 운영 + 감사 — etcdctl 로 직접 변경한 케이스도 UI 에 toast — 우회 변경
+  추적성.
+
 ## v2 후보
 
-- audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림 (UI).
+- Grafana dashboard / alerts 가 v1.25 의 recording series 사용하도록 갱신
+  (외부 인터페이스 변경 없으나 점진 cleanup).
+- mci-admin UI 의 다른 broadcast 도 (현재 5종 외) 통합.

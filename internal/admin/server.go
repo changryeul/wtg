@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	apihandlers "github.com/winwaysystems/wtg/internal/api/handlers"
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/embed"
 
 	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/metrics"
@@ -46,6 +48,10 @@ type Server struct {
 	// 신규 자원 (symbols/pricing/profiles) 용 공유 etcd 클라이언트.
 	// EtcdEndpoints 가 비어있으면 nil — 핸들러는 503 반환.
 	etcdShared *clientv3.Client
+
+	// devEtcd — DevMode 자동 기동 embedded etcd. cfg.EtcdEndpoints 가 비고
+	// DevMode 일 때만 채워짐. Shutdown 시 close.
+	devEtcd *embed.Etcd
 
 	// TimescaleDB pgx pool — cfg.ChartDSN 활성 시. 마진 재계산 endpoint 가 사용.
 	chartPool *pgxpool.Pool
@@ -106,6 +112,18 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 
 // Start — broker 연결 + HTTP listen (블로킹).
 func (s *Server) Start(ctx context.Context) error {
+	// DevMode + EtcdEndpoints 미설정 → embedded etcd 자동 기동.
+	// 결과: routes/policy/symbols/pricing/profiles/user-profiles/quoteid-engines
+	// 가 코드 변경 없이 동일 etcd 를 통해 동작. 재시작 후에도 영속 (stable data dir).
+	if s.cfg.DevMode && strings.TrimSpace(s.cfg.EtcdEndpoints) == "" && s.devEtcd == nil {
+		srv, clientURL, err := startDevEmbeddedEtcd(ctx, "", s.logger)
+		if err != nil {
+			return fmt.Errorf("dev embedded etcd: %w", err)
+		}
+		s.devEtcd = srv
+		s.cfg.EtcdEndpoints = clientURL
+	}
+
 	// broker 호출용 Caller — NoBroker 면 stub, 아니면 실제 mymq.Client.
 	var mqCaller anyCaller
 	if s.cfg.NoBroker {
@@ -561,6 +579,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if err := s.etcdShared.Close(); err != nil && first == nil {
 			first = err
 		}
+	}
+	// devEtcd 는 etcdShared / policySync 의 client 가 모두 닫힌 뒤에 종료해야
+	// "use of closed connection" 류 노이즈 없음.
+	if s.devEtcd != nil {
+		s.devEtcd.Close()
 	}
 	if s.chartPool != nil {
 		s.chartPool.Close()

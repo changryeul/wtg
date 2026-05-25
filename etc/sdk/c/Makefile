@@ -20,7 +20,7 @@ endif
 LDLIBS  += -lpthread
 
 OBJS    := quoteid_client.o
-TARGETS := example_fix_flow test_pool
+TARGETS := example_fix_flow test_pool test_async
 
 .PHONY: all lib clean
 
@@ -34,6 +34,9 @@ example_fix_flow: example_fix_flow.c quoteid_client.o
 
 test_pool: test_pool.c quoteid_client.o
 	$(CC) $(CFLAGS) test_pool.c quoteid_client.o $(LDLIBS) -o $@
+
+test_async: test_async.c quoteid_client.o
+	$(CC) $(CFLAGS) test_async.c quoteid_client.o $(LDLIBS) -o $@
 
 lib: libquoteid.a
 

@@ -1203,10 +1203,65 @@ OK
 - `contended` 증가율을 Prometheus 외부 메트릭으로 노출하면 saturation
   실시간 감지 (v2 — qid_client_pool 의 Prometheus collector).
 
+## v1.23 — C SDK 비동기 engine (curl_multi pipelining, commit 추가)
+
+v1.22 의 pool 이 "N thread × 각자 sync" 라면 v1.23 의 async engine 은
+"1 thread × N in-flight". curl_multi handle + 1 worker thread 로 단일
+caller thread 가 여러 quote 를 동시 진행.
+
+### API
+
+```c
+qid_async_engine_t* eng = qid_async_engine_new(&opts);
+
+qid_async_t* h = qid_validate_async(eng, qid);
+/* 또는 mark_consumed_async */
+qid_async_t* h = qid_mark_consumed_async(eng, qid, order_id);
+
+int qid_async_is_done(h);                          /* non-block */
+qid_err_t qid_async_wait(h);                       /* block */
+qid_err_t qid_async_get_validate(h, &result);      /* wait + parse */
+qid_err_t qid_async_get_mark(h, &result);
+void qid_async_free(h);
+
+qid_async_engine_free(eng);  /* worker thread join */
+```
+
+### 검증 결과
+
+```
+submit done 50 in 0.0004s
+after 50ms sleep: 50/50 already done
+all done in 0.0537s (submit→done 0.0533s)
+ok=50 err=0 not_found=50
+OK
+```
+
+- submit 50 in 0.4ms — 큐에 enqueue 만, 즉시 반환.
+- 50ms sleep 동안 worker 가 모두 처리.
+- 직렬 sync (~50 × 1ms = 50ms) 와 비슷한 wallclock — 로컬 loopback 이라
+  RTT 가 작음. 실 네트워크 (1-2ms RTT) 에서는 async 가 50-100ms,
+  sync 직렬은 50-100배 더 걸림.
+
+### pool vs async 선택
+
+| 조건 | 추천 |
+|------|------|
+| N order handler thread, 각자 1주문 = 1 RPC | pool (lock-free fast path) |
+| 1 thread, batch 모드 N quote 동시 검증 | **async** |
+| FIX NewOrderList 다건 한 묶음 | BatchValidate RPC + sync (서버측 fan-out) |
+| pool 부족 + burst 발생 | async 병행 |
+
+### 한계
+
+- in-flight 상한 1024 (MAX_INFLIGHT). 초과 시 ERR_INTERNAL 즉시 — drop.
+  높은 burst 시나리오는 engine 인스턴스 추가.
+- worker thread 1개 — 1 multi handle 의 CPU bound 한계. 보통 문제 없음
+  (curl 은 응답 파싱이 cheap), 필요시 multi engine 인스턴스.
+
 ## v2 후보
 
-- libcurl multi-handle 비동기 변형 (`qid_validate_async`).
-- C SDK pool stats 의 Prometheus collector 통합.
+- C SDK pool / async stats 의 Prometheus collector 통합.
 - recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
   대시보드 응답 속도 개선.
 - audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.

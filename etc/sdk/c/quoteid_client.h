@@ -292,6 +292,89 @@ typedef struct {
  */
 qid_client_pool_stats_t qid_client_pool_stats(const qid_client_pool_t* pool);
 
+/* ─── Async engine — curl_multi 기반 비동기 변형 ──────────────────────── */
+
+/*
+ * qid_async_engine_t — 하나의 worker thread + curl_multi handle 로 N 요청을
+ * 동시에 in-flight 진행. 같은 thread 안에서 여러 quote 를 pipelining 하고
+ * 싶을 때 (단일-thread event loop 엔진, 또는 batch 처리 thread) 유용.
+ *
+ * 단순히 N thread 가 각각 sync 호출하는 게 더 자연스러우면 qid_client_pool_t
+ * 사용 — 그쪽이 lock-free hot path. async engine 은 thread 수보다 in-flight
+ * 가 훨씬 많을 때 의미.
+ *
+ * 흐름:
+ *
+ *   engine 생성 (boot 1회) → curl_multi worker thread 시작
+ *      ↓
+ *   thread (보통 1개) 가 N 요청 submit:
+ *      qid_async_t* h1 = qid_validate_async(eng, qid1);
+ *      qid_async_t* h2 = qid_validate_async(eng, qid2);
+ *      ...
+ *      다른 작업 수행...
+ *      qid_async_wait(h1) + qid_async_get_validate(h1, &r1);
+ *      qid_async_free(h1);
+ *      ...
+ *
+ * 모든 handle 은 qid_async_free 로 정리 (worker 가 끝났든 안 끝났든).
+ */
+typedef struct qid_async_engine qid_async_engine_t;
+typedef struct qid_async qid_async_t;
+
+/*
+ * qid_async_engine_new — engine 생성. opts 는 sync client 와 동일 의미.
+ * worker thread 가 즉시 시작.
+ */
+qid_async_engine_t* qid_async_engine_new(const qid_client_options_t* opts);
+
+/*
+ * qid_async_engine_free — engine 종료 (worker thread join).
+ * pending handle 이 있어도 free 후 안전하게 정리 — 단, 결과는 못 얻음
+ * (qid_async_wait 가 ERR_TRANSPORT 반환).
+ */
+void qid_async_engine_free(qid_async_engine_t* eng);
+
+/*
+ * qid_validate_async — async Validate 제출. handle 즉시 반환, 완료 후
+ * qid_async_get_validate 로 결과 추출.
+ */
+qid_async_t* qid_validate_async(qid_async_engine_t* eng,
+                                const char* quote_id);
+
+/*
+ * qid_mark_consumed_async — async MarkConsumed 제출.
+ */
+qid_async_t* qid_mark_consumed_async(qid_async_engine_t* eng,
+                                     const char* quote_id,
+                                     const char* consumer_id);
+
+/*
+ * qid_async_is_done — non-blocking 검사. 1 = 결과 준비됨 / 0 = 아직 진행 중.
+ */
+int qid_async_is_done(qid_async_t* h);
+
+/*
+ * qid_async_wait — handle 이 완료될 때까지 block.
+ * 반환: QID_OK 면 결과 추출 가능, 그 외는 RPC 자체 실패.
+ */
+qid_err_t qid_async_wait(qid_async_t* h);
+
+/*
+ * qid_async_get_validate — wait + Validate 결과 추출.
+ * 자동으로 wait 호출 (block).
+ */
+qid_err_t qid_async_get_validate(qid_async_t* h, qid_validate_result_t* out);
+
+/*
+ * qid_async_get_mark — wait + MarkConsumed 결과 추출.
+ */
+qid_err_t qid_async_get_mark(qid_async_t* h, qid_mark_result_t* out);
+
+/*
+ * qid_async_free — handle 자원 해제. 호출자가 get_* 했든 안 했든 반드시 호출.
+ */
+void qid_async_free(qid_async_t* h);
+
 #ifdef __cplusplus
 }
 #endif

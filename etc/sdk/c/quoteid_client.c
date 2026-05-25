@@ -531,6 +531,349 @@ void qid_client_pool_release(qid_client_pool_t* pool, qid_client_t* c) {
     pthread_mutex_unlock(&pool->mu);
 }
 
+/* ─── Async engine (curl_multi 기반) ──────────────────────────────────── */
+
+enum {
+    QID_ASYNC_VALIDATE = 1,
+    QID_ASYNC_MARK     = 2,
+};
+
+struct qid_async {
+    int kind;
+    /* 요청 */
+    char* url;           /* full URL */
+    char* body;          /* JSON body */
+    /* libcurl */
+    CURL* easy;
+    struct curl_slist* headers;
+    qid_buf_t resp;
+    long http_code;
+    /* 결과 */
+    int done;
+    qid_err_t err;
+    pthread_mutex_t mu;
+    pthread_cond_t  cv;
+    /* engine 연결 — 큐 chain */
+    qid_async_engine_t* eng;
+    struct qid_async* next;
+};
+
+struct qid_async_engine {
+    CURLM* multi;
+    char* base_url;
+    char* engine_id;
+    /* TLS 옵션 — 모든 easy handle 에 복사 적용 */
+    char* ca_file;
+    char* cert_file;
+    char* key_file;
+    int insecure_skip_verify;
+    long timeout_ms;
+    long connect_timeout_ms;
+    /* worker */
+    pthread_t worker;
+    pthread_mutex_t mu;
+    pthread_cond_t  cv;        /* submit 도착 or close 신호 */
+    int closed;
+    /* submit queue (worker 가 multi 에 add 하기 전 대기) */
+    qid_async_t* head;
+    qid_async_t* tail;
+};
+
+static char* str_dup_or_empty(const char* s) {
+    return strdup(s ? s : "");
+}
+
+static void async_set_done(qid_async_t* h, qid_err_t err) {
+    pthread_mutex_lock(&h->mu);
+    h->err = err;
+    h->done = 1;
+    pthread_cond_broadcast(&h->cv);
+    pthread_mutex_unlock(&h->mu);
+}
+
+static void* async_worker(void* arg) {
+    qid_async_engine_t* eng = (qid_async_engine_t*)arg;
+    /* 활성 handles map — easy handle → qid_async_t */
+    /* 작은 규모 가정 (운영 in-flight ~100). 선형 검색이 cache-friendly. */
+    enum { MAX_INFLIGHT = 1024 };
+    qid_async_t* slots[MAX_INFLIGHT] = {0};
+    int slot_count = 0;
+
+    while (1) {
+        /* 1) submit 큐를 multi 에 add (closed 이면 즉시 break). */
+        pthread_mutex_lock(&eng->mu);
+        while (!eng->head && !eng->closed && slot_count == 0) {
+            pthread_cond_wait(&eng->cv, &eng->mu);
+        }
+        if (eng->closed && !eng->head && slot_count == 0) {
+            pthread_mutex_unlock(&eng->mu);
+            break;
+        }
+        qid_async_t* pending = eng->head;
+        eng->head = eng->tail = NULL;
+        pthread_mutex_unlock(&eng->mu);
+
+        while (pending) {
+            qid_async_t* h = pending;
+            pending = pending->next;
+            h->next = NULL;
+            if (slot_count < MAX_INFLIGHT) {
+                curl_multi_add_handle(eng->multi, h->easy);
+                slots[slot_count++] = h;
+            } else {
+                async_set_done(h, QID_ERR_INTERNAL); /* engine 포화 — 드물게 */
+            }
+        }
+
+        /* 2) curl_multi 진행 + 완료된 handle 처리. */
+        int still_running = 0;
+        curl_multi_perform(eng->multi, &still_running);
+
+        /* 짧은 timeout — submit 신호도 polling. */
+        struct curl_waitfd extra_fds = {0};
+        (void)extra_fds;
+        int numfds = 0;
+        curl_multi_wait(eng->multi, NULL, 0, 50, &numfds);
+        curl_multi_perform(eng->multi, &still_running);
+
+        int msgs_left = 0;
+        CURLMsg* msg;
+        while ((msg = curl_multi_info_read(eng->multi, &msgs_left)) != NULL) {
+            if (msg->msg != CURLMSG_DONE) continue;
+            CURL* easy = msg->easy_handle;
+            qid_async_t* h = NULL;
+            int idx = -1;
+            for (int i = 0; i < slot_count; i++) {
+                if (slots[i] && slots[i]->easy == easy) {
+                    h = slots[i];
+                    idx = i;
+                    break;
+                }
+            }
+            if (!h) continue;
+            curl_multi_remove_handle(eng->multi, easy);
+            qid_err_t err;
+            if (msg->data.result != CURLE_OK) {
+                err = QID_ERR_TRANSPORT;
+            } else {
+                long code = 0;
+                curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code);
+                h->http_code = code;
+                err = map_http_code(code);
+            }
+            async_set_done(h, err);
+            slots[idx] = slots[--slot_count];
+        }
+    }
+
+    /* close — 남은 in-flight 모두 TRANSPORT 로 신호. */
+    for (int i = 0; i < slot_count; i++) {
+        qid_async_t* h = slots[i];
+        if (!h) continue;
+        curl_multi_remove_handle(eng->multi, h->easy);
+        async_set_done(h, QID_ERR_TRANSPORT);
+    }
+    return NULL;
+}
+
+qid_async_engine_t* qid_async_engine_new(const qid_client_options_t* opts) {
+    if (!opts || !opts->base_url) return NULL;
+    qid_async_engine_t* e = (qid_async_engine_t*)calloc(1, sizeof(*e));
+    if (!e) return NULL;
+    e->multi = curl_multi_init();
+    if (!e->multi) { free(e); return NULL; }
+    e->base_url  = str_dup_or_empty(opts->base_url);
+    e->engine_id = str_dup_or_empty(opts->engine_id);
+    e->ca_file   = opts->ca_file   ? str_dup_or_empty(opts->ca_file)   : NULL;
+    e->cert_file = opts->cert_file ? str_dup_or_empty(opts->cert_file) : NULL;
+    e->key_file  = opts->key_file  ? str_dup_or_empty(opts->key_file)  : NULL;
+    e->insecure_skip_verify = opts->insecure_skip_verify ? 1 : 0;
+    e->timeout_ms = opts->timeout_ms > 0 ? opts->timeout_ms : 1000;
+    e->connect_timeout_ms = opts->connect_timeout_ms > 0 ? opts->connect_timeout_ms : 500;
+    pthread_mutex_init(&e->mu, NULL);
+    pthread_cond_init(&e->cv, NULL);
+    if (pthread_create(&e->worker, NULL, async_worker, e) != 0) {
+        curl_multi_cleanup(e->multi);
+        pthread_mutex_destroy(&e->mu);
+        pthread_cond_destroy(&e->cv);
+        free(e->base_url); free(e->engine_id);
+        free(e->ca_file); free(e->cert_file); free(e->key_file);
+        free(e);
+        return NULL;
+    }
+    return e;
+}
+
+void qid_async_engine_free(qid_async_engine_t* eng) {
+    if (!eng) return;
+    pthread_mutex_lock(&eng->mu);
+    eng->closed = 1;
+    pthread_cond_broadcast(&eng->cv);
+    pthread_mutex_unlock(&eng->mu);
+    pthread_join(eng->worker, NULL);
+    curl_multi_cleanup(eng->multi);
+    pthread_mutex_destroy(&eng->mu);
+    pthread_cond_destroy(&eng->cv);
+    free(eng->base_url); free(eng->engine_id);
+    free(eng->ca_file); free(eng->cert_file); free(eng->key_file);
+    free(eng);
+}
+
+/* submit 헬퍼 — easy handle 셋업 + 큐 enqueue. */
+static qid_async_t* async_submit(qid_async_engine_t* eng,
+                                 int kind,
+                                 const char* path,
+                                 cJSON* body_obj) {
+    if (!eng) { cJSON_Delete(body_obj); return NULL; }
+    qid_async_t* h = (qid_async_t*)calloc(1, sizeof(*h));
+    if (!h) { cJSON_Delete(body_obj); return NULL; }
+    h->kind = kind;
+    h->eng = eng;
+    pthread_mutex_init(&h->mu, NULL);
+    pthread_cond_init(&h->cv, NULL);
+
+    /* URL + body */
+    size_t url_len = strlen(eng->base_url) + strlen(path) + 1;
+    h->url = (char*)malloc(url_len);
+    if (!h->url) { cJSON_Delete(body_obj); qid_async_free(h); return NULL; }
+    snprintf(h->url, url_len, "%s%s", eng->base_url, path);
+    h->body = cJSON_PrintUnformatted(body_obj);
+    cJSON_Delete(body_obj);
+    if (!h->body) { qid_async_free(h); return NULL; }
+
+    /* easy handle */
+    h->easy = curl_easy_init();
+    if (!h->easy) { qid_async_free(h); return NULL; }
+    h->headers = curl_slist_append(NULL, "Content-Type: application/json");
+    curl_easy_setopt(h->easy, CURLOPT_URL, h->url);
+    curl_easy_setopt(h->easy, CURLOPT_HTTPHEADER, h->headers);
+    curl_easy_setopt(h->easy, CURLOPT_POSTFIELDS, h->body);
+    curl_easy_setopt(h->easy, CURLOPT_POSTFIELDSIZE, (long)strlen(h->body));
+    curl_easy_setopt(h->easy, CURLOPT_WRITEFUNCTION, qid_write_cb);
+    curl_easy_setopt(h->easy, CURLOPT_WRITEDATA, &h->resp);
+    curl_easy_setopt(h->easy, CURLOPT_TIMEOUT_MS, eng->timeout_ms);
+    curl_easy_setopt(h->easy, CURLOPT_CONNECTTIMEOUT_MS, eng->connect_timeout_ms);
+    curl_easy_setopt(h->easy, CURLOPT_NOSIGNAL, 1L);
+    if (eng->ca_file)   curl_easy_setopt(h->easy, CURLOPT_CAINFO,  eng->ca_file);
+    if (eng->cert_file) curl_easy_setopt(h->easy, CURLOPT_SSLCERT, eng->cert_file);
+    if (eng->key_file)  curl_easy_setopt(h->easy, CURLOPT_SSLKEY,  eng->key_file);
+    if (eng->insecure_skip_verify) {
+        curl_easy_setopt(h->easy, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(h->easy, CURLOPT_SSL_VERIFYHOST, 0L);
+    }
+
+    /* enqueue */
+    pthread_mutex_lock(&eng->mu);
+    if (eng->closed) {
+        pthread_mutex_unlock(&eng->mu);
+        async_set_done(h, QID_ERR_TRANSPORT);
+        return h;
+    }
+    if (!eng->head) {
+        eng->head = eng->tail = h;
+    } else {
+        eng->tail->next = h;
+        eng->tail = h;
+    }
+    pthread_cond_signal(&eng->cv);
+    pthread_mutex_unlock(&eng->mu);
+    return h;
+}
+
+qid_async_t* qid_validate_async(qid_async_engine_t* eng, const char* quote_id) {
+    if (!quote_id) return NULL;
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "quoteId", quote_id);
+    cJSON_AddStringToObject(root, "engineId", eng ? eng->engine_id : "");
+    cJSON_AddNumberToObject(root, "tsUnixNano", (double)now_unix_nano());
+    return async_submit(eng, QID_ASYNC_VALIDATE, "/v1/quoteid/validate", root);
+}
+
+qid_async_t* qid_mark_consumed_async(qid_async_engine_t* eng,
+                                     const char* quote_id,
+                                     const char* consumer_id) {
+    if (!quote_id || !consumer_id) return NULL;
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "quoteId", quote_id);
+    cJSON_AddStringToObject(root, "consumerId", consumer_id);
+    cJSON_AddStringToObject(root, "engineId", eng ? eng->engine_id : "");
+    cJSON_AddNumberToObject(root, "tsUnixNano", (double)now_unix_nano());
+    return async_submit(eng, QID_ASYNC_MARK, "/v1/quoteid/mark-consumed", root);
+}
+
+int qid_async_is_done(qid_async_t* h) {
+    if (!h) return 1;
+    pthread_mutex_lock(&h->mu);
+    int d = h->done;
+    pthread_mutex_unlock(&h->mu);
+    return d;
+}
+
+qid_err_t qid_async_wait(qid_async_t* h) {
+    if (!h) return QID_ERR_BAD_REQUEST;
+    pthread_mutex_lock(&h->mu);
+    while (!h->done) {
+        pthread_cond_wait(&h->cv, &h->mu);
+    }
+    qid_err_t err = h->err;
+    pthread_mutex_unlock(&h->mu);
+    return err;
+}
+
+/* 응답 body → result struct 공통. body 가 비어있으면 JSON 오류로. */
+static qid_err_t parse_async_validate(qid_async_t* h, qid_validate_result_t* out) {
+    memset(out, 0, sizeof(*out));
+    if (!h->resp.data) return QID_ERR_JSON;
+    cJSON* j = cJSON_Parse(h->resp.data);
+    if (!j) return QID_ERR_JSON;
+    out->status = parse_status(j);
+    parse_record(j, &out->record);
+    out->ord_rej_reason = j_i32(j, "ordRejReason");
+    copy_jstring(out->reject_text, sizeof(out->reject_text), j, "rejectText");
+    cJSON_Delete(j);
+    return QID_OK;
+}
+
+static qid_err_t parse_async_mark(qid_async_t* h, qid_mark_result_t* out) {
+    memset(out, 0, sizeof(*out));
+    if (!h->resp.data) return QID_ERR_JSON;
+    cJSON* j = cJSON_Parse(h->resp.data);
+    if (!j) return QID_ERR_JSON;
+    out->status = parse_status(j);
+    parse_record(j, &out->record);
+    copy_jstring(out->consumed_by, sizeof(out->consumed_by), j, "consumedBy");
+    out->ord_rej_reason = j_i32(j, "ordRejReason");
+    copy_jstring(out->reject_text, sizeof(out->reject_text), j, "rejectText");
+    cJSON_Delete(j);
+    return QID_OK;
+}
+
+qid_err_t qid_async_get_validate(qid_async_t* h, qid_validate_result_t* out) {
+    if (!h || !out) return QID_ERR_BAD_REQUEST;
+    qid_err_t err = qid_async_wait(h);
+    if (err != QID_OK) return err;
+    return parse_async_validate(h, out);
+}
+
+qid_err_t qid_async_get_mark(qid_async_t* h, qid_mark_result_t* out) {
+    if (!h || !out) return QID_ERR_BAD_REQUEST;
+    qid_err_t err = qid_async_wait(h);
+    if (err != QID_OK) return err;
+    return parse_async_mark(h, out);
+}
+
+void qid_async_free(qid_async_t* h) {
+    if (!h) return;
+    if (h->easy)    curl_easy_cleanup(h->easy);
+    if (h->headers) curl_slist_free_all(h->headers);
+    qid_buf_free(&h->resp);
+    free(h->url);
+    free(h->body);
+    pthread_mutex_destroy(&h->mu);
+    pthread_cond_destroy(&h->cv);
+    free(h);
+}
+
 qid_client_pool_stats_t qid_client_pool_stats(const qid_client_pool_t* pool) {
     qid_client_pool_stats_t s = {0};
     if (!pool) return s;

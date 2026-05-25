@@ -2,3 +2,4 @@
 *.a
 example_fix_flow
 test_pool
+test_async

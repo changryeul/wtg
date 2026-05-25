@@ -133,6 +133,60 @@ if (!c) { /* pool 비었음 — fast reject 또는 fallback */ }
 시나리오 — race / leak / 호출 누락 검증. `make test_pool` 후 mci-price
 띄워두고 `./test_pool` 실행.
 
+## qid_async_engine_t — curl_multi 비동기 (단일 thread pipelining)
+
+pool 이 "N thread × 각자 sync" 라면 async engine 은 "1 thread × N in-flight"
+모델. 단일 thread 안에서 여러 quote 를 동시 처리 (FIX session thread 가
+batch validate 하면서 다른 작업 병행).
+
+```c
+qid_async_engine_t* eng = qid_async_engine_new(&opts);
+
+/* 50 요청 즉시 submit — 0.4ms */
+qid_async_t* h[50];
+for (int i=0; i<50; i++) h[i] = qid_validate_async(eng, qids[i]);
+
+/* 다른 작업 — worker thread 가 curl_multi 로 pipeline */
+do_other_work();
+
+/* 결과 수거 — wait + parse */
+for (int i=0; i<50; i++) {
+    qid_validate_result_t vr;
+    if (qid_async_get_validate(h[i], &vr) == QID_OK) { ... }
+    qid_async_free(h[i]);
+}
+
+qid_async_engine_free(eng);
+```
+
+또는 non-blocking polling:
+```c
+if (qid_async_is_done(h)) {
+    qid_async_get_validate(h, &vr);
+    qid_async_free(h);
+}
+```
+
+내부:
+- 하나의 `CURLM*` multi handle + 하나의 background worker thread.
+- `qid_validate_async` 는 easy handle 셋업 + 큐 enqueue → worker 신호.
+- worker 가 `curl_multi_perform` + `curl_multi_wait` 루프, 완료 시 handle
+  의 cv signal.
+- 호출자는 thread-safe `is_done` / `wait` / `get_*` API.
+
+테스트 binary `test_async` 가 50 요청 submit + 50ms sleep + 결과 수거
+시나리오 — pipelining 효과 확인. `make test_async` 후 mci-price
+띄워두고 `./test_async` 실행.
+
+### pool vs async — 선택 기준
+
+| 조건 | 추천 |
+|------|------|
+| N order handler thread, 각자 1주문 = 1 RPC | **pool** (lock-free fast path) |
+| 1 thread, batch 모드 N quote 동시 검증 | **async** |
+| FIX NewOrderList 다건 한 묶음에 처리 | BatchValidate RPC + sync (서버측 fan-out) |
+| pool 사용 중인데 갑자기 burst 발생 | async 병행 (다른 engine 인스턴스) |
+
 ## 에러 매핑
 
 | `qid_err_t` | 의미 | engine 측 대응 |

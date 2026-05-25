@@ -105,6 +105,53 @@ func TestDeserialize_VariableGrid(t *testing.T) {
 	}
 }
 
+// W1101S01-style 통합 round-trip — 헤더가 `orec[1]` 로 선언했지만 broker 가
+// `grid01_cnt` 만큼 N 행 보내는 경우. Parse 의 trailing-array heuristic 이
+// Repeat=-1 로 reclassify 해서 wire deserialize 가 N 행 모두 읽는지 검증.
+func TestDeserialize_W1101S01_TrailingArrayHack(t *testing.T) {
+	src := `typedef struct { // Output
+  char grid01_cnt[6];
+    struct {
+      char empid[7];
+      char emnm[40];
+    } orec[1];
+} W1101S01_O;`
+	s, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Output[1].Repeat != -1 {
+		t.Fatalf("Parse 후 orec.Repeat=%d (heuristic 미작동 — 기대값 -1)", s.Output[1].Repeat)
+	}
+
+	// broker 응답 시뮬: grid01_cnt="     3" + 3 row × (7+40 byte).
+	// 이전 동작에선 1 행만 읽고 끝났음 (Repeat=1 기본).
+	buf := []byte("     3" +
+		"E00001 " + "Alice                                   " +
+		"E00002 " + "Bob                                     " +
+		"E00003 " + "Charlie                                 ")
+	out, err := Deserialize(s.Output, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["grid01_cnt"] != "3" {
+		t.Errorf("grid01_cnt=%q want '3'", out["grid01_cnt"])
+	}
+	rows, ok := out["orec"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("orec 타입 mismatch: %T", out["orec"])
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows=%d want 3 (이전 buggy 동작은 1)", len(rows))
+	}
+	if rows[0]["empid"] != "E00001" || rows[0]["emnm"] != "Alice" {
+		t.Errorf("row0=%+v", rows[0])
+	}
+	if rows[2]["empid"] != "E00003" || rows[2]["emnm"] != "Charlie" {
+		t.Errorf("row2=%+v", rows[2])
+	}
+}
+
 // 입력에 없는 필드 — 공백 fill, 잘림 없음.
 func TestSerialize_MissingFieldsAreSpaced(t *testing.T) {
 	fields := []Field{

@@ -72,13 +72,14 @@ func TestParse_W1104_Inline(t *testing.T) {
 	if s.Input[0].Comment != "거래참여자번호" {
 		t.Errorf("comment=%q", s.Input[0].Comment)
 	}
-	// Output: rcnt + 인라인 struct (orec)
+	// Output: rcnt + 인라인 struct (orec).
+	// rcnt + orec[1] 페어 → trailing-array hack heuristic 으로 Repeat=-1 (가변) 로 reclassify.
 	if len(s.Output) != 2 {
 		t.Fatalf("Output len=%d want 2 (rcnt + orec): %+v", len(s.Output), s.Output)
 	}
 	rec := s.Output[1]
-	if rec.Name != "orec" || rec.CType != "struct" || rec.Repeat != 1 {
-		t.Errorf("orec=%+v", rec)
+	if rec.Name != "orec" || rec.CType != "struct" || rec.Repeat != -1 {
+		t.Errorf("orec=%+v (Repeat=-1 expected — trailing-array hack)", rec)
 	}
 	if len(rec.Children) != 3 {
 		t.Errorf("orec children=%d want 3", len(rec.Children))
@@ -112,6 +113,95 @@ func TestParse_W3382_NamedRecord(t *testing.T) {
 	}
 	if len(orec.Children) != 4 {
 		t.Errorf("orec children len=%d want 4 (svcId/taskLevel/noOfProcess/path), got %+v", len(orec.Children), orec.Children)
+	}
+}
+
+// trailing-array hack heuristic — *_cnt + orec[1] 패턴이면 가변 grid (Repeat=-1) 로 reclassify.
+// 운영 헤더 ~98% 가 이 패턴 (broker 가 grid_cnt 만큼 실제 byte 채워옴).
+func TestReclassifyTrailingArray_GridCnt(t *testing.T) {
+	src := `typedef struct { // Output
+  char grid01_cnt[6];
+    struct {
+      char empid[7];
+      char emnm[40];
+    } orec[1];
+} W1101S01_O;`
+	s, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Output) != 2 {
+		t.Fatalf("Output len=%d", len(s.Output))
+	}
+	if got := s.Output[1].Repeat; got != -1 {
+		t.Errorf("orec.Repeat=%d want -1 (grid01_cnt 직전이므로 가변 reclassify)", got)
+	}
+}
+
+// false positive 방지 — *_cnt 가 아닌 일반 char field 직전이면 Repeat 유지 (1).
+func TestReclassifyTrailingArray_NotMisidentified(t *testing.T) {
+	src := `typedef struct { // Output
+  char branch_name[20];
+    struct {
+      char val[8];
+    } orec[1];
+} W9999S99_O;`
+	s, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Output[1].Repeat; got != 1 {
+		t.Errorf("orec.Repeat=%d want 1 (branch_name 은 count field 아님)", got)
+	}
+}
+
+// inline struct 에 [] (가변) 명시한 경우 — spec.go:340 unreachable 분기 수정 검증.
+func TestReclassifyTrailingArray_OrecExplicitEmpty(t *testing.T) {
+	src := `typedef struct { // Output
+  char rcnt[6];
+    struct {
+      char val[8];
+    } orec[];
+} W9998S98_O;`
+	s, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Output[1].Repeat; got != -1 {
+		t.Errorf("orec.Repeat=%d want -1 (orec[] 는 가변)", got)
+	}
+}
+
+// 다양한 count 컨벤션 (rcnt / list_cnt / *_count) 모두 인식.
+func TestReclassifyTrailingArray_CountNamePatterns(t *testing.T) {
+	cases := []struct {
+		name       string
+		countNm    string
+		wantRepeat int
+	}{
+		{"grid01_cnt", "grid01_cnt", -1},
+		{"rcnt", "rcnt", -1},
+		{"cnt", "cnt", -1},
+		{"list_cnt", "list_cnt", -1},
+		{"item_count", "item_count", -1},
+		{"COUNT (uppercase)", "COUNT", -1},
+		{"branch_name (NOT)", "branch_name", 1},
+		{"cntr (NOT — cnt 끝아님)", "cntr", 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := "typedef struct {\n  char " + c.countNm + "[6];\n    struct {\n      char x[1];\n    } orec[1];\n} W_O;\n"
+			s, err := Parse(src)
+			if err != nil {
+				t.Fatalf("Parse: %v\nsrc=%s", err, src)
+			}
+			if len(s.Output) < 2 {
+				t.Fatalf("Output len=%d want 2 — %+v", len(s.Output), s.Output)
+			}
+			if got := s.Output[1].Repeat; got != c.wantRepeat {
+				t.Errorf("countNm=%q → orec.Repeat=%d want %d", c.countNm, got, c.wantRepeat)
+			}
+		})
 	}
 }
 

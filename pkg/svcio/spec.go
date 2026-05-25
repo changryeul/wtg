@@ -145,7 +145,54 @@ func Parse(text string) (*SvcSpec, error) {
 
 	// _O 가 _R 보다 먼저 파싱됐을 가능성 — 한 번 더 resolve.
 	spec.Output = resolveRecords(spec.Output, spec.Records)
+
+	// trailing-array hack 보정 — `*_cnt` + `orec[1]` 패턴이면 가변 grid 로 reclassify.
+	// 운영 헤더의 ~98% 가 이 패턴 (orec[1] 선언 + grid_cnt 직전) 인데 wire 에는 N 행
+	// 채워옴 → 1 행 고정으로 읽으면 N-1 행 손실. 본 후처리는 spec 에서 Repeat=-1 로
+	// 미리 표시해서 wire.go 의 가변 grid 로직(직전 char field ASCII int) 이 동작하게.
+	reclassifyTrailingArrays(spec.Input)
+	reclassifyTrailingArrays(spec.Output)
 	return spec, nil
+}
+
+// reclassifyTrailingArrays — fields 안의 (count_field, orec[1]) 페어를 검출해
+// orec.Repeat 을 -1 (가변) 로 갱신. 재귀 — nested grid 안에 또 grid 가 있어도 처리.
+//
+// 검출 규칙:
+//   - prev 가 children 없는 char-style 필드 (Children 비어있고 Size>0) +
+//     이름이 isCountFieldName 패턴
+//   - cur 가 nested struct (Children > 0) + 현재 Repeat == 1
+//   → cur.Repeat = -1
+func reclassifyTrailingArrays(fields []Field) {
+	for i := range fields {
+		if i > 0 {
+			prev := fields[i-1]
+			cur := &fields[i]
+			if cur.Repeat == 1 && len(cur.Children) > 0 &&
+				len(prev.Children) == 0 && prev.Size > 0 &&
+				isCountFieldName(prev.Name) {
+				cur.Repeat = -1
+			}
+		}
+		if len(fields[i].Children) > 0 {
+			reclassifyTrailingArrays(fields[i].Children)
+		}
+	}
+}
+
+// isCountFieldName — record-count field 작명 컨벤션 인식.
+// 운영 헤더 sample 에 등장하는 패턴: grid01_cnt / grid02_cnt / rcnt / cnt /
+// list_cnt / *_count 등.
+func isCountFieldName(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return false
+	}
+	switch s {
+	case "rcnt", "cnt", "count":
+		return true
+	}
+	return strings.HasSuffix(s, "_cnt") || strings.HasSuffix(s, "_count")
 }
 
 // resolveRecords — Field.CType 이 spec.Records 의 key 와 일치하면 Children 으로 풀어 inline.
@@ -332,18 +379,22 @@ func readInlineStruct(scanner *bufio.Scanner) (body, name string, repeat int, er
 					// 닫는 라인. 이후 `} orec[1];` 해석.
 					afterClose := trim[i+1:]
 					m := reInlineStructClose.FindStringSubmatch(afterClose)
-					if len(m) < 2 {
+					if len(m) < 4 {
 						return "", "", 0, errors.New("svcio: 인라인 struct close 패턴 불일치: " + afterClose)
 					}
 					name = m[1]
+					// m[2] 가 비어있지 않으면 "[N]" 또는 "[]" 가 있는 것.
+					// m[3] 은 그 안 N (빈 값이면 가변).
 					if m[2] != "" {
-						if m[2] == "" {
-							repeat = -1
+						if m[3] == "" {
+							repeat = -1 // "[]" — 가변
 						} else {
-							n, _ := strconv.Atoi(m[2])
+							n, _ := strconv.Atoi(m[3])
 							repeat = n
 						}
 					}
+					// m[2] 비어있으면 "} orec;" — 괄호 없음. repeat=0 그대로
+					// (wire.go 가 1 로 정규화).
 					return sb.String(), name, repeat, nil
 				}
 			}
@@ -416,6 +467,10 @@ var (
 	// 인라인 nested 의 시작 — `struct {`.
 	reInlineStructOpen = regexp.MustCompile(`^\s*struct\s*\{`)
 
-	// 인라인 nested 의 종료 — `} NAME[N];` 또는 `} NAME[];`. group 1 name, group 2 repeat ("" 면 0/[N] 미존재).
-	reInlineStructClose = regexp.MustCompile(`\s*(\w+)(?:\s*\[\s*(\d*)\s*\])?\s*;`)
+	// 인라인 nested 의 종료 — `} NAME[N];` / `} NAME[];` / `} NAME;`.
+	//   group 1 = name
+	//   group 2 = "[N]" 또는 "[]" 그대로 (괄호 자체 — 빈 값이면 괄호 미존재)
+	//   group 3 = N (digits, 빈 값이면 [] 가변)
+	// group 2/3 분리는 "[]" (가변) 와 괄호 미존재 (single struct) 의 모호성 제거용.
+	reInlineStructClose = regexp.MustCompile(`\s*(\w+)(\s*\[\s*(\d*)\s*\])?\s*;`)
 )

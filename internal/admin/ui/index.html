@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>WTG Control · mci-admin</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<!-- 마진 재계산 결과 시각화용. lightweight-charts v4.2 — candlestick / line. -->
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
   // 핵심 색상 토큰은 CSS 변수로 추상화 — body[data-theme] 에 따라 light/dark 자동 전환.
@@ -1070,7 +1072,16 @@
                 <div class="flex gap-1">
                   <button id="mr-view-close" class="mr-view-btn px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-active="true">Close only</button>
                   <button id="mr-view-ohlc" class="mr-view-btn px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700">OHLC 전체</button>
+                  <button id="mr-view-chart" class="mr-view-btn px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700">차트</button>
                 </div>
+              </div>
+              <div id="mr-chart-wrap" class="hidden p-3">
+                <div class="text-[10px] text-slate-500 mb-1">
+                  <span class="inline-block w-3 h-1 align-middle" style="background:#64748b"></span> raw mid
+                  <span class="inline-block w-3 h-1 align-middle ml-3" style="background:#22d3ee"></span> customer bid
+                  <span class="inline-block w-3 h-1 align-middle ml-3" style="background:#f59e0b"></span> customer ask
+                </div>
+                <div id="mr-chart" style="width: 100%; height: 360px;"></div>
               </div>
               <table class="w-full text-xs" id="mr-table-close">
                 <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
@@ -2759,14 +2770,79 @@ function initMarginRecompute() {
   $("#mr-run").onclick = runMarginRecompute;
   $("#mr-view-close").onclick = () => setMarginView("close");
   $("#mr-view-ohlc").onclick = () => setMarginView("ohlc");
+  $("#mr-view-chart").onclick = () => setMarginView("chart");
 }
 
 function setMarginView(mode) {
-  const close = mode === "close";
-  $("#mr-view-close").dataset.active = close ? "true" : "false";
-  $("#mr-view-ohlc").dataset.active = close ? "false" : "true";
-  $("#mr-table-close").classList.toggle("hidden", !close);
-  $("#mr-table-ohlc").classList.toggle("hidden", close);
+  $("#mr-view-close").dataset.active = mode === "close" ? "true" : "false";
+  $("#mr-view-ohlc").dataset.active = mode === "ohlc" ? "true" : "false";
+  $("#mr-view-chart").dataset.active = mode === "chart" ? "true" : "false";
+  $("#mr-table-close").classList.toggle("hidden", mode !== "close");
+  $("#mr-table-ohlc").classList.toggle("hidden", mode !== "ohlc");
+  $("#mr-chart-wrap").classList.toggle("hidden", mode !== "chart");
+  if (mode === "chart" && marginLastResult) {
+    drawMarginChart(marginLastResult);
+  }
+}
+
+// 마지막 결과 저장 — 토글로 차트 다시 그릴 때 재사용.
+let marginLastResult = null;
+let marginChart = null;
+let marginRawSeries = null;
+let marginCustBidSeries = null;
+let marginCustAskSeries = null;
+
+function drawMarginChart(r) {
+  const el = $("#mr-chart");
+  if (!el || !window.LightweightCharts || !r.samples?.length) return;
+  // chart 가 이미 있으면 시리즈만 갱신 (재생성 시 깜빡임 회피).
+  if (!marginChart) {
+    marginChart = LightweightCharts.createChart(el, {
+      layout: { background: { type: "solid", color: "#0f172a" }, textColor: "#cbd5e1",
+                fontFamily: "JetBrains Mono, ui-monospace, monospace" },
+      grid: { vertLines: { color: "rgba(255,255,255,0.05)" }, horzLines: { color: "rgba(255,255,255,0.05)" } },
+      rightPriceScale: { borderColor: "#1f2a40" },
+      timeScale: { borderColor: "#1f2a40", timeVisible: true, secondsVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+    // raw candle (회색 톤) + customer bid/ask 선 두 개.
+    marginRawSeries = marginChart.addCandlestickSeries({
+      upColor: "#64748b", downColor: "#475569",
+      borderUpColor: "#64748b", borderDownColor: "#475569",
+      wickUpColor: "#64748b", wickDownColor: "#475569",
+      priceLineVisible: false,
+    });
+    marginCustBidSeries = marginChart.addLineSeries({
+      color: "#22d3ee", lineWidth: 2, priceLineVisible: false,
+    });
+    marginCustAskSeries = marginChart.addLineSeries({
+      color: "#f59e0b", lineWidth: 2, priceLineVisible: false,
+    });
+    // resize observer.
+    new ResizeObserver(() => {
+      if (marginChart) marginChart.applyOptions({ width: el.clientWidth });
+    }).observe(el);
+  }
+  const tsOf = (iso) => Math.floor(new Date(iso).getTime() / 1000);
+  const midOf = (bid, ask) => (bid + ask) / 2;
+
+  const candleData = r.samples.map(s => ({
+    time: tsOf(s.opened_at),
+    open:  midOf(s.raw.open_bid,  s.raw.open_ask),
+    high:  midOf(s.raw.high_bid,  s.raw.high_ask),
+    low:   midOf(s.raw.low_bid,   s.raw.low_ask),
+    close: midOf(s.raw.close_bid, s.raw.close_ask),
+  }));
+  const bidLine = r.samples.map(s => ({
+    time: tsOf(s.opened_at), value: s.customer.close_bid,
+  }));
+  const askLine = r.samples.map(s => ({
+    time: tsOf(s.opened_at), value: s.customer.close_ask,
+  }));
+  marginRawSeries.setData(candleData);
+  marginCustBidSeries.setData(bidLine);
+  marginCustAskSeries.setData(askLine);
+  marginChart.timeScale().fitContent();
 }
 
 // datetime-local 의 value 는 local-time 으로 표시 — UTC 라고 라벨링했지만
@@ -2825,6 +2901,7 @@ async function runMarginRecompute() {
 }
 
 function renderMarginResult(r) {
+  marginLastResult = r;
   $("#mr-result").classList.remove("hidden");
   const meta = `${r.bars_processed} 봉 · table v${r.table_version} (${r.table_source}) · ${r.pair} · ${r.profile.Channel}.${r.profile.Site}.${r.profile.Tier}`;
   $("#mr-meta").textContent = meta;
@@ -2874,6 +2951,10 @@ function renderMarginResult(r) {
       h("td", { class: "px-2 py-2 text-right font-mono text-cyan-300",                            text: fmt(s.customer.low_bid) }),
       h("td", { class: "px-2 py-2 text-right font-mono text-cyan-300",                            text: fmt(s.customer.close_bid) }),
     ));
+  }
+  // 현재 차트 모드 보고 있으면 즉시 갱신.
+  if ($("#mr-view-chart").dataset.active === "true") {
+    drawMarginChart(r);
   }
 }
 

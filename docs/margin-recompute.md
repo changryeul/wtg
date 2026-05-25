@@ -132,7 +132,15 @@ quote = close).
 }]
 ```
 
-UI 의 결과 테이블은 토글 — "Close only" (legacy 7 컬럼) / "OHLC 전체" (8 점 bid).
+UI 의 결과는 3-way 토글:
+
+- **Close only** — legacy 7 컬럼 테이블 (close raw vs customer + Δ).
+- **OHLC 전체** — bid 의 O/H/L/C × raw + customer (9 컬럼).
+- **차트** — lightweight-charts:
+  - 회색 candlestick = raw mid `((bid+ask)/2)` OHLC
+  - cyan line     = customer close bid
+  - orange line   = customer close ask
+  - bid/ask 두 선이 raw 봉을 위·아래로 감싸는 spread 가 시각적으로 표현됨
 
 ## 한계
 
@@ -167,4 +175,3 @@ mci-admin 좌측 nav 의 "마진 재계산" 클릭 → 폼 + 결과 화면.
   `GET /v1/admin/margin/jobs/{id}` 로 polling. 1년+ / 100k+ 봉 시나리오.
 - **CSV / parquet export** — 정산용 다운로드.
 - **Profile multi-select** — 한 호출에 N profile 비교.
-- **차트 시각화** — 결과를 lightweight-charts 로 raw vs customer 선 비교.

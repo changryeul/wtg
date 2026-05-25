@@ -24,6 +24,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <pthread.h>
 
 #include <curl/curl.h>
 #include <cjson/cJSON.h>
@@ -422,4 +424,123 @@ const char* qid_err_name(qid_err_t e) {
     case QID_ERR_INTERNAL:     return "INTERNAL";
     default:                   return "UNKNOWN";
     }
+}
+
+/* ─── Pool — multi-threaded 엔진용 ────────────────────────────────────── */
+
+struct qid_client_pool {
+    qid_client_t** all;     /* 전체 client array (lifecycle 보관) */
+    qid_client_t** free;    /* free stack — top = free[free_n-1] */
+    size_t cap;
+    size_t free_n;
+    pthread_mutex_t mu;
+    pthread_cond_t  cv;     /* free 가 비어있을 때 wait */
+    int             closed;
+    /* 카운터 */
+    uint64_t acquires;
+    uint64_t contended;
+};
+
+qid_client_pool_t* qid_client_pool_new(const qid_client_options_t* opts, size_t size) {
+    if (!opts || size == 0) return NULL;
+    qid_client_pool_t* p = (qid_client_pool_t*)calloc(1, sizeof(*p));
+    if (!p) return NULL;
+    p->all  = (qid_client_t**)calloc(size, sizeof(qid_client_t*));
+    p->free = (qid_client_t**)calloc(size, sizeof(qid_client_t*));
+    if (!p->all || !p->free) {
+        free(p->all); free(p->free); free(p);
+        return NULL;
+    }
+    p->cap = size;
+    /* N 개 client 사전 생성. 1 개라도 실패하면 전체 rollback. */
+    for (size_t i = 0; i < size; i++) {
+        qid_client_t* c = qid_client_new(opts);
+        if (!c) {
+            for (size_t j = 0; j < i; j++) qid_client_free(p->all[j]);
+            free(p->all); free(p->free); free(p);
+            return NULL;
+        }
+        p->all[i] = c;
+        p->free[i] = c;
+    }
+    p->free_n = size;
+    pthread_mutex_init(&p->mu, NULL);
+    pthread_cond_init(&p->cv, NULL);
+    return p;
+}
+
+void qid_client_pool_free(qid_client_pool_t* pool) {
+    if (!pool) return;
+    pthread_mutex_lock(&pool->mu);
+    pool->closed = 1;
+    pthread_cond_broadcast(&pool->cv);  /* acquire 대기 중인 thread 깨움 */
+    pthread_mutex_unlock(&pool->mu);
+
+    /* 모든 client 자원 해제 — 호출자가 in-use client 를 더 안 쓴다고 가정. */
+    for (size_t i = 0; i < pool->cap; i++) {
+        if (pool->all[i]) qid_client_free(pool->all[i]);
+    }
+    pthread_mutex_destroy(&pool->mu);
+    pthread_cond_destroy(&pool->cv);
+    free(pool->all);
+    free(pool->free);
+    free(pool);
+}
+
+qid_client_t* qid_client_pool_acquire(qid_client_pool_t* pool) {
+    if (!pool) return NULL;
+    pthread_mutex_lock(&pool->mu);
+    pool->acquires++;
+    int waited = 0;
+    while (pool->free_n == 0 && !pool->closed) {
+        waited = 1;
+        pthread_cond_wait(&pool->cv, &pool->mu);
+    }
+    if (waited) pool->contended++;
+    if (pool->closed) {
+        pthread_mutex_unlock(&pool->mu);
+        return NULL;
+    }
+    qid_client_t* c = pool->free[--pool->free_n];
+    pthread_mutex_unlock(&pool->mu);
+    return c;
+}
+
+qid_client_t* qid_client_pool_try_acquire(qid_client_pool_t* pool) {
+    if (!pool) return NULL;
+    pthread_mutex_lock(&pool->mu);
+    pool->acquires++;
+    if (pool->free_n == 0 || pool->closed) {
+        if (pool->free_n == 0) pool->contended++;
+        pthread_mutex_unlock(&pool->mu);
+        return NULL;
+    }
+    qid_client_t* c = pool->free[--pool->free_n];
+    pthread_mutex_unlock(&pool->mu);
+    return c;
+}
+
+void qid_client_pool_release(qid_client_pool_t* pool, qid_client_t* c) {
+    if (!pool || !c) return;
+    pthread_mutex_lock(&pool->mu);
+    if (pool->free_n < pool->cap) {
+        pool->free[pool->free_n++] = c;
+        pthread_cond_signal(&pool->cv);
+    }
+    /* free_n == cap 이면 호출자 버그 (이중 release) — 묵음 무시 */
+    pthread_mutex_unlock(&pool->mu);
+}
+
+qid_client_pool_stats_t qid_client_pool_stats(const qid_client_pool_t* pool) {
+    qid_client_pool_stats_t s = {0};
+    if (!pool) return s;
+    /* 비-const lock — 통계 읽기지만 일관성 위해 lock. cast 는 표준 패턴. */
+    pthread_mutex_t* mu = (pthread_mutex_t*)&pool->mu;
+    pthread_mutex_lock(mu);
+    s.size      = pool->cap;
+    s.available = pool->free_n;
+    s.acquires  = pool->acquires;
+    s.contended = pool->contended;
+    pthread_mutex_unlock(mu);
+    return s;
 }

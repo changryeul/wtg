@@ -101,8 +101,37 @@ fill_order(order, mr.record.bid, mr.record.ask);
 ## 스레드 모델
 
 - `qid_client_t` 인스턴스는 단일 스레드 (libcurl easy handle 의 표준 규칙).
-- 다중 스레드 엔진은 **스레드별로 인스턴스 분리** 권장 (pool 패턴).
-- v2 후속 — `qid_client_pool_t` 추상화 검토.
+- 다중 스레드 엔진은 `qid_client_pool_t` 사용 (아래).
+
+### qid_client_pool_t — 멀티스레드 엔진 권장
+
+```c
+qid_client_pool_t* pool = qid_client_pool_new(&opts, /*size=*/8);
+
+/* order handler thread N */
+qid_client_t* c = qid_client_pool_acquire(pool);   /* block 또는 NULL (closed) */
+qid_validate(c, ...);
+qid_mark_consumed(c, ...);
+qid_client_pool_release(pool, c);
+
+/* boot 시 N 개 client 미리 생성 — TLS handshake / connection 비용을 정적
+   pool 에 spread. acquire/release 는 mutex + condvar 으로 thread-safe. */
+```
+
+운영 size 선택:
+- pool size = 동시 in-flight 주문 thread 수의 1.5x 권장 (적당한 여유).
+- size 가 부족하면 `qid_client_pool_stats_t.contended` 가 증가 — 메트릭으로
+  알림. 너무 크면 mci-price 측 connection 수 늘어남 (보통 문제 없음).
+
+비-블록 변형:
+```c
+qid_client_t* c = qid_client_pool_try_acquire(pool);
+if (!c) { /* pool 비었음 — fast reject 또는 fallback */ }
+```
+
+테스트 binary `test_pool` 가 pool size 4 + thread 16 × 호출 50 = 800 RPC
+시나리오 — race / leak / 호출 누락 검증. `make test_pool` 후 mci-price
+띄워두고 `./test_pool` 실행.
 
 ## 에러 매핑
 

@@ -16,9 +16,11 @@ LDLIBS  ?= $(shell pkg-config --libs   libcurl libcjson 2>/dev/null)
 ifeq ($(strip $(LDLIBS)),)
 LDLIBS  := -lcurl -lcjson
 endif
+# pool 은 pthread 사용 — 항상 link.
+LDLIBS  += -lpthread
 
 OBJS    := quoteid_client.o
-TARGETS := example_fix_flow
+TARGETS := example_fix_flow test_pool
 
 .PHONY: all lib clean
 
@@ -29,6 +31,9 @@ quoteid_client.o: quoteid_client.c quoteid_client.h
 
 example_fix_flow: example_fix_flow.c quoteid_client.o
 	$(CC) $(CFLAGS) example_fix_flow.c quoteid_client.o $(LDLIBS) -o $@
+
+test_pool: test_pool.c quoteid_client.o
+	$(CC) $(CFLAGS) test_pool.c quoteid_client.o $(LDLIBS) -o $@
 
 lib: libquoteid.a
 

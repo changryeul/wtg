@@ -1159,10 +1159,54 @@ HTTP → JSON → C struct → FIX OrdRejReason 매핑 전체 path 작동.
 - 다중 thread 엔진은 thread 별 인스턴스 분리 (pool 패턴).
 - v2 후속 — `qid_client_pool_t` 추상화.
 
+## v1.22 — C SDK pool (멀티스레드 엔진용, commit 추가)
+
+매칭 엔진이 멀티스레드라 v1.21 의 단일 client 로는 부족 — libcurl easy
+handle 의 단일 스레드 규칙 회피용 thread-safe pool.
+
+### API
+
+```c
+qid_client_pool_t* pool = qid_client_pool_new(&opts, size);
+qid_client_t* c = qid_client_pool_acquire(pool);   /* block 또는 NULL */
+qid_client_t* c = qid_client_pool_try_acquire(pool); /* non-block */
+qid_client_pool_release(pool, c);
+qid_client_pool_stats_t s = qid_client_pool_stats(pool);
+```
+
+### 내부 모델
+
+- 고정 array N 개 client 사전 생성 (boot 1회) — TLS handshake / connection
+  비용을 사전 분산.
+- free stack (LIFO) — release 즉시 cache-warm client 가 다음 acquire 에.
+- pthread mutex + condvar — acquire block, release signal.
+- 카운터 — `acquires` / `contended` (block 한 횟수, saturation 지표).
+
+### 검증
+
+`etc/sdk/c/test_pool.c` — pool size 4 + 16 thread × 50 호출 = 800 RPC.
+
+```
+pool=4 workers=16 iters_per=50 (total RPC=800)
+stats: size=4 available=4 acquires=800 contended=21
+ok=800 err=0 not_found=800
+OK
+```
+
+- `available=4` — 모두 반환됨 (leak 없음).
+- `contended=21` — saturation 시 block 후 다른 thread release 대기 정상.
+- `ok=800` — race / 호출 누락 없음.
+
+### 운영 — pool size 선택
+
+- 동시 in-flight order thread × 1.5 권장 (여유).
+- `contended` 증가율을 Prometheus 외부 메트릭으로 노출하면 saturation
+  실시간 감지 (v2 — qid_client_pool 의 Prometheus collector).
+
 ## v2 후보
 
-- `qid_client_pool_t` — 다중 스레드 thread-safe pool.
 - libcurl multi-handle 비동기 변형 (`qid_validate_async`).
+- C SDK pool stats 의 Prometheus collector 통합.
 - recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
   대시보드 응답 속도 개선.
 - audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.

@@ -222,6 +222,76 @@ const char* qid_status_name(qid_status_t s);
  */
 const char* qid_err_name(qid_err_t e);
 
+/* ─── Pool — multi-threaded 엔진용 ────────────────────────────────────── */
+
+/*
+ * qid_client_pool_t — 고정 크기 client pool. libcurl easy handle 의 단일
+ * 스레드 규칙 회피용. 매칭 엔진의 N order handler thread 가 동시에 사용
+ * 가능하도록 N 개 (또는 그 이상의 size) client 를 미리 생성.
+ *
+ * 흐름:
+ *
+ *   pool 생성 (boot 1회)
+ *      ↓
+ *   thread 안에서:
+ *      c = pool_acquire(pool)  ← block 가능
+ *      qid_validate(c, ...)
+ *      qid_mark_consumed(c, ...)
+ *      pool_release(pool, c)
+ *
+ * pool 의 free list 가 비어있으면 acquire 는 다른 thread 가 release 할
+ * 때까지 block. try_acquire 는 즉시 NULL.
+ *
+ * 통계는 qid_client_pool_stats — 운영 모니터링용.
+ */
+typedef struct qid_client_pool qid_client_pool_t;
+
+/*
+ * qid_client_pool_new — size 만큼의 client 를 미리 생성. opts 는 모든
+ * client 에 동일 적용 (mTLS cert / base_url 등). 실패 시 NULL.
+ */
+qid_client_pool_t* qid_client_pool_new(const qid_client_options_t* opts,
+                                       size_t size);
+
+/*
+ * qid_client_pool_free — 모든 in-use client 가 release 된 후 호출 권장.
+ * 호출 시점에 in-use 가 있어도 pool 자원은 해제되지만, 그 client 를 쓰는
+ * thread 는 use-after-free 위험. graceful shutdown 절차는 호출자 책임.
+ */
+void qid_client_pool_free(qid_client_pool_t* pool);
+
+/*
+ * qid_client_pool_acquire — pool 에서 client 하나 받음.
+ * 비어있으면 다른 thread 의 release 까지 block. pool 이 closed 면 NULL.
+ */
+qid_client_t* qid_client_pool_acquire(qid_client_pool_t* pool);
+
+/*
+ * qid_client_pool_try_acquire — non-blocking. pool 비어있으면 즉시 NULL.
+ */
+qid_client_t* qid_client_pool_try_acquire(qid_client_pool_t* pool);
+
+/*
+ * qid_client_pool_release — acquire 한 client 반환. 다른 thread 가 곧
+ * 사용 가능.
+ */
+void qid_client_pool_release(qid_client_pool_t* pool, qid_client_t* c);
+
+/*
+ * qid_client_pool_stats_t — 운영 모니터링 카운터 snapshot.
+ */
+typedef struct {
+    size_t size;          /* 총 client 수 */
+    size_t available;     /* 현재 free (acquire 가능) 수 */
+    uint64_t acquires;    /* 누적 acquire 호출 */
+    uint64_t contended;   /* 누적 — block 해야 했던 acquire (saturation 지표) */
+} qid_client_pool_stats_t;
+
+/*
+ * qid_client_pool_stats — 현재 카운터 snapshot.
+ */
+qid_client_pool_stats_t qid_client_pool_stats(const qid_client_pool_t* pool);
+
 #ifdef __cplusplus
 }
 #endif

@@ -426,6 +426,191 @@
           "refId": "A"
         }
       ]
+    },
+
+    {
+      "type": "row",
+      "title": "AsyncRegistry (Put 비동기 batch)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 49},
+      "id": 600,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Queue length (현재)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 50},
+      "id": 50,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5000},
+              {"color": "red", "value": 8000}
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "wtg_quoteid_async_queue_len{service=~\"$service\"}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Dropped rate (alert if > 0)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 50},
+      "id": 51,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 2,
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 0.01}
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(wtg_quoteid_async_dropped_total{service=~\"$service\"}[$rate_window]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Written rate",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 50},
+      "id": 52,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "fieldConfig": {"defaults": {"unit": "ops", "decimals": 1}},
+      "targets": [
+        {
+          "expr": "sum(rate(wtg_quoteid_async_written_total{service=~\"$service\"}[$rate_window]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Failed rate",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 50},
+      "id": 53,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 2,
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.001},
+              {"color": "red", "value": 0.01}
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(wtg_quoteid_async_failed_total{service=~\"$service\"}[$rate_window]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Enqueue / Write / Drop throughput",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 54},
+      "id": 54,
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"]}},
+      "targets": [
+        {
+          "expr": "sum(rate(wtg_quoteid_async_enqueued_total{service=~\"$service\"}[$rate_window]))",
+          "legendFormat": "enqueued",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(wtg_quoteid_async_written_total{service=~\"$service\"}[$rate_window]))",
+          "legendFormat": "written",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(wtg_quoteid_async_dropped_total{service=~\"$service\"}[$rate_window]))",
+          "legendFormat": "dropped",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(rate(wtg_quoteid_async_failed_total{service=~\"$service\"}[$rate_window]))",
+          "legendFormat": "failed",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue length over time",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 54},
+      "id": 55,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"fillOpacity": 30, "gradientMode": "opacity"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5000},
+              {"color": "red", "value": 8000}
+            ]
+          }
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right"}},
+      "targets": [
+        {
+          "expr": "wtg_quoteid_async_queue_len{service=~\"$service\"}",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

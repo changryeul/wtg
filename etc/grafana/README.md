@@ -42,6 +42,11 @@ curl -X POST http://grafana.local/api/dashboards/db \
 | Batch | Batch size 분포 heatmap | 분포 변화 detect |
 | Errors | RBAC denied / Internal | 보안 / 인프라 이상 |
 | Errors | Consume conflict (already / expired / not_found) | race / 클럭 skew |
+| AsyncRegistry | Queue length (stat) | 현재 backlog (5k yellow, 8k red) |
+| AsyncRegistry | Dropped rate (stat) | audit 누락 (alert) |
+| AsyncRegistry | Written / Failed rate (stat) | worker 처리량 / 실패 |
+| AsyncRegistry | Enqueue / Write / Drop / Fail throughput | 시계열 비교 |
+| AsyncRegistry | Queue length over time | 백로그 추세 (saturation 진행 추적) |
 
 ### Alert rules — quoteid-alerts.json (v1.16 추가)
 

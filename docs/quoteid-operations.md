@@ -1067,10 +1067,35 @@ rate(wtg_quoteid_async_written_total[5m])
 - async 비활성 시 (--quoteid-async-queue=0) 이 코드는 실행 안 됨 — 메트릭
   시계열도 안 생김 (Prometheus rate query 가 빈 시리즈 처리).
 
+## v1.20 — Grafana dashboard AsyncRegistry row (commit 추가)
+
+v1.19 의 메트릭 + alert 위에 시각화 row 추가. `etc/grafana/quoteid-dashboard.json`
+이 26 패널 / 32 PromQL 쿼리로 확장 (이전 19 / 23).
+
+### 새 row 구성 (y=49~)
+
+| 위치 | 패널 | 의도 |
+|------|------|------|
+| stat | Queue length (현재) | scrape 시점 backlog, 5k yellow / 8k red |
+| stat | Dropped rate | audit 누락 alert (red if > 0.01/s) |
+| stat | Written rate | worker 처리량 — 정상 시 enqueued 와 동일 |
+| stat | Failed rate | yellow 0.001 / red 0.01 (Redis 이상) |
+| ts   | Enqueue / Write / Drop / Fail throughput | 시계열 비교 — write rate 가 enqueue 와 lag 가 있으면 backlog 누적 신호 |
+| ts   | Queue length over time | backlog 추세 + 임계 라인 (5k/8k) |
+
+### 운영 해석
+
+- **queue 가 일정 수준에서 멈춰 있음** — 정상 (incoming rate = drain rate).
+- **queue 가 우상향** — drain 부족, 곧 saturation. `--quoteid-async-queue` 증가
+  또는 Redis 응답 점검.
+- **dropped 발생** — queue saturation 결과. audit 누락 알림 (PagerDuty).
+  drop 된 quote 의 검증은 NOT_FOUND → 신규 주문 자연 거절 (fail-safe).
+- **enqueued ↔ written 격차** — 짧으면 batch wait (FlushInterval), 지속되면
+  Redis 응답 지연.
+
 ## v2 후보
 
 - WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
 - recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
   대시보드 응답 속도 개선.
 - audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.
-- Grafana dashboard 에 AsyncRegistry row 추가 (drop / queue_len / written rate).

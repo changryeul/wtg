@@ -74,21 +74,33 @@ rule_files:
 | `wtg-quoteid-async` | 3 (drop ratio / lag / queue max) | backpressure 지표 |
 | `wtg-quoteid-throughput` | 3 (validate / mark / total rate) | 처리량 추세 |
 
-#### 사용 예 — alert 가 recorded series 참조
+#### 적용 현황 (v1.27)
 
-이전 (raw expression):
+alerts JSON 의 다음 3개 rule 이 v1.25 recording series 사용:
+
+| Rule | 변경된 expr |
+|------|------------|
+| `wtg-quoteid-rbac-denied` | `sum(wtg:quoteid_denied:rate5m)` |
+| `wtg-quoteid-consume-already` | `max(wtg:quoteid_already_consumed:ratio)` |
+| `wtg-quoteid-batch-latency` | `max(wtg:quoteid_batch_validate:p99)` |
+
+dashboard 의 Overview "ALREADY_CONSUMED ratio" stat 도 recording 사용:
 ```promql
-sum(rate(wtg_quoteid_op_total{status="consume_already"}[5m])) /
-clamp_min(sum(rate(wtg_quoteid_op_total{status=~"consume_.*"}[5m])), 1) > 0.001
+max(wtg:quoteid_already_consumed:ratio{service=~"$service"})
 ```
 
-v1.25 이후 (recording rule 사용):
-```promql
-wtg:quoteid_already_consumed:ratio > 0.001
-```
+dashboard 의 latency 패널 (Validate / MarkConsumed / Batch* p50/p95/p99) 는
+사용자 변경 가능한 `$rate_window` 변수 의존 — raw expression 유지.
 
-Alert 가 매 평가마다 raw rate 두 번 + clamp_min + division 안 함 — Prometheus
-부하 ↓.
+#### 운영 주의
+
+위 4 항목이 활성화되려면 Prometheus 측에 recording rules 가 먼저 로드
+되어야 한다. 로드 안 됐으면 alerts / dashboard 패널이 비어 보임. 점검
+:
+```bash
+curl -s http://prometheus:9090/api/v1/rules | jq '.data.groups[].rules[] | select(.type=="recording") | .name'
+```
+`wtg:quoteid_*` 가 보여야 OK.
 
 ### Alert rules — quoteid-alerts.json (v1.16 추가)
 

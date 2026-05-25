@@ -17,7 +17,7 @@
               "refId": "A",
               "datasourceUid": "${DS_PROMETHEUS}",
               "model": {
-                "expr": "sum(rate(wtg_quoteid_op_total{status=\"denied\"}[5m]))",
+                "expr": "sum(wtg:quoteid_denied:rate5m)",
                 "refId": "A",
                 "instant": true
               },
@@ -60,7 +60,7 @@
               "refId": "A",
               "datasourceUid": "${DS_PROMETHEUS}",
               "model": {
-                "expr": "sum(rate(wtg_quoteid_op_total{status=\"consume_already\"}[5m])) / clamp_min(sum(rate(wtg_quoteid_op_total{status=~\"consume_.*\"}[5m])), 1)",
+                "expr": "max(wtg:quoteid_already_consumed:ratio)",
                 "refId": "A",
                 "instant": true
               },
@@ -103,7 +103,7 @@
               "refId": "A",
               "datasourceUid": "${DS_PROMETHEUS}",
               "model": {
-                "expr": "histogram_quantile(0.99, sum by (le) (rate(wtg_quoteid_batch_duration_seconds_bucket{op=\"batch_validate\"}[5m])))",
+                "expr": "max(wtg:quoteid_batch_validate:p99)",
                 "refId": "A",
                 "instant": true
               },

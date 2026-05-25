@@ -1387,8 +1387,27 @@ mci-admin server
 - 운영 + 감사 — etcdctl 로 직접 변경한 케이스도 UI 에 toast — 우회 변경
   추적성.
 
+## v1.27 — Recording series 적용 (commit 추가)
+
+v1.25 의 recording rules 가 dashboard / alerts 에서 실제 사용되도록 4
+항목 교체.
+
+| 위치 | 이전 expr | 신규 expr |
+|------|-----------|-----------|
+| alert `wtg-quoteid-rbac-denied` | `sum(rate(wtg_quoteid_op_total{status="denied"}[5m]))` | `sum(wtg:quoteid_denied:rate5m)` |
+| alert `wtg-quoteid-consume-already` | `sum(rate(...{status="consume_already"}[5m])) / clamp_min(..., 1)` | `max(wtg:quoteid_already_consumed:ratio)` |
+| alert `wtg-quoteid-batch-latency` | `histogram_quantile(0.99, sum by (le) (...))` | `max(wtg:quoteid_batch_validate:p99)` |
+| dashboard "ALREADY_CONSUMED ratio" stat | raw ratio | `max(wtg:quoteid_already_consumed:ratio{service=~"$service"})` |
+
+dashboard 의 latency 패널은 `$rate_window` 변수 의존 (사용자 조정 가능) →
+raw 유지.
+
+### 운영 주의
+
+Prometheus 에 v1.25 recording rules 가 로드되어 있어야 위 expression 이
+의미 있음. 안 로드면 alerts / 패널이 비어 보임 — `curl -s
+prometheus:9090/api/v1/rules` 로 `wtg:quoteid_*` 시계열 확인.
+
 ## v2 후보
 
-- Grafana dashboard / alerts 가 v1.25 의 recording series 사용하도록 갱신
-  (외부 인터페이스 변경 없으나 점진 cleanup).
-- mci-admin UI 의 다른 broadcast 도 (현재 5종 외) 통합.
+- mci-admin UI 의 다른 broadcast 도 (현재 5종 외) 통합 — 필요 시 별도 트랙.

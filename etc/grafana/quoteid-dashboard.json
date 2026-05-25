@@ -186,7 +186,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(wtg_quoteid_op_total{service=~\"$service\", status=\"consume_already\"}[$rate_window])) / clamp_min(sum(rate(wtg_quoteid_op_total{service=~\"$service\", status=~\"consume_.*\"}[$rate_window])), 1)",
+          "expr": "max(wtg:quoteid_already_consumed:ratio{service=~\"$service\"})",
           "refId": "A"
         }
       ]

@@ -1093,9 +1093,76 @@ v1.19 의 메트릭 + alert 위에 시각화 row 추가. `etc/grafana/quoteid-da
 - **enqueued ↔ written 격차** — 짧으면 batch wait (FlushInterval), 지속되면
   Redis 응답 지연.
 
+## v1.21 — C SDK (commit 추가)
+
+매칭 엔진이 C 로 만들어졌으므로 gRPC-C++ (~수십 MB) 대신 HTTP REST +
+libcurl 기반 thin client SDK. `etc/sdk/c/` 에 5 파일.
+
+### 파일
+
+- `quoteid_client.h` — 공용 C API (qid_client_t opaque + 4 RPC + 2 헬퍼).
+- `quoteid_client.c` — 구현 (~430 라인, libcurl + cJSON).
+- `example_fix_flow.c` — FIX NewOrderSingle handler 예제.
+- `Makefile` — pkg-config 우선, fallback `-lcurl -lcjson`.
+- `README.md` — OS 별 설치 / 빌드 / API / 스레드 모델 / TLS 권장.
+
+### 의존성
+
+| OS | 설치 |
+|----|------|
+| Ubuntu/Debian | `apt install libcurl4-openssl-dev libcjson-dev` |
+| RHEL/CentOS | `yum install libcurl-devel cjson-devel` |
+| macOS | `brew install curl cjson` |
+| Alpine | `apk add curl-dev cjson-dev` |
+
+운영 시스템 모두에 표준 패키지로 존재 — 추가 빌드 단계 불필요.
+
+### API 요약
+
+```c
+qid_client_t* qid_client_new(const qid_client_options_t* opts);
+void          qid_client_free(qid_client_t* c);
+
+qid_err_t qid_validate     (c, quote_id, &result);
+qid_err_t qid_mark_consumed(c, quote_id, consumer_id, &result);
+qid_err_t qid_batch_validate(c, quote_ids, n, results, &nout);
+qid_err_t qid_batch_mark_consumed(c, quote_ids, consumer_ids, n, results, &nout);
+```
+
+`qid_err_t` 는 transport / HTTP / JSON 레이어 에러. `qid_status_t` 는 RPC
+응답의 비즈니스 상태 (OK / NOT_FOUND / EXPIRED / ALREADY_CONSUMED). 두
+계층 분리로 fail-safe 정책 명확.
+
+### TLS / 보안
+
+`opts.ca_file / cert_file / key_file` 로 mTLS. mci-price 의
+`--http-tls-client-ca` 와 짝. dev 자체발급은 `insecure_skip_verify=true`,
+**운영 금지**.
+
+### 라이브 검증
+
+mci-price 띄워 SDK 호출:
+
+```
+$ /tmp/mci-price --listen :18084 --quoteid-instance A &
+$ QID_BASE=http://localhost:18084 QID_ENGINE_ID=test-engine \
+    ./example_fix_flow A-nonexistent order-42
+[Validate] status=NOT_FOUND pair= bid=0.00000 ask=0.00000 profile=..
+REJECT order — OrdRejReason=5 (quote_id not found)
+```
+
+HTTP → JSON → C struct → FIX OrdRejReason 매핑 전체 path 작동.
+
+### 스레드 모델
+
+- `qid_client_t` 인스턴스 = 1 thread (libcurl easy handle 표준).
+- 다중 thread 엔진은 thread 별 인스턴스 분리 (pool 패턴).
+- v2 후속 — `qid_client_pool_t` 추상화.
+
 ## v2 후보
 
-- WTG↔engine 호환 client SDK — Go 외 (Java/C++) 자동 stub 배포.
+- `qid_client_pool_t` — 다중 스레드 thread-safe pool.
+- libcurl multi-handle 비동기 변형 (`qid_validate_async`).
 - recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
   대시보드 응답 속도 개선.
 - audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.

@@ -183,7 +183,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 curl -H "Authorization: Bearer $TOKEN" \
      http://localhost:9090/v1/admin/clients  # 활성 클라이언트
 curl -H "Authorization: Bearer $TOKEN" \
-     "http://localhost:9090/v1/admin/whois?usid=trader01"
+     "http://localhost:9090/v1/admin/users?argv0=trader*"      # usid glob 검색
+curl -H "Authorization: Bearer $TOKEN" \
+     "http://localhost:9090/v1/admin/whois?argv0=ECHOSVC&argv1=PING"  # 라우팅 추적
 ```
 
 UI 의 **브로커 명령** 화면에서 같은 결과 확인 가능.

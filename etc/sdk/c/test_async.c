@@ -88,6 +88,11 @@ int main(void) {
             t_done - t0, t_done - t_submit);
     fprintf(stderr, "ok=%d err=%d not_found=%d\n", ok, err, not_found);
 
+    /* Prometheus exposition. */
+    char prom[2048];
+    size_t plen = qid_async_engine_stats_text(eng, "test-async", prom, sizeof(prom));
+    fprintf(stderr, "----- Prometheus (%zu bytes) -----\n%s-----\n", plen, prom);
+
     qid_async_engine_free(eng);
     curl_global_cleanup();
 

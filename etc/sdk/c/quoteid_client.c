@@ -21,6 +21,7 @@
 
 #include "quoteid_client.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -577,6 +578,11 @@ struct qid_async_engine {
     /* submit queue (worker 가 multi 에 add 하기 전 대기) */
     qid_async_t* head;
     qid_async_t* tail;
+    /* 카운터 — mu 보호. */
+    uint64_t submits;
+    uint64_t completed;
+    uint64_t failed;
+    int      in_flight;  /* worker 가 multi 에 add 한 후 ~ DONE 사이 */
 };
 
 static char* str_dup_or_empty(const char* s) {
@@ -620,8 +626,14 @@ static void* async_worker(void* arg) {
             if (slot_count < MAX_INFLIGHT) {
                 curl_multi_add_handle(eng->multi, h->easy);
                 slots[slot_count++] = h;
+                pthread_mutex_lock(&eng->mu);
+                eng->in_flight++;
+                pthread_mutex_unlock(&eng->mu);
             } else {
                 async_set_done(h, QID_ERR_INTERNAL); /* engine 포화 — 드물게 */
+                pthread_mutex_lock(&eng->mu);
+                eng->failed++;
+                pthread_mutex_unlock(&eng->mu);
             }
         }
 
@@ -662,6 +674,11 @@ static void* async_worker(void* arg) {
                 err = map_http_code(code);
             }
             async_set_done(h, err);
+            pthread_mutex_lock(&eng->mu);
+            eng->in_flight--;
+            if (err == QID_OK) eng->completed++;
+            else               eng->failed++;
+            pthread_mutex_unlock(&eng->mu);
             slots[idx] = slots[--slot_count];
         }
     }
@@ -672,6 +689,10 @@ static void* async_worker(void* arg) {
         if (!h) continue;
         curl_multi_remove_handle(eng->multi, h->easy);
         async_set_done(h, QID_ERR_TRANSPORT);
+        pthread_mutex_lock(&eng->mu);
+        eng->in_flight--;
+        eng->failed++;
+        pthread_mutex_unlock(&eng->mu);
     }
     return NULL;
 }
@@ -764,7 +785,9 @@ static qid_async_t* async_submit(qid_async_engine_t* eng,
 
     /* enqueue */
     pthread_mutex_lock(&eng->mu);
+    eng->submits++;
     if (eng->closed) {
+        eng->failed++;
         pthread_mutex_unlock(&eng->mu);
         async_set_done(h, QID_ERR_TRANSPORT);
         return h;
@@ -872,6 +895,106 @@ void qid_async_free(qid_async_t* h) {
     pthread_mutex_destroy(&h->mu);
     pthread_cond_destroy(&h->cv);
     free(h);
+}
+
+qid_async_engine_stats_t qid_async_engine_stats(const qid_async_engine_t* eng) {
+    qid_async_engine_stats_t s = {0};
+    if (!eng) return s;
+    pthread_mutex_t* mu = (pthread_mutex_t*)&eng->mu;
+    pthread_mutex_lock(mu);
+    s.submits   = eng->submits;
+    s.completed = eng->completed;
+    s.failed    = eng->failed;
+    s.in_flight = (uint64_t)(eng->in_flight < 0 ? 0 : eng->in_flight);
+    pthread_mutex_unlock(mu);
+    return s;
+}
+
+/* ─── Prometheus exposition format ────────────────────────────────────── */
+
+/*
+ * append_to_buf — snprintf wrapper that tracks (offset, cap) and total
+ * bytes that would have been written. caller checks if total > cap to
+ * detect truncation.
+ */
+static size_t append_to_buf(char* buf, size_t cap, size_t off,
+                            const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n;
+    if (off >= cap) {
+        /* 이미 가득 — 길이만 계산. */
+        char tmp[1];
+        n = vsnprintf(tmp, 1, fmt, ap);
+    } else {
+        n = vsnprintf(buf + off, cap - off, fmt, ap);
+    }
+    va_end(ap);
+    if (n < 0) return off;
+    return off + (size_t)n;
+}
+
+/* label fragment — service_label 있으면 `{service="X"}`, 없으면 빈 문자열. */
+static void make_label(char* out, size_t cap, const char* service_label) {
+    if (service_label && *service_label) {
+        snprintf(out, cap, "{service=\"%s\"}", service_label);
+    } else {
+        if (cap > 0) out[0] = '\0';
+    }
+}
+
+size_t qid_client_pool_stats_text(const qid_client_pool_t* pool,
+                                  const char* service_label,
+                                  char* buf, size_t cap) {
+    if (!pool || !buf) return 0;
+    qid_client_pool_stats_t s = qid_client_pool_stats(pool);
+    char lbl[128];
+    make_label(lbl, sizeof(lbl), service_label);
+    size_t off = 0;
+    off = append_to_buf(buf, cap, off,
+        "# HELP qid_pool_size Total client count in pool.\n"
+        "# TYPE qid_pool_size gauge\n"
+        "qid_pool_size%s %zu\n", lbl, s.size);
+    off = append_to_buf(buf, cap, off,
+        "# HELP qid_pool_available Current available client count.\n"
+        "# TYPE qid_pool_available gauge\n"
+        "qid_pool_available%s %zu\n", lbl, s.available);
+    off = append_to_buf(buf, cap, off,
+        "# HELP qid_pool_acquires_total Cumulative acquire() calls.\n"
+        "# TYPE qid_pool_acquires_total counter\n"
+        "qid_pool_acquires_total%s %llu\n", lbl, (unsigned long long)s.acquires);
+    off = append_to_buf(buf, cap, off,
+        "# HELP qid_pool_contended_total acquire() that had to block.\n"
+        "# TYPE qid_pool_contended_total counter\n"
+        "qid_pool_contended_total%s %llu\n", lbl, (unsigned long long)s.contended);
+    return off;
+}
+
+size_t qid_async_engine_stats_text(const qid_async_engine_t* eng,
+                                   const char* service_label,
+                                   char* buf, size_t cap) {
+    if (!eng || !buf) return 0;
+    qid_async_engine_stats_t s = qid_async_engine_stats(eng);
+    char lbl[128];
+    make_label(lbl, sizeof(lbl), service_label);
+    size_t off = 0;
+    off = append_to_buf(buf, cap, off,
+        "# HELP qid_async_submits_total Cumulative submit calls (validate / mark_consumed async).\n"
+        "# TYPE qid_async_submits_total counter\n"
+        "qid_async_submits_total%s %llu\n", lbl, (unsigned long long)s.submits);
+    off = append_to_buf(buf, cap, off,
+        "# HELP qid_async_completed_total HTTP 응답 받은 누적 (status code 무관).\n"
+        "# TYPE qid_async_completed_total counter\n"
+        "qid_async_completed_total%s %llu\n", lbl, (unsigned long long)s.completed);
+    off = append_to_buf(buf, cap, off,
+        "# HELP qid_async_failed_total TRANSPORT / 큐 포화 / engine closed 누적.\n"
+        "# TYPE qid_async_failed_total counter\n"
+        "qid_async_failed_total%s %llu\n", lbl, (unsigned long long)s.failed);
+    off = append_to_buf(buf, cap, off,
+        "# HELP qid_async_in_flight 현재 worker 가 진행 중인 요청 수.\n"
+        "# TYPE qid_async_in_flight gauge\n"
+        "qid_async_in_flight%s %llu\n", lbl, (unsigned long long)s.in_flight);
+    return off;
 }
 
 qid_client_pool_stats_t qid_client_pool_stats(const qid_client_pool_t* pool) {

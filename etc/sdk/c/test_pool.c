@@ -92,6 +92,11 @@ int main(void) {
     fprintf(stderr, "stats: size=%zu available=%zu acquires=%llu contended=%llu\n",
             s.size, s.available,
             (unsigned long long)s.acquires, (unsigned long long)s.contended);
+
+    /* Prometheus exposition format — 엔진팀이 /metrics 응답에 첨부. */
+    char prom[2048];
+    size_t plen = qid_client_pool_stats_text(pool, "test-pool", prom, sizeof(prom));
+    fprintf(stderr, "----- Prometheus (%zu bytes) -----\n%s-----\n", plen, prom);
     fprintf(stderr, "ok=%llu err=%llu not_found=%llu\n",
             (unsigned long long)atomic_load(&g_ok_count),
             (unsigned long long)atomic_load(&g_err_count),

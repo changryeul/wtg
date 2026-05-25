@@ -375,6 +375,64 @@ qid_err_t qid_async_get_mark(qid_async_t* h, qid_mark_result_t* out);
  */
 void qid_async_free(qid_async_t* h);
 
+/*
+ * qid_async_engine_stats_t — async engine 운영 카운터 snapshot.
+ */
+typedef struct {
+    uint64_t submits;     /* qid_validate_async / mark_async 총 호출 */
+    uint64_t completed;   /* 성공 완료 (HTTP code 와 무관, RPC 자체 OK) */
+    uint64_t failed;      /* TRANSPORT / 큐 포화 / engine closed */
+    uint64_t in_flight;   /* 현재 worker 가 진행 중인 개수 (snapshot) */
+} qid_async_engine_stats_t;
+
+/*
+ * qid_async_engine_stats — 현재 카운터 snapshot.
+ */
+qid_async_engine_stats_t qid_async_engine_stats(const qid_async_engine_t* eng);
+
+/* ─── Prometheus exposition format ─────────────────────────────────────── */
+
+/*
+ * qid_client_pool_stats_text — pool stats 를 Prometheus exposition 텍스트
+ * 형식으로 buf 에 출력. 엔진팀이 자기 /metrics endpoint 에 그대로 첨부하거나
+ * pushgateway 로 보낼 수 있다.
+ *
+ * service_label 은 Prometheus label `service="..."` — 다중 pool / engine
+ * 인스턴스 식별. NULL 이면 label 생략.
+ *
+ * 반환: 실제로 출력하려 한 bytes 수 (snprintf 와 동일 의미). cap 이 부족하면
+ * 부분 출력 + 반환값이 cap 이상.
+ *
+ * 출력 예 (service_label="matching-A"):
+ *
+ *   # HELP qid_pool_size Total client count in pool.
+ *   # TYPE qid_pool_size gauge
+ *   qid_pool_size{service="matching-A"} 8
+ *   # HELP qid_pool_available Current available client count.
+ *   # TYPE qid_pool_available gauge
+ *   qid_pool_available{service="matching-A"} 6
+ *   # HELP qid_pool_acquires_total Cumulative acquire() calls.
+ *   # TYPE qid_pool_acquires_total counter
+ *   qid_pool_acquires_total{service="matching-A"} 12345
+ *   # HELP qid_pool_contended_total acquire() that had to block.
+ *   # TYPE qid_pool_contended_total counter
+ *   qid_pool_contended_total{service="matching-A"} 23
+ */
+size_t qid_client_pool_stats_text(const qid_client_pool_t* pool,
+                                  const char* service_label,
+                                  char* buf, size_t cap);
+
+/*
+ * qid_async_engine_stats_text — async engine stats 의 Prometheus exposition.
+ * 출력 metric:
+ *   qid_async_submits_total / qid_async_completed_total /
+ *   qid_async_failed_total (counter)
+ *   qid_async_in_flight (gauge)
+ */
+size_t qid_async_engine_stats_text(const qid_async_engine_t* eng,
+                                   const char* service_label,
+                                   char* buf, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

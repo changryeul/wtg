@@ -219,6 +219,40 @@ dev 자체발급 cert 만 `insecure_skip_verify=true` — 운영 금지.
 - mci-price 의 alert (Grafana Unified Alerting, `etc/grafana/quoteid-alerts.json`)
   중 `denied` 가 page 임 — 엔진 cert / engine_id 설정 오류 즉시 발견.
 
+### 엔진 측 Prometheus 통합
+
+C SDK 가 자체 stats 를 Prometheus exposition 텍스트로 출력 — 엔진팀이
+자기 `/metrics` HTTP 응답에 그대로 붙이거나 pushgateway 로 push.
+
+```c
+char buf[2048];
+size_t n = qid_client_pool_stats_text(pool, "matching-A", buf, sizeof(buf));
+/* HTTP 응답에 buf 를 그대로 write — 또는 pushgateway 로 POST. */
+
+size_t m = qid_async_engine_stats_text(eng, "matching-A", buf, sizeof(buf));
+```
+
+출력 metric:
+
+```
+qid_pool_size{service="matching-A"}           8          (gauge)
+qid_pool_available{service="matching-A"}      6          (gauge)
+qid_pool_acquires_total{service="matching-A"} 12345      (counter)
+qid_pool_contended_total{service="matching-A"} 23        (counter)
+
+qid_async_submits_total{service="matching-A"} 5000       (counter)
+qid_async_completed_total{service="matching-A"} 4995     (counter)
+qid_async_failed_total{service="matching-A"} 0           (counter)
+qid_async_in_flight{service="matching-A"} 12             (gauge)
+```
+
+권장 alert 임계:
+- `rate(qid_pool_contended_total[5m]) / rate(qid_pool_acquires_total[5m]) > 0.1` —
+  pool saturation, size 늘릴 시점.
+- `qid_pool_available == 0` 가 지속 — 즉시 size 증가.
+- `rate(qid_async_failed_total[5m]) > 0.001` — TRANSPORT / 큐 포화.
+- `qid_async_in_flight > 800` (MAX_INFLIGHT=1024 기준) — 곧 포화.
+
 ## v2 후속
 
 - `qid_client_pool_t` — 다중 스레드 엔진 thread-safe pool.

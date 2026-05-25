@@ -1259,9 +1259,60 @@ OK
 - worker thread 1개 — 1 multi handle 의 CPU bound 한계. 보통 문제 없음
   (curl 은 응답 파싱이 cheap), 필요시 multi engine 인스턴스.
 
+## v1.24 — C SDK Prometheus exposition (commit 추가)
+
+엔진측 pool / async stats 를 Prometheus 텍스트 형식으로 출력. 엔진팀이
+자기 `/metrics` HTTP 응답에 첨부하거나 pushgateway 로 push — Go 측 mci-price
+의 `/metrics` 와 동등하게 엔진 client-side 도 관측 가능.
+
+### API
+
+```c
+size_t qid_client_pool_stats_text(pool, "matching-A", buf, sizeof(buf));
+size_t qid_async_engine_stats_text(eng, "matching-A", buf, sizeof(buf));
+```
+
+snprintf 시맨틱 — 반환값 > cap 이면 truncation.
+
+### 출력 metric
+
+```
+qid_pool_size{service="matching-A"}            gauge
+qid_pool_available{service="matching-A"}       gauge
+qid_pool_acquires_total{service="matching-A"}  counter
+qid_pool_contended_total{service="matching-A"} counter
+qid_async_submits_total{service="matching-A"}  counter
+qid_async_completed_total{service="matching-A"} counter
+qid_async_failed_total{service="matching-A"}   counter
+qid_async_in_flight{service="matching-A"}      gauge
+```
+
+### 권장 엔진 측 alert
+
+| Alert | 조건 | severity |
+|-------|------|----------|
+| Pool saturation | `rate(contended)/rate(acquires) > 0.1` | warn |
+| Pool empty 지속 | `available == 0` for 1m | warn → page |
+| Async transport failure | `rate(failed) > 0.001/s` | warn |
+| Async in_flight 임박 | `in_flight > 800` (cap 1024) | warn |
+
+### 라이브 검증
+
+```
+test_pool:
+  qid_pool_size{service="test-pool"} 4
+  qid_pool_acquires_total{service="test-pool"} 800
+  qid_pool_contended_total{service="test-pool"} 16
+
+test_async:
+  qid_async_submits_total{service="test-async"} 50
+  qid_async_completed_total{service="test-async"} 50
+  qid_async_failed_total{service="test-async"} 0
+  qid_async_in_flight{service="test-async"} 0
+```
+
 ## v2 후보
 
-- C SDK pool / async stats 의 Prometheus collector 통합.
 - recording rules — PromQL 미리 계산 (예: ALREADY_CONSUMED ratio) 으로
   대시보드 응답 속도 개선.
 - audit ring + websocket — engine_id 변경 시 다른 운영자가 즉시 알림.

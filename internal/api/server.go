@@ -180,13 +180,14 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.mq = mq
 
-	// 세션 저장소 — DevMode 가 아니면 in-memory 기본 (Phase 3 Redis 전 단계).
-	// auth.md §7 — 운영은 RedisStore 로 차환 예정. 인터페이스 동일.
-	if !s.cfg.DevMode {
+	// 세션 저장소 — 외부 주입(SetSessionStore / SetRefreshStore) 안 했으면
+	// MemoryStore 가 기본. 운영은 Redis 를 주입(auth.md §7). DevMode 든 아니든
+	// 동일 — login 핸들러가 nil 일 때 "no_session_store" 503 을 막는다.
+	if s.sessions == nil {
 		s.sessions = auth.NewMemoryStore(auth.MemoryStoreOptions{})
-		if s.refresh == nil {
-			s.refresh = auth.NewMemoryRefreshStore(auth.MemoryRefreshStoreOptions{})
-		}
+	}
+	if s.refresh == nil {
+		s.refresh = auth.NewMemoryRefreshStore(auth.MemoryRefreshStoreOptions{})
 	}
 	// etcd TLS 1회 빌드 → routing/policy 모두 동일 인증서.
 	etcdTLS, err := s.buildEtcdTLS()

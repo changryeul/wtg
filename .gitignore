@@ -7,6 +7,9 @@ build/
 *.log
 .DS_Store
 
+# 부하 테스트 결과 (scripts/load-test.sh)
+/logs/
+
 # repo root 에 잘못 떨어진 산출물 — 정식 위치는 build/bin/.
 # (cmd/<svc>/ 안에서 또는 root 에서 `go build ./cmd/<svc>` 시 root 에 생성됨)
 /mci-api

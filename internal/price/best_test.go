@@ -166,6 +166,36 @@ func TestBestConsumer_DifferentSymbolsIndependent(t *testing.T) {
 	}
 }
 
+func TestBestConsumer_CrossedFallsBackToNewest(t *testing.T) {
+	// 두 feed 가 서로 분리된 가격대 → max(bid)/min(ask) 가 cross.
+	// fallback 정책: 최신 ts 의 feed bid/ask 를 그대로 사용 (해당 feed
+	// 는 자체 spread 가 유효하므로 cross 없음).
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+
+	// SMB: bid 1380.60, ask 1380.62
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.60, 1380.62))
+	// KMB: bid 1380.40, ask 1380.42 — 이게 더 늦은 ts (가장 최신)
+	bc.OnTick(buildRaw("USDKRW", "KMB", 1380.40, 1380.42))
+
+	// 정상 best 라면 best_bid=1380.60 (SMB), best_ask=1380.42 (KMB) → crossed!
+	// fallback 으로 최신 feed (KMB) 값 그대로 emit 되어야.
+	got := c.snapshot()
+	last := decodeBest(t, got[len(got)-1])
+	if last.Bid != 1380.40 || last.Ask != 1380.42 {
+		t.Errorf("cross fallback 실패: got bid=%v ask=%v, want 1380.40/1380.42 (KMB 최신)", last.Bid, last.Ask)
+	}
+	// Stats 가 crossed 마커 노출
+	st := bc.Stats()
+	sym := st.Symbols["USDKRW"]
+	if !sym.CrossedFallbck {
+		t.Errorf("Stats.CrossedFallbck=false, want true")
+	}
+	if sym.ActiveSources != 2 {
+		t.Errorf("Stats.ActiveSources=%d, want 2", sym.ActiveSources)
+	}
+}
+
 func TestBestConsumer_FanOutToMultipleDownstream(t *testing.T) {
 	c1, c2 := &collector{}, &collector{}
 	bc := NewBestConsumer(BestOptions{}, c1, c2)

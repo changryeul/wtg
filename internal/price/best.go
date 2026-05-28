@@ -111,6 +111,7 @@ func (b *BestConsumer) OnTick(t *Tick) {
 	bestBid, bestAsk, srcCount := b.recomputeLocked(bySource)
 	b.mu.Unlock()
 
+	// 음수 = cross fallback 발동 (정보 보존용). hot path 는 절대값만 본다.
 	if srcCount == 0 {
 		// 방금 update 했는데 0 이 나오는 건 모든 entry 가 stale → 비정상.
 		return
@@ -147,9 +148,18 @@ func (b *BestConsumer) OnTick(t *Tick) {
 }
 
 // recomputeLocked — bySource 의 active entry 들로 best 산정. caller 가 lock 잡음.
+//
+// 정상: max(bid) / min(ask) across active sources.
+// Crossed (best_bid > best_ask): max bid 와 min ask 가 서로 다른 feed 라서
+// 한쪽 feed 가 stale/skewed 인 신호. mds 의 mdssise_make_new_best 와 같은
+// 정책으로, 최신 ts 의 feed 의 bid/ask 를 그대로 사용 (해당 feed 자체는
+// 일관된 spread 라 cross 가 없음). srcCount=1 로 표시해서 호출자가 "fallback
+// 발동" 을 구분할 수 있게 음수 값으로 negate 한다.
 func (b *BestConsumer) recomputeLocked(bySource map[string]sourceQuote) (bid, ask float64, srcCount int) {
 	now := time.Now()
 	first := true
+	var newest sourceQuote
+	hasNewest := false
 	for _, sq := range bySource {
 		if b.maxStaleness >= 0 && now.Sub(sq.ts) > b.maxStaleness {
 			continue
@@ -166,6 +176,15 @@ func (b *BestConsumer) recomputeLocked(bySource map[string]sourceQuote) (bid, as
 			}
 		}
 		srcCount++
+		if !hasNewest || sq.ts.After(newest.ts) {
+			newest = sq
+			hasNewest = true
+		}
+	}
+	// Cross 검출 → 최신 feed 의 일관된 bid/ask 로 fallback.
+	if hasNewest && srcCount > 1 && bid > ask {
+		bid, ask = newest.bid, newest.ask
+		srcCount = -srcCount // 음수 = "crossed → fallback 발동" 마커
 	}
 	return bid, ask, srcCount
 }
@@ -176,9 +195,10 @@ type BestStats struct {
 }
 
 type BestSymbolStat struct {
-	ActiveSources int     `json:"active_sources"`
-	BestBid       float64 `json:"best_bid"`
-	BestAsk       float64 `json:"best_ask"`
+	ActiveSources  int     `json:"active_sources"`
+	BestBid        float64 `json:"best_bid"`
+	BestAsk        float64 `json:"best_ask"`
+	CrossedFallbck bool    `json:"crossed_fallback,omitempty"`
 }
 
 // Stats 는 현재 cache 상태의 스냅샷을 반환 (HTTP /v1/best-stats 노출용).
@@ -188,7 +208,16 @@ func (b *BestConsumer) Stats() BestStats {
 	out := BestStats{Symbols: make(map[string]BestSymbolStat, len(b.cache))}
 	for sym, bySource := range b.cache {
 		bid, ask, n := b.recomputeLocked(bySource)
-		out.Symbols[sym] = BestSymbolStat{ActiveSources: n, BestBid: bid, BestAsk: ask}
+		crossed := n < 0
+		if crossed {
+			n = -n
+		}
+		out.Symbols[sym] = BestSymbolStat{
+			ActiveSources:  n,
+			BestBid:        bid,
+			BestAsk:        ask,
+			CrossedFallbck: crossed,
+		}
 	}
 	return out
 }

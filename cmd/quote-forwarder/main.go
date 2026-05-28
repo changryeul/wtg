@@ -25,8 +25,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"syscall"
@@ -649,6 +651,15 @@ func startMetricsServer(ctx context.Context, logger *slog.Logger, addr string,
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
+	// pprof — metrics endpoint 와 같은 listener 에 부착 (부하 진단용).
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	mux.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	mux.Handle("/debug/pprof/mutex", pprof.Handler("mutex"))
+	mux.Handle("/debug/pprof/block", pprof.Handler("block"))
+	runtime.SetMutexProfileFraction(1)
+	runtime.SetBlockProfileRate(1)
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		stat := map[string]any{
 			"uptime_sec":      time.Since(startedAt).Seconds(),

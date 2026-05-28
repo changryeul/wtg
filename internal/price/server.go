@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -397,6 +399,23 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	if s.cfg.DevMode {
 		mux.HandleFunc("POST /v1/dev/tick", s.DevTickHandler())
 		s.logger.Info("DevMode tick 주입 endpoint 활성 — POST /v1/dev/tick")
+
+		// pprof — DevMode 한정 (부하 진단용). 운영 노출 금지.
+		// /debug/pprof/{profile,heap,goroutine,mutex,block,...}
+		mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+		mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+		mux.Handle("GET /debug/pprof/heap", pprof.Handler("heap"))
+		mux.Handle("GET /debug/pprof/goroutine", pprof.Handler("goroutine"))
+		mux.Handle("GET /debug/pprof/mutex", pprof.Handler("mutex"))
+		mux.Handle("GET /debug/pprof/block", pprof.Handler("block"))
+		mux.Handle("GET /debug/pprof/allocs", pprof.Handler("allocs"))
+		// mutex/block profiler 는 활성화하지 않으면 항상 0. 1=모든 contention 기록.
+		runtime.SetMutexProfileFraction(1)
+		runtime.SetBlockProfileRate(1)
+		s.logger.Info("pprof 활성 (DevMode) — /debug/pprof/{profile,heap,mutex,block,goroutine}")
 	}
 
 	// QuoteID HTTP gateway — gRPC 와 동일한 핸들러, JSON wire.

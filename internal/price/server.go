@@ -374,6 +374,13 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	}
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
+	// DevMode 우회 tick 주입 — broker broadcast 를 못 받는 dev 환경에서
+	// Aggregator/Consumer chain 단독 검증용. 운영에선 라우트 미등록.
+	if s.cfg.DevMode {
+		mux.HandleFunc("POST /v1/dev/tick", s.DevTickHandler())
+		s.logger.Info("DevMode tick 주입 endpoint 활성 — POST /v1/dev/tick")
+	}
+
 	// QuoteID HTTP gateway — gRPC 와 동일한 핸들러, JSON wire.
 	if s.quoteValidator != nil {
 		RegisterQuoteValidationHTTP(mux, s.quoteValidator, s.logger)

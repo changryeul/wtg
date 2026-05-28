@@ -53,6 +53,7 @@ type quoteMetrics struct {
 	publishErrors *prometheus.CounterVec
 	parseErrors   *prometheus.CounterVec
 	bytes         *prometheus.CounterVec
+	rcvBuf        *prometheus.GaugeVec
 }
 
 func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
@@ -77,8 +78,12 @@ func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
 			prometheus.CounterOpts{Name: "quote_forwarder_bytes_total", Help: "UDP 페이로드 바이트 합"},
 			[]string{"feed"},
 		),
+		rcvBuf: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Name: "quote_forwarder_udp_rcvbuf_bytes", Help: "UDP SO_RCVBUF 실제 적용된 크기"},
+			[]string{"feed"},
+		),
 	}
-	for _, c := range []prometheus.Collector{m.received, m.published, m.publishErrors, m.parseErrors, m.bytes} {
+	for _, c := range []prometheus.Collector{m.received, m.published, m.publishErrors, m.parseErrors, m.bytes, m.rcvBuf} {
 		_ = reg.Register(c)
 	}
 	return m
@@ -103,6 +108,7 @@ func main() {
 		instance    = flag.Int("instance", 1, "appl 인스턴스 번호")
 		includeFix  = flag.Bool("include-fix", false, "true 면 envelope 에 raw FIX(가독화) 도 같이 박는다")
 		metricsAddr = flag.String("metrics", "", "Prometheus metrics + /stats HTTP listen 주소 (예: 127.0.0.1:9091). 비면 비활성")
+		udpRcvBuf   = flag.Int("udp-rcvbuf", 4*1024*1024, "UDP socket SO_RCVBUF (bytes). kernel 한계(macOS kern.ipc.maxsockbuf 기본 8MB)를 넘으면 silently clamp. 0 이면 OS default.")
 	)
 	flag.Parse()
 
@@ -167,7 +173,25 @@ func main() {
 			os.Exit(1)
 		}
 		defer conn.Close()
-		logger.Info("UDP listen", slog.String("feed", f.Label), slog.String("addr", f.Addr))
+		// SO_RCVBUF 키움 — burst 시세 (수만 tick/sec) 시 kernel UDP 큐 overflow
+		// 가 가장 큰 손실 위치 (load-gen 측정 결과). 요청값이 kern.ipc.maxsockbuf
+		// 를 넘으면 OS 가 silently clamp 하므로 syscall 로 실제값 확인 후 로그.
+		actualBuf := 0
+		if *udpRcvBuf > 0 {
+			if err := conn.SetReadBuffer(*udpRcvBuf); err != nil {
+				logger.Warn("UDP SetReadBuffer 실패", slog.String("feed", f.Label), slog.Any("err", err))
+			}
+			if got, err := actualReadBuffer(conn); err == nil {
+				actualBuf = got
+			}
+		}
+		logger.Info("UDP listen",
+			slog.String("feed", f.Label),
+			slog.String("addr", f.Addr),
+			slog.Int("rcvbuf_req", *udpRcvBuf),
+			slog.Int("rcvbuf_actual", actualBuf),
+		)
+		qm.rcvBuf.WithLabelValues(f.Label).Set(float64(actualBuf))
 		go feedLoop(ctx, logger, mq, conn, f.Label, *includeFix, qm)
 	}
 
@@ -548,6 +572,27 @@ func buildEnvelope(feed string, seq uint64, payload []byte, includeFix bool) []b
 
 	out, _ := json.Marshal(env)
 	return out
+}
+
+// actualReadBuffer — 현재 socket 에 실제 적용된 SO_RCVBUF 값. SetReadBuffer
+// 요청이 kernel 한계로 clamp 됐는지 확인용 (macOS kern.ipc.maxsockbuf).
+//
+// Linux 는 호출자가 요청한 값을 내부적으로 2배로 두 채 저장하므로 GetsockoptInt
+// 가 요청값의 2배를 돌려준다 (유명한 quirk). 검증 시 그것까지 감안.
+func actualReadBuffer(conn *net.UDPConn) (int, error) {
+	sc, err := conn.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	var size int
+	var sockErr error
+	ctlErr := sc.Control(func(fd uintptr) {
+		size, sockErr = syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF)
+	})
+	if ctlErr != nil {
+		return 0, ctlErr
+	}
+	return size, sockErr
 }
 
 // publishBroadcast — FCCast/SubBroadcast, LogonID 빈값 (전체 ws 사용자 fan-out).

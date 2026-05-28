@@ -65,10 +65,17 @@ func main() {
 		slog.String("exchange", cfg.ExchangeName),
 		slog.String("symbols_file", cfg.SymbolsFile),
 		slog.Bool("chart_enabled", cfg.ChartDSN != ""),
+		slog.Bool("best_enabled", cfg.BestEnabled),
+		slog.Duration("best_staleness", cfg.BestMaxStaleness),
 		slog.Int("print", cfg.PrintFirstN),
 	)
 
 	srv := price.NewServer(cfg, logger)
+	if cfg.BestEnabled {
+		logger.Info("BestConsumer 활성 — 다중시장 best 호가 산정",
+			slog.Duration("max_staleness", cfg.BestMaxStaleness),
+		)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

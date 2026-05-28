@@ -105,6 +105,20 @@ type Config struct {
 	// Aggregator 의 Sweeper 호출 주기 (default 1s).
 	AggregatorSweepInterval time.Duration
 
+	// ─── BestConsumer (다중시장 best 호가 산정) ───────────────────────────
+	//
+	// cooker 가 시장별 raw 시세를 publish 하면 BestConsumer 가 (Symbol, Source)
+	// 별로 최신 quote 를 캐시하고 매 raw tick 마다 best (max bid, min ask) 를
+	// 재계산해 합성 BEST Tick 을 downstream consumer 에 전달한다. Aggregator/
+	// PricingConsumer/gRPC 는 이 best 만 본다 — raw 다중시장이 흡수되어 single
+	// stream 처럼 보인다. 자세한 동작은 best.go 참조.
+	//
+	// 단일 feed 환경 (cooker 가 이미 best 합산해서 publish) 에서도 안전 — best
+	// of 1 source = 그 자체. BestEnabled=false 로 끄면 raw 가 downstream 까지
+	// last-write-wins 로 흐름 (이전 동작).
+	BestEnabled      bool
+	BestMaxStaleness time.Duration // 0 이면 30s 기본, 음수면 stale 검사 비활성
+
 	// ─── PricingConsumer (Profile 별 마진 적용 후 broker publish) ──────────
 	//
 	// 두 가지 카탈로그 소스 모드 (상호배타):
@@ -208,7 +222,9 @@ func DefaultConfig() Config {
 		BrokerPort:       11217,
 		ApplName:         "mci-price",
 		Instance:         0,
-		QueueName:        "mci_price",
+		QueueName:        "", // 빈값 — broker 가 _CLIENT_ type 으로 등록해야 QfUnsolRep
+		// 가 동작 (publish.c:185-189 의 _REPRESENTATIVE_UNSOL_RECVER_ 매칭).
+		// mci-push 와 동일 컨벤션. 비빈값을 주면 broker 가 broadcast 안 보냄.
 		ExchangeName:     "PRICE",
 		DialTimeout:      5 * time.Second,
 		HandshakeTimeout: 5 * time.Second,
@@ -226,6 +242,9 @@ func DefaultConfig() Config {
 		ArchiverFlushInterval:   time.Second,
 		ArchiverBatchMax:        500,
 		AggregatorSweepInterval: time.Second,
+
+		BestEnabled:      true,
+		BestMaxStaleness: 30 * time.Second,
 
 		PricingFile:  "",
 		ProfilesFile: "",
@@ -452,6 +471,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.ArchiverFlushInterval, "arc-flush", cfg.ArchiverFlushInterval, "Archiver flush interval")
 	fs.IntVar(&cfg.ArchiverBatchMax, "arc-batch", cfg.ArchiverBatchMax, "Archiver batch INSERT 최대 행수")
 	fs.DurationVar(&cfg.AggregatorSweepInterval, "agg-sweep", cfg.AggregatorSweepInterval, "Aggregator 만료 봉 sweeper 주기")
+	fs.BoolVar(&cfg.BestEnabled, "best", cfg.BestEnabled, "다중시장 best 호가 산정 활성 (raw tick 들을 합산해 합성 BEST 만 downstream 에 흘림)")
+	fs.DurationVar(&cfg.BestMaxStaleness, "best-staleness", cfg.BestMaxStaleness, "feed quote 가 이 시간 이상 갱신 없으면 best 계산에서 제외 (0=30s 기본, 음수=비활성)")
 	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (etcd 비활성 시)")
 	fs.StringVar(&cfg.ProfilesFile, "profiles", cfg.ProfilesFile, "활성 Profile 카탈로그 JSON ([]session.Profile, etcd 비활성 시)")
 	etcdStr := strings.Join(cfg.EtcdEndpoints, ",")

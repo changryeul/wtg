@@ -2,6 +2,7 @@ package price
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -34,7 +35,15 @@ type Tick struct {
 	Flag     uint8     // pushmsg.flag
 	Body     []byte    // pushmsg.msgb[:msgl] — cooker payload (raw)
 	Received time.Time // mci-price 가 디코딩한 wallclock 시각
+
+	// Source — quote envelope 의 "src" 필드 (feed 식별자: SMB/KMB/EBS/REUT
+	// 또는 BestConsumer 가 합성한 "BEST"). 다중시장 best 호가 산정 (best.go)
+	// 의 cache key. 빈값이면 source 미지정 — BestConsumer 가 무시.
+	Source string
 }
+
+// SourceBest — BestConsumer 가 emit 하는 합성 Tick 의 Source 마커.
+const SourceBest = "BEST"
 
 // 디코딩 에러.
 var (
@@ -129,4 +138,24 @@ func trimNul(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// peekSource 는 v1 JSON envelope body 에서 "src" 필드만 가볍게 추출한다.
+// 전체 envelope 디코드는 downstream consumer 가 별도로 (bid/ask 추출 시)
+// 수행하므로 여기선 src 만. 파싱 실패 / src 없음 → 빈 문자열.
+func peekSource(body []byte) string {
+	// trailing NUL padding 제거 (broker fixed buffer 잔여).
+	for len(body) > 0 && body[len(body)-1] == 0 {
+		body = body[:len(body)-1]
+	}
+	if len(body) == 0 {
+		return ""
+	}
+	var s struct {
+		Src string `json:"src"`
+	}
+	if err := json.Unmarshal(body, &s); err != nil {
+		return ""
+	}
+	return s.Src
 }

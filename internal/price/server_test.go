@@ -32,6 +32,10 @@ func newTestServer(consumer TickConsumer) (*Server, *fakeSubscriber) {
 	cfg := DefaultConfig()
 	cfg.ExchangeName = "PRICE"
 	cfg.StatsInterval = 0 // 통계 루프 비활성
+	// BestConsumer 는 v1 envelope body + Source 가 채워진 raw 를 기대.
+	// server_test 는 opaque body 로 hot path 만 검증하므로 비활성.
+	// BestConsumer 단독 검증은 best_test.go.
+	cfg.BestEnabled = false
 	srv := NewServer(cfg, nil)
 	if consumer != nil {
 		srv.AddConsumer(consumer)
@@ -167,6 +171,7 @@ func TestServerEmptyExchangeFilterPassesAll(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ExchangeName = ""
 	cfg.StatsInterval = 0
+	cfg.BestEnabled = false // opaque body 로 raw fan-out 검증
 	srv := NewServer(cfg, nil)
 	var got atomic.Int32
 	srv.AddConsumer(TickConsumerFunc(func(t *Tick) { got.Add(1) }))

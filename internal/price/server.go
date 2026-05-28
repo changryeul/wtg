@@ -55,8 +55,10 @@ type Server struct {
 	mq         *mymq.Client
 	conflation *Conflation
 	consumers  []TickConsumer
-	grpcSrv    *GRPCServer // 외부 주입 가능 (AttachGRPC); nil 이면 Start 가 자동 생성.
-	metrics    *metrics.Registry
+	best       *BestConsumer // cfg.BestEnabled 이면 NewServer 가 생성, AddConsumer
+	// 가 best.downstream 에 라우팅. nil 이면 raw fan-out (이전 동작).
+	grpcSrv *GRPCServer // 외부 주입 가능 (AttachGRPC); nil 이면 Start 가 자동 생성.
+	metrics *metrics.Registry
 
 	// quoteValidator — HTTP gateway (POST /v1/quoteid/*) 로 외부 노출하기 위한
 	// 옵션 attach. 동일 인스턴스를 gRPC (GRPCServer.AttachValidator) 와
@@ -72,21 +74,43 @@ type Server struct {
 }
 
 // NewServer 는 Server 를 구성 (broker 미접속 상태).
+//
+// cfg.BestEnabled 이면 BestConsumer 가 단일 hot-path consumer 로 자리잡고,
+// 이후 AddConsumer 호출은 모두 BestConsumer.downstream 으로 라우팅된다.
+// 그래야 raw 다중시장 tick 들이 BestConsumer 에서 흡수된 뒤 합성 BEST 만
+// Aggregator/PricingConsumer/gRPC 에 전달된다.
 func NewServer(cfg Config, logger *slog.Logger, consumers ...TickConsumer) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{
+	s := &Server{
 		cfg:        cfg,
 		logger:     logger,
 		conflation: NewConflation(),
-		consumers:  consumers,
 		metrics:    metrics.NewRegistry(),
 	}
+	if cfg.BestEnabled {
+		s.best = NewBestConsumer(BestOptions{
+			MaxStaleness: cfg.BestMaxStaleness,
+			Logger:       logger,
+		}, consumers...)
+		s.consumers = []TickConsumer{s.best}
+	} else {
+		s.consumers = consumers
+	}
+	return s
 }
 
 // AddConsumer 는 Tick 다운스트림 소비자를 추가한다 (Start 전 호출).
+//
+// BestConsumer 활성 시 등록 대상은 BestConsumer.downstream — Aggregator 등은
+// raw 가 아닌 합성 BEST Tick 만 받는다. 비활성 시 (테스트/회귀 호환) 기존
+// 동작과 동일하게 hot path consumer 리스트에 직접 추가.
 func (s *Server) AddConsumer(c TickConsumer) {
+	if s.best != nil {
+		s.best.AddDownstream(c)
+		return
+	}
 	s.consumers = append(s.consumers, c)
 }
 
@@ -267,6 +291,11 @@ func (s *Server) handleUnsolicited(msg *mymq.Unsolicited) {
 		return
 	}
 
+	// Tick.Source 채움 — v1 envelope 의 "src" 필드. BestConsumer 의 (Symbol,
+	// Source) 캐시 키. raw body 가 v1 envelope 이 아니면 빈값 (BestConsumer 는
+	// 빈 Source 를 drop, 비활성 시는 무관).
+	tick.Source = peekSource(tick.Body)
+
 	// Conflation 업데이트.
 	s.conflation.Update(tick)
 
@@ -337,6 +366,12 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/price-stats", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.Stats())
 	})
+	// BestConsumer 활성 시 per-symbol best snapshot 노출 (디버그 / 운영 가시성).
+	if s.best != nil {
+		mux.HandleFunc("GET /v1/best-stats", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, s.best.Stats())
+		})
+	}
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	// QuoteID HTTP gateway — gRPC 와 동일한 핸들러, JSON wire.

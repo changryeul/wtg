@@ -1782,8 +1782,10 @@ if (themeMQ) {
 applyTheme(loadThemePref());
 
 // ───────── HTTP ─────────
-async function api(path, opts = {}) {
-  const headers = Object.assign({"Content-Type": "application/json"}, opts.headers || {});
+// authHeaders — DevMode / JWT 모드에 맞는 인증 헤더만 추출. raw fetch 가
+// 필요한 곳(예: pricing 의 raw JSON 편집기) 에서 재사용.
+function authHeaders() {
+  const headers = {};
   if (localStorage.getItem(LS_DEV) === "1") {
     const u = localStorage.getItem(LS_USER) || "";
     if (u) headers["X-WTG-User"] = u;
@@ -1791,6 +1793,11 @@ async function api(path, opts = {}) {
     const t = localStorage.getItem(LS_TOKEN);
     if (t) headers["Authorization"] = "Bearer " + t;
   }
+  return headers;
+}
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({"Content-Type": "application/json"}, authHeaders(), opts.headers || {});
   const res = await fetch(path, { ...opts, headers });
   let body = null;
   try { body = await res.json(); } catch (_) {}
@@ -2423,7 +2430,10 @@ async function saveSymbol() {
 // ───────── Pricing (마진 테이블) ─────────
 async function loadPricing() {
   try {
-    const resp = await fetch("/v1/admin/pricing/table", { credentials: "same-origin" });
+    const resp = await fetch("/v1/admin/pricing/table", {
+      credentials: "same-origin",
+      headers: authHeaders(),
+    });
     if (resp.status === 404) {
       $("#pricing-editor").value = "";
       $("#pricing-version").textContent = "(미등록)";
@@ -2463,7 +2473,7 @@ async function savePricing() {
     const resp = await fetch("/v1/admin/pricing/table", {
       method: "PUT",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: raw,
     });
     if (!resp.ok) {

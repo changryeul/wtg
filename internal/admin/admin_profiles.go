@@ -39,6 +39,26 @@ func (d *ProfilesDeps) keyFor(key string) string {
 	return d.normalize() + key
 }
 
+// profileEntry — admin endpoint 의 JSON 응답 모양 (lowercase 키, UI 기대 형식).
+// session.Profile 자체에 json tag 를 추가하면 다른 wire format (Redis 세션 /
+// pricing config / quoteid Record / gRPC) 도 함께 변경되므로 admin response
+// 만 별도 wrapper 로 분리.
+type profileEntry struct {
+	Channel session.Channel `json:"channel"`
+	Site    session.Site    `json:"site"`
+	Tier    session.Tier    `json:"tier"`
+	Key     string          `json:"key"`
+}
+
+func toProfileEntry(p session.Profile) profileEntry {
+	return profileEntry{
+		Channel: p.Channel,
+		Site:    p.Site,
+		Tier:    p.Tier,
+		Key:     p.Key(),
+	}
+}
+
 // ListProfiles 는 GET /v1/admin/profiles — 전체 활성 Profile 반환.
 func ListProfiles(deps *ProfilesDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +73,7 @@ func ListProfiles(deps *ProfilesDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "etcd", err.Error())
 			return
 		}
-		out := make([]session.Profile, 0, len(resp.Kvs))
+		out := make([]profileEntry, 0, len(resp.Kvs))
 		for _, kv := range resp.Kvs {
 			var p session.Profile
 			if err := json.Unmarshal(kv.Value, &p); err != nil {
@@ -63,7 +83,7 @@ func ListProfiles(deps *ProfilesDeps) http.HandlerFunc {
 				)
 				continue
 			}
-			out = append(out, p)
+			out = append(out, toProfileEntry(p))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"profiles": out,
@@ -100,7 +120,7 @@ func GetProfile(deps *ProfilesDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "decode", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, p)
+		writeJSON(w, http.StatusOK, toProfileEntry(p))
 	}
 }
 
@@ -152,10 +172,11 @@ func PutProfile(deps *ProfilesDeps) http.HandlerFunc {
 			slog.String("site", string(p.Site)),
 			slog.String("tier", string(p.Tier)),
 		)
+		entry := toProfileEntry(p)
 		if deps.Hub != nil {
-			deps.Hub.Broadcast("profile", map[string]any{"action": "put", "profile": p})
+			deps.Hub.Broadcast("profile", map[string]any{"action": "put", "profile": entry})
 		}
-		writeJSON(w, http.StatusOK, p)
+		writeJSON(w, http.StatusOK, entry)
 	}
 }
 

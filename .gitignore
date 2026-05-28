@@ -3,6 +3,7 @@ build/
 *.out
 .idea/
 .vscode/
+.obsidian/
 *.log
 .DS_Store
 

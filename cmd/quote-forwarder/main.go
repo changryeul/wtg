@@ -130,28 +130,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	mq, err := mymq.Open(ctx, *brokerHost, *brokerPort, mymq.Options{
-		ApplName:         *appl,
-		Instance:         *instance,
-		Channel:          mymq.ChannelAdmin,
-		HandshakeTimeout: 5 * time.Second,
-		Logger:           logger,
-		// 자동 재접속 — heartbeat 타임아웃이나 일시 단절에서도 forwarder 가
-		// 살아 남도록. 없으면 단발 끊김 후 모든 publish 가 closed connection.
-		Reconnect: &mymq.ReconnectOptions{
-			InitialBackoff: 1 * time.Second,
-			MaxBackoff:     30 * time.Second,
-			BackoffFactor:  2.0,
-		},
-	})
-	if err != nil {
-		logger.Error("broker 연결 실패", slog.Any("err", err))
-		os.Exit(1)
-	}
-	defer mq.Close()
-	si := mq.SessionInfo()
-	logger.Info("broker 연결 OK", slog.Int("scid", int(si.ConnectionID)))
-
 	// metrics 초기화 + HTTP listener (옵션)
 	reg := metrics.NewRegistry()
 	qm := newQuoteMetrics(reg)
@@ -159,9 +137,20 @@ func main() {
 		go startMetricsServer(ctx, logger, *metricsAddr, reg, feeds, *brokerHost, *brokerPort)
 	}
 
-	// 각 feed 마다 UDP listener goroutine.
-	for _, f := range feeds {
-		f := f
+	// 각 feed 마다 (UDP listener + 독립 broker connection) goroutine.
+	//
+	// 왜 feed 별 독립 connection 인가:
+	//   pkg/mymq.Client.writeFrame 가 writeMu 로 직렬화한다 (단일 connection
+	//   thread-safety 보장). 모든 feed 가 1개 connection 을 공유하면 4 goroutine
+	//   이 한 writeMu 를 경쟁 → broker Send 가 사실상 single-threaded ~4k tick/s
+	//   ceiling. feed 별 connection 으로 분리하면 writeMu 도 분리되어 broker
+	//   write 가 N 배 parallel.
+	//
+	// Instance 번호는 *instance 를 base 로 feed 인덱스를 더해서 broker 측에서
+	// 4 connection 이 서로 다른 ApplName ("quote-fwd-01" ~ "quote-fwd-04") 으로
+	// 보이도록 한다.
+	for i, f := range feeds {
+		i, f := i, f
 		addr, err := net.ResolveUDPAddr("udp", f.Addr)
 		if err != nil {
 			logger.Error("listen 주소 파싱 실패", slog.String("feed", f.Label), slog.Any("err", err))
@@ -192,6 +181,32 @@ func main() {
 			slog.Int("rcvbuf_actual", actualBuf),
 		)
 		qm.rcvBuf.WithLabelValues(f.Label).Set(float64(actualBuf))
+
+		// feed별 독립 broker connection — ApplName="<base>-<NN>" 으로 broker
+		// 측에서 4 connection 이 별개 client 로 보이게.
+		mq, err := mymq.Open(ctx, *brokerHost, *brokerPort, mymq.Options{
+			ApplName:         *appl,
+			Instance:         *instance + i, // base + feed 인덱스
+			Channel:          mymq.ChannelAdmin,
+			HandshakeTimeout: 5 * time.Second,
+			Logger:           logger,
+			Reconnect: &mymq.ReconnectOptions{
+				InitialBackoff: 1 * time.Second,
+				MaxBackoff:     30 * time.Second,
+				BackoffFactor:  2.0,
+			},
+		})
+		if err != nil {
+			logger.Error("broker 연결 실패", slog.String("feed", f.Label), slog.Any("err", err))
+			os.Exit(1)
+		}
+		defer mq.Close()
+		si := mq.SessionInfo()
+		logger.Info("broker 연결 OK",
+			slog.String("feed", f.Label),
+			slog.Int("instance", *instance+i),
+			slog.Int("scid", int(si.ConnectionID)),
+		)
 		go feedLoop(ctx, logger, mq, conn, f.Label, *includeFix, qm)
 	}
 

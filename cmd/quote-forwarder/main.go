@@ -488,18 +488,27 @@ func buildEnvelope(feed string, seq uint64, payload []byte, includeFix bool) []b
 }
 
 // publishBroadcast — FCCast/SubBroadcast, LogonID 빈값 (전체 ws 사용자 fan-out).
+// Exchange 는 BroadcastHeader 에 박는다. FrameInput.Xchg 에 박으면 pkg/mymq
+// applyDefaults 가 navi 자동채움(transaction 모드)을 트리거해 broker 가
+// publish_packet 대신 message_packet_transfer 로 분기, "Lost reply message"
+// 로 drop 한다. broker 는 publish_packet 안에서 broadcast->exchange 필드를
+// 보고 receiver list 의 client->xchg 와 매칭한다 (publish.c:103, 223).
 func publishBroadcast(mq *mymq.Client, payload []byte) error {
 	var hdr mymq.BroadcastHeader
 	hdr.Function = byte(mymq.FCCast)
 	hdr.SubFunction = byte(mymq.SubBroadcast)
+	copy(hdr.Exchange[:], mymq.ExchangePrice)
 
 	body := make([]byte, mymq.BroadcastPrefixSize+len(payload))
 	mymq.EncodeBroadcastHeader(body[:mymq.BroadcastPrefixSize], &hdr)
 	copy(body[mymq.BroadcastPrefixSize:], payload)
 
+	// Dirf=DirPublish 명시 — applyDefaults 가 보정해주지만, broadcast 의도를
+	// 호출 지점에서 분명히. Xchg/Navis 는 비워야 broker 가 broadcast 로 인식.
 	return mq.Send(&mymq.FrameInput{
 		Func: mymq.FCCast,
 		Subc: mymq.SubBroadcast,
+		Dirf: mymq.DirPublish,
 		Body: body,
 	})
 }

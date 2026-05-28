@@ -741,6 +741,22 @@ func (c *Client) applyDefaults(in *FrameInput) {
 		in.Chan = c.chanCode
 	}
 
+	// Broadcast 계열 (FCCast/FCPush/FCSignal) 은 broker 의 packet_proc 가
+	// nvia==0 인 경우에만 publish_packet (fan-out) 으로 분기한다. nvia!=0 이면
+	// message_packet_transfer (1:1 transaction) 로 분기 후 dirf 가 0(IOCTL)
+	// 이면 default 케이스에서 receiver scid 를 찾지 못해
+	//   WRN Lost reply message 'XCHG@' for a receiver scid=0(sock=0)
+	// 로 drop 된다. 따라서 navi 자동채움은 transaction 계열에만 적용하고,
+	// broadcast 는 Dirf 만 DirPublish 로 보정한다.
+	isBroadcast := in.Func == FCCast || in.Func == FCPush || in.Func == FCSignal
+
+	if isBroadcast {
+		if in.Dirf == 0 {
+			in.Dirf = DirPublish
+		}
+		return
+	}
+
 	// Navigation 자동 채움 — C 라이브러리의 mymq_send 가
 	// content_set_this(whoami) + content_set_dstn(xchg, rkey) 로 자동
 	// 채우는 것과 동일한 동작.

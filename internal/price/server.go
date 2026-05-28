@@ -148,9 +148,19 @@ func (s *Server) Start(ctx context.Context) error {
 		Logger:           s.logger,
 		TLS:              brokerTLS,
 		Queue: &mymq.QueueOptions{
-			Name:  s.cfg.QueueName,
-			Attr:  mymq.QtClient,
-			Flags: mymq.QfUnsolMsg | mymq.QfUnsolHdr,
+			Name: s.cfg.QueueName,
+			Attr: mymq.QtClient,
+			// QfUnsolRep 가 핵심 — broker 의 representative receiver 로 등록되어
+			// LogonID 매칭 없이 모든 broadcast (forwarder/cooker 의 raw 시세) 를 수신.
+			// 빠지면 broker 가 broadcast 를 보내주지 않아 recv 가 0 으로 막힌다.
+			// mci-push 와 동일 패턴 (internal/push/server.go).
+			Flags: mymq.QfUnsolMsg | mymq.QfUnsolHdr | mymq.QfUnsolRep,
+			// Exchange declare — broker 의 publish_packet 이 TO_EXCH 매칭 시
+			// client->xchg 와 strcasecmp 한다 (publish.c:223). 빈값이면 publish
+			// 마다 0/N 으로 skip 되어 recv 가 영원히 0. cfg.ExchangeName 을
+			// declare 해서 그 exchange 의 broadcast 만 받게 한다 (FANOUT).
+			ExchangeName: s.cfg.ExchangeName,
+			ExchangeType: mymq.ExchangeFanout,
 		},
 		Reconnect: &mymq.ReconnectOptions{
 			InitialBackoff: 1 * time.Second,

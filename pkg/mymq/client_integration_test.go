@@ -310,3 +310,42 @@ func TestClientApplyDefaultsChannel(t *testing.T) {
 		t.Errorf("명시 chan 을 덮어씀: got %v", in2.Chan)
 	}
 }
+
+// TestClientApplyDefaultsBroadcastNoNavi — FCCast/FCPush/FCSignal 의 경우
+// applyDefaults 가 navi 자동채움을 하면 안 된다. broker 의 packet_proc 가
+// nvia==0 일 때만 publish_packet (broadcast fan-out) 으로 분기하기 때문이다.
+// nvia!=0 이면 message_packet_transfer (transaction) 로 잘못 분기 후
+// "Lost reply message" 로 drop 됨. 또한 Dirf 가 0(IOCTL) 이면 DirPublish 로
+// 자동 채워야 broker 가 PUBLISH 방향으로 해석.
+func TestClientApplyDefaultsBroadcastNoNavi(t *testing.T) {
+	c := &Client{chanCode: ChannelWeb.Bytes(), whoamiSc: 12345}
+
+	for _, fn := range []Func{FCCast, FCPush, FCSignal} {
+		// Xchg 가 채워진 broadcast — transaction 패턴이면 navi 자동채움이
+		// 트리거되는 조건. 하지만 broadcast 는 navi 가 비어 있어야 한다.
+		in := &FrameInput{Func: fn, Xchg: "PRICE"}
+		c.applyDefaults(in)
+		if len(in.Navis) != 0 {
+			t.Errorf("func=%d: broadcast 인데 navi 자동채움됨 (nvia=%d) — broker 가 transaction 으로 오인하여 drop 한다",
+				fn, len(in.Navis))
+		}
+		if in.Dirf != DirPublish {
+			t.Errorf("func=%d: Dirf=%d (DirPublish=%d 기대) — broker 가 PUBLISH 로 해석 못 함",
+				fn, in.Dirf, DirPublish)
+		}
+	}
+
+	// 호출자가 Dirf 를 명시적으로 설정한 경우 덮어쓰지 않는다.
+	in := &FrameInput{Func: FCCast, Xchg: "PRICE", Dirf: DirForward}
+	c.applyDefaults(in)
+	if in.Dirf != DirForward {
+		t.Errorf("명시 Dirf 를 덮어씀: got %d, want %d", in.Dirf, DirForward)
+	}
+
+	// 일반 transaction (FCNotify 등) 은 기존대로 navi 자동채움이 동작해야 한다.
+	in2 := &FrameInput{Func: FCNotify, Xchg: "ECHO", Rkey: "PING"}
+	c.applyDefaults(in2)
+	if len(in2.Navis) != 2 {
+		t.Errorf("transaction navi 자동채움 회귀: got %d navi, want 2", len(in2.Navis))
+	}
+}

@@ -7,36 +7,17 @@ import (
 	"time"
 
 	"github.com/winwaysystems/wtg/pkg/mymq"
+	"github.com/winwaysystems/wtg/pkg/quote"
 )
 
-// pushdata wire 레이아웃 (mymq.h):
-//
-//	struct pushdata {
-//	    long      mkid;          // 8 bytes (Linux x86_64) — market id
-//	    pushmsg_t pushmsg;       // 1544 bytes
-//	};
-//	struct pushmsg {
-//	    uint32_t  seqn;          // 4 — sequencial number
-//	    char      symb[20];      // 20 — symbol (L_SYMB)
-//	    uint32_t  mask;          // 4 — event mask (mask_t)
-//	    uint8_t   type;          // 1 — message type
-//	    uint8_t   flag;          // 1 — flags
-//	    uint16_t  msgl;          // 2 — length of msgb[]
-//	    char      msgb[1512];    // 1512 — real-time message (MAX_PUSH_LEN)
-//	};
-//
-// 합계: 8 + 1544 = 1552 bytes.
-//
-// Endianness: 정수 필드는 모두 빅엔디안. C 코드는 그대로 메모리 dump 해서
-// 보내지만 broker 가 publish 시 ntohl/htonl 로 변환해서 전달한다고 가정.
-// 실 트래픽 검증 후 BE/native 결정 — 일단 BE 가정.
-
+// pushdata wire 레이아웃 정의는 pkg/quote/pushdata.go 가 단일 진실. 호환성을
+// 위해 producer (cooker/quote-forwarder) 와 consumer (mci-price) 가 모두 같은
+// 상수를 사용한다. 아래는 가독성을 위한 로컬 alias — 변경하지 말 것.
 const (
-	pushmsgSize  = 4 + 20 + 4 + 1 + 1 + 2 + 1512
-	pushdataSize = 8 + pushmsgSize // mtype_t = long = 8 bytes (Linux x86_64)
-
-	maxPushLen = 1512
-	lSymb      = 20
+	pushmsgSize  = quote.PushmsgSize
+	pushdataSize = quote.PushdataSize
+	maxPushLen   = quote.MaxPushLen
+	lSymb        = quote.LSymb
 )
 
 // Tick 은 mci-price 가 정규화한 시세 단위.

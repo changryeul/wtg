@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
+	"github.com/winwaysystems/wtg/pkg/quote"
 )
 
 // 운영 가시성용 카운터 — feed 별 라벨로 분리.
@@ -267,11 +268,37 @@ func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *n
 		qm.received.WithLabelValues(label).Inc()
 		qm.bytes.WithLabelValues(label).Add(float64(n))
 
-		envelope, parsedOK := buildEnvelopeWithStatus(label, seq, buf[:n], includeFix)
+		// rich envelope — parse 결과 가시성 (msgtype 분류, debug 로그 hook 용).
+		// publish 와는 별개 — 발행 자체는 v1 pushdata 만 보낸다.
+		richEnv := parseQuote(buf[:n])
+		parsedOK := richEnv.MsgType == "snapshot" || richEnv.MsgType == "incremental"
 		if !parsedOK {
 			qm.parseErrors.WithLabelValues(label).Inc()
 		}
-		if err := publishBroadcast(mq, envelope); err != nil {
+
+		// mci-price 가 받을 wire 는 cooker 의 pushdata 구조 (pushmsg.symb +
+		// msgb=v1 JSON envelope). rich envelope 를 그대로 보내면 mci-price 의
+		// DecodePushData 가 길이 부족으로 drop. v1 추출 실패하면 publish 생략.
+		sym, bid, ask, v1ok := extractV1(richEnv)
+		if !v1ok {
+			qm.parseErrors.WithLabelValues(label).Inc()
+			continue
+		}
+		wire, err := quote.EncodePushdataV1(quote.JSONEnvelope{
+			Sym: sym,
+			Bid: bid,
+			Ask: ask,
+			TS:  time.Now().UTC(),
+			Src: label,
+			Seq: seq,
+		})
+		if err != nil {
+			totalPubErr.Add(1)
+			qm.publishErrors.WithLabelValues(label).Inc()
+			logger.Warn("pushdata 인코딩 실패", slog.String("feed", label), slog.Any("err", err))
+			continue
+		}
+		if err := publishBroadcast(mq, wire); err != nil {
 			totalPubErr.Add(1)
 			qm.publishErrors.WithLabelValues(label).Inc()
 			logger.Warn("broker publish 실패", slog.String("feed", label), slog.Any("err", err), slog.String("src", src.String()))
@@ -280,21 +307,57 @@ func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *n
 		totalPubOK.Add(1)
 		qm.published.WithLabelValues(label).Inc()
 		if seq%100 == 1 {
-			logger.Info("forwarded", slog.String("feed", label), slog.Uint64("seq", seq), slog.Int("len", n))
+			logger.Info("forwarded",
+				slog.String("feed", label), slog.Uint64("seq", seq), slog.Int("len", n),
+				slog.String("sym", sym), slog.Float64("bid", bid), slog.Float64("ask", ask),
+			)
+		}
+		// --include-fix 가 켜져 있으면 rich envelope (raw FIX 가독화 포함) 을
+		// 감사용 debug 로그로 남긴다. 발행 wire 와는 무관.
+		if includeFix {
+			audit := buildEnvelope(label, seq, buf[:n], true)
+			logger.Debug("audit", slog.String("fix_envelope", string(audit)))
 		}
 	}
 }
 
-// buildEnvelopeWithStatus 는 buildEnvelope 의 wrapper — 파싱 결과의 정상 여부도
-// 같이 반환해 카운터 분류에 쓸 수 있게 한다 (msgtype != snapshot/incremental
-// 이면 parse 실패로 분류).
-func buildEnvelopeWithStatus(feed string, seq uint64, payload []byte, includeFix bool) ([]byte, bool) {
-	out := buildEnvelope(feed, seq, payload, includeFix)
-	// out 의 msgtype 을 빠르게 확인하기 위해 다시 파싱하지 않고 substring 만.
-	// raw 처리에 추가 비용 거의 없음.
-	ok := bytes.Contains(out, []byte(`"msgtype":"snapshot"`)) ||
-		bytes.Contains(out, []byte(`"msgtype":"incremental"`))
-	return out, ok
+// extractV1 은 rich quoteEnvelope 에서 mci-price 가 기대하는 v1 평면 envelope
+// (docs/cooker-quote-schema.md) 을 추출한다. ok=false 이면 publish 생략.
+//
+// 규칙:
+//   - 35=W (snapshot) 은 env.Symbol 최상위 + entries 의 bid/ask 가 짝으로 옴
+//   - 35=X (incremental) 은 entry 마다 e.Symbol 가짐. 단일 side 만 올 수도 있음
+//   - 한 메시지에서 bid 와 ask 둘 다 못 추출하면 v1 envelope 으로 발행 불가.
+//     (시세 cache 기반 결합은 forwarder scope 밖 — cooker 가 stateful 처리.)
+func extractV1(env quoteEnvelope) (sym string, bid, ask float64, ok bool) {
+	for _, e := range env.Entries {
+		switch e.Type {
+		case "bid":
+			if bid == 0 && e.Px > 0 {
+				bid = e.Px
+				if sym == "" {
+					sym = e.Symbol
+				}
+			}
+		case "ask":
+			if ask == 0 && e.Px > 0 {
+				ask = e.Px
+				if sym == "" {
+					sym = e.Symbol
+				}
+			}
+		}
+		if bid > 0 && ask > 0 {
+			break
+		}
+	}
+	if sym == "" {
+		sym = env.Symbol
+	}
+	if sym == "" || bid <= 0 || ask <= 0 || ask < bid {
+		return "", 0, 0, false
+	}
+	return sym, bid, ask, true
 }
 
 // ── FIX parsing ──────────────────────────────────────────────────────────

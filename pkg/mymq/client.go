@@ -78,6 +78,23 @@ type Options struct {
 	//
 	// Reconnect 시에도 동일 *tls.Config 가 재사용된다.
 	TLS *tls.Config
+
+	// SubBufferSize 는 Subscribe() 가 노출하는 unsolicited 채널 (subCh) 의
+	// buffered capacity. 0 이면 default 256.
+	//
+	// 채널이 가득 차면 dispatch 가 silent drop 하므로 (broker → mci-* 사이
+	// 가장 흔한 backpressure 지점), 고부하 환경에선 큰 값으로 (8192~) 운영
+	// 권장. Subscribe consumer 가 빠르게 처리할 수 있어야 효과 있음 — 단순히
+	// 늘리는 게 답은 아니고, drop 카운터 (SubDrops()) 로 실측 후 조정.
+	SubBufferSize int
+}
+
+// applySubBufferDefault — Options.SubBufferSize 가 0 이면 default 적용.
+// 노출은 테스트 / Open 양쪽에서 일관된 default 보장 위함.
+func applySubBufferDefault(o *Options) {
+	if o.SubBufferSize == 0 {
+		o.SubBufferSize = 256
+	}
 }
 
 // dialBroker 는 Options.TLS 활성 시 tls.Dial, 아니면 plain TCP.
@@ -158,7 +175,9 @@ type Client struct {
 	pending  sync.Map      // ckey(uint32) -> chan *Reply  (동시 Call 매칭 테이블)
 	nextCkey atomic.Uint32 // 다음 ckey 할당용 카운터
 
-	subCh chan *Unsolicited // unsolicited 메시지 채널 (Subscribe() 가 노출)
+	subCh    chan *Unsolicited // unsolicited 메시지 채널 (Subscribe() 가 노출)
+	subDrops atomic.Uint64     // subCh 가 가득 차서 drop 된 누적 메시지 수
+	// (Options.SubBufferSize 와 함께 backpressure 진단). SubDrops() 로 노출.
 
 	// 직전 readLoop 종료 사유 (재연결 진단용).
 	// atomic.Value 는 첫 Store 의 concrete type 으로 고정되므로 wrapper 사용.
@@ -182,6 +201,7 @@ func Open(ctx context.Context, host string, port int, opts Options) (*Client, er
 	if opts.HandshakeTimeout == 0 {
 		opts.HandshakeTimeout = 5 * time.Second
 	}
+	applySubBufferDefault(&opts)
 
 	addr := fmt.Sprintf("%s:%d", host, port)
 	conn, err := dialBroker(ctx, addr, &opts)
@@ -195,7 +215,7 @@ func Open(ctx context.Context, host string, port int, opts Options) (*Client, er
 		port:     port,
 		conn:     conn,
 		chanCode: opts.Channel.Bytes(),
-		subCh:    make(chan *Unsolicited, 256),
+		subCh:    make(chan *Unsolicited, opts.SubBufferSize),
 		doneCh:   make(chan struct{}),
 	}
 	// ckey 0 은 서버측 unsolicited 메시지 식별자로 예약 — 카운터는 1 부터 발급.
@@ -297,6 +317,18 @@ func (c *Client) heartbeatLoop(interval time.Duration) {
 // The channel is closed when the client disconnects.
 func (c *Client) Subscribe() <-chan *Unsolicited {
 	return c.subCh
+}
+
+// SubDrops 는 subCh 가 가득 차서 dispatch 가 drop 한 unsolicited 메시지의
+// 누적 count. backpressure 진단용 — 정상 운영에선 0 이어야 하고, 증가하면
+// (a) Options.SubBufferSize 가 작거나 (b) Subscribe consumer 가 느림.
+func (c *Client) SubDrops() uint64 {
+	return c.subDrops.Load()
+}
+
+// SubBufferCapacity 는 현재 subCh 의 buffered capacity (디버그용).
+func (c *Client) SubBufferCapacity() int {
+	return cap(c.subCh)
 }
 
 // SessionInfo 는 broker 가 핸드셰이크 응답으로 알려준 세션 파라미터를 반환한다.
@@ -601,6 +633,15 @@ func (c *Client) dispatch(df *DecodedFrame) {
 	}
 
 	// Unsolicited (push/broadcast/signal/control without correlation).
+	c.deliverUnsolicited(df)
+}
+
+// deliverUnsolicited 는 dispatch 의 unsolicited 분기 — subCh 로 비차단 송신.
+// 채널이 가득 차면 silent drop 대신 subDrops 카운터를 증가시켜 SubDrops()
+// 로 외부 진단 가능하게 한다 (load-gen 측정 시 broker → consumer backpressure
+// 의 정량적 지표).
+func (c *Client) deliverUnsolicited(df *DecodedFrame) {
+	body := df.Body
 	out := cloneBytes(body)
 	var prefix *BroadcastHeader
 	switch df.Header.Func {
@@ -620,7 +661,7 @@ func (c *Client) dispatch(df *DecodedFrame) {
 		Decoded: df,
 	}:
 	default:
-		// 구독자 버퍼 가득 — drop. (TODO 향후 metric 카운터)
+		c.subDrops.Add(1)
 	}
 }
 

@@ -42,6 +42,11 @@ type Config struct {
 	QueueName    string
 	ExchangeName string // 받을 broadcast 의 exchange (필터링 용)
 
+	// SubBufferSize — pkg/mymq.Client 의 subCh (unsolicited 수신 채널) 깊이.
+	// 0 이면 pkg/mymq default 256. 고부하에서 broker→consumer backpressure 가
+	// 보이면 (SubDrops 증가) 8192 이상으로 운영.
+	SubBufferSize int
+
 	// 핸드셰이크 / I/O 타임아웃.
 	DialTimeout      time.Duration
 	HandshakeTimeout time.Duration
@@ -450,6 +455,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.Instance, "instance", cfg.Instance, "다중 인스턴스 일련번호")
 	fs.StringVar(&cfg.QueueName, "queue", cfg.QueueName, "broker 측 큐 이름")
 	fs.StringVar(&cfg.ExchangeName, "exchange", cfg.ExchangeName, "필터링 대상 exchange")
+	fs.IntVar(&cfg.SubBufferSize, "sub-buffer", cfg.SubBufferSize, "broker subscribe 채널 (subCh) 버퍼 크기 (0=pkg/mymq default 256)")
 	fs.IntVar(&cfg.PrintFirstN, "print", cfg.PrintFirstN, "처음 N 개 tick 을 stdout 에 dump (0 = 비활성)")
 	fs.DurationVar(&cfg.StatsInterval, "stats", cfg.StatsInterval, "통계 출력 주기")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드")

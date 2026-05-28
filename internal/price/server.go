@@ -171,6 +171,10 @@ func (s *Server) Start(ctx context.Context) error {
 		HandshakeTimeout: s.cfg.HandshakeTimeout,
 		Logger:           s.logger,
 		TLS:              brokerTLS,
+		// SubBufferSize — broker → mci-price unsolicited 채널 깊이. 0 이면
+		// pkg/mymq default 256. 부하 테스트 (cmd/load-gen) 에서 broker→client
+		// drop 이 보이면 이 값을 올리고 SubDrops() 가 0 으로 떨어지는지 재측정.
+		SubBufferSize: s.cfg.SubBufferSize,
 		Queue: &mymq.QueueOptions{
 			Name: s.cfg.QueueName,
 			Attr: mymq.QtClient,
@@ -341,15 +345,29 @@ type Stats struct {
 	Matched  uint64          `json:"matched"`
 	Dropped  uint64          `json:"dropped"`
 	Conf     ConflationStats `json:"conflation"`
+
+	// SubDrops — pkg/mymq.Client.subCh 가 가득 차서 broker 쪽에서 drop 된
+	// 누적 메시지 수. backpressure 진단용. 0 이 정상, 증가하면 SubBufferSize
+	// 를 늘리거나 subscribeLoop 처리 속도 개선 필요.
+	SubDrops      uint64 `json:"sub_drops"`
+	SubBufferSize int    `json:"sub_buffer_size"`
 }
 
 // Stats 는 외부 노출용 카운터.
 func (s *Server) Stats() Stats {
+	var subDrops uint64
+	var subBuf int
+	if s.mq != nil {
+		subDrops = s.mq.SubDrops()
+		subBuf = s.mq.SubBufferCapacity()
+	}
 	return Stats{
-		Received: s.totalRecv.Load(),
-		Matched:  s.totalMatch.Load(),
-		Dropped:  s.totalDrop.Load(),
-		Conf:     s.conflation.Stats(),
+		Received:      s.totalRecv.Load(),
+		Matched:       s.totalMatch.Load(),
+		Dropped:       s.totalDrop.Load(),
+		Conf:          s.conflation.Stats(),
+		SubDrops:      subDrops,
+		SubBufferSize: subBuf,
 	}
 }
 

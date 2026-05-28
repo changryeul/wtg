@@ -49,8 +49,10 @@ mci-* 컴포넌트는 모두 broker (mymqd) 에 mymq client 로 connect 해서 �
 | **Internal API** | mci-api         | 8080                  | ChannelWeb                  | `POST /v1/tx`, `/v1/login`, `/v1/logout`, `/v1/refresh`, `/v1/ping` |
 |                  | mci-admin       | 9090                  | ChannelAdmin                | 운영자 콘솔 + admin 명령 + 정책/룰 관리 + tx-test/push-test proxy               |
 |                  | mci-push        | 8081                  | ChannelWeb (representative) | broker 의 unsolicited 받아 user 별 ws fan-out                           |
-|                  | mci-price       | (TBD)                 | ChannelWeb                  | 시세 fan-out 전용                                                       |
-| **추가**           | quote-forwarder | UDP 30044~30051       | ChannelAdmin                | UDP FX 시세 → broker broadcast publish                                |
+|                  | mci-price       | 8082 (HTTP) / 50051 (gRPC) | ChannelWeb              | 시세 fan-out + BestConsumer (다중시장 best 산정) + Aggregator (6 tf OHLC) + Archiver |
+|                  | mci-chart       | 8086                  | (gRPC client)               | TimescaleDB historical REST + WS 라이브 봉 (SubscribeBar)             |
+| **추가**           | quote-forwarder | UDP 30044~30051       | ChannelAdmin                | UDP FX 시세 → batch publish (per-feed broker connection)            |
+| **부하 도구**       | load-gen        | —                     | —                           | UDP 시세 부하 생성기 + delivery/drop/sub_drops 측정 (`scripts/load-test.sh`) |
 | **Broker**       | mymqd           | 11217 (cluster 11218) | —                           | mymq message broker (docker 컨테이너)                                   |
 | **Broker내**      | test_service    | (broker 안 entrypoint) | —                           | TSTSVC/PING echo 서비스 (single rkey, round-trip 검증용)                  |
 | **Broker내**      | WECHO           | (broker 안 entrypoint, `win/src/trn/WECHO`) | —          | 운영 svcmain 패턴 prototype — multi rkey (PING/ECHO/UPPER/TIME/INFO) |
@@ -178,48 +180,65 @@ POST /v1/admin/push-test ──FCPush──▶ mymqd
 ### 3.3 시세 (UDP → broadcast → ws fan-out)
 
 ```
-[시세 source]                       [forwarder]                  [broker]              [ws 사용자]
+[시세 source]              [forwarder (per feed)]           [broker]              [mci-price]                  [downstream]
 
-replay_smb2 / nc / wtgctl quote
-       │ UDP 30044/30045/30046/30051
+replay_smb2 / nc / wtgctl
+       │ UDP 30044/45/46/51
        ↓
-   ┌─────────────┐
-   │ quote-fwd   │ FIX 4.4 파싱 (35=W/X)
-   │             │ → JSON envelope
-   └──────┬──────┘
-          ↓ FCCast/SubBroadcast
-       mymqd ─ broadcast (LogonID="")
-          │
-          └─▶ representative receiver (mci-push)
-                   │
-                   │ dispatcher: LogonID 빈값
-                   │     → 전체 user fan-out
-                   ▼
-              모든 ws 사용자 ◀
+   ┌──────────────────────────────────┐
+   │ reader  ─ pure ReadFromUDP        │
+   │   ↓ pktCh (buf 8192)              │
+   │ worker  ─ fastExtractV1 (FIX 한번 스캔)
+   │   ↓ batch buffer (max 14)         │
+   │ flush   ─ JSON 배열 → pushdata    │
+   └──────────┬────────────────────────┘
+              ↓ FCCast/SubBroadcast, Xchg=PRICE (FANOUT)
+           mymqd  ─ publish_packet → 매칭된 client 에 send
+              │
+              └─▶ mci-price (Xchg="PRICE" declare 한 receiver)
+                      │
+                      │ ParseEnvelopes (단일 객체 / 배열 auto-detect)
+                      │ Tick.Source ← env.Src
+                      ↓
+                  BestConsumer  per (Symbol, Source) 캐시
+                      │  best_bid = max(bid), best_ask = min(ask)
+                      │  cross 시 최신 feed bid/ask fallback (mds 모델)
+                      ↓ Source="BEST" 합성 Tick
+                  Aggregator  ─ SymbolMap → pair → 6 timeframe OHLC
+                      ├→ Archiver ─→ TimescaleDB.quote_bars (1m+ 영속)
+                      └→ gRPC SubscribeBar/SubscribeQuote
+                              ↓
+                          mci-chart (WS /v1/chart/stream)
+                          mci-edge-price (외부 ws)
 ```
 
-forwarder 출력 envelope:
-```json
-{
-  "ts": "2026-05-03T01:50:04.338422Z",
-  "feed": "SMB",
-  "seq": 1,
-  "msgtype": "snapshot",
-  "symbol": "USDKRW",
-  "sender": "SMB",
-  "target": "SUB",
-  "entries": [
-    {"type":"bid","px":1380.5,"qty":1000000},
-    {"type":"ask","px":1380.7,"qty":1500000}
-  ]
-}
-```
+forwarder publish wire (pushdata.msgb 안의 JSON):
 
-**옵션 1 (현재)**: forwarder 가 cooker 우회 — UDP 직접 listen.
+- 단일 envelope (cooker C 호환):
+  ```json
+  {"sym":"USDKRW","bid":1380.45,"ask":1380.55,"ts":"...","src":"SMB","seq":1}
+  ```
+- batch (forwarder 의 batch publish — broker publish 빈도 1/N):
+  ```json
+  [{"sym":"USDKRW","bid":1380.45,"ask":1380.55,...},{"sym":"USDKRW","bid":1380.43,"ask":1380.53,...},...]
+  ```
+
+`internal/price.ParseEnvelopes` 가 첫 char 로 `[` / `{` 자동 분기 — cooker /
+forwarder 양쪽 wire 동시 지원.
+
+**옵션 1 (현재 dev)**: forwarder 가 cooker 우회 — UDP 직접 listen.
 **옵션 2 (정통)**: forwarder 가 cooker 의 multicast 224.0.0.1:30022 에 join —
 가공된 시세 받음.
 **옵션 3 (PAL 통합)**: cooker 의 `mds_mq` PAL 백엔드를 broker push 로 교체 —
 forwarder 불필요.
+
+**부하 측정 결과** (cmd/load-gen + scripts/load-test.sh, Apple M4 Pro):
+
+| 시나리오 | tick/s | delivery | 비고 |
+|---|---|---|---|
+| LOW | 640 | 100% | baseline |
+| MID | 6.4k | 100% | 운영 변동성 |
+| HIGH | 64k | ~62% | broker publisher thread 가 ceiling (publish.c 단일 thread) |
 
 ---
 

@@ -57,6 +57,7 @@ type quoteMetrics struct {
 	bytes         *prometheus.CounterVec
 	rcvBuf        *prometheus.GaugeVec
 	batchSize     *prometheus.HistogramVec
+	queueDrops    *prometheus.CounterVec
 }
 
 func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
@@ -93,8 +94,12 @@ func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
 			},
 			[]string{"feed"},
 		),
+		queueDrops: prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "quote_forwarder_queue_drops_total", Help: "reader → worker 채널 가득 시 명시적 drop"},
+			[]string{"feed"},
+		),
 	}
-	for _, c := range []prometheus.Collector{m.received, m.published, m.publishErrors, m.parseErrors, m.bytes, m.rcvBuf, m.batchSize} {
+	for _, c := range []prometheus.Collector{m.received, m.published, m.publishErrors, m.parseErrors, m.bytes, m.rcvBuf, m.batchSize, m.queueDrops} {
 		_ = reg.Register(c)
 	}
 	return m
@@ -122,6 +127,7 @@ func main() {
 		udpRcvBuf    = flag.Int("udp-rcvbuf", 4*1024*1024, "UDP socket SO_RCVBUF (bytes). kernel 한계(macOS kern.ipc.maxsockbuf 기본 8MB)를 넘으면 silently clamp. 0 이면 OS default.")
 		batchMax     = flag.Int("batch-max", 14, "한 broker message 에 묶을 envelope 최대 개수 (1=batch 비활성). pushdata.msgb 1512B 한계 — typical envelope 105B × 14 = 1485B (마진 27B). over-size 시 split fallback 으로 안전.")
 		batchTimeout = flag.Duration("batch-timeout", 10*time.Millisecond, "batch 가 batch-max 에 도달 못해도 이 시간 후 강제 flush")
+		feedBuffer   = flag.Int("feed-buffer", 8192, "feed 별 reader → worker 채널 버퍼 크기. 가득 차면 reader 가 명시적 drop (kernel silent drop 회피, queue_drop 카운터로 가시화).")
 	)
 	flag.Parse()
 
@@ -220,7 +226,7 @@ func main() {
 			slog.Int("instance", *instance+i),
 			slog.Int("scid", int(si.ConnectionID)),
 		)
-		go feedLoop(ctx, logger, mq, conn, f.Label, *includeFix, qm, *batchMax, *batchTimeout)
+		go feedLoop(ctx, logger, mq, conn, f.Label, *includeFix, qm, *batchMax, *batchTimeout, *feedBuffer)
 	}
 
 	<-ctx.Done()
@@ -299,18 +305,67 @@ func splitColon(s string) []string {
 // feedLoop 은 한 거래소의 UDP packet 을 읽어 broker broadcast 로 발사한다.
 //
 // 각 단계마다 metrics 카운터를 증가 — Prometheus 로 노출.
-func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *net.UDPConn, label string, includeFix bool, qm *quoteMetrics, batchMax int, batchTimeout time.Duration) {
+// rawPacket — reader → worker 채널의 단위. seq 는 forwarder 통합 카운터.
+type rawPacket struct {
+	data []byte
+	seq  uint64
+}
+
+func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *net.UDPConn, label string, includeFix bool, qm *quoteMetrics, batchMax int, batchTimeout time.Duration, feedBuffer int) {
 	go func() {
 		<-ctx.Done()
 		_ = conn.SetReadDeadline(time.Now())
 	}()
-	buf := make([]byte, 64*1024)
-	var seq uint64
 	if batchMax < 1 {
 		batchMax = 1
 	}
+	if feedBuffer < 1 {
+		feedBuffer = 1
+	}
 	batch := make([]quote.JSONEnvelope, 0, batchMax)
-	var batchStarted time.Time
+
+	// ── Reader goroutine ──
+	//
+	// pure ReadFromUDP loop — parse/publish 작업 분리. UDP read syscall 만
+	// 빠르게 돌려 kernel buffer 가 차지 않게 한다. 채널 가득 시 명시적 drop
+	// (queue_drops 카운터) 으로 kernel silent drop 회피. 채널 capacity 가
+	// burst 흡수 buffer 역할.
+	pktCh := make(chan rawPacket, feedBuffer)
+	go func() {
+		buf := make([]byte, 64*1024)
+		var seq uint64
+		for {
+			n, _, err := conn.ReadFromUDP(buf)
+			if err != nil {
+				if ctx.Err() != nil {
+					close(pktCh)
+					return
+				}
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					continue
+				}
+				logger.Warn("UDP read", slog.String("feed", label), slog.Any("err", err))
+				continue
+			}
+			seq++
+			totalReceived.Add(1)
+			qm.received.WithLabelValues(label).Inc()
+			qm.bytes.WithLabelValues(label).Add(float64(n))
+
+			// buf 의 사본 — 다음 read 가 덮어쓰지 않게 (channel 의 수신자가
+			// 비동기로 소비). 작은 패킷 (~150B) 이라 alloc 비용 소소.
+			pkt := make([]byte, n)
+			copy(pkt, buf[:n])
+			select {
+			case pktCh <- rawPacket{data: pkt, seq: seq}:
+			default:
+				// 채널 가득 — worker 가 parse/publish 못 따라감. 명시적 drop.
+				qm.queueDrops.WithLabelValues(label).Inc()
+			}
+		}
+	}()
+
+	var seq uint64
 
 	// publishOne — batch (또는 sub-batch) 1 회 publish. ErrPushdataPayloadTooLong
 	// 만 별도 처리해 caller 가 split 재시도 가능하게 분리 신호.
@@ -364,70 +419,71 @@ func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *n
 		batch = batch[:0]
 	}
 
+	// ── Worker loop (현 goroutine) ──
+	//
+	// pktCh 에서 raw UDP packet 을 받아 parse + batch + publish. batch 가 빈
+	// 동안 timer 도 stop — 작은 GC pressure 와 CPU 절약. batch 첫 envelope
+	// 시점에 timer 재시작.
+	flushTimer := time.NewTimer(time.Hour) // dummy 초기값 — 곧 stop
+	if !flushTimer.Stop() {
+		<-flushTimer.C
+	}
 	for {
-		// batch 에 1개 이상 있을 때만 read deadline 적용 — timeout 으로 flush.
-		// 비어 있으면 무한 대기 (CPU 낭비 방지).
-		if len(batch) > 0 {
-			deadline := batchStarted.Add(batchTimeout)
-			_ = conn.SetReadDeadline(deadline)
-		} else {
-			_ = conn.SetReadDeadline(time.Time{}) // no deadline
-		}
-		n, src, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-flushTimer.C:
+			// batch flush 시간 도래.
+			flush()
+		case pkt, ok := <-pktCh:
+			if !ok {
 				return
 			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				// batch flush timeout
-				flush()
+			seq = pkt.seq
+
+			// FIX → v1 envelope. v1 추출 실패하면 skip.
+			richEnv := parseQuote(pkt.data)
+			parsedOK := richEnv.MsgType == "snapshot" || richEnv.MsgType == "incremental"
+			if !parsedOK {
+				qm.parseErrors.WithLabelValues(label).Inc()
+			}
+			sym, bid, ask, v1ok := extractV1(richEnv)
+			if !v1ok {
+				qm.parseErrors.WithLabelValues(label).Inc()
 				continue
 			}
-			logger.Warn("UDP read", slog.String("feed", label), slog.Any("err", err))
-			continue
-		}
-		seq++
-		totalReceived.Add(1)
-		qm.received.WithLabelValues(label).Inc()
-		qm.bytes.WithLabelValues(label).Add(float64(n))
 
-		// FIX → v1 envelope. v1 추출 실패하면 skip (single-side, sym 누락 등).
-		richEnv := parseQuote(buf[:n])
-		parsedOK := richEnv.MsgType == "snapshot" || richEnv.MsgType == "incremental"
-		if !parsedOK {
-			qm.parseErrors.WithLabelValues(label).Inc()
-		}
-		sym, bid, ask, v1ok := extractV1(richEnv)
-		if !v1ok {
-			qm.parseErrors.WithLabelValues(label).Inc()
-			continue
-		}
+			// batch 에 누적. 첫 envelope 면 timer 시작.
+			if len(batch) == 0 {
+				flushTimer.Reset(batchTimeout)
+			}
+			batch = append(batch, quote.JSONEnvelope{
+				Sym: sym, Bid: bid, Ask: ask,
+				TS:  time.Now().UTC(),
+				Src: label, Seq: seq,
+			})
+			if len(batch) >= batchMax {
+				if !flushTimer.Stop() {
+					select {
+					case <-flushTimer.C:
+					default:
+					}
+				}
+				flush()
+			}
 
-		// batch 에 누적. 첫 envelope 면 timer 시작 시점 기록.
-		if len(batch) == 0 {
-			batchStarted = time.Now()
+			if seq%1000 == 1 {
+				logger.Info("forwarded",
+					slog.String("feed", label), slog.Uint64("seq", seq), slog.Int("len", len(pkt.data)),
+					slog.String("sym", sym), slog.Float64("bid", bid), slog.Float64("ask", ask),
+					slog.Int("batch_max", batchMax),
+				)
+			}
+			if includeFix {
+				audit := buildEnvelope(label, seq, pkt.data, true)
+				logger.Debug("audit", slog.String("fix_envelope", string(audit)))
+			}
 		}
-		batch = append(batch, quote.JSONEnvelope{
-			Sym: sym, Bid: bid, Ask: ask,
-			TS:  time.Now().UTC(),
-			Src: label, Seq: seq,
-		})
-		if len(batch) >= batchMax {
-			flush()
-		}
-
-		if seq%1000 == 1 {
-			logger.Info("forwarded",
-				slog.String("feed", label), slog.Uint64("seq", seq), slog.Int("len", n),
-				slog.String("sym", sym), slog.Float64("bid", bid), slog.Float64("ask", ask),
-				slog.Int("batch_max", batchMax),
-			)
-		}
-		if includeFix {
-			audit := buildEnvelope(label, seq, buf[:n], true)
-			logger.Debug("audit", slog.String("fix_envelope", string(audit)))
-		}
-		_ = src // (debug 로그에서만 사용 — backpressure 시 src 정보 필요시 활용)
 	}
 }
 

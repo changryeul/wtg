@@ -56,6 +56,7 @@ type quoteMetrics struct {
 	parseErrors   *prometheus.CounterVec
 	bytes         *prometheus.CounterVec
 	rcvBuf        *prometheus.GaugeVec
+	batchSize     *prometheus.HistogramVec
 }
 
 func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
@@ -84,8 +85,16 @@ func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
 			prometheus.GaugeOpts{Name: "quote_forwarder_udp_rcvbuf_bytes", Help: "UDP SO_RCVBUF 실제 적용된 크기"},
 			[]string{"feed"},
 		),
+		batchSize: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "quote_forwarder_batch_size",
+				Help:    "broker publish 1회당 envelope 수 (batch publish)",
+				Buckets: []float64{1, 2, 4, 8, 16, 32, 64},
+			},
+			[]string{"feed"},
+		),
 	}
-	for _, c := range []prometheus.Collector{m.received, m.published, m.publishErrors, m.parseErrors, m.bytes, m.rcvBuf} {
+	for _, c := range []prometheus.Collector{m.received, m.published, m.publishErrors, m.parseErrors, m.bytes, m.rcvBuf, m.batchSize} {
 		_ = reg.Register(c)
 	}
 	return m
@@ -108,9 +117,11 @@ func main() {
 		brokerPort  = flag.Int("broker-port", 11217, "mymqd 포트")
 		appl        = flag.String("appl", "quote-fwd", "broker appl 이름")
 		instance    = flag.Int("instance", 1, "appl 인스턴스 번호")
-		includeFix  = flag.Bool("include-fix", false, "true 면 envelope 에 raw FIX(가독화) 도 같이 박는다")
-		metricsAddr = flag.String("metrics", "", "Prometheus metrics + /stats HTTP listen 주소 (예: 127.0.0.1:9091). 비면 비활성")
-		udpRcvBuf   = flag.Int("udp-rcvbuf", 4*1024*1024, "UDP socket SO_RCVBUF (bytes). kernel 한계(macOS kern.ipc.maxsockbuf 기본 8MB)를 넘으면 silently clamp. 0 이면 OS default.")
+		includeFix   = flag.Bool("include-fix", false, "true 면 envelope 에 raw FIX(가독화) 도 같이 박는다")
+		metricsAddr  = flag.String("metrics", "", "Prometheus metrics + /stats HTTP listen 주소 (예: 127.0.0.1:9091). 비면 비활성")
+		udpRcvBuf    = flag.Int("udp-rcvbuf", 4*1024*1024, "UDP socket SO_RCVBUF (bytes). kernel 한계(macOS kern.ipc.maxsockbuf 기본 8MB)를 넘으면 silently clamp. 0 이면 OS default.")
+		batchMax     = flag.Int("batch-max", 10, "한 broker message 에 묶을 envelope 최대 개수 (1=batch 비활성, 단일 envelope 발행). pushdata.msgb 1512B 한계 — envelope ~110B × 10 ≈ 1130B 안전 마진.")
+		batchTimeout = flag.Duration("batch-timeout", 10*time.Millisecond, "batch 가 batch-max 에 도달 못해도 이 시간 후 강제 flush")
 	)
 	flag.Parse()
 
@@ -209,7 +220,7 @@ func main() {
 			slog.Int("instance", *instance+i),
 			slog.Int("scid", int(si.ConnectionID)),
 		)
-		go feedLoop(ctx, logger, mq, conn, f.Label, *includeFix, qm)
+		go feedLoop(ctx, logger, mq, conn, f.Label, *includeFix, qm, *batchMax, *batchTimeout)
 	}
 
 	<-ctx.Done()
@@ -288,18 +299,89 @@ func splitColon(s string) []string {
 // feedLoop 은 한 거래소의 UDP packet 을 읽어 broker broadcast 로 발사한다.
 //
 // 각 단계마다 metrics 카운터를 증가 — Prometheus 로 노출.
-func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *net.UDPConn, label string, includeFix bool, qm *quoteMetrics) {
+func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *net.UDPConn, label string, includeFix bool, qm *quoteMetrics, batchMax int, batchTimeout time.Duration) {
 	go func() {
 		<-ctx.Done()
 		_ = conn.SetReadDeadline(time.Now())
 	}()
 	buf := make([]byte, 64*1024)
 	var seq uint64
+	if batchMax < 1 {
+		batchMax = 1
+	}
+	batch := make([]quote.JSONEnvelope, 0, batchMax)
+	var batchStarted time.Time
+
+	// publishOne — batch (또는 sub-batch) 1 회 publish. ErrPushdataPayloadTooLong
+	// 만 별도 처리해 caller 가 split 재시도 가능하게 분리 신호.
+	publishOne := func(envs []quote.JSONEnvelope) error {
+		var wire []byte
+		var err error
+		if len(envs) == 1 {
+			wire, err = quote.EncodePushdataV1(envs[0])
+		} else {
+			wire, err = quote.EncodePushdataBatch(envs)
+		}
+		if err != nil {
+			return err
+		}
+		if err := publishBroadcast(mq, wire); err != nil {
+			return err
+		}
+		totalPubOK.Add(uint64(len(envs)))
+		qm.published.WithLabelValues(label).Add(float64(len(envs)))
+		qm.batchSize.WithLabelValues(label).Observe(float64(len(envs)))
+		return nil
+	}
+
+	// flush — batch 를 broker 로 보낸다. payload 초과 (envelope 누적 size 가
+	// pushdata.msgb 1512B 한계 초과) 면 batch 를 둘로 나눠 재귀 split 발행 —
+	// 1-element 까지 내려가도 안 들어가면 drop.
+	var flushSplit func(envs []quote.JSONEnvelope)
+	flushSplit = func(envs []quote.JSONEnvelope) {
+		if len(envs) == 0 {
+			return
+		}
+		err := publishOne(envs)
+		if err == nil {
+			return
+		}
+		if err == quote.ErrPushdataPayloadTooLong && len(envs) > 1 {
+			// 반으로 split — 평균 envelope size 가 110B 가정 시 거의 발생 안 함
+			// (batchMax=10 으로 안전 마진). 실측 envelope 가 크면 폴백 진입.
+			mid := len(envs) / 2
+			flushSplit(envs[:mid])
+			flushSplit(envs[mid:])
+			return
+		}
+		totalPubErr.Add(uint64(len(envs)))
+		qm.publishErrors.WithLabelValues(label).Add(float64(len(envs)))
+		logger.Warn("publish 실패 — drop", slog.String("feed", label),
+			slog.Int("batch_size", len(envs)), slog.Any("err", err))
+	}
+	flush := func() {
+		flushSplit(batch)
+		batch = batch[:0]
+	}
+
 	for {
+		// batch 에 1개 이상 있을 때만 read deadline 적용 — timeout 으로 flush.
+		// 비어 있으면 무한 대기 (CPU 낭비 방지).
+		if len(batch) > 0 {
+			deadline := batchStarted.Add(batchTimeout)
+			_ = conn.SetReadDeadline(deadline)
+		} else {
+			_ = conn.SetReadDeadline(time.Time{}) // no deadline
+		}
 		n, src, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
+			}
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				// batch flush timeout
+				flush()
+				continue
 			}
 			logger.Warn("UDP read", slog.String("feed", label), slog.Any("err", err))
 			continue
@@ -309,56 +391,43 @@ func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *n
 		qm.received.WithLabelValues(label).Inc()
 		qm.bytes.WithLabelValues(label).Add(float64(n))
 
-		// rich envelope — parse 결과 가시성 (msgtype 분류, debug 로그 hook 용).
-		// publish 와는 별개 — 발행 자체는 v1 pushdata 만 보낸다.
+		// FIX → v1 envelope. v1 추출 실패하면 skip (single-side, sym 누락 등).
 		richEnv := parseQuote(buf[:n])
 		parsedOK := richEnv.MsgType == "snapshot" || richEnv.MsgType == "incremental"
 		if !parsedOK {
 			qm.parseErrors.WithLabelValues(label).Inc()
 		}
-
-		// mci-price 가 받을 wire 는 cooker 의 pushdata 구조 (pushmsg.symb +
-		// msgb=v1 JSON envelope). rich envelope 를 그대로 보내면 mci-price 의
-		// DecodePushData 가 길이 부족으로 drop. v1 추출 실패하면 publish 생략.
 		sym, bid, ask, v1ok := extractV1(richEnv)
 		if !v1ok {
 			qm.parseErrors.WithLabelValues(label).Inc()
 			continue
 		}
-		wire, err := quote.EncodePushdataV1(quote.JSONEnvelope{
-			Sym: sym,
-			Bid: bid,
-			Ask: ask,
+
+		// batch 에 누적. 첫 envelope 면 timer 시작 시점 기록.
+		if len(batch) == 0 {
+			batchStarted = time.Now()
+		}
+		batch = append(batch, quote.JSONEnvelope{
+			Sym: sym, Bid: bid, Ask: ask,
 			TS:  time.Now().UTC(),
-			Src: label,
-			Seq: seq,
+			Src: label, Seq: seq,
 		})
-		if err != nil {
-			totalPubErr.Add(1)
-			qm.publishErrors.WithLabelValues(label).Inc()
-			logger.Warn("pushdata 인코딩 실패", slog.String("feed", label), slog.Any("err", err))
-			continue
+		if len(batch) >= batchMax {
+			flush()
 		}
-		if err := publishBroadcast(mq, wire); err != nil {
-			totalPubErr.Add(1)
-			qm.publishErrors.WithLabelValues(label).Inc()
-			logger.Warn("broker publish 실패", slog.String("feed", label), slog.Any("err", err), slog.String("src", src.String()))
-			continue
-		}
-		totalPubOK.Add(1)
-		qm.published.WithLabelValues(label).Inc()
-		if seq%100 == 1 {
+
+		if seq%1000 == 1 {
 			logger.Info("forwarded",
 				slog.String("feed", label), slog.Uint64("seq", seq), slog.Int("len", n),
 				slog.String("sym", sym), slog.Float64("bid", bid), slog.Float64("ask", ask),
+				slog.Int("batch_max", batchMax),
 			)
 		}
-		// --include-fix 가 켜져 있으면 rich envelope (raw FIX 가독화 포함) 을
-		// 감사용 debug 로그로 남긴다. 발행 wire 와는 무관.
 		if includeFix {
 			audit := buildEnvelope(label, seq, buf[:n], true)
 			logger.Debug("audit", slog.String("fix_envelope", string(audit)))
 		}
+		_ = src // (debug 로그에서만 사용 — backpressure 시 src 정보 필요시 활용)
 	}
 }
 

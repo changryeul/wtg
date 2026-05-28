@@ -19,6 +19,7 @@ import (
 
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
+	"github.com/winwaysystems/wtg/pkg/quote"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
 
@@ -71,6 +72,10 @@ type Server struct {
 	totalRecv  atomic.Uint64
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
 	totalDrop  atomic.Uint64 // 디코딩 실패 등
+	totalTicks atomic.Uint64 // 실제 처리된 envelope (tick) 수.
+	// batch 1개 broker message 가 N envelope 을 담을 수 있으므로
+	// totalRecv (broker message 수) 와 분리. delivery% 측정 시 sent UDP
+	// 와 비교할 대상은 totalTicks 쪽.
 
 	http *http.Server
 }
@@ -297,17 +302,43 @@ func (s *Server) handleUnsolicited(msg *mymq.Unsolicited) {
 		return
 	}
 
-	// Tick.Source 채움 — v1 envelope 의 "src" 필드. BestConsumer 의 (Symbol,
-	// Source) 캐시 키. raw body 가 v1 envelope 이 아니면 빈값 (BestConsumer 는
-	// 빈 Source 를 drop, 비활성 시는 무관).
-	tick.Source = peekSource(tick.Body)
+	// pushdata.msgb 에서 v1 envelope 들 추출 — 단일 객체 또는 배열 (forwarder
+	// batch publish). 1 broker message = N tick 가능.
+	envs, err := ParseEnvelopes(tick.Body)
+	if err != nil {
+		s.totalDrop.Add(1)
+		s.logger.Debug("envelope 파싱 실패",
+			slog.Any("error", err),
+			slog.Int("body_len", len(tick.Body)),
+		)
+		return
+	}
 
-	// Conflation 업데이트.
-	s.conflation.Update(tick)
-
-	// 다운스트림 consumer 호출.
-	for _, c := range s.consumers {
-		c.OnTick(tick)
+	for _, env := range envs {
+		// envelope 별 sub-tick — Symbol/Source 를 envelope 으로 덮어쓴다.
+		// (batch 일 때 pushmsg.symb 는 첫 envelope 만 반영하므로 per-envelope
+		// sym 으로 SymbolMap lookup 해야 정확.)
+		body, mErr := quote.EncodeJSONEnvelope(env)
+		if mErr != nil {
+			s.totalDrop.Add(1)
+			continue
+		}
+		sub := &Tick{
+			MarketID: tick.MarketID,
+			Symbol:   env.Sym,
+			SeqNum:   tick.SeqNum,
+			Mask:     tick.Mask,
+			Type:     tick.Type,
+			Flag:     tick.Flag,
+			Body:     body,
+			Source:   env.Src,
+			Received: time.Now(),
+		}
+		s.totalTicks.Add(1)
+		s.conflation.Update(sub)
+		for _, c := range s.consumers {
+			c.OnTick(sub)
+		}
 	}
 }
 
@@ -343,9 +374,10 @@ func (s *Server) statsLoop(ctx context.Context) {
 
 // Stats 는 Server 의 누적 카운터 + conflation 스냅샷.
 type Stats struct {
-	Received uint64          `json:"received"`
-	Matched  uint64          `json:"matched"`
-	Dropped  uint64          `json:"dropped"`
+	Received uint64          `json:"received"` // broker message 수
+	Matched  uint64          `json:"matched"`  // exchange 필터 통과
+	Dropped  uint64          `json:"dropped"`  // 디코딩 실패
+	Ticks    uint64          `json:"ticks"`    // 실제 envelope (tick) 수 — batch 펼친 후
 	Conf     ConflationStats `json:"conflation"`
 
 	// SubDrops — pkg/mymq.Client.subCh 가 가득 차서 broker 쪽에서 drop 된
@@ -367,6 +399,7 @@ func (s *Server) Stats() Stats {
 		Received:      s.totalRecv.Load(),
 		Matched:       s.totalMatch.Load(),
 		Dropped:       s.totalDrop.Load(),
+		Ticks:         s.totalTicks.Load(),
 		Conf:          s.conflation.Stats(),
 		SubDrops:      subDrops,
 		SubBufferSize: subBuf,

@@ -106,9 +106,10 @@ func buildFIX(feed, pair string, bid, ask float64) []byte {
 
 // ── price-stats / best-stats 응답 모델 ──
 type priceStats struct {
-	Received uint64 `json:"received"`
+	Received uint64 `json:"received"` // broker message 수
 	Matched  uint64 `json:"matched"`
 	Dropped  uint64 `json:"dropped"`
+	Ticks    uint64 `json:"ticks"` // batch 펼친 envelope 수 (sent UDP 와 1:1 비교 대상)
 	Conf     struct {
 		Symbols uint64 `json:"Symbols"`
 		Updates uint64 `json:"Updates"`
@@ -205,12 +206,13 @@ func main() {
 	defer cancel()
 
 	// ── baseline 카운터 — delta 계산용 (이번 test 가 mci-price 에 미친 효과만) ──
-	var baseRecv, baseDrop uint64
+	var baseRecv, baseDrop, baseTicks uint64
 	if *priceStatsURL != "" {
 		var ps priceStats
 		if err := fetchJSON(*priceStatsURL, &ps); err == nil {
 			baseRecv = ps.Received
 			baseDrop = ps.Dropped
+			baseTicks = ps.Ticks
 		}
 	}
 
@@ -335,23 +337,29 @@ func main() {
 	achievedRate := float64(finalSent) / duration.Seconds()
 	achievedPct := achievedRate / float64(totalRate) * 100
 
-	var finalRecv, finalDrop uint64
+	var finalRecv, finalDrop, finalTicks uint64
 	if *priceStatsURL != "" {
 		var ps priceStats
 		if err := fetchJSON(*priceStatsURL, &ps); err == nil {
 			finalRecv = ps.Received
 			finalDrop = ps.Dropped
+			finalTicks = ps.Ticks
 		}
 	}
 	deltaRecv := finalRecv - baseRecv
 	deltaDrop := finalDrop - baseDrop
+	deltaTicks := finalTicks - baseTicks
 	deliveryPct := 0.0
 	if finalSent > 0 {
-		deliveryPct = float64(deltaRecv) / float64(finalSent) * 100
+		deliveryPct = float64(deltaTicks) / float64(finalSent) * 100
 	}
 	dropPct := 0.0
 	if deltaRecv > 0 {
 		dropPct = float64(deltaDrop) / float64(deltaRecv) * 100
+	}
+	batchAvg := 0.0
+	if deltaRecv > 0 {
+		batchAvg = float64(deltaTicks) / float64(deltaRecv)
 	}
 
 	fmt.Println("\n=== Summary ===")
@@ -359,8 +367,10 @@ func main() {
 	fmt.Printf("Target rate:      %d tick/s 총 (%d stream × %d/stream)\n", totalRate, streams, *rate)
 	fmt.Printf("Achieved rate:    %.0f tick/s (%.1f%% of target)\n", achievedRate, achievedPct)
 	fmt.Printf("Sent (UDP):       %d (errs %d)\n", finalSent, finalErrs)
-	fmt.Printf("Received Δ:       %d (delivery %.1f%% of sent — Δ from price-stats)\n", deltaRecv, deliveryPct)
-	fmt.Printf("Dropped Δ:        %d (%.2f%% of Δ recv)\n", deltaDrop, dropPct)
+	fmt.Printf("Messages Δ:       %d (broker delivery 단위)\n", deltaRecv)
+	fmt.Printf("Ticks Δ:          %d (delivery %.1f%% of sent — sent vs envelope)\n", deltaTicks, deliveryPct)
+	fmt.Printf("Avg batch size:   %.1f (ticks per broker message)\n", batchAvg)
+	fmt.Printf("Dropped Δ:        %d (%.2f%% of Δ messages)\n", deltaDrop, dropPct)
 
 	// CSV 출력 — 시간별 샘플. 다른 run 과 비교 시 외부 툴로 처리.
 	if *csvPath != "" {

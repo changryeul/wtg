@@ -2,6 +2,7 @@ package quote
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 )
 
@@ -89,6 +90,31 @@ func EncodePushdata(opts PushdataOptions, payload []byte) ([]byte, error) {
 
 	copy(buf[off:off+len(payload)], payload)
 	return buf, nil
+}
+
+// EncodePushdataBatch — 다수 v1 envelope 를 JSON 배열로 직렬화해서 pushdata
+// msgb 에 박는다. broker publish 1 회로 N tick 을 전달 (broker publisher
+// thread 가 ceiling 인 환경에서 throughput 우회).
+//
+// pushmsg.symb 는 첫 envelope 의 Sym 으로 (정보 전용 — mci-price 는 per-
+// envelope sym 으로 SymbolMap lookup). seqn 은 첫 envelope 의 Seq.
+// payload (`[...]`) 가 MaxPushLen(1512B) 을 넘으면 ErrPushdataPayloadTooLong.
+//
+// 단일 envelope 의 경우 호출자가 EncodePushdataV1 직접 사용 권장 (단일 객체
+// 형태가 cooker C wire 와 호환). 본 함수는 N ≥ 2 일 때 사용.
+func EncodePushdataBatch(envs []JSONEnvelope) ([]byte, error) {
+	if len(envs) == 0 {
+		return nil, ErrEnvelopeEmpty
+	}
+	body, err := json.Marshal(envs)
+	if err != nil {
+		return nil, err
+	}
+	first := envs[0]
+	return EncodePushdata(PushdataOptions{
+		SeqNum: uint32(first.Seq),
+		Symbol: first.Sym,
+	}, body)
 }
 
 // EncodePushdataV1 는 v1 JSON envelope 을 직렬화 → pushdata 로 감싸는 편의 함수.

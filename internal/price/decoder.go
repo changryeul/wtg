@@ -159,3 +159,38 @@ func peekSource(body []byte) string {
 	}
 	return s.Src
 }
+
+// ParseEnvelopes 는 pushdata.msgb 의 v1 envelope (단일 객체 또는 배열) 을
+// auto-detect 해서 []quote.JSONEnvelope 로 디코드한다. 첫 non-whitespace
+// 바이트가 `[` 이면 배열, 그 외에는 단일 객체로 처리. 단일 객체는 길이 1
+// 슬라이스로 반환되어 호출자가 일관된 loop 로 처리 가능.
+//
+// forwarder batch publish (quote.EncodePushdataBatch) 와 단일 cooker
+// publish (단일 객체 wire) 양쪽 모두 동일 함수로 흡수.
+func ParseEnvelopes(body []byte) ([]quote.JSONEnvelope, error) {
+	// trailing NUL padding 제거 (broker fixed buffer 잔여).
+	for len(body) > 0 && body[len(body)-1] == 0 {
+		body = body[:len(body)-1]
+	}
+	// leading whitespace skip — 첫 non-whitespace 으로 array/object 판단.
+	i := 0
+	for i < len(body) && (body[i] == ' ' || body[i] == '\t' || body[i] == '\r' || body[i] == '\n') {
+		i++
+	}
+	if i >= len(body) {
+		return nil, quote.ErrEnvelopeEmpty
+	}
+	if body[i] == '[' {
+		var arr []quote.JSONEnvelope
+		if err := json.Unmarshal(body[i:], &arr); err != nil {
+			return nil, err
+		}
+		return arr, nil
+	}
+	// 단일 객체 — 검증까지 같이 (quote.DecodeJSONEnvelope 가 sym/bid/ask 검증).
+	env, err := quote.DecodeJSONEnvelope(body[i:])
+	if err != nil {
+		return nil, err
+	}
+	return []quote.JSONEnvelope{env}, nil
+}

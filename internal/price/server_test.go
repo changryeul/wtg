@@ -52,7 +52,7 @@ func TestServerHandleMatchedExchange(t *testing.T) {
 	defer cancel()
 	go srv.subscribeLoop(ctx, sub)
 
-	tick := &Tick{Symbol: "USDKRW", SeqNum: 1, Body: []byte("x")}
+	tick := &Tick{Symbol: "USDKRW", SeqNum: 1, Body: []byte(`{"sym":"USDKRW","bid":1.0,"ask":1.1,"src":"T"}`)}
 	body := EncodePushData(tick)
 	sub.ch <- mkUnsol(mymq.FCCast, "PRICE", body)
 
@@ -157,7 +157,10 @@ func TestServerMultipleConsumers(t *testing.T) {
 	defer cancel()
 	go srv.subscribeLoop(ctx, sub)
 
-	body := EncodePushData(&Tick{Symbol: "USDKRW"})
+	body := EncodePushData(&Tick{
+		Symbol: "USDKRW",
+		Body:   []byte(`{"sym":"USDKRW","bid":1.0,"ask":1.1,"src":"T"}`),
+	})
 	sub.ch <- mkUnsol(mymq.FCCast, "PRICE", body)
 
 	time.Sleep(100 * time.Millisecond)
@@ -181,7 +184,10 @@ func TestServerEmptyExchangeFilterPassesAll(t *testing.T) {
 	defer cancel()
 	go srv.subscribeLoop(ctx, sub)
 
-	body := EncodePushData(&Tick{Symbol: "X"})
+	body := EncodePushData(&Tick{
+		Symbol: "X",
+		Body:   []byte(`{"sym":"X","bid":1.0,"ask":1.1,"src":"T"}`),
+	})
 	sub.ch <- mkUnsol(mymq.FCCast, "ANY_EXCH", body)
 
 	time.Sleep(100 * time.Millisecond)

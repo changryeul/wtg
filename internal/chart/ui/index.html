@@ -381,6 +381,19 @@ class ChartCell {
     this.destroyed = false;
     this._syncingRange = false;
     this._syncingCross = false;
+    // ── WS 재연결 상태 ──
+    //   _wsAttempt    : 연속 실패 카운트 (성공 시 0)
+    //   _wsRetryTimer : 다음 connectWS 예약 timer id
+    //   _wsCountdownTimer: 표시 카운트다운 timer (1초)
+    //   _wsNextAt     : 다음 시도 timestamp (Date.now()+delay)
+    //   _wsLastBarTs  : 마지막 수신 봉 close_at ms (gap recovery 기준)
+    //   _wsMaxAttempt : 이후 manual 재시도 버튼만 노출 (사용자 의도 확인)
+    this._wsAttempt = 0;
+    this._wsRetryTimer = null;
+    this._wsCountdownTimer = null;
+    this._wsNextAt = 0;
+    this._wsLastBarTs = 0;
+    this._wsMaxAttempt = 10;
 
     this.root = this.buildDOM();
     this.wireControls();
@@ -705,6 +718,60 @@ class ChartCell {
     }
   }
 
+  // ── 단절 표시 / countdown ──
+  _setWsState(color, title) {
+    this._wsState.style.color = "var(--" + color + ")";
+    if (title) this._wsState.title = title;
+    else this._wsState.removeAttribute("title");
+  }
+  _stopWsCountdown() {
+    if (this._wsCountdownTimer) {
+      clearInterval(this._wsCountdownTimer);
+      this._wsCountdownTimer = null;
+    }
+  }
+  _startWsCountdown() {
+    this._stopWsCountdown();
+    const tick = () => {
+      const remainMs = this._wsNextAt - Date.now();
+      if (remainMs <= 0) { this._stopWsCountdown(); return; }
+      const remainS = Math.ceil(remainMs / 1000);
+      this._setWsState("bad",
+        `재연결 #${this._wsAttempt} — ${remainS}s 후 시도`);
+    };
+    tick();
+    this._wsCountdownTimer = setInterval(tick, 1000);
+  }
+
+  // 단절 후 재연결 — exponential backoff (cap 30s) + max 시도 한도.
+  // 한도 도달 시 자동 재시도 중단하고 사용자가 새로고침 / 컨트롤 조작 시 회복.
+  _scheduleReconnect() {
+    if (this.destroyed) return;
+    if (this._wsAttempt >= this._wsMaxAttempt) {
+      this._setWsState("bad",
+        `재연결 ${this._wsMaxAttempt}회 실패 — 페이지 새로고침 또는 컨트롤 조작 시 재시도`);
+      return;
+    }
+    this._wsAttempt++;
+    // 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
+    const delay = Math.min(1000 * Math.pow(2, this._wsAttempt - 1), 30000);
+    this._wsNextAt = Date.now() + delay;
+    this._startWsCountdown();
+    if (this._wsRetryTimer) clearTimeout(this._wsRetryTimer);
+    this._wsRetryTimer = setTimeout(() => this.connectWS(), delay);
+  }
+
+  // 재연결 즉시 — visibility / online 이벤트 또는 manual 트리거.
+  _reconnectNow() {
+    if (this.destroyed) return;
+    if (this._wsRetryTimer) {
+      clearTimeout(this._wsRetryTimer);
+      this._wsRetryTimer = null;
+    }
+    this._stopWsCountdown();
+    this.connectWS();
+  }
+
   connectWS() {
     if (this.ws) { try { this.ws.close(); } catch (_) {} }
     if (this.destroyed) return;
@@ -713,8 +780,18 @@ class ChartCell {
       + "?pairs=" + encodeURIComponent(this.pair)
       + "&tfs=" + encodeURIComponent(this.tf);
     this.ws = new WebSocket(url);
-    this._wsState.style.color = "var(--text-muted)";
-    this.ws.onopen = () => { this._wsState.style.color = "var(--good)"; };
+    this._setWsState("text-muted", "연결 중");
+    this.ws.onopen = () => {
+      const wasReconnect = this._wsAttempt > 0;
+      this._wsAttempt = 0;
+      this._stopWsCountdown();
+      this._setWsState("good", "연결됨");
+      // gap recovery — 단절 동안 누락된 봉 복구 (historical 다시 로드).
+      // 첫 연결 (wasReconnect=false) 은 loadHistorical 이 이미 직전에 호출됨.
+      if (wasReconnect) {
+        try { this.loadHistorical(); } catch (_) {}
+      }
+    };
     this.ws.onmessage = (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch (_) { return; }
       if (msg.type !== "bar") return;
@@ -726,14 +803,15 @@ class ChartCell {
       } else {
         this.candleData.push(candle); this.barCount += 1;
       }
+      this._wsLastBarTs = Date.now();
       this.recomputeAllIndicators();
       this._updateRecent(candle);
       evaluateAlertsForCell(this, candle);
     };
-    this.ws.onerror = () => { this._wsState.style.color = "var(--bad)"; };
+    this.ws.onerror = () => { this._setWsState("bad", "WebSocket 에러"); };
     this.ws.onclose = () => {
-      this._wsState.style.color = "var(--bad)";
-      if (!this.destroyed) setTimeout(() => this.connectWS(), 5000);
+      if (this.destroyed) return;
+      this._scheduleReconnect();
     };
   }
 
@@ -755,6 +833,8 @@ class ChartCell {
 
   destroy() {
     this.destroyed = true;
+    if (this._wsRetryTimer) clearTimeout(this._wsRetryTimer);
+    this._stopWsCountdown();
     if (this.ws) try { this.ws.close(); } catch (_) {}
     try { this.mainChart.remove(); } catch (_) {}
     for (const id in this.panes) try { this.panes[id].chart.remove(); } catch (_) {}
@@ -811,7 +891,26 @@ const layoutManager = {
   activeCell() { return this.cells[this.activeCellIdx]; },
 
   resizeAll() { for (const c of this.cells) c.resize(); },
+
+  // 모든 활성 셀의 ws 즉시 재연결 — visibility 복귀 / online 이벤트 hook.
+  // 단절된 셀만 영향 (open 상태면 _reconnectNow 가 close→connect 라
+  // 일시적 끊김. 조건적으로 단절된 것만 시도하도록 readyState 확인).
+  reconnectAllNow() {
+    for (const c of this.cells) {
+      const rs = c.ws ? c.ws.readyState : 3; // 3=CLOSED, 1=OPEN
+      if (rs !== 1) c._reconnectNow();
+    }
+  },
 };
+
+// ── 페이지 visibility / 네트워크 복귀 hook (전역, 1회 등록) ──
+// laptop sleep / tab background 복귀 / 인터넷 끊김→복귀 시 ws 즉시 재시도.
+// browser 가 background tab 의 setTimeout 을 throttle 해서 5s 백오프가 1m+
+// 로 늘어나는 문제도 동시 해소.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") layoutManager.reconnectAllNow();
+});
+window.addEventListener("online", () => { layoutManager.reconnectAllNow(); });
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Alerts — 전역. evaluateAlertsForCell 가 WS 콜백에서 호출됨.

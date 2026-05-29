@@ -88,6 +88,11 @@ type Config struct {
 	// 비어있으면 모든 Profile 의 quote 를 받는다 (edge 가 사용자별 분기 담당).
 	// 좁히면 broker→edge 트래픽 절감.
 	QuoteProfileKeys []string
+
+	// QuoteSeedPairs — Phase 2 권한 가드의 초기 시드. operator 가 알고 있는
+	// 운영 pair 카탈로그를 사전 등록해 첫 quote 도착 전에도 subscribe 가능하게.
+	// 비면 passive learning 만 — 첫 quote 까지는 어떤 pair 도 허용 안 됨.
+	QuoteSeedPairs []string
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -170,7 +175,16 @@ func LoadConfig(args []string) (Config, error) {
 			}
 		}
 	}
+	if v := os.Getenv("WTG_EPRICE_QUOTE_SEED_PAIRS"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				cfg.QuoteSeedPairs = append(cfg.QuoteSeedPairs, p)
+			}
+		}
+	}
 	cidrStr := os.Getenv("WTG_EPRICE_ALLOW_CIDRS")
+	seedPairsStr := ""
 
 	fs := flag.NewFlagSet("mci-edge-price", flag.ContinueOnError)
 	fs.StringVar(&cidrStr, "allow-cidrs", cidrStr, "외부 접근 허용 CIDR (콤마 구분, 비면 모두 허용)")
@@ -193,6 +207,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.BoolVar(&cfg.EnableQuoteStream, "quote-stream", cfg.EnableQuoteStream, "PriceService.SubscribeQuote 활성 (Profile-routed CustomerQuote)")
 	quoteProfStr := strings.Join(cfg.QuoteProfileKeys, ",")
 	fs.StringVar(&quoteProfStr, "quote-profiles", quoteProfStr, "수신할 profile_keys 화이트리스트 (콤마 구분, 빈값=모두)")
+	seedPairsStr = strings.Join(cfg.QuoteSeedPairs, ",")
+	fs.StringVar(&seedPairsStr, "quote-seed-pairs", seedPairsStr, "Phase 2 권한 가드 초기 시드 pair (콤마 구분, 빈값=passive learning 만)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
@@ -203,6 +219,13 @@ func LoadConfig(args []string) (Config, error) {
 		p = strings.TrimSpace(p)
 		if p != "" {
 			cfg.QuoteProfileKeys = append(cfg.QuoteProfileKeys, p)
+		}
+	}
+	cfg.QuoteSeedPairs = cfg.QuoteSeedPairs[:0]
+	for _, p := range strings.Split(seedPairsStr, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			cfg.QuoteSeedPairs = append(cfg.QuoteSeedPairs, p)
 		}
 	}
 	if cidrs, err := netutil.ParseCIDRs(cidrStr); err != nil {

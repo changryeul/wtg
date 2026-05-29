@@ -46,6 +46,14 @@ type Server struct {
 	jwtVer      *auth.Verifier
 	tlsReloader *tlsutil.Reloader
 
+	// pairValidator — Phase 2. nil 이면 모든 pair 허용 (backward compat).
+	// MemoryPairValidator 가 기본 구현. operator seed (config) + passive
+	// learning (consumeQuoteOnce 가 도착 quote.Pair 추가) 결합.
+	pairValidator PairValidator
+
+	// 부정 카운터 — admin / metric 노출용.
+	totalRejectedPairs atomic.Uint64
+
 	totalRecv atomic.Uint64
 
 	http *http.Server
@@ -54,6 +62,10 @@ type Server struct {
 // SetJWTVerifier — DMZ public key 기반 access JWT 검증기.
 // 호출하지 않으면 DevMode 만 동작.
 func (s *Server) SetJWTVerifier(v *auth.Verifier) { s.jwtVer = v }
+
+// SetPairValidator — 외부에서 PairValidator 주입 (테스트 / 운영 wiring).
+// nil 로 설정하면 모든 pair 허용 모드로 회귀.
+func (s *Server) SetPairValidator(v PairValidator) { s.pairValidator = v }
 
 // NewServer 는 Server 를 구성한다 (gRPC 미연결 상태).
 func NewServer(cfg Config, logger *slog.Logger) *Server {
@@ -73,6 +85,13 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 			IdleEviction:   5 * time.Minute,
 			EvictionPeriod: 1 * time.Minute,
 		})
+	}
+	// Phase 2 권한 가드 — seed 가 있거나 quote-stream 활성이면 MemoryPairValidator
+	// 자동 wire. 운영자가 SetPairValidator 로 명시 주입한 경우엔 그쪽 우선.
+	if len(cfg.QuoteSeedPairs) > 0 {
+		v := NewMemoryPairValidator()
+		v.Add(cfg.QuoteSeedPairs...)
+		s.pairValidator = v
 	}
 	return s
 }
@@ -212,6 +231,12 @@ func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceService
 			continue
 		}
 		profKey := cq.GetChannel() + "." + cq.GetSite() + "." + cq.GetTier()
+		// Phase 2 passive learning — 도착한 quote 의 pair 를 validator 에 등록.
+		// upstream PricingTable 이 실제로 발행하는 pair 만 점진적으로 허용 set
+		// 에 들어가 — 운영자가 seed 안 줘도 첫 quote 도착 후 subscribe 가능.
+		if mv, ok := s.pairValidator.(*MemoryPairValidator); ok && mv != nil {
+			mv.Add(cq.GetPair())
+		}
 		s.registry.SendByProfile(profKey, cq.GetPair(), payload)
 	}
 }
@@ -340,10 +365,15 @@ func (s *Server) BuildHandler() http.Handler {
 		})
 	})
 	mux.HandleFunc("GET /v1/edge-stats", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"received": s.totalRecv.Load(),
-			"registry": s.registry.Stats(),
-		})
+		out := map[string]any{
+			"received":             s.totalRecv.Load(),
+			"registry":             s.registry.Stats(),
+			"rejected_pairs_total": s.totalRejectedPairs.Load(),
+		}
+		if s.pairValidator != nil {
+			out["allowed_pairs"] = s.pairValidator.AllowedSnapshot()
+		}
+		writeJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("GET /v1/subscribe", s.subscribeHandler(upgrader))
 	mux.Handle("GET /metrics", s.metrics.Handler())
@@ -551,7 +581,13 @@ func (s *Server) handleControlMessage(sub *Subscriber, data []byte) {
 	}
 	switch req.Type {
 	case "subscribe":
-		sub.SubscribePairs(req.Pairs)
+		accepted, rejected := s.gateSubscribe(req.Pairs)
+		sub.SubscribePairs(accepted)
+		if len(rejected) > 0 {
+			s.totalRejectedPairs.Add(uint64(len(rejected)))
+			s.sendControlPairReject(sub, rejected)
+			// echo 도 함께 — 클라이언트가 현재 활성 set 확인할 수 있게.
+		}
 	case "unsubscribe":
 		sub.UnsubscribePairs(req.Pairs)
 	default:
@@ -559,6 +595,43 @@ func (s *Server) handleControlMessage(sub *Subscriber, data []byte) {
 		return
 	}
 	s.sendControlEcho(sub)
+}
+
+// gateSubscribe — Phase 2 권한 가드. validator 가 nil 이면 모두 통과 (회귀
+// 없는 backward compat). 빈 string 은 무조건 reject.
+func (s *Server) gateSubscribe(pairs []string) (accepted, rejected []string) {
+	if s.pairValidator == nil {
+		return pairs, nil
+	}
+	accepted = make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		if p == "" {
+			rejected = append(rejected, p)
+			continue
+		}
+		if s.pairValidator.IsAllowed(p) {
+			accepted = append(accepted, p)
+		} else {
+			rejected = append(rejected, p)
+		}
+	}
+	return accepted, rejected
+}
+
+// sendControlPairReject — 거절된 pair 목록 알림. ws 끊지 않음.
+//
+//	{"type":"error","code":"forbidden_pair","rejected":["..."],"message":"..."}
+func (s *Server) sendControlPairReject(sub *Subscriber, rejected []string) {
+	payload, err := json.Marshal(map[string]any{
+		"type":     "error",
+		"code":     "forbidden_pair",
+		"rejected": rejected,
+		"message":  "허용되지 않은 pair (PricingTable 미등록 또는 미허가)",
+	})
+	if err != nil {
+		return
+	}
+	_ = sub.Send(payload)
 }
 
 // sendControlEcho — 현재 필터 셋 상태 echo. Pairs=nil 이면 all 모드.

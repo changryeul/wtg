@@ -233,8 +233,9 @@ func encodePushJSON(m *wtgpb.PushMessage) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// startHTTP.
-func (s *Server) startHTTP(ctx context.Context) error {
+// BuildHandler — 미들웨어 chain 까지 적용된 최종 http.Handler 반환. 테스트
+// (httptest.NewServer) 와 startHTTP 가 동일 chain 을 공유하도록 분리.
+func (s *Server) BuildHandler() http.Handler {
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
@@ -282,7 +283,12 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	if len(s.cfg.AllowCIDRs) > 0 {
 		mws = append(mws, netutil.IPAllowList(s.cfg.AllowCIDRs, s.logger))
 	}
-	chain := middleware.Chain(mux, mws...)
+	return middleware.Chain(mux, mws...)
+}
+
+// startHTTP.
+func (s *Server) startHTTP(ctx context.Context) error {
+	chain := s.BuildHandler()
 
 	s.http = &http.Server{
 		Addr:         s.cfg.ListenAddr,

@@ -12,6 +12,7 @@ import (
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
+	"github.com/winwaysystems/wtg/pkg/netutil"
 )
 
 // newFakeUpstream — Internal mci-chart 모사. 받은 헤더를 callback 으로 캡처.
@@ -185,6 +186,99 @@ func TestEdgeChart_JWT_RejectsInvalid(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Errorf("유효한 토큰: status=%d, want 200", resp.StatusCode)
+	}
+}
+
+// IP allowlist — 의도적으로 loopback 을 *제외* 한 CIDR 만 허용 → 모든 요청 403.
+func TestEdgeChart_AllowCIDRs_BlocksDeniedIP(t *testing.T) {
+	up := newFakeUpstream(t, nil)
+	cfg := DefaultConfig()
+	cfg.UpstreamURL = up.URL
+	cfg.DevMode = true
+	cfg.IPRatePerSec = 0
+	// loopback 비포함 — httptest 는 127.0.0.1 에서 dial 하므로 403.
+	cidrs, err := netutil.ParseCIDRs("10.99.0.0/16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AllowCIDRs = cidrs
+
+	s := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, err := s.BuildHandler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	// healthz 는 IP allowlist 적용 대상 — middleware chain 위쪽에서 차단.
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("denied IP 인데 403 아님: %d", resp.StatusCode)
+	}
+}
+
+// IP allowlist — loopback 포함 시 정상 통과.
+func TestEdgeChart_AllowCIDRs_AllowsLoopback(t *testing.T) {
+	up := newFakeUpstream(t, nil)
+	cfg := DefaultConfig()
+	cfg.UpstreamURL = up.URL
+	cfg.DevMode = true
+	cfg.IPRatePerSec = 0
+	cidrs, _ := netutil.ParseCIDRs("127.0.0.0/8")
+	cfg.AllowCIDRs = cidrs
+
+	s := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, _ := s.BuildHandler()
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("loopback 허용 CIDR 인데 status=%d, want 200", resp.StatusCode)
+	}
+}
+
+// IP rate-limit — burst 이상으로 요청 시 429.
+func TestEdgeChart_RateLimit_BurstExhausted(t *testing.T) {
+	up := newFakeUpstream(t, nil)
+	cfg := DefaultConfig()
+	cfg.UpstreamURL = up.URL
+	cfg.DevMode = true
+	cfg.IPRatePerSec = 1 // 1 TPS, burst 작게
+	cfg.IPBurst = 2     // 첫 2 요청은 burst 로 통과, 그 이상은 429
+	s := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h, _ := s.BuildHandler()
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	var got200, got429 int
+	for i := 0; i < 10; i++ {
+		resp, err := http.Get(ts.URL + "/healthz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusOK:
+			got200++
+		case http.StatusTooManyRequests:
+			got429++
+		}
+	}
+	if got200 < 1 {
+		t.Errorf("burst 첫 요청도 통과 못함: 200=%d", got200)
+	}
+	if got429 < 1 {
+		t.Errorf("burst 초과 후 429 안 나옴: 429=%d, 200=%d", got429, got200)
 	}
 }
 

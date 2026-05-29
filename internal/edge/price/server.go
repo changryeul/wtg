@@ -322,8 +322,9 @@ func encodeTickJSON(t *wtgpb.Tick) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// startHTTP 는 ws + 모니터링 endpoint 를 가동한다.
-func (s *Server) startHTTP(ctx context.Context) error {
+// BuildHandler — 미들웨어 chain 까지 적용된 최종 http.Handler 반환. 테스트
+// 와 startHTTP 가 동일 chain 공유.
+func (s *Server) BuildHandler() http.Handler {
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
@@ -367,7 +368,12 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	if len(s.cfg.AllowCIDRs) > 0 {
 		mws = append(mws, netutil.IPAllowList(s.cfg.AllowCIDRs, s.logger))
 	}
-	chain := middleware.Chain(mux, mws...)
+	return middleware.Chain(mux, mws...)
+}
+
+// startHTTP 는 ws + 모니터링 endpoint 를 가동한다.
+func (s *Server) startHTTP(ctx context.Context) error {
+	chain := s.BuildHandler()
 
 	s.http = &http.Server{
 		Addr:         s.cfg.ListenAddr,

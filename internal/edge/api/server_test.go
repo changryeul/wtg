@@ -303,3 +303,44 @@ func TestEdgeMaxBodyEnforced(t *testing.T) {
 		t.Errorf("max body 초과인데 200 OK: %d", resp.StatusCode)
 	}
 }
+
+
+// IP rate-limit — burst 이상 요청 시 429. /v1/ping 은 인증 면제이지만
+// rate-limit / IPAllow 미들웨어는 동일하게 적용된다.
+func TestEdgeRateLimitBurstExhausted(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.UpstreamURL = "http://127.0.0.1:1"
+	cfg.DevMode = true
+	cfg.MaxRequestBody = 0
+	cfg.IPRatePerSec = 1
+	cfg.IPBurst = 2
+
+	srv := NewServer(cfg, quietLogger())
+	handler, err := srv.BuildHandler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	var got200, got429 int
+	for i := 0; i < 10; i++ {
+		resp, err := http.Get(ts.URL + "/v1/ping")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusOK:
+			got200++
+		case http.StatusTooManyRequests:
+			got429++
+		}
+	}
+	if got200 < 1 {
+		t.Errorf("burst 첫 요청 통과 못함: 200=%d", got200)
+	}
+	if got429 < 1 {
+		t.Errorf("burst 초과 후 429 없음: 429=%d, 200=%d", got429, got200)
+	}
+}

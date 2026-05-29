@@ -22,6 +22,17 @@ type QuotePublisher interface {
 	PublishQuote(profile session.Profile, cq pricing.CustomerQuote) error
 }
 
+// QuoteSubscriberSink 는 Phase 3 의 optional 확장. publisher 가 이 인터페이스
+// 까지 만족하면 PricingConsumer 가 매 tick 마다 prof 별로 HasSubscribers 를
+// 물어 구독자 0 인 Profile 의 PricingTable.Apply 호출을 skip 한다.
+//
+// publisher 가 이 인터페이스를 만족 안 하면 (옛 구현 / 테스트 mock) 모든
+// Profile 처리 — backward compat. 기존 publisher 인터페이스에 method 추가
+// 하지 않고 type assertion 으로 분기해 회귀 없음.
+type QuoteSubscriberSink interface {
+	HasQuoteSubscribers(profileKey string) bool
+}
+
 // ProfileSource 는 현재 시점에 활성화된 Profile 목록을 제공한다.
 // mci-admin 이 etcd 에 등록한 Profile 카탈로그를 watch 로 따라가는 구현 또는
 // 정적 dev seed 구현 등.
@@ -74,11 +85,17 @@ type PricingConsumer struct {
 	quoteRegCtx     context.Context
 	quoteRegTimeout time.Duration
 
-	ticksIn         atomic.Uint64
-	ticksDropped    atomic.Uint64 // sym 미등록 / inactive / decode 실패
-	quotesPublished atomic.Uint64
-	publishErrors   atomic.Uint64
-	quoteRegErrors  atomic.Uint64 // Registry.Put 실패 카운트
+	// sink — Phase 3 optional. publisher 가 QuoteSubscriberSink 도 만족하면
+	// 매 tick prof 별로 HasQuoteSubscribers 호출해 빈 Profile 의 Apply skip.
+	// type assertion 결과를 캐시 — 매 tick interface 변환 비용 회피.
+	sink QuoteSubscriberSink
+
+	ticksIn          atomic.Uint64
+	ticksDropped     atomic.Uint64 // sym 미등록 / inactive / decode 실패
+	quotesPublished  atomic.Uint64
+	publishErrors    atomic.Uint64
+	quoteRegErrors   atomic.Uint64 // Registry.Put 실패 카운트
+	profilesSkipped  atomic.Uint64 // Phase 3 — 구독자 0 으로 pruned 한 Profile 발행 횟수
 }
 
 // PricingConsumerOptions 는 PricingConsumer 생성 옵션.
@@ -125,7 +142,7 @@ func NewPricingConsumer(opt PricingConsumerOptions) *PricingConsumer {
 	if regTimeout <= 0 {
 		regTimeout = 200 * time.Millisecond
 	}
-	return &PricingConsumer{
+	pc := &PricingConsumer{
 		store:           opt.Store,
 		symbols:         opt.Symbols,
 		decoder:         opt.Decoder,
@@ -139,6 +156,11 @@ func NewPricingConsumer(opt PricingConsumerOptions) *PricingConsumer {
 		quoteRegCtx:     context.Background(),
 		quoteRegTimeout: regTimeout,
 	}
+	// Phase 3 optional pruning — publisher 가 QuoteSubscriberSink 만족 시.
+	if sink, ok := opt.Publisher.(QuoteSubscriberSink); ok {
+		pc.sink = sink
+	}
+	return pc
 }
 
 // OnTick 은 TickConsumer 인터페이스.
@@ -162,6 +184,12 @@ func (c *PricingConsumer) OnTick(t *Tick) {
 
 	tbl := c.store.Load()
 	for _, prof := range c.profiles.ActiveProfiles() {
+		// Phase 3 — 구독자 0 인 Profile 은 Apply 호출조차 skip.
+		// sink 가 nil 이면 모든 Profile 처리 (backward compat 경로).
+		if c.sink != nil && !c.sink.HasQuoteSubscribers(prof.Key()) {
+			c.profilesSkipped.Add(1)
+			continue
+		}
 		cq := tbl.Apply(raw, prof, c.tenor)
 		c.attachQuoteID(&cq, prof)
 		if err := c.publisher.PublishQuote(prof, cq); err != nil {
@@ -218,6 +246,7 @@ type PricingConsumerStats struct {
 	QuotesPublished uint64 `json:"quotes_published"`
 	PublishErrors   uint64 `json:"publish_errors"`
 	QuoteRegErrors  uint64 `json:"quote_register_errors"`
+	ProfilesSkipped uint64 `json:"profiles_skipped"` // Phase 3 — 구독자 0 으로 pruned
 }
 
 // Stats 는 누적 카운터 snapshot 을 반환.
@@ -228,6 +257,7 @@ func (c *PricingConsumer) Stats() PricingConsumerStats {
 		QuotesPublished: c.quotesPublished.Load(),
 		PublishErrors:   c.publishErrors.Load(),
 		QuoteRegErrors:  c.quoteRegErrors.Load(),
+		ProfilesSkipped: c.profilesSkipped.Load(),
 	}
 }
 

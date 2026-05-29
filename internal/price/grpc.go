@@ -309,6 +309,28 @@ func (g *GRPCServer) QuoteSubscriberCount() int {
 	return len(g.quoteSubscribers)
 }
 
+// HasQuoteSubscribers — Phase 3 QuoteSubscriberSink 인터페이스 구현.
+// 현재 활성 quote subscriber 중 그 Profile 을 관심 대상에 두는 게 1+ 있나.
+//
+// 매칭 규칙은 PublishQuote 의 필터와 동일:
+//   - s.profiles 가 빈 set 이면 모든 profile 매칭 (=구독자 1)
+//   - 비어있지 않으면 profileKey 일치 시만
+//
+// 매 tick 호출되므로 lock 안에서 빠르게. RLock + map lookup 만 — 충분히 가벼움.
+func (g *GRPCServer) HasQuoteSubscribers(profileKey string) bool {
+	g.qmu.RLock()
+	defer g.qmu.RUnlock()
+	for _, s := range g.quoteSubscribers {
+		if len(s.profiles) == 0 {
+			return true // 무필터 = 모두 받음
+		}
+		if _, ok := s.profiles[profileKey]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // ─── Bar stream ────────────────────────────────────────────────────────────
 
 // PublishBar 는 BarCloseHandler 시그니처 — Aggregator 의 onClose 콜백으로 등록 가능.

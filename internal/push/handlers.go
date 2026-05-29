@@ -84,19 +84,29 @@ func SubscribeHandler(deps *HandlerDeps) http.HandlerFunc {
 // StatsResponse 는 운영 모니터링용 응답 포맷.
 //
 // connections / users 는 ws Registry 의 실시간 게이지.
-// dispatcher 의 received / delivered / dropped 는 broker → ws fan-out 단의 누적 카운터:
-//   - received  : broker 에서 받은 unsolicited 메시지 총수
-//   - delivered : ws Send 까지 도달한 (사용자별 fan-out 합)
-//   - dropped   : LogonID 없거나 사용자 등록 안 된 경우 drop
+// dispatcher 의 카운터는 broker → ws fan-out 단의 누적:
+//   - received       : broker 에서 받은 unsolicited 총수
+//   - delivered      : ws Send 까지 도달한 fan-out 합
+//   - dropped        : sent=0 인 fan-out 총합 (drop_* 사유 4 종 합)
+//   - drop_unsupp    : Func 가 FCCast/FCPush/FCSignal 아님
+//   - drop_envelope  : envelope JSON marshal 실패
+//   - drop_unknown_user: LogonID 명시 됐는데 conn 없음
+//   - drop_no_broadcast: LogonID 빈값 + 등록 conn 0
+//   - send_failed    : fan-out 안 일부 conn send 실패 (slow / closed)
 //
 // uptime 은 mci-push 부팅 후 경과 시간 (초).
 type StatsResponse struct {
-	Connections        int    `json:"connections"`
-	Users              int    `json:"users"`
-	UptimeSec          int64  `json:"uptime_sec,omitempty"`
-	DispatcherReceived uint64 `json:"dispatcher_received,omitempty"`
-	DispatcherDeliver  uint64 `json:"dispatcher_delivered,omitempty"`
-	DispatcherDropped  uint64 `json:"dispatcher_dropped,omitempty"`
+	Connections           int    `json:"connections"`
+	Users                 int    `json:"users"`
+	UptimeSec             int64  `json:"uptime_sec,omitempty"`
+	DispatcherReceived    uint64 `json:"dispatcher_received,omitempty"`
+	DispatcherDeliver     uint64 `json:"dispatcher_delivered,omitempty"`
+	DispatcherDropped     uint64 `json:"dispatcher_dropped,omitempty"`
+	DropUnsupp            uint64 `json:"dispatcher_drop_unsupp,omitempty"`
+	DropEnvelope          uint64 `json:"dispatcher_drop_envelope,omitempty"`
+	DropUnknownUser       uint64 `json:"dispatcher_drop_unknown_user,omitempty"`
+	DropNoBroadcast       uint64 `json:"dispatcher_drop_no_broadcast,omitempty"`
+	DispatcherSendFailed  uint64 `json:"dispatcher_send_failed,omitempty"`
 }
 
 // StatsHandler 는 GET /v1/push-stats — registry + dispatcher 모니터링 endpoint.
@@ -114,6 +124,11 @@ func StatsHandler(deps *HandlerDeps) http.HandlerFunc {
 			resp.DispatcherReceived = s.Received
 			resp.DispatcherDeliver = s.Delivered
 			resp.DispatcherDropped = s.Dropped
+			resp.DropUnsupp = s.DropUnsupp
+			resp.DropEnvelope = s.DropEnvelope
+			resp.DropUnknownUser = s.DropUnknownUser
+			resp.DropNoBroadcast = s.DropNoBroadcast
+			resp.DispatcherSendFailed = s.SendFailed
 		}
 		writeJSON(w, http.StatusOK, resp)
 	}

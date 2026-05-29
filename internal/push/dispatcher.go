@@ -37,10 +37,27 @@ type Dispatcher struct {
 	hooks    []UnsolicitedHook
 	logger   *slog.Logger
 
-	// 메트릭 카운터 (외부에서 조회 가능).
-	totalRecv    atomic.Uint64
-	totalDeliver atomic.Uint64 // 어느 사용자에게든 1 send 된 수
-	totalDrop    atomic.Uint64 // 매칭 실패 (LogonID 빈 값) 또는 미등록 사용자
+	// ── 메트릭 카운터 (외부에서 조회 가능). 누적 단조증가 ──
+	//
+	// totalRecv         : Run() 이 채널에서 가져온 모든 메시지.
+	// totalDeliver      : 어느 사용자에게든 ws 전송 1+회 성공한 메시지 수
+	//                     (sent>0 인 fan-out 1 회당 1 증가, send 횟수는 NOT).
+	// totalDrop         : sent=0 인 fan-out — 아래 4 사유의 합.
+	//   ├ dropUnsupp    : Func 가 FCCast/FCPush/FCSignal 아님
+	//   ├ dropEnvelope  : json marshal 실패
+	//   ├ dropUnknownUser: LogonID 명시 됐는데 그 user 의 conn 없음
+	//   └ dropNoBroadcast: LogonID 빈값인데 등록된 conn 0
+	// sendFailed        : fan-out 안에서 일부 conn 에 send 실패 (slow / closed).
+	//                     deliver 와는 별개 — 한 fan-out 이 sent=2 failed=1 이면
+	//                     deliver+=1, sendFailed+=1.
+	totalRecv        atomic.Uint64
+	totalDeliver     atomic.Uint64
+	totalDrop        atomic.Uint64
+	dropUnsupp       atomic.Uint64
+	dropEnvelope     atomic.Uint64
+	dropUnknownUser  atomic.Uint64
+	dropNoBroadcast  atomic.Uint64
+	sendFailed       atomic.Uint64
 }
 
 // DispatcherOptions 는 Dispatcher 구성 의존성.
@@ -90,10 +107,13 @@ func (d *Dispatcher) Run(ctx context.Context) {
 func (d *Dispatcher) handle(msg *mymq.Unsolicited) {
 	d.totalRecv.Add(1)
 
-	// FC_CAST / FC_PUSH / FC_SIGNAL 만 처리. 그 외는 무시.
+	// FC_CAST / FC_PUSH / FC_SIGNAL 만 처리. 그 외는 unsupported 로 카운트
+	// (broker 가 보낸 다른 종류 — heartbeat / control / 등 — 가시화).
 	switch msg.Header.Func {
 	case mymq.FCCast, mymq.FCPush, mymq.FCSignal:
 	default:
+		d.dropUnsupp.Add(1)
+		d.totalDrop.Add(1)
 		return
 	}
 
@@ -109,44 +129,67 @@ func (d *Dispatcher) handle(msg *mymq.Unsolicited) {
 			slog.Any("error", err),
 			slog.Int("body_len", len(msg.Body)),
 		)
+		d.dropEnvelope.Add(1)
+		d.totalDrop.Add(1)
 		return
 	}
 
 	// LogonID 가 명시된 경우 → 단일 사용자 fan-out.
-	// 비어있으면 → 전체 broadcast 또는 channel 매칭 (현재는 단순 broadcast).
+	// 비어있으면 → 전체 broadcast.
 	if msg.Prefix != nil && msg.Prefix.LogonIDString() != "" {
 		usid := msg.Prefix.LogonIDString()
-		sent, _ := d.registry.FanoutToUser(usid, envelope)
+		sent, failed := d.registry.FanoutToUser(usid, envelope)
+		if failed > 0 {
+			d.sendFailed.Add(uint64(failed))
+		}
 		if sent > 0 {
 			d.totalDeliver.Add(uint64(sent))
 		} else {
+			d.dropUnknownUser.Add(1)
 			d.totalDrop.Add(1)
 		}
 		return
 	}
 
 	// LogonID 없는 broadcast — 전체 사용자에게.
-	sent, _ := d.registry.FanoutBroadcast(envelope)
+	sent, failed := d.registry.FanoutBroadcast(envelope)
+	if failed > 0 {
+		d.sendFailed.Add(uint64(failed))
+	}
 	if sent > 0 {
 		d.totalDeliver.Add(uint64(sent))
 	} else {
+		d.dropNoBroadcast.Add(1)
 		d.totalDrop.Add(1)
 	}
 }
 
 // Stats 는 dispatcher 의 누적 카운터를 반환한다 (모니터링/테스트).
+//
+// Drop 사유는 합산값 Dropped 와 별개로 reason 별로도 노출된다 —
+// Dropped == DropUnsupp + DropEnvelope + DropUnknownUser + DropNoBroadcast.
 type Stats struct {
-	Received  uint64
-	Delivered uint64
-	Dropped   uint64
+	Received        uint64 `json:"received"`
+	Delivered       uint64 `json:"delivered"`
+	Dropped         uint64 `json:"dropped"`
+	DropUnsupp      uint64 `json:"drop_unsupp"`       // Func 가 FCCast/FCPush/FCSignal 아님
+	DropEnvelope    uint64 `json:"drop_envelope"`     // json marshal 실패
+	DropUnknownUser uint64 `json:"drop_unknown_user"` // LogonID 명시 됐는데 conn 없음
+	DropNoBroadcast uint64 `json:"drop_no_broadcast"` // LogonID 빈값 + 등록 conn 0
+	SendFailed      uint64 `json:"send_failed"`       // fan-out 내 일부 conn send 실패 (slow/closed)
 }
 
 // Stats 는 dispatcher 의 누적 카운터.
 func (d *Dispatcher) Stats() Stats {
 	return Stats{
-		Received:  d.totalRecv.Load(),
-		Delivered: d.totalDeliver.Load(),
-		Dropped:   d.totalDrop.Load(),
+		Received:        d.totalRecv.Load(),
+		Delivered:       d.totalDeliver.Load(),
+		Dropped:         d.totalDrop.Load(),
+		DropUnsupp:      d.dropUnsupp.Load(),
+		DropEnvelope:    d.dropEnvelope.Load(),
+		DropUnknownUser: d.dropUnknownUser.Load(),
+		DropNoBroadcast: d.dropNoBroadcast.Load(),
+		SendFailed:      d.sendFailed.Load(),
 	}
 }
 

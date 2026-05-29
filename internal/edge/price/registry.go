@@ -28,10 +28,92 @@ type Subscriber struct {
 	logger     *slog.Logger
 
 	onClose func(*Subscriber)
+
+	// pair 필터 — Phase 1 per-ws subscription.
+	//   nil           : 필터 없음, 그 Profile 의 모든 pair 수신 (기존 동작).
+	//   non-empty set : 해당 pair 만 수신.
+	//   subscribe → empty 로 떨어지면 nil 로 되돌려 "all" 모드 재진입.
+	pairsMu sync.RWMutex
+	pairs   map[string]struct{}
 }
 
 // ProfileKey 는 Subscriber 가 매칭될 quote profile key (immutable).
 func (s *Subscriber) ProfileKey() string { return s.profileKey }
+
+// MatchesPair — 이 subscriber 가 해당 pair 의 시세를 받기로 선언했는지.
+// pairs 가 nil (subscribe 한 적 없거나 unsubscribe 로 비워짐) 이면 모두 매칭.
+func (s *Subscriber) MatchesPair(pair string) bool {
+	s.pairsMu.RLock()
+	defer s.pairsMu.RUnlock()
+	if s.pairs == nil {
+		return true
+	}
+	_, ok := s.pairs[pair]
+	return ok
+}
+
+// SubscribePairs — pair 들을 필터 셋에 추가 (idempotent). 처음 호출 시 "all"
+// 모드에서 "filtered" 모드로 전환.
+func (s *Subscriber) SubscribePairs(pairs []string) {
+	if len(pairs) == 0 {
+		return
+	}
+	s.pairsMu.Lock()
+	defer s.pairsMu.Unlock()
+	if s.pairs == nil {
+		s.pairs = make(map[string]struct{}, len(pairs))
+	}
+	for _, p := range pairs {
+		if p != "" {
+			s.pairs[p] = struct{}{}
+		}
+	}
+}
+
+// UnsubscribePairs — pair 들을 필터 셋에서 제거. 결과가 empty 면 nil 로
+// 되돌려 "all" 모드 재진입.
+func (s *Subscriber) UnsubscribePairs(pairs []string) {
+	if len(pairs) == 0 {
+		return
+	}
+	s.pairsMu.Lock()
+	defer s.pairsMu.Unlock()
+	if s.pairs == nil {
+		return
+	}
+	for _, p := range pairs {
+		delete(s.pairs, p)
+	}
+	if len(s.pairs) == 0 {
+		s.pairs = nil
+	}
+}
+
+// SubscribedPairs — 현재 필터 셋 스냅샷 (정렬된 슬라이스). nil 은 "all 모드"
+// 의미 — 빈 슬라이스가 아니라 nil 반환.
+func (s *Subscriber) SubscribedPairs() []string {
+	s.pairsMu.RLock()
+	defer s.pairsMu.RUnlock()
+	if s.pairs == nil {
+		return nil
+	}
+	out := make([]string, 0, len(s.pairs))
+	for p := range s.pairs {
+		out = append(out, p)
+	}
+	sortStrings(out)
+	return out
+}
+
+// sortStrings — 작은 helper. sort 패키지 임포트 회피 (이미 sync 만 사용).
+func sortStrings(s []string) {
+	// insertion sort — n <= 수십이라 충분.
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+}
 
 var subIDSeq atomic.Uint64
 
@@ -165,18 +247,25 @@ func (r *Registry) Broadcast(p []byte) (sent, dropped int) {
 	return sent, dropped
 }
 
-// SendByProfile 는 매칭 profileKey 를 가진 subscriber 에게만 송신한다.
-// profileKey 가 빈값인 subscriber 는 절대 받지 않음 (quote 미구독 의미).
-func (r *Registry) SendByProfile(profileKey string, p []byte) (sent, dropped int) {
+// SendByProfile 는 (profileKey, pair) 매칭 subscriber 에게만 송신한다.
+//   - profileKey 빈값 subscriber : 절대 받지 않음 (quote 미구독)
+//   - pair 빈값 인자             : pair 필터 미적용 (backward-compat 경로)
+//   - sub 가 pair 필터 셋이 nil  : 그 Profile 의 모든 pair 수신 (Phase 1 default)
+//   - sub 가 pair 필터 셋 비어있지 않음 : pair 일치 subscriber 만
+func (r *Registry) SendByProfile(profileKey, pair string, p []byte) (sent, dropped int) {
 	if profileKey == "" {
 		return 0, 0
 	}
 	r.mu.RLock()
 	snapshot := make([]*Subscriber, 0, len(r.subs))
 	for _, s := range r.subs {
-		if s.profileKey == profileKey {
-			snapshot = append(snapshot, s)
+		if s.profileKey != profileKey {
+			continue
 		}
+		if pair != "" && !s.MatchesPair(pair) {
+			continue
+		}
+		snapshot = append(snapshot, s)
 	}
 	r.mu.RUnlock()
 

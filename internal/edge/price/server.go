@@ -212,7 +212,7 @@ func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceService
 			continue
 		}
 		profKey := cq.GetChannel() + "." + cq.GetSite() + "." + cq.GetTier()
-		s.registry.SendByProfile(profKey, payload)
+		s.registry.SendByProfile(profKey, cq.GetPair(), payload)
 	}
 }
 
@@ -500,7 +500,23 @@ func (s *Server) writeLoop(sub *Subscriber) {
 	}
 }
 
-// readLoop 는 ws 클라이언트 측 메시지 소비 (시세는 단방향이라 ping/close 만).
+// readLoop 는 ws 클라이언트 측 메시지 소비.
+//
+// Phase 1: 시세는 여전히 단방향이지만 control message 양방향 추가:
+//
+//	{"type":"subscribe",   "pairs":["USD/KRW","EUR/USD"]}  → 필터 추가
+//	{"type":"unsubscribe", "pairs":["EUR/USD"]}           → 필터 제거 (빈셋=all 복귀)
+//
+// 서버는 처리 후 현재 셋 상태를 echo:
+//
+//	{"type":"subscribed",  "pairs":["USD/KRW", ...]}      // 필터 활성
+//	{"type":"subscribed",  "pairs":null}                  // all 모드 (필터 없음)
+//
+// invalid JSON / 알 수 없는 type 은 error frame:
+//
+//	{"type":"error", "code":"bad_request", "message":"..."}
+//
+// ws 연결은 끊지 않음 — 잘못된 메시지 1건이 세션 전체를 끊지 않게.
 func (s *Server) readLoop(sub *Subscriber) {
 	defer sub.Close()
 	sub.conn.SetReadDeadline(time.Now().Add(s.cfg.WsPongTimeout))
@@ -509,10 +525,65 @@ func (s *Server) readLoop(sub *Subscriber) {
 		return nil
 	})
 	for {
-		if _, _, err := sub.conn.ReadMessage(); err != nil {
+		_, data, err := sub.conn.ReadMessage()
+		if err != nil {
 			return
 		}
+		if len(data) == 0 {
+			continue
+		}
+		s.handleControlMessage(sub, data)
 	}
+}
+
+// controlRequest — ws 클라이언트가 보내는 control message 모양.
+type controlRequest struct {
+	Type  string   `json:"type"`
+	Pairs []string `json:"pairs"`
+}
+
+// handleControlMessage — 단일 control message 파싱 + 처리 + echo.
+func (s *Server) handleControlMessage(sub *Subscriber, data []byte) {
+	var req controlRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		s.sendControlError(sub, "bad_request", "JSON parse 실패: "+err.Error())
+		return
+	}
+	switch req.Type {
+	case "subscribe":
+		sub.SubscribePairs(req.Pairs)
+	case "unsubscribe":
+		sub.UnsubscribePairs(req.Pairs)
+	default:
+		s.sendControlError(sub, "unknown_type", "지원하지 않는 type: "+req.Type)
+		return
+	}
+	s.sendControlEcho(sub)
+}
+
+// sendControlEcho — 현재 필터 셋 상태 echo. Pairs=nil 이면 all 모드.
+func (s *Server) sendControlEcho(sub *Subscriber) {
+	pairs := sub.SubscribedPairs()
+	payload, err := json.Marshal(map[string]any{
+		"type":  "subscribed",
+		"pairs": pairs, // nil → JSON null (의도)
+	})
+	if err != nil {
+		return
+	}
+	_ = sub.Send(payload)
+}
+
+func (s *Server) sendControlError(sub *Subscriber, code, msg string) {
+	payload, err := json.Marshal(map[string]any{
+		"type":    "error",
+		"code":    code,
+		"message": msg,
+	})
+	if err != nil {
+		return
+	}
+	_ = sub.Send(payload)
 }
 
 // Shutdown 은 그레이스풀 종료.

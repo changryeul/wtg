@@ -27,7 +27,8 @@ func TestRegistry_SendByProfile_MatchesOnly(t *testing.T) {
 	r.Add(stdSub)
 	r.Add(bareSub)
 
-	sent, dropped := r.SendByProfile("WEB.BRANCH.VIP", []byte("vip-payload"))
+	// pair="" → pair 필터 없이 profile 만 검증 (기존 의도 유지)
+	sent, dropped := r.SendByProfile("WEB.BRANCH.VIP", "", []byte("vip-payload"))
 	if sent != 1 || dropped != 0 {
 		t.Errorf("sent=%d dropped=%d, want 1/0", sent, dropped)
 	}
@@ -61,7 +62,7 @@ func TestRegistry_SendByProfile_EmptyKey(t *testing.T) {
 	sub := NewSubscriber(&websocket.Conn{}, SubscriberOptions{ProfileKey: "WEB.BRANCH.VIP", SendQueueSize: 4})
 	r.Add(sub)
 
-	sent, _ := r.SendByProfile("", []byte("x"))
+	sent, _ := r.SendByProfile("", "", []byte("x"))
 	if sent != 0 {
 		t.Errorf("empty key 인데 sent=%d", sent)
 	}

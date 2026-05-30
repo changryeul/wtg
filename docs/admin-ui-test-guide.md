@@ -14,7 +14,7 @@ mci-admin (`http://127.0.0.1:9090/`) 의 모든 화면을 차례대로 둘러보
 
 # broker 있는 환경 — wire/passthrough 까지 검증
 ./build/bin/mci-admin --dev --listen :9090 \
-    --mymqd-host 10.0.0.10 --mymqd-port 11217
+    --broker-host 10.0.0.10 --broker-port 11217
 ```
 
 ### 0.2 로그인 (DevMode)
@@ -43,12 +43,12 @@ mci-admin (`http://127.0.0.1:9090/`) 의 모든 화면을 차례대로 둘러보
 현재 사용자 정보. 스파크라인은 최근 12개 샘플 (2초 간격 = 24초 윈도우).
 
 ### 1.2 화면 요소
-| 카드 | 표시 | 의미 |
-|------|------|-----|
-| 활성 라우팅 룰 | `kpi-routes` 숫자 + 스파크 | `/v1/admin/routes` 의 active=true 수 |
-| API 응답 시간 | `kpi-rtt` ms + avg | 위 호출 자체의 RTT |
-| 브로커 | `kpi-broker` CONNECTED/DOWN | broker connection state |
-| 현재 사용자 | `kpi-user` + channel | 로그인 정보 |
+| 카드        | 표시                          | 의미                                 |
+| --------- | --------------------------- | ---------------------------------- |
+| 활성 라우팅 룰  | `kpi-routes` 숫자 + 스파크       | `/v1/admin/routes` 의 active=true 수 |
+| API 응답 시간 | `kpi-rtt` ms + avg          | 위 호출 자체의 RTT                       |
+| 브로커       | `kpi-broker` CONNECTED/DOWN | broker connection state            |
+| 현재 사용자    | `kpi-user` + channel        | 로그인 정보                             |
 
 ### 1.3 테스트 시나리오
 1. **카드 표시 검증** — 4개 카드 모두 `—` 가 아닌 실제 값으로 채워짐.

@@ -142,6 +142,17 @@
   }
   [data-theme="dark"] .nav-btn[data-active="true"] { color: #67e8f9; }
 
+  /* 사이드바 nav 아이템 — 그룹화된 메뉴의 공통 스타일.
+     좌측 아이콘(.nav-ico) 폭 고정 → 텍스트 정렬 일관. */
+  .nav-item {
+    @apply w-full text-left px-3 py-1.5 rounded-lg flex items-center gap-2.5
+           text-slate-300 hover:bg-ink-800/60 hover:text-slate-100 transition;
+  }
+  .nav-ico {
+    @apply inline-block w-5 text-center text-[15px] leading-none opacity-80;
+  }
+  .nav-btn[data-active="true"] .nav-ico { opacity: 1; }
+
   /* 테마 토글 버튼 — 활성 상태. */
   .mr-view-btn[data-active="true"] {
     background: rgba(34,211,238,0.15);
@@ -238,34 +249,64 @@
 <div id="app-shell" class="hidden min-h-screen grid-fade">
   <div class="flex min-h-screen">
 
-    <!-- Sidebar -->
-    <aside class="w-64 shrink-0 border-r border-ink-700/60 glass relative">
-      <div class="px-5 py-5 flex items-center gap-3 border-b border-ink-700/40">
+    <!-- Sidebar — flex column 구조: 로고(고정) + nav(가변, 스크롤) + 하단 도구(고정) -->
+    <aside class="w-64 shrink-0 border-r border-ink-700/60 glass flex flex-col h-screen sticky top-0">
+      <!-- 로고 -->
+      <div class="px-5 py-5 flex items-center gap-3 border-b border-ink-700/40 shrink-0">
         <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-accent-400 to-indigo-500 flex items-center justify-center text-ink-950 font-bold">W</div>
         <div>
           <div class="text-sm font-semibold">WTG Control</div>
           <div class="text-[10px] uppercase tracking-widest text-slate-400">mci-admin</div>
         </div>
       </div>
-      <nav class="px-3 py-4 space-y-1 text-sm" id="nav">
-        <button data-page="dashboard"  class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">대시보드</button>
-        <button data-page="routes"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">라우팅 룰</button>
-        <button data-page="policy"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">정책 엔진</button>
-        <button data-page="broker"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">브로커 명령</button>
-        <button data-page="tester"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">API 테스터</button>
-        <button data-page="wsmon"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">WS 모니터</button>
-        <button data-page="quote"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">시세</button>
-        <button data-page="symbols"    class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">통화쌍</button>
-        <button data-page="pricing"    class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">마진 테이블</button>
-        <button data-page="profiles"   class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">프로파일</button>
-        <button data-page="users"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">사용자 프로파일</button>
-        <button data-page="quoteid-engines" class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">QuoteID 엔진</button>
-        <button data-page="margin"     class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">마진 재계산</button>
-        <button data-page="svcio"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">서비스 명세</button>
-        <button data-page="audit"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">감사 로그</button>
-        <button data-page="guide"      class="nav-btn w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 hover:bg-ink-800/60">운영 가이드</button>
+
+      <!-- nav — 그룹별 분류. 좌측 작은 아이콘 + 들여쓰기 + 그룹 헤더로 가독성 ↑.
+           nav 자체가 flex-1 + overflow-y-auto 라 길어져도 하단 영역과 겹치지 않음. -->
+      <nav class="flex-1 overflow-y-auto px-3 py-3 text-sm" id="nav">
+        <!-- 개요 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">개요</div>
+        <div class="space-y-0.5 mb-3">
+          <button data-page="dashboard" class="nav-btn nav-item"><span class="nav-ico">📊</span>대시보드</button>
+        </div>
+
+        <!-- 운영 정책 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">운영 정책</div>
+        <div class="space-y-0.5 mb-3">
+          <button data-page="routes" class="nav-btn nav-item"><span class="nav-ico">🔀</span>라우팅 룰</button>
+          <button data-page="policy" class="nav-btn nav-item"><span class="nav-ico">🛡</span>정책 엔진</button>
+        </div>
+
+        <!-- 시세 카탈로그 — etcd watch 로 mci-price/mci-api 가 hot reload -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">시세 카탈로그</div>
+        <div class="space-y-0.5 mb-3">
+          <button data-page="symbols"         class="nav-btn nav-item"><span class="nav-ico">🔤</span>통화쌍</button>
+          <button data-page="pricing"         class="nav-btn nav-item"><span class="nav-ico">💰</span>마진 테이블</button>
+          <button data-page="profiles"        class="nav-btn nav-item"><span class="nav-ico">🧩</span>프로파일</button>
+          <button data-page="users"           class="nav-btn nav-item"><span class="nav-ico">👥</span>사용자 프로파일</button>
+          <button data-page="quoteid-engines" class="nav-btn nav-item"><span class="nav-ico">🔑</span>QuoteID 엔진</button>
+        </div>
+
+        <!-- 진단 도구 — broker/시세/API 흐름 점검 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">진단 도구</div>
+        <div class="space-y-0.5 mb-3">
+          <button data-page="tester" class="nav-btn nav-item"><span class="nav-ico">🔌</span>API 테스터</button>
+          <button data-page="broker" class="nav-btn nav-item"><span class="nav-ico">🖥</span>브로커 명령</button>
+          <button data-page="wsmon"  class="nav-btn nav-item"><span class="nav-ico">📡</span>WS 모니터</button>
+          <button data-page="quote"  class="nav-btn nav-item"><span class="nav-ico">💱</span>시세</button>
+          <button data-page="margin" class="nav-btn nav-item"><span class="nav-ico">🧮</span>마진 재계산</button>
+          <button data-page="svcio"  class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
+        </div>
+
+        <!-- 감사 & 도움말 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">감사 & 도움말</div>
+        <div class="space-y-0.5 mb-2">
+          <button data-page="audit" class="nav-btn nav-item"><span class="nav-ico">📜</span>감사 로그</button>
+          <button data-page="guide" class="nav-btn nav-item"><span class="nav-ico">📖</span>운영 가이드</button>
+        </div>
       </nav>
-      <div class="absolute bottom-0 w-full px-3 pb-4 space-y-2">
+
+      <!-- 하단 — 테마 토글 + 로그인 정보 (sticky 처럼 항상 보임) -->
+      <div class="shrink-0 px-3 pb-4 pt-2 border-t border-ink-700/40 space-y-2">
         <!-- 테마 토글 — 다크/라이트/시스템 -->
         <div class="rounded-xl border border-ink-700/60 p-2 text-xs">
           <div class="flex items-center justify-between mb-1.5 px-1">

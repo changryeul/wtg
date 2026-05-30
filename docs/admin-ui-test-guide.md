@@ -179,20 +179,39 @@ edge-push / edge-price / mci-push 등 ws endpoint 에 직접 연결해서
 ## 7. 시세 (`page-quote`)
 
 ### 7.1 무엇을 하는가
-mci-push (`:8081`) ws 에 연결해서 quote-forwarder 가 publish 한 시세를
-통화쌍별 호가창 + 최근 체결 50개로 시각화.
+mci-edge-price (`:8083`) ws 에 연결해서 mci-price 가 정제한 BEST tick 을
+통화쌍별 호가창으로 시각화. quote-forwarder envelope (broker direct) 도
+backward compatibility 로 처리.
 
-### 7.2 테스트 시나리오
-1. **연결** — `▶ 연결` → 상태 dot 초록.
-2. **시세 흘리기** — 다른 터미널에서:
+### 7.2 화면 요소
+- **URL** — default `ws://localhost:8083/v1/subscribe`. 8081 (mci-push) 은 시세 fanout 채널 아니라 시세 안 흐름.
+- **구독할 통화쌍 (입력 → subscribe + UI 필터)** — 콤마 구분. 연결 직후 자동으로 `{"type":"subscribe","pairs":[...]}` 전송 + UI 가 받은 tick 중 매칭 안 하는 건 drop. 비워두면 모든 통화 표시.
+- **호가창 grid** — 받은 통화쌍 카드 (출력).
+- **최근 체결** — trade entry 있을 때만 (BEST tick 은 호가만, 체결 없음).
+
+### 7.3 테스트 시나리오
+0. **시세 부하 생성** — 먼저 forwarder 가 실제로 시세 흘리는지 확인 (모든 카운터의 prerequisite).
    ```bash
-   ./scripts/load-test.sh low    # 640 tick/s
+   curl -sS http://127.0.0.1:9091/stats | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['published_total'])"
+   # 두 번 호출해서 숫자 변하면 시세 흐름. 안 변하면:
+   wtgctl burst start walk      # walk / trend / volatile / spike / multi
    ```
-3. **통화쌍 카드** — `USD/KRW`, `EUR/KRW` 등이 자동 grid 생성.
-4. **호가 갱신** — bid/ask 가 색 점멸 (good/bad).
-5. **tick/sec / 통화쌍 / 체결** 카운터 증가.
-6. **초기화** — `초기화` 클릭 → grid 비워짐.
-7. **종료** — `■ 종료`.
+1. **연결** — `▶ 연결` → 상태 dot 초록 + 자동 subscribe 전송.
+2. **통화쌍 카드** — 입력한 pair (USD/KRW, EUR/KRW, JPY/KRW) 만 grid 에 등장.
+3. **호가 갱신** — bid/ask 가 색 점멸 (good=상승/bad=하락).
+4. **tick/sec / 통화쌍** 카운터 증가.
+5. **다른 통화 차단** — 입력 박스에 `USD/KRW` 만 두고 다시 연결 → USD/KRW 카드만.
+6. **모든 통화** — 입력 박스 비우고 연결 → 들어오는 모든 sym 카드.
+7. **초기화** — `초기화` → grid 비워짐.
+8. **종료** — `■ 종료`.
+
+### 7.4 트러블슈팅
+| 증상 | 원인 / 처치 |
+|------|------------|
+| 연결 OK, 카드 0개 | forwarder published_total 멈춤 — `wtgctl burst start walk` |
+| WS 모니터엔 메시지 오는데 시세 페이지 grid 0 | (해결됨) BEST tick schema 가 forwarder envelope 과 달랐던 거. 최신 빌드면 정상 |
+| 입력한 pair 외 다른 통화 표시 | (해결됨) edge-price raw fanout 이 무차별 broadcast — UI 측 필터로 차단. 최신 빌드면 정상 |
+| `종료 (code=1006)` | edge-price 미기동 / CheckOrigin — `wtgctl edge start` |
 
 ---
 

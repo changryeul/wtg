@@ -879,14 +879,26 @@
             </div>
           </div>
 
-          <!-- ws connection 입력 -->
+          <!-- ws connection 입력 — default 는 edge-price(8083). 연결 시 q-pairs 의 통화쌍을 자동 subscribe. -->
           <div class="border-gradient rounded-2xl p-4 space-y-3">
             <div class="flex flex-wrap items-center gap-2 text-sm">
               <input id="q-url" placeholder="ws://host:port/path"
-                value="ws://localhost:8081/v1/subscribe"
+                value="ws://localhost:8083/v1/subscribe"
                 class="flex-1 min-w-[260px] px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-xs" />
               <button id="q-connect" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">▶ 연결</button>
               <button id="q-disconnect" class="px-4 py-2 rounded-lg bg-ink-800 border border-ink-700 hover:bg-bad/20 hover:text-bad text-sm hidden">■ 종료</button>
+            </div>
+            <!-- 구독할 통화쌍 — 입력값. 연결 직후 server 에 subscribe 메시지로 전송.
+                 받은 통화쌍은 아래 호가창 grid 에 표시됨. -->
+            <div class="flex items-start gap-2 text-xs">
+              <div class="flex flex-col">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">구독할 통화쌍 (입력 → subscribe + UI 필터)</span>
+                <span class="text-[10px] text-slate-600">콤마 구분 · 비워두면 모든 통화 표시</span>
+              </div>
+              <input id="q-pairs" value="USD/KRW,EUR/KRW,JPY/KRW,GBP/KRW,AUD/KRW,CNY/KRW"
+                title="콤마로 구분. 연결 직후 edge-price 에 subscribe 메시지로 전송."
+                class="flex-1 px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px]" />
+              <span class="text-[10px] text-slate-500 pt-1">8083=edge-price ✓ / 8081=mci-push ✗</span>
             </div>
             <div class="flex flex-wrap items-center gap-4 text-xs text-slate-400">
               <span>총 메시지 <span id="q-stat-total" class="font-mono text-slate-200">0</span></span>
@@ -5237,6 +5249,7 @@ const quoteState = {
   sock: null, wired: false,
   symbols: new Map(),   // symbol → { feed, ts, bid, bidQty, ask, askQty, last, lastQty, prevBid, prevAsk }
   trades: [],           // 최근 체결 (최대 50)
+  allowed: null,        // q-pairs 기반 필터 set — null 이면 모두 허용. {sym→true} (USDKRW + USD/KRW 둘 다)
   total: 0, rate: 0, rateBucket: 0, rateTimer: null,
   TRADE_LIMIT: 50,
 };
@@ -5298,6 +5311,22 @@ function quoteConnect() {
   sock.addEventListener("open", () => {
     quoteSetState("connected");
     if (!quoteState.rateTimer) quoteState.rateTimer = setInterval(quoteTickRate, 1000);
+    // q-pairs → subscribe 메시지 + UI 필터 set.
+    // edge-price 의 raw tick fanout 은 pair filter 무관 전체 broadcast 이므로
+    // UI 가 alloweds 으로 한 번 더 거른다. server 쪽 subscribe 는 stale/quote stream
+    // path 에 영향.
+    const pairsRaw = ($("#q-pairs") && $("#q-pairs").value) || "";
+    const pairs = pairsRaw.split(",").map(s => s.trim()).filter(Boolean);
+    if (pairs.length > 0) {
+      quoteState.allowed = {};
+      for (const p of pairs) {
+        quoteState.allowed[p] = true;                  // 예: USD/KRW
+        quoteState.allowed[p.replace(/\//g, "")] = true; // 예: USDKRW
+      }
+      try { sock.send(JSON.stringify({ type: "subscribe", pairs: pairs })); } catch (_) {}
+    } else {
+      quoteState.allowed = null;  // all
+    }
   });
   sock.addEventListener("message", (ev) => {
     quoteState.total++;
@@ -5328,10 +5357,52 @@ function quoteTickRate() {
 // 없는 형태로 wrap — JSON 의 data 만 꺼내 처리.
 function handleQuoteFrame(raw) {
   let outer; try { outer = JSON.parse(raw); } catch (_) { return; }
-  const env = outer && outer.data;
+  if (!outer || typeof outer !== "object") return;
+
+  // control echo (예: {"type":"subscribed","pairs":[...]}) — 무시.
+  if (outer.type && !outer.data) return;
+
+  const env = outer.data;
   if (!env || typeof env !== "object") return;
-  if (env.msgtype !== "snapshot" && env.msgtype !== "incremental") return;
-  applyQuoteEnvelope(env);
+
+  // path A — edge-price 의 BEST tick. {sym, bid, ask, ts, src, seq}
+  // (mci-price 가 다중시장 best 산정 후 보내는 평면 형식)
+  if (env.sym && (typeof env.bid === "number" || typeof env.ask === "number")) {
+    applyBestTick(env, outer.symbol);
+    return;
+  }
+
+  // path B — quote-forwarder envelope (broker direct broadcast).
+  // {ts, feed, msgtype, symbol?, entries:[{action?, type, symbol?, px, qty}]}
+  if (env.msgtype === "snapshot" || env.msgtype === "incremental") {
+    applyQuoteEnvelope(env);
+    return;
+  }
+}
+
+// applyBestTick — mci-price BEST tick 1건 반영. 호가 (bid/ask) 만, 체결 없음.
+function applyBestTick(env, fallbackSym) {
+  const sym = env.sym || fallbackSym || "";
+  if (!sym) return;
+  // UI 측 pair 필터 — 서버 raw tick fanout 이 무차별 broadcast 라 alloweds 로 거름.
+  if (quoteState.allowed && !quoteState.allowed[sym]) return;
+  let row = quoteState.symbols.get(sym);
+  if (!row) {
+    row = { feed: env.src || "BEST", ts: env.ts, bid: 0, bidQty: 0, ask: 0, askQty: 0,
+            last: 0, lastQty: 0, prevBid: 0, prevAsk: 0, prevLast: 0, priceHistory: [] };
+    quoteState.symbols.set(sym, row);
+  }
+  row.feed = env.src || row.feed;
+  row.ts = env.ts;
+  if (typeof env.bid === "number") { row.prevBid = row.bid; row.bid = env.bid; }
+  if (typeof env.ask === "number") { row.prevAsk = row.ask; row.ask = env.ask; }
+  const px = row.bid && row.ask ? (row.bid + row.ask) / 2 : (row.bid || row.ask);
+  if (px) {
+    row.priceHistory.push(px);
+    if (row.priceHistory.length > 60) row.priceHistory.shift();
+  }
+  $("#q-stat-symbols").textContent = String(quoteState.symbols.size);
+  quoteRender();
 }
 
 function applyQuoteEnvelope(env) {

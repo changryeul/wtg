@@ -6,6 +6,7 @@ package api
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -103,6 +104,24 @@ type Config struct {
 	// etcd 미사용 시 split-brain (admin 토글이 api 에 안 닿음) 을 막는
 	// 가벼운 우회. 운영에선 비우고 etcd 사용.
 	DevPolicyURL string
+
+	// ── Redis (운영 다중 인스턴스 session / refresh 공유) ──
+	//
+	// RedisAddr 비어있으면 in-memory store 사용 (단일 인스턴스 dev / 1차).
+	// 운영 다중 mci-api 에서는 필수 — 한 인스턴스가 발급한 session/refresh 가
+	// 다른 인스턴스에서도 보여야 한다. SetSessionStore/SetRefreshStore 로
+	// 명시 주입한 경우 그쪽이 우선.
+	//
+	// 형식 (auth.md §7 참조):
+	//   단일       : "127.0.0.1:6379"
+	//   Sentinel   : "addr1,addr2,addr3" + RedisSentinelMaster
+	//   Cluster    : RedisMode="cluster" + 콤마 분리 endpoints
+	RedisAddr           string
+	RedisPassword       string
+	RedisDB             int
+	RedisPrefix         string // default "wtg:auth"
+	RedisSentinelMaster string // sentinel 사용 시 master 이름
+	RedisMode           string // "direct" | "sentinel" | "cluster" (빈값=auto: 1addr→direct, 2+→sentinel)
 }
 
 // DefaultConfig 는 합리적인 디폴트가 채워진 Config 를 반환한다.
@@ -220,6 +239,24 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_API_DEV_POLICY_URL"); v != "" {
 		cfg.DevPolicyURL = v
 	}
+	if v := os.Getenv("WTG_API_REDIS_ADDR"); v != "" {
+		cfg.RedisAddr = v
+	}
+	if v := os.Getenv("WTG_API_REDIS_PASSWORD"); v != "" {
+		cfg.RedisPassword = v
+	}
+	if v := os.Getenv("WTG_API_REDIS_DB"); v != "" {
+		fmt.Sscanf(v, "%d", &cfg.RedisDB)
+	}
+	if v := os.Getenv("WTG_API_REDIS_PREFIX"); v != "" {
+		cfg.RedisPrefix = v
+	}
+	if v := os.Getenv("WTG_API_REDIS_MASTER"); v != "" {
+		cfg.RedisSentinelMaster = v
+	}
+	if v := os.Getenv("WTG_API_REDIS_MODE"); v != "" {
+		cfg.RedisMode = v
+	}
 
 	// flag 가 env 를 덮어씀 (CLI 가 가장 강력).
 	fs := flag.NewFlagSet("mci-api", flag.ContinueOnError)
@@ -251,6 +288,12 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.DevRoutesFile, "dev-routes-file", cfg.DevRoutesFile, "DevMode 라우팅 룰 시드 JSON 경로 (예: ~/mymq/etc/wtg-routes.json). 비면 hardcode default")
 	fs.StringVar(&cfg.DevRoutesPolicy, "dev-routes-policy", cfg.DevRoutesPolicy, "cfg ↔ in-memory 동기화 정책. additive(default) | sync. mci-admin 과 일치시킬 것")
 	fs.StringVar(&cfg.DevPolicyURL, "dev-policy-url", cfg.DevPolicyURL, "DevMode 정책 snapshot poll URL (예: http://127.0.0.1:9090/v1/admin/policy). 비우면 비활성")
+	fs.StringVar(&cfg.RedisAddr, "redis", cfg.RedisAddr, "session/refresh 공유 redis 주소. 단일 host:port 또는 콤마 분리. 비면 in-memory")
+	fs.StringVar(&cfg.RedisPassword, "redis-password", cfg.RedisPassword, "redis 비밀번호")
+	fs.IntVar(&cfg.RedisDB, "redis-db", cfg.RedisDB, "redis DB index")
+	fs.StringVar(&cfg.RedisPrefix, "redis-prefix", cfg.RedisPrefix, "redis 키 prefix (default wtg:auth)")
+	fs.StringVar(&cfg.RedisSentinelMaster, "redis-master", cfg.RedisSentinelMaster, "Sentinel master 이름 (다중 addr + sentinel)")
+	fs.StringVar(&cfg.RedisMode, "redis-mode", cfg.RedisMode, "topology 명시: direct / sentinel / cluster (빈값=auto)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

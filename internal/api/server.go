@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/internal/api/handlers"
@@ -46,6 +48,8 @@ type Server struct {
 
 	upEtcdCli *clientv3.Client // user-profile etcd client (옵션)
 	upEtcdRes *auth.EtcdUserProfileResolver
+
+	rdb redis.UniversalClient // Redis (auto-wire 시) — Shutdown 에서 Close.
 }
 
 // SetPolicyEngine — mci-admin 과 공유 시 외부 주입.
@@ -94,6 +98,46 @@ func ternary(cond bool, a, b string) string {
 		return a
 	}
 	return b
+}
+
+// buildRedis — cfg.Redis* → redis.UniversalClient. topology 자동 감지:
+//   - cfg.RedisMode 명시 시 그대로 (direct / sentinel / cluster)
+//   - 빈값이면 콤마 분리 endpoint 개수로 추정 (1=direct, 2+=sentinel)
+func (s *Server) buildRedis() (redis.UniversalClient, error) {
+	addrs := strings.Split(s.cfg.RedisAddr, ",")
+	for i := range addrs {
+		addrs[i] = strings.TrimSpace(addrs[i])
+	}
+	mode := s.cfg.RedisMode
+	if mode == "" {
+		if len(addrs) == 1 {
+			mode = "direct"
+		} else {
+			mode = "sentinel"
+		}
+	}
+	switch mode {
+	case "direct":
+		return redis.NewClient(&redis.Options{
+			Addr: addrs[0], Password: s.cfg.RedisPassword, DB: s.cfg.RedisDB,
+		}), nil
+	case "sentinel":
+		if s.cfg.RedisSentinelMaster == "" {
+			return nil, fmt.Errorf("redis sentinel mode 인데 --redis-master 비어있음")
+		}
+		return redis.NewFailoverClient(&redis.FailoverOptions{
+			MasterName:    s.cfg.RedisSentinelMaster,
+			SentinelAddrs: addrs,
+			Password:      s.cfg.RedisPassword,
+			DB:            s.cfg.RedisDB,
+		}), nil
+	case "cluster":
+		return redis.NewClusterClient(&redis.ClusterOptions{
+			Addrs: addrs, Password: s.cfg.RedisPassword,
+		}), nil
+	default:
+		return nil, fmt.Errorf("알 수 없는 redis-mode: %q", mode)
+	}
 }
 
 // buildEtcdTLS — cfg.EtcdTLS* → *tls.Config. 모두 비어있으면 nil.
@@ -180,14 +224,36 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.mq = mq
 
-	// 세션 저장소 — 외부 주입(SetSessionStore / SetRefreshStore) 안 했으면
-	// MemoryStore 가 기본. 운영은 Redis 를 주입(auth.md §7). DevMode 든 아니든
-	// 동일 — login 핸들러가 nil 일 때 "no_session_store" 503 을 막는다.
-	if s.sessions == nil {
-		s.sessions = auth.NewMemoryStore(auth.MemoryStoreOptions{})
-	}
-	if s.refresh == nil {
-		s.refresh = auth.NewMemoryRefreshStore(auth.MemoryRefreshStoreOptions{})
+	// 세션 / refresh 저장소 — 외부 주입(SetSessionStore / SetRefreshStore) 이
+	// 우선. 미주입 시 cfg.RedisAddr 가 있으면 Redis backed, 아니면 in-memory.
+	// 운영 다중 인스턴스에선 Redis 필수 (한 인스턴스 발급 token 이 다른
+	// 인스턴스 /v1/refresh 에서도 보여야).
+	if s.sessions == nil || s.refresh == nil {
+		if s.cfg.RedisAddr != "" {
+			rdb, err := s.buildRedis()
+			if err != nil {
+				return fmt.Errorf("redis 연결: %w", err)
+			}
+			s.rdb = rdb
+			if s.sessions == nil {
+				s.sessions = auth.NewRedisStore(rdb, auth.RedisStoreOptions{Prefix: s.cfg.RedisPrefix})
+			}
+			if s.refresh == nil {
+				s.refresh = auth.NewRedisRefreshStore(rdb, auth.RedisRefreshStoreOptions{Prefix: s.cfg.RedisPrefix})
+			}
+			s.logger.Info("session / refresh store: Redis",
+				slog.String("addr", s.cfg.RedisAddr),
+				slog.String("prefix", s.cfg.RedisPrefix),
+			)
+		} else {
+			if s.sessions == nil {
+				s.sessions = auth.NewMemoryStore(auth.MemoryStoreOptions{})
+			}
+			if s.refresh == nil {
+				s.refresh = auth.NewMemoryRefreshStore(auth.MemoryRefreshStoreOptions{})
+			}
+			s.logger.Info("session / refresh store: in-memory (운영 다중 인스턴스에선 --redis 필수)")
+		}
 	}
 	// etcd TLS 1회 빌드 → routing/policy 모두 동일 인증서.
 	etcdTLS, err := s.buildEtcdTLS()
@@ -408,6 +474,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.upEtcdRes != nil {
 		_ = s.upEtcdRes.Close()
+	}
+	if s.rdb != nil {
+		_ = s.rdb.Close()
 	}
 	if s.upEtcdCli != nil {
 		_ = s.upEtcdCli.Close()

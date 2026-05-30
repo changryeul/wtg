@@ -51,8 +51,13 @@ type Server struct {
 	// learning (consumeQuoteOnce 가 도착 quote.Pair 추가) 결합.
 	pairValidator PairValidator
 
+	// Phase 4 liveness — pair 별 last_ts 추적 + stale 알림. nil 이면 비활성.
+	liveness *pairLiveness
+
 	// 부정 카운터 — admin / metric 노출용.
 	totalRejectedPairs atomic.Uint64
+	totalStaleSent     atomic.Uint64 // stale 알림 누적 발송 수
+	totalFreshSent     atomic.Uint64 // 회복 알림 누적
 
 	totalRecv atomic.Uint64
 
@@ -93,6 +98,10 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 		v.Add(cfg.QuoteSeedPairs...)
 		s.pairValidator = v
 	}
+	// Phase 4 liveness — StaleThreshold>0 일 때만 활성. scanner 는 Start 에서 가동.
+	if cfg.StaleThreshold > 0 {
+		s.liveness = newPairLiveness()
+	}
 	return s
 }
 
@@ -116,6 +125,8 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.cfg.EnableQuoteStream {
 		go s.subscribeQuoteLoop(streamCtx)
 	}
+	// Phase 4 stale scanner — liveness 가 nil 이면 함수 자체가 early return.
+	go s.runStaleScanner(streamCtx)
 
 	return s.startHTTP(ctx)
 }
@@ -236,6 +247,13 @@ func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceService
 		// 에 들어가 — 운영자가 seed 안 줘도 첫 quote 도착 후 subscribe 가능.
 		if mv, ok := s.pairValidator.(*MemoryPairValidator); ok && mv != nil {
 			mv.Add(cq.GetPair())
+		}
+		// Phase 4 liveness — quote 도착 마킹. stale 상태였다가 회복되면 fresh
+		// 알림 발송 (그 pair 매칭하는 모든 subscriber 에게).
+		if s.liveness != nil {
+			if became := s.liveness.Update(cq.GetPair(), time.Now()); became {
+				s.sendFreshNotification(cq.GetPair())
+			}
 		}
 		s.registry.SendByProfile(profKey, cq.GetPair(), payload)
 	}
@@ -372,6 +390,11 @@ func (s *Server) BuildHandler() http.Handler {
 		}
 		if s.pairValidator != nil {
 			out["allowed_pairs"] = s.pairValidator.AllowedSnapshot()
+		}
+		if s.liveness != nil {
+			out["liveness"] = s.liveness.Snapshot()
+			out["stale_sent_total"] = s.totalStaleSent.Load()
+			out["fresh_sent_total"] = s.totalFreshSent.Load()
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
@@ -632,6 +655,66 @@ func (s *Server) sendControlPairReject(sub *Subscriber, rejected []string) {
 		return
 	}
 	_ = sub.Send(payload)
+}
+
+// sendStaleNotification — pair 의 stale 진입 알림 (그 pair 매칭 sub 들에게).
+//
+//	{"type":"stale","pair":"USD/KRW","threshold_sec":30}
+func (s *Server) sendStaleNotification(pair string, threshold time.Duration) {
+	payload, err := json.Marshal(map[string]any{
+		"type":          "stale",
+		"pair":          pair,
+		"threshold_sec": int(threshold.Seconds()),
+	})
+	if err != nil {
+		return
+	}
+	sent, _ := s.registry.BroadcastForPair(pair, payload)
+	s.totalStaleSent.Add(uint64(sent))
+}
+
+// sendFreshNotification — pair 의 회복 알림 (stale 였다가 quote 다시 옴).
+//
+//	{"type":"fresh","pair":"USD/KRW"}
+func (s *Server) sendFreshNotification(pair string) {
+	payload, err := json.Marshal(map[string]any{
+		"type": "fresh",
+		"pair": pair,
+	})
+	if err != nil {
+		return
+	}
+	sent, _ := s.registry.BroadcastForPair(pair, payload)
+	s.totalFreshSent.Add(uint64(sent))
+}
+
+// runStaleScanner — 백그라운드 goroutine 으로 pair liveness 주기 스캔.
+// 신규 stale pair 에 대해 알림 발송. context cancel 시 종료.
+func (s *Server) runStaleScanner(ctx context.Context) {
+	if s.liveness == nil || s.cfg.StaleThreshold <= 0 {
+		return
+	}
+	interval := s.cfg.StaleScanInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			newlyStale := s.liveness.ScanForStale(now, s.cfg.StaleThreshold)
+			for _, pair := range newlyStale {
+				s.logger.Warn("pair stale — 알림 발송",
+					slog.String("pair", pair),
+					slog.Duration("threshold", s.cfg.StaleThreshold),
+				)
+				s.sendStaleNotification(pair, s.cfg.StaleThreshold)
+			}
+		}
+	}
 }
 
 // sendControlEcho — 현재 필터 셋 상태 echo. Pairs=nil 이면 all 모드.

@@ -93,6 +93,12 @@ type Config struct {
 	// 운영 pair 카탈로그를 사전 등록해 첫 quote 도착 전에도 subscribe 가능하게.
 	// 비면 passive learning 만 — 첫 quote 까지는 어떤 pair 도 허용 안 됨.
 	QuoteSeedPairs []string
+
+	// Phase 4 stale detection — pair 가 이 시간 이상 무음이면 stale 알림 전송.
+	// 0 이면 비활성 (옛 동작). default 30s.
+	StaleThreshold time.Duration
+	// stale scanner 의 주기. default 5s. StaleThreshold=0 이면 무관.
+	StaleScanInterval time.Duration
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -114,6 +120,8 @@ func DefaultConfig() Config {
 		IPBurst:           200,
 		LogLevel:          "info",
 		EnableQuoteStream: false,
+		StaleThreshold:    30 * time.Second,
+		StaleScanInterval: 5 * time.Second,
 	}
 }
 
@@ -209,6 +217,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&quoteProfStr, "quote-profiles", quoteProfStr, "수신할 profile_keys 화이트리스트 (콤마 구분, 빈값=모두)")
 	seedPairsStr = strings.Join(cfg.QuoteSeedPairs, ",")
 	fs.StringVar(&seedPairsStr, "quote-seed-pairs", seedPairsStr, "Phase 2 권한 가드 초기 시드 pair (콤마 구분, 빈값=passive learning 만)")
+	fs.DurationVar(&cfg.StaleThreshold, "stale-threshold", cfg.StaleThreshold, "Phase 4 stale 알림 임계 (0=비활성, default 30s)")
+	fs.DurationVar(&cfg.StaleScanInterval, "stale-scan", cfg.StaleScanInterval, "stale scanner 주기 (default 5s)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

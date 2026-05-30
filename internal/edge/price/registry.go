@@ -247,6 +247,36 @@ func (r *Registry) Broadcast(p []byte) (sent, dropped int) {
 	return sent, dropped
 }
 
+// BroadcastForPair 는 pair 매칭 subscriber 에게만 송신한다 (profile 무관).
+// stale / fresh 알림 같은 system message 전송에 사용. pair 의 sub 가 어떤
+// profile 이든 그 pair 에 영향 받으므로 profile filter 는 적용 안 함.
+//
+// MatchesPair 가 nil 필터 (=all 모드) 도 true 반환하므로 subscribe 안 한
+// sub 도 알림 수신 — 무해 (그 sub 는 아예 quote 안 받지만 시스템 알림은
+// 받는 게 운영 일관성).
+func (r *Registry) BroadcastForPair(pair string, p []byte) (sent, dropped int) {
+	if pair == "" {
+		return 0, 0
+	}
+	r.mu.RLock()
+	snapshot := make([]*Subscriber, 0, len(r.subs))
+	for _, s := range r.subs {
+		if s.MatchesPair(pair) {
+			snapshot = append(snapshot, s)
+		}
+	}
+	r.mu.RUnlock()
+
+	for _, s := range snapshot {
+		if err := s.Send(p); err == nil {
+			sent++
+		} else {
+			dropped++
+		}
+	}
+	return sent, dropped
+}
+
 // SendByProfile 는 (profileKey, pair) 매칭 subscriber 에게만 송신한다.
 //   - profileKey 빈값 subscriber : 절대 받지 않음 (quote 미구독)
 //   - pair 빈값 인자             : pair 필터 미적용 (backward-compat 경로)

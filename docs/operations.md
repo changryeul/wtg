@@ -21,6 +21,49 @@
 | **TLS 인증서** | mTLS (broker / DMZ↔Internal / 외부 HTTPS) | 운영. dev 는 plain TCP |
 | **TimescaleDB** (`quote_bars` hypertable) | 봉 영속 + 압축/retention | mci-chart 활성 시 필수 |
 
+### Broker publish 손실 진단 (HIGH 부하 한정)
+
+64k tick/s 같은 burst 부하에서 forwarder publish 와 broker→mci-price 도달 사이
+**~14-18% 손실**이 관측됨. C 엔진 무수정 정책상 broker 안에는 직접 카운터를
+못 넣지만 외부 진단 도구:
+
+```bash
+./scripts/broker-loss-diag.sh high           # HIGH 시나리오 30s
+./scripts/broker-loss-diag.sh mid            # MID
+DURATION=15s ./scripts/broker-loss-diag.sh   # 시간 override
+```
+
+각 단계 메시지 수와 broker log 카테고리별 빈도를 출력:
+
+```
+forwarder UDP recv     :  1,919,820
+forwarder published env:  1,309,839
+forwarder published msg:    123,716  (envelopes / avg_batch 10.59)
+broker→mci-price msg   :    105,842  ( 85.6% of pub msg)
+mci-price ticks        :  1,120,590
+mci-price sub_drops    :          0
+
+broker side 손실 추정  : 17,874 messages (14.4%)
+```
+
+broker log 의 `Published N/M` 카운트가 `forwarder published msg` 보다 적으면
+broker 의 `publish_packet` 진입 자체를 못한 것 — 손실은 **forwarder
+TCP write → broker TCP recv 사이** (broker 단일 reader thread 가 draining 못
+따라감 → kernel TCP recv buffer 적체 → forwarder write 가 timeout 으로 drop).
+
+**완화 옵션** (broker 무수정 제약 안에서):
+
+1. **forwarder pacing** — `--batch-max` 키워서 broker publish 빈도 줄임
+   (이미 default 14 까지 튜닝됨, msgb 1512B 한계)
+2. **broker TCP recv buffer 키우기** — host sysctl `kern.ipc.maxsockbuf`,
+   `net.inet.tcp.recvspace` 상한 늘리기. Docker container 의 broker 도 host
+   설정 따라감.
+3. **broker 외부 화이트박스 측정** — `tcpdump -i lo port 11217` 으로 패킷
+   바이트 audit (forwarder pub bytes vs broker→mci-price bytes 비교)
+
+> 본 손실은 운영의 typical 시세량 (수 k tick/s) 에선 안 보임. burst 부하
+> 한정 — load test 시나리오 LOW/MID 는 100% delivery.
+
 ### TimescaleDB 운영 점검
 
 `etc/sql/quote_bars.sql` 부트스트랩 후 정책 모니터링:

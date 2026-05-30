@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -332,6 +333,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// 핸들러 dependencies.
+	aliasMetrics := handlers.NewAliasMetrics()
 	deps := &handlers.Deps{
 		MQ:           mq,
 		CallTimeout:  s.cfg.BrokerCallTimeout,
@@ -342,6 +344,7 @@ func (s *Server) Start(ctx context.Context) error {
 		JWTIssuer:    s.jwtIss,
 		RefreshStore: s.refresh,
 		UserProfiles: upResolver,
+		AliasMetrics: aliasMetrics,
 	}
 
 	// 라우팅 — Go 1.22+ ServeMux (method+path 패턴 지원).
@@ -355,6 +358,14 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /v1/login", handlers.Login(deps))
 	mux.HandleFunc("POST /v1/logout", handlers.Logout(deps))
 	mux.HandleFunc("POST /v1/refresh", handlers.Refresh(deps))
+	mux.HandleFunc("GET /v1/admin/alias-stats", func(w http.ResponseWriter, r *http.Request) {
+		// per-alias usage metrics — 운영 가시화. 호출 수 / 에러율 / 평균 latency.
+		// trust-edge 환경이라 일반 user 인증으로도 노출 — 민감 데이터 아님.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"aliases": aliasMetrics.Snapshot(),
+		})
+	})
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	// 미들웨어 체인 — 바깥 → 안쪽 순서:

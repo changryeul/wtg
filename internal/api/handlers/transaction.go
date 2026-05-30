@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/internal/api/transform"
@@ -58,6 +59,11 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "validation", err.Error())
 			return
 		}
+		// alias 별 호출 시작 시각 — 응답 직전까지 latency 측정.
+		callStart := time.Now()
+		recordAlias := func(isErr bool) {
+			deps.AliasMetrics.RecordCall(env.Alias, time.Since(callStart), isErr)
+		}
 
 		// 운영 정책 검사 — kill switch / 정비창 / 차단 심볼·routing-key.
 		// 비즈니스 거부는 매매 엔진이 담당, 본 검사는 운영 차원만 (auth.md §1).
@@ -82,6 +88,7 @@ func Transaction(deps *Deps) http.HandlerFunc {
 				if d.Reason == policy.ReasonKillSwitch || d.Reason == policy.ReasonMaintenance {
 					status = http.StatusServiceUnavailable
 				}
+				recordAlias(true)
 				writeError(w, status, d.Reason, d.Message)
 				return
 			}
@@ -89,6 +96,7 @@ func Transaction(deps *Deps) http.HandlerFunc {
 
 		frame, err := env.BuildFrame(0, p.Usid, deps.Routes)
 		if err != nil {
+			recordAlias(true)
 			if errors.Is(err, transform.ErrUnknownAlias) {
 				writeError(w, http.StatusNotFound, "unknown_alias", err.Error())
 				return
@@ -115,6 +123,7 @@ func Transaction(deps *Deps) http.HandlerFunc {
 				slog.Any("error", err),
 			)
 			status, code, msg := mapBrokerError(err)
+			recordAlias(true)
 			writeError(w, status, code, msg)
 			return
 		}
@@ -123,10 +132,12 @@ func Transaction(deps *Deps) http.HandlerFunc {
 		// envelope 에 errn/errm/data 모두 포함시켜 클라이언트가 디테일을 받을 수 있게.
 		if mqErr := reply.AsError(); mqErr != nil {
 			status, _, _ := mapBrokerError(mqErr)
+			recordAlias(true)
 			writeJSON(w, status, transform.FromReply(reply))
 			return
 		}
 
+		recordAlias(false)
 		writeJSON(w, http.StatusOK, transform.FromReply(reply))
 	}
 }

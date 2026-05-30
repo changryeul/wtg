@@ -71,6 +71,10 @@ type Deps struct {
 	// nil 이거나 미등록 usid → Session.Profile.Site/Tier 빈 값 (시세 quote 매칭 X,
 	// raw broadcast 만 수신). 클라이언트가 body 로 보낸 Site/Tier 는 보안상 무시.
 	UserProfiles auth.UserProfileResolver
+
+	// AliasMetrics — /v1/tx 호출 1건마다 alias 별 호출 수 / 에러 / 평균 latency
+	// 누적. /v1/admin/alias-stats endpoint 에서 노출 (운영 가시화). nil 이면 미수집.
+	AliasMetrics *AliasMetrics
 }
 
 // writeJSON 은 표준 JSON 응답 헬퍼. 에러 발생 시 access log 가 캡처하므로

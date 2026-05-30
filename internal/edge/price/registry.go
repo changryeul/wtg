@@ -247,6 +247,34 @@ func (r *Registry) Broadcast(p []byte) (sent, dropped int) {
 	return sent, dropped
 }
 
+// RevokePairFromAll — Phase 4b admin override. 모든 subscriber 의 pair 필터
+// 에서 해당 pair 를 제거한다 (admin disallow-pair endpoint 에서 호출).
+// 영향 받은 subscriber 수 반환. all 모드 (필터 nil) sub 는 영향 없음 —
+// 이미 자기 set 에 그 pair 가 명시되지 않은 상태.
+func (r *Registry) RevokePairFromAll(pair string) (affected int) {
+	if pair == "" {
+		return 0
+	}
+	r.mu.RLock()
+	snapshot := make([]*Subscriber, 0, len(r.subs))
+	for _, s := range r.subs {
+		snapshot = append(snapshot, s)
+	}
+	r.mu.RUnlock()
+
+	for _, s := range snapshot {
+		// pair 가 sub 의 필터에 실제 있을 때만 카운트.
+		s.pairsMu.RLock()
+		_, had := s.pairs[pair]
+		s.pairsMu.RUnlock()
+		if had {
+			s.UnsubscribePairs([]string{pair})
+			affected++
+		}
+	}
+	return affected
+}
+
 // BroadcastForPair 는 pair 매칭 subscriber 에게만 송신한다 (profile 무관).
 // stale / fresh 알림 같은 system message 전송에 사용. pair 의 sub 가 어떤
 // profile 이든 그 pair 에 영향 받으므로 profile filter 는 적용 안 함.

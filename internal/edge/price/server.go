@@ -401,6 +401,12 @@ func (s *Server) BuildHandler() http.Handler {
 	mux.HandleFunc("GET /v1/subscribe", s.subscribeHandler(upgrader))
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
+	// Phase 4b admin endpoint — 별도 IP allowlist 가드. cfg.AdminAllowCIDRs
+	// 가 비어있으면 모든 admin 요청 거부 (default secure). 일반 ws AllowCIDRs
+	// 와 별개 — 운영망에서만 좁게 허용 권장.
+	mux.HandleFunc("POST /v1/admin/disallow-pair", s.guardAdmin(s.adminDisallowPair()))
+	mux.HandleFunc("POST /v1/admin/allow-pair", s.guardAdmin(s.adminAllowPair()))
+
 	authMW := middleware.Auth(middleware.AuthConfig{
 		DevMode:     s.cfg.DevMode,
 		JWTVerifier: s.jwtVer,

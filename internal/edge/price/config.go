@@ -99,6 +99,11 @@ type Config struct {
 	StaleThreshold time.Duration
 	// stale scanner 의 주기. default 5s. StaleThreshold=0 이면 무관.
 	StaleScanInterval time.Duration
+
+	// Phase 4b admin allowlist — /v1/admin/* endpoint 접근 허용 CIDR.
+	// 비면 모든 admin 요청 거부 (default secure). AllowCIDRs (일반 ws) 와
+	// 별도로 좁게 운영망에서만 허용 권장.
+	AdminAllowCIDRs []*net.IPNet
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -192,10 +197,12 @@ func LoadConfig(args []string) (Config, error) {
 		}
 	}
 	cidrStr := os.Getenv("WTG_EPRICE_ALLOW_CIDRS")
+	adminCidrStr := os.Getenv("WTG_EPRICE_ADMIN_ALLOW_CIDRS")
 	seedPairsStr := ""
 
 	fs := flag.NewFlagSet("mci-edge-price", flag.ContinueOnError)
 	fs.StringVar(&cidrStr, "allow-cidrs", cidrStr, "외부 접근 허용 CIDR (콤마 구분, 비면 모두 허용)")
+	fs.StringVar(&adminCidrStr, "admin-allow-cidrs", adminCidrStr, "Phase 4b admin endpoint 접근 허용 CIDR (콤마 구분, 비면 모두 거부)")
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP/WS listen 주소")
 	fs.StringVar(&cfg.UpstreamGRPC, "upstream", cfg.UpstreamGRPC, "Internal mci-price gRPC endpoint")
 	fs.StringVar(&cfg.SubscriberID, "subscriber-id", cfg.SubscriberID, "edge 인스턴스 식별자")
@@ -242,6 +249,11 @@ func LoadConfig(args []string) (Config, error) {
 		return cfg, err
 	} else {
 		cfg.AllowCIDRs = cidrs
+	}
+	if cidrs, err := netutil.ParseCIDRs(adminCidrStr); err != nil {
+		return cfg, err
+	} else {
+		cfg.AdminAllowCIDRs = cidrs
 	}
 	return cfg, nil
 }

@@ -49,6 +49,19 @@ func (v *MemoryPairValidator) Add(pairs ...string) {
 	}
 }
 
+// Remove — Phase 4b admin override. pair 를 허용 set 에서 제거 (idempotent).
+// 호출 후 IsAllowed(pair) = false → 신규 subscribe 차단.
+func (v *MemoryPairValidator) Remove(pairs ...string) {
+	if len(pairs) == 0 {
+		return
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, p := range pairs {
+		delete(v.allowed, p)
+	}
+}
+
 // IsAllowed — pair 가 허용 set 에 있는지.
 func (v *MemoryPairValidator) IsAllowed(pair string) bool {
 	v.mu.RLock()

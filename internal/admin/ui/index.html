@@ -143,13 +143,32 @@
   [data-theme="dark"] .nav-btn[data-active="true"] { color: #67e8f9; }
 
   /* 사이드바 nav 아이템 — 그룹화된 메뉴의 공통 스타일.
+     Tailwind CDN 의 @apply 가 일부 utility(flex 등) 를 일관되지 않게 처리하는 케이스가 있어
+     명시적 CSS 로 작성. button 이 inline-block default 라 같은 줄에 붙는 문제 방지.
      좌측 아이콘(.nav-ico) 폭 고정 → 텍스트 정렬 일관. */
   .nav-item {
-    @apply w-full text-left px-3 py-1.5 rounded-lg flex items-center gap-2.5
-           text-slate-300 hover:bg-ink-800/60 hover:text-slate-100 transition;
+    display: flex !important;
+    align-items: center;
+    gap: 0.625rem;          /* gap-2.5 */
+    width: 100%;
+    padding: 0.375rem 0.75rem;  /* py-1.5 px-3 */
+    border-radius: 0.5rem;
+    text-align: left;
+    color: rgb(203 213 225);    /* slate-300 */
+    transition: background-color .15s, color .15s;
+  }
+  .nav-item:hover {
+    background: rgba(30, 41, 59, 0.6);  /* ink-800/60 */
+    color: rgb(241 245 249);            /* slate-100 */
   }
   .nav-ico {
-    @apply inline-block w-5 text-center text-[15px] leading-none opacity-80;
+    display: inline-block;
+    width: 1.25rem;        /* w-5 */
+    text-align: center;
+    font-size: 15px;
+    line-height: 1;
+    opacity: 0.8;
+    flex-shrink: 0;
   }
   .nav-btn[data-active="true"] .nav-ico { opacity: 1; }
 

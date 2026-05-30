@@ -77,6 +77,20 @@ func TestAuditRingAtAutoFill(t *testing.T) {
 	}
 }
 
+func TestAuditRingResourceField(t *testing.T) {
+	// Resource 필드는 카테고리 필터/UI 칩에 사용된다 — round-trip 손실 X 검증.
+	r := NewAuditRing(4)
+	r.Push(AuditEntry{Action: "PUT_SYMBOL", Resource: "symbol", Usid: "alice"})
+	r.Push(AuditEntry{Action: "POLICY_KILL_SWITCH", Resource: "policy", Usid: "bob"})
+	out := r.List(0)
+	if len(out) != 2 {
+		t.Fatalf("len=%d, want 2", len(out))
+	}
+	if out[0].Resource != "policy" || out[1].Resource != "symbol" {
+		t.Errorf("Resource round-trip 실패: %+v", out)
+	}
+}
+
 func TestAuditRingConcurrent(t *testing.T) {
 	r := NewAuditRing(50)
 	var wg sync.WaitGroup

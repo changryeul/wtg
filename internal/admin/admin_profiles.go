@@ -166,7 +166,7 @@ func PutProfile(deps *ProfilesDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "etcd", err.Error())
 			return
 		}
-		profileAudit(deps, r, "PUT_PROFILE",
+		emitAudit(deps.Logger, deps.Audit, r, "profile", "PUT_PROFILE",
 			slog.String("key", key),
 			slog.String("channel", string(p.Channel)),
 			slog.String("site", string(p.Site)),
@@ -203,7 +203,7 @@ func DeleteProfile(deps *ProfilesDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "not_found", "profile 미존재")
 			return
 		}
-		profileAudit(deps, r, "DELETE_PROFILE", slog.String("key", key))
+		emitAudit(deps.Logger, deps.Audit, r, "profile", "DELETE_PROFILE", slog.String("key", key))
 		if deps.Hub != nil {
 			deps.Hub.Broadcast("profile", map[string]any{"action": "delete", "key": key})
 		}
@@ -211,10 +211,3 @@ func DeleteProfile(deps *ProfilesDeps) http.HandlerFunc {
 	}
 }
 
-func profileAudit(deps *ProfilesDeps, r *http.Request, action string, attrs ...any) {
-	if deps == nil {
-		return
-	}
-	rd := &RoutingDeps{Logger: deps.Logger, Audit: deps.Audit}
-	auditLog(rd, r, action, attrs...)
-}

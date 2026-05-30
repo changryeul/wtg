@@ -99,7 +99,7 @@ func PutPricingTable(deps *PricingDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "etcd", err.Error())
 			return
 		}
-		pricingAudit(deps, r, "PUT_PRICING_TABLE",
+		emitAudit(deps.Logger, deps.Audit, r, "pricing", "PUT_PRICING_TABLE",
 			slog.Int64("version", tbl.Version),
 			slog.Int("hq_count", len(tbl.HQMargin)),
 			slog.Int("site_count", len(tbl.SiteMargin)),
@@ -116,10 +116,3 @@ func PutPricingTable(deps *PricingDeps) http.HandlerFunc {
 	}
 }
 
-func pricingAudit(deps *PricingDeps, r *http.Request, action string, attrs ...any) {
-	if deps == nil {
-		return
-	}
-	rd := &RoutingDeps{Logger: deps.Logger, Audit: deps.Audit}
-	auditLog(rd, r, action, attrs...)
-}

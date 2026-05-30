@@ -233,30 +233,48 @@ func principalUsid(r *http.Request) string {
 //
 // 운영에서는 별도 immutable audit sink 로 보내야 한다 (현재는 logger + ring).
 // ring 이 nil 이면 logger 만 사용 (외부 의존성 격리).
+//
+// RoutingDeps 전용 — 다른 핸들러 (symbols/profiles/...) 는 emitAudit 헬퍼 사용.
 func auditLog(deps *RoutingDeps, r *http.Request, action string, attrs ...any) {
 	if deps == nil {
 		return
 	}
+	emitAudit(deps.Logger, deps.Audit, r, "route", action, attrs...)
+}
+
+// emitAudit 은 모든 admin mutation 이 공유하는 audit emit helper.
+//
+// 이전에는 핸들러 파일별로 RoutingDeps 를 만들어 auditLog 를 호출하는 shim
+// (symbolAudit / profileAudit / ...) 이 중복돼 있었다. 이를 하나로 통합.
+//
+// resource:
+//   - 'route', 'symbol', 'profile', 'user_profile', 'pricing',
+//     'quoteid_engine', 'policy', 'svcio' 등
+//   - AuditEntry.Resource 에 박혀 UI 가 카테고리별 필터/색상칩 표시 가능.
+//
+// logger / ring 모두 nil 이면 no-op (테스트/최소 환경 안전).
+func emitAudit(logger *slog.Logger, ring *AuditRing, r *http.Request, resource, action string, attrs ...any) {
 	usid := principalUsid(r)
 	rid := middleware.RequestIDFromContext(r.Context())
 
-	if deps.Logger != nil {
+	if logger != nil {
 		all := []any{
 			slog.String("action", action),
+			slog.String("resource", resource),
 			slog.String("usid", usid),
 			slog.String("rid", rid),
 		}
 		all = append(all, attrs...)
-		deps.Logger.InfoContext(r.Context(), "admin audit", all...)
+		logger.InfoContext(r.Context(), "admin audit", all...)
 	}
-	if deps.Audit != nil {
-		// attrs 는 slog.Attr-style key/value 페어 (slog.String("k", v) 등) — 평탄화.
+	if ring != nil {
 		flat := flattenAttrs(attrs)
-		deps.Audit.Push(AuditEntry{
-			Action: action,
-			Usid:   usid,
-			RID:    rid,
-			Attrs:  flat,
+		ring.Push(AuditEntry{
+			Action:   action,
+			Resource: resource,
+			Usid:     usid,
+			RID:      rid,
+			Attrs:    flat,
 		})
 	}
 }

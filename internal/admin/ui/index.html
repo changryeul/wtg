@@ -1504,8 +1504,11 @@
                 자동 새로고침
               </label>
               <button id="audit-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻</button>
+              <button id="audit-export" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm" title="현재 표시된 항목을 CSV 로 내려받기">⇩ CSV</button>
             </div>
           </div>
+          <!-- Resource 카테고리 필터 칩. 클릭으로 토글, "전체" 면 필터 해제. -->
+          <div id="audit-resource-chips" class="flex flex-wrap gap-1.5"></div>
           <div class="border-gradient rounded-2xl p-2">
             <div id="audit-summary" class="px-3 py-2 text-xs text-slate-400 border-b border-ink-700/50 flex items-center gap-4">
               <span>총 <span id="audit-count" class="text-slate-200 font-mono">0</span></span>
@@ -4700,18 +4703,20 @@ auto rsp = req.send();
 };
 
 // ───────── Audit Timeline ─────────
-const auditState = { entries: [], poller: null, wired: false };
+const auditState = { entries: [], poller: null, wired: false, resource: null };
 
 function initAudit() {
   if (!auditState.wired) {
     $("#audit-refresh").onclick = loadAudit;
     $("#audit-filter").addEventListener("input", renderAudit);
+    $("#audit-export").onclick = exportAuditCSV;
     $("#audit-auto").addEventListener("change", (e) => {
       if (e.target.checked) startAuditPoller();
       else stopAuditPoller();
     });
     auditState.wired = true;
   }
+  renderResourceChips();
   loadAudit();
   // ws stream 이 연결되어 있으면 polling 불필요 — push 로 즉시 받음.
   if ($("#audit-auto").checked && (!stream.sock || stream.sock.readyState !== 1)) {
@@ -4743,16 +4748,75 @@ async function loadAudit() {
 }
 
 const ACTION_STYLES = {
-  PUT_ROUTE:        { dot: "bg-accent-400",  label: "수정/생성", icon: "✎" },
-  DELETE_ROUTE:     { dot: "bg-bad",         label: "삭제",     icon: "✕" },
-  SET_ROUTE_ACTIVE: { dot: "bg-warn",        label: "활성토글", icon: "⊙" },
-  default:          { dot: "bg-slate-500",   label: "액션",     icon: "•" },
+  // routes
+  PUT_ROUTE:              { dot: "bg-accent-400",  label: "라우팅 수정/생성", icon: "✎" },
+  DELETE_ROUTE:           { dot: "bg-bad",         label: "라우팅 삭제",     icon: "✕" },
+  SET_ROUTE_ACTIVE:       { dot: "bg-warn",        label: "라우팅 활성토글", icon: "⊙" },
+  // symbols
+  PUT_SYMBOL:             { dot: "bg-accent-400",  label: "통화쌍 수정/생성", icon: "✎" },
+  DELETE_SYMBOL:          { dot: "bg-bad",         label: "통화쌍 삭제",     icon: "✕" },
+  // profiles
+  PUT_PROFILE:            { dot: "bg-accent-400",  label: "프로파일 수정/생성", icon: "✎" },
+  DELETE_PROFILE:         { dot: "bg-bad",         label: "프로파일 삭제",     icon: "✕" },
+  // user_profile
+  PUT_USER_PROFILE:       { dot: "bg-accent-400",  label: "사용자 수정/생성", icon: "✎" },
+  DELETE_USER_PROFILE:    { dot: "bg-bad",         label: "사용자 삭제",     icon: "✕" },
+  // pricing
+  PUT_PRICING_TABLE:      { dot: "bg-accent-400",  label: "마진 테이블 저장", icon: "✎" },
+  // quoteid engine
+  PUT_QUOTEID_ENGINE:     { dot: "bg-accent-400",  label: "QuoteID 엔진 수정/생성", icon: "✎" },
+  DELETE_QUOTEID_ENGINE:  { dot: "bg-bad",         label: "QuoteID 엔진 삭제", icon: "✕" },
+  // policy
+  POLICY_KILL_SWITCH:     { dot: "bg-bad",         label: "킬스위치",       icon: "⚠" },
+  POLICY_MAINTENANCE:     { dot: "bg-warn",        label: "정비창",         icon: "🔧" },
+  POLICY_BLOCKED_SYMBOLS: { dot: "bg-warn",        label: "차단 심볼",      icon: "⛔" },
+  POLICY_BLOCKED_RKEYS:   { dot: "bg-warn",        label: "차단 라우팅키",  icon: "⛔" },
+  // svcio
+  SVCIO_TEST_WIRE:        { dot: "bg-slate-400",   label: "wire 테스트",    icon: "⚡" },
+  SVCIO_SAVE_SOURCE:      { dot: "bg-accent-400",  label: "svc 헤더 저장",  icon: "💾" },
+  default:                { dot: "bg-slate-500",   label: "액션",           icon: "•" },
 };
+
+// Resource 별 칩 — null = 전체. UI 가 카테고리별 필터 칩 렌더링에 사용.
+const RESOURCE_LABELS = {
+  route:          "라우팅",
+  symbol:         "통화쌍",
+  profile:        "프로파일",
+  user_profile:   "사용자",
+  pricing:        "마진",
+  quoteid_engine: "QuoteID",
+  policy:         "정책",
+  svcio:          "SvcIO",
+};
+
+function renderResourceChips() {
+  const wrap = $("#audit-resource-chips");
+  if (!wrap) return;
+  wrap.replaceChildren();
+  // "전체" + 각 resource 별 칩.
+  const items = [["", "전체"]].concat(Object.entries(RESOURCE_LABELS));
+  for (const [res, label] of items) {
+    const active = (res === "" && !auditState.resource) || res === auditState.resource;
+    const btn = h("button", {
+      class: "px-2.5 py-1 rounded-full text-xs border transition " +
+        (active
+          ? "bg-accent-500 text-ink-950 border-accent-500 font-semibold"
+          : "bg-ink-800 text-slate-300 border-ink-700 hover:border-accent-500/60"),
+    }, label);
+    btn.onclick = () => {
+      auditState.resource = res || null;
+      renderResourceChips();
+      renderAudit();
+    };
+    wrap.appendChild(btn);
+  }
+}
 
 function renderAudit() {
   const tl = $("#audit-timeline");
   if (!tl) return;
   const filter = $("#audit-filter").value.trim().toLowerCase();
+  const resFilter = auditState.resource;
 
   tl.replaceChildren();
   // 라인.
@@ -4766,12 +4830,44 @@ function renderAudit() {
 
   let shown = 0;
   for (const e of auditState.entries) {
-    const hay = (e.action + " " + (e.usid||"") + " " + JSON.stringify(e.attrs||{})).toLowerCase();
+    if (resFilter && e.resource !== resFilter) continue;
+    const hay = (e.action + " " + (e.resource||"") + " " + (e.usid||"") + " " + JSON.stringify(e.attrs||{})).toLowerCase();
     if (filter && !hay.includes(filter)) continue;
     tl.appendChild(renderAuditEntry(e));
     shown++;
   }
+  if (shown === 0) {
+    tl.appendChild(h("div", { class: "text-slate-500 text-sm py-6 text-center", text: "필터 조건에 일치하는 항목 없음." }));
+  }
   $("#audit-shown").textContent = shown;
+}
+
+// exportAuditCSV — 현재 필터 적용된 entry 들을 CSV 로 download.
+// 임시 분석/외부 sink 비교용 — operational sink (7년 보관) 와 별개.
+function exportAuditCSV() {
+  const filter = $("#audit-filter").value.trim().toLowerCase();
+  const resFilter = auditState.resource;
+  const rows = [["at", "resource", "action", "usid", "rid", "attrs"]];
+  for (const e of auditState.entries) {
+    if (resFilter && e.resource !== resFilter) continue;
+    const hay = (e.action + " " + (e.resource||"") + " " + (e.usid||"") + " " + JSON.stringify(e.attrs||{})).toLowerCase();
+    if (filter && !hay.includes(filter)) continue;
+    rows.push([e.at || "", e.resource || "", e.action || "", e.usid || "", e.rid || "", JSON.stringify(e.attrs || {})]);
+  }
+  const csv = rows.map(r => r.map(c => {
+    const s = String(c).replace(/"/g, '""');
+    return /[",\n]/.test(s) ? `"${s}"` : s;
+  }).join(",")).join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }); // BOM for Excel
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  a.href = url;
+  a.download = `audit-${ts}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function renderAuditEntry(e) {
@@ -4798,9 +4894,14 @@ function renderAuditEntry(e) {
     }
   }
 
+  const resLabel = e.resource ? (RESOURCE_LABELS[e.resource] || e.resource) : null;
+  const resChip = resLabel
+    ? h("span", { class: "px-1.5 py-0.5 rounded text-[10px] bg-accent-500/15 text-accent-300 border border-accent-500/30", text: resLabel })
+    : null;
   const headerLine = h("div", { class: "flex items-baseline gap-2" },
     h("span", { class: "text-base", text: style.icon }),
     h("span", { class: "font-semibold text-slate-100", text: style.label }),
+    resChip,
     h("span", { class: "text-xs font-mono text-slate-500", text: e.action }),
     h("span", { class: "ml-auto text-xs font-mono text-slate-400", text: tStr }),
   );

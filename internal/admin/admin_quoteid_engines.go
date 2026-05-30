@@ -189,7 +189,7 @@ func PutQuoteIDEngine(deps *QuoteIDEnginesDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "etcd", err.Error())
 			return
 		}
-		quoteIDEngineAudit(deps, r, "PUT_QUOTEID_ENGINE",
+		emitAudit(deps.Logger, deps.Audit, r, "quoteid_engine", "PUT_QUOTEID_ENGINE",
 			slog.String("engine_id", engineID),
 			slog.Any("permissions", m.Permissions),
 			slog.String("expires_at", m.ExpiresAt),
@@ -234,7 +234,7 @@ func DeleteQuoteIDEngine(deps *QuoteIDEnginesDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "not_found", "engine 미존재")
 			return
 		}
-		quoteIDEngineAudit(deps, r, "DELETE_QUOTEID_ENGINE", slog.String("engine_id", engineID))
+		emitAudit(deps.Logger, deps.Audit, r, "quoteid_engine", "DELETE_QUOTEID_ENGINE", slog.String("engine_id", engineID))
 		if deps.Hub != nil {
 			deps.Hub.Broadcast("quoteid_engine", map[string]any{
 				"action": "delete", "engine_id": engineID,
@@ -244,10 +244,3 @@ func DeleteQuoteIDEngine(deps *QuoteIDEnginesDeps) http.HandlerFunc {
 	}
 }
 
-func quoteIDEngineAudit(deps *QuoteIDEnginesDeps, r *http.Request, action string, attrs ...any) {
-	if deps == nil {
-		return
-	}
-	rd := &RoutingDeps{Logger: deps.Logger, Audit: deps.Audit}
-	auditLog(rd, r, action, attrs...)
-}

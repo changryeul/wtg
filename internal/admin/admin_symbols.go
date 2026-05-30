@@ -147,7 +147,7 @@ func PutSymbol(deps *SymbolsDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusInternalServerError, "etcd", err.Error())
 			return
 		}
-		symbolAudit(deps, r, "PUT_SYMBOL",
+		emitAudit(deps.Logger, deps.Audit, r, "symbol", "PUT_SYMBOL",
 			slog.String("symbol", sym),
 			slog.String("pair", string(e.Pair)),
 			slog.Bool("active", e.Active),
@@ -182,22 +182,12 @@ func DeleteSymbol(deps *SymbolsDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusNotFound, "not_found", "symbol 미존재")
 			return
 		}
-		symbolAudit(deps, r, "DELETE_SYMBOL", slog.String("symbol", sym))
+		emitAudit(deps.Logger, deps.Audit, r, "symbol", "DELETE_SYMBOL", slog.String("symbol", sym))
 		if deps.Hub != nil {
 			deps.Hub.Broadcast("symbol", map[string]any{"action": "delete", "symbol": sym})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
-}
-
-// symbolAudit — RoutingDeps.auditLog 의 SymbolsDeps 버전.
-func symbolAudit(deps *SymbolsDeps, r *http.Request, action string, attrs ...any) {
-	if deps == nil {
-		return
-	}
-	// 동일한 audit 페이로드 형태를 따른다.
-	rd := &RoutingDeps{Logger: deps.Logger, Audit: deps.Audit}
-	auditLog(rd, r, action, attrs...)
 }
 
 // 컴파일 타임 보장 — 핸들러 빈값 deps 호출 안전성.

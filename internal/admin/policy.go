@@ -52,7 +52,7 @@ func SetKillSwitch(deps *PolicyDeps) http.HandlerFunc {
 		}
 		usid := principalUsid(r)
 		deps.Engine.SetKillSwitchScoped(req.Active, req.Channels, usid)
-		policyAudit(deps, r, "POLICY_KILL_SWITCH",
+		emitAudit(deps.Logger, deps.Audit, r, "policy", "POLICY_KILL_SWITCH",
 			slog.Bool("active", req.Active),
 			slog.Any("channels", req.Channels),
 		)
@@ -88,7 +88,7 @@ func SetMaintenance(deps *PolicyDeps) http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "validation", err.Error())
 			return
 		}
-		policyAudit(deps, r, "POLICY_MAINTENANCE",
+		emitAudit(deps.Logger, deps.Audit, r, "policy", "POLICY_MAINTENANCE",
 			slog.Time("start", req.Start),
 			slog.Time("end", req.End),
 		)
@@ -116,7 +116,7 @@ func SetBlockedSymbols(deps *PolicyDeps) http.HandlerFunc {
 		st := deps.Engine.State()
 		st.BlockedSymbols = req.Items
 		deps.Engine.SetState(st, principalUsid(r))
-		policyAudit(deps, r, "POLICY_BLOCKED_SYMBOLS",
+		emitAudit(deps.Logger, deps.Audit, r, "policy", "POLICY_BLOCKED_SYMBOLS",
 			slog.Int("count", len(req.Items)),
 		)
 		writeJSON(w, http.StatusOK, deps.Engine.State())
@@ -137,20 +137,11 @@ func SetBlockedRoutingKeys(deps *PolicyDeps) http.HandlerFunc {
 		st := deps.Engine.State()
 		st.BlockedRoutingKeys = req.Items
 		deps.Engine.SetState(st, principalUsid(r))
-		policyAudit(deps, r, "POLICY_BLOCKED_RKEYS",
+		emitAudit(deps.Logger, deps.Audit, r, "policy", "POLICY_BLOCKED_RKEYS",
 			slog.Int("count", len(req.Items)),
 		)
 		writeJSON(w, http.StatusOK, deps.Engine.State())
 	}
-}
-
-// policyAudit — auditLog 와 동일하지만 PolicyDeps 시그니처.
-func policyAudit(deps *PolicyDeps, r *http.Request, action string, attrs ...any) {
-	if deps == nil {
-		return
-	}
-	rd := &RoutingDeps{Logger: deps.Logger, Audit: deps.Audit}
-	auditLog(rd, r, action, attrs...)
 }
 
 // 사용 안 함 (편집기 silence) — handler 패키지 외부 참조 회피.

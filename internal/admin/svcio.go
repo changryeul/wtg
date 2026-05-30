@@ -292,9 +292,10 @@ func TestWireSvc(deps *TestWireDeps) http.HandlerFunc {
 		// audit + ws push.
 		if deps.Audit != nil {
 			deps.Audit.Push(AuditEntry{
-				At:     time.Now(),
-				Action: "SVCIO_TEST_WIRE",
-				Usid:   principalUsid(r),
+				At:       time.Now(),
+				Action:   "SVCIO_TEST_WIRE",
+				Resource: "svcio",
+				Usid:     principalUsid(r),
 				Attrs: map[string]any{
 					"code":     code,
 					"channel":  channel,
@@ -424,10 +425,11 @@ func SaveSvcIOSource(deps *EditDeps) http.HandlerFunc {
 
 		if deps.Audit != nil {
 			deps.Audit.Push(AuditEntry{
-				At:     time.Now(),
-				Action: "SVCIO_SAVE_SOURCE",
-				Usid:   principalUsid(r),
-				Attrs:  map[string]any{"code": code, "path": spec.SourcePath, "bytes": len(req.Content)},
+				At:       time.Now(),
+				Action:   "SVCIO_SAVE_SOURCE",
+				Resource: "svcio",
+				Usid:     principalUsid(r),
+				Attrs:    map[string]any{"code": code, "path": spec.SourcePath, "bytes": len(req.Content)},
 			})
 		}
 		writeJSON(w, http.StatusOK, newSpec)

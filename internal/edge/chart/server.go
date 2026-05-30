@@ -94,6 +94,7 @@ func (s *Server) BuildHandler() (http.Handler, error) {
 
 	mws := []middleware.Middleware{
 		middleware.BearerFromQuery(),
+		middleware.UserFromQuery(),
 		metrics.HTTPMiddleware(s.metrics, "mci-edge-chart"),
 		middleware.AccessLog(s.logger),
 		middleware.RequestID(),
@@ -211,8 +212,8 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		JWTVerifier: s.jwtVer,
 		Logger:      s.logger,
 	})
-	// query 의 access_token 도 처리 (브라우저 ws 헤더 미지원 대응).
-	return middleware.BearerFromQuery()(authMW(next))
+	// query 의 access_token / x_wtg_user 도 처리 (브라우저 ws 헤더 미지원 대응).
+	return middleware.BearerFromQuery()(middleware.UserFromQuery()(authMW(next)))
 }
 
 // healthzHandler — edge 자체 헬스 (upstream 호출 안 함).

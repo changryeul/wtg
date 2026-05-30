@@ -371,7 +371,11 @@ func (s *Server) BuildHandler() http.Handler {
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
-		CheckOrigin:     nil, // 운영 환경에서 화이트리스트 함수 주입.
+		// CheckOrigin: 운영은 nil = gorilla default (same-origin). DevMode 는 모두 허용 —
+		// admin UI(:9090) → edge-price(:8083) wsmon 같은 cross-origin 진단 가능.
+	}
+	if s.cfg.DevMode {
+		upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 	}
 
 	mux := http.NewServeMux()
@@ -414,8 +418,11 @@ func (s *Server) BuildHandler() http.Handler {
 	})
 	mws := []middleware.Middleware{
 		authMW,
-		// ws 클라이언트 호환 — query 의 access_token 을 헤더로 변환.
+		// ws 클라이언트 호환 — query 의 access_token / x_wtg_user 를 헤더로 변환.
+		// 브라우저 WebSocket API 가 사용자 정의 헤더 못 주는 환경 (admin UI WS 모니터 등) 대응.
+		// 운영(JWT): BearerFromQuery → Authorization: Bearer. DevMode: UserFromQuery → X-WTG-User.
 		middleware.BearerFromQuery(),
+		middleware.UserFromQuery(),
 		metrics.HTTPMiddleware(s.metrics, "mci-edge-price"),
 		middleware.AccessLog(s.logger),
 		middleware.RequestID(),

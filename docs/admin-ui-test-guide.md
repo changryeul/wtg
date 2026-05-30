@@ -110,7 +110,7 @@ alias → exchange / routing_key 매핑 CRUD. mci-api `/v1/tx` 의 `alias` 가
 ### 4.1 무엇을 하는가
 mymqd admin 명령 (Status / Clients / Exchanges / Users / Whois) 직접 호출.
 결과는 raw JSON.
-
+	
 ### 4.2 테스트 시나리오
 1. **Status** — broker 정보 + uptime + queue 카운터.
 2. **Clients** — 현재 broker 에 연결된 client 목록 (mci-api, mci-push, ...).
@@ -153,16 +153,26 @@ edge-push / edge-price / mci-push 등 ws endpoint 에 직접 연결해서
 실시간 메시지 + 통계 (메시지 수 / B/sec / peak / drop / uptime) 관찰.
 
 ### 6.2 테스트 시나리오
-1. **프리셋 선택** — `mci-push (8081)` → URL 자동 채움.
+1. **프리셋 선택** — `edge-price (8083)` → URL 자동 채움 (또는 `mci-push (8081)`).
 2. **연결** — `▶ 연결` → 상태 dot 초록 + `connected`.
-3. **메시지 도착** — broker → mci-push 로 push 가 흐르면 로그에 누적, B/sec 증가.
-4. **일시정지** — 체크 → 화면 freeze, peak 는 계속 갱신.
-5. **자동 스크롤** — 해제 시 사용자 스크롤 유지.
-6. **JSON 정렬** — 체크 시 메시지가 pretty.
-7. **필터** — 텍스트 입력 → 매칭 메시지만 표시.
-8. **메시지 전송** — `{"type":"ping"}` 전송 → 서버 응답 확인.
-9. **종료** — `■ 종료` → 상태 dot 회색.
-10. **메시지 비우기** — log 영역 초기화 (통계는 유지).
+3. **시세 subscribe** (edge-price) — "메시지 전송" 펼침 → preset 칩 `+ subscribe USD/EUR/JPY KRW` 클릭 → **전송** → inline status `✓ 전송됨` → stream 에 시세 envelope 흘러옴 → B/sec / 메시지 카운터 증가.
+4. **메시지 도착** — broker → 서버로 push 흐르면 로그에 누적, B/sec 증가.
+5. **일시정지** — 체크 → 화면 freeze, peak 는 계속 갱신.
+6. **자동 스크롤** — 해제 시 사용자 스크롤 유지.
+7. **JSON 정렬** — 체크 시 메시지가 pretty.
+8. **필터** — 텍스트 입력 → 매칭 메시지만 표시.
+9. **메시지 전송 형식** — edge-price 는 `{"type":"subscribe","pairs":["USD/KRW",...]}` 또는 `{"type":"unsubscribe","pairs":[...]}` 만 받음. 다른 형식은 `bad_request` 응답. mci-push/edge-push 는 단방향 — client 메시지 무시.
+10. **unsubscribe** — preset `− unsubscribe USD/KRW` → 전송 → 해당 통화쌍 메시지 중단.
+11. **종료** — `■ 종료` → 상태 dot 회색.
+12. **메시지 비우기** — log 영역 초기화 (통계는 유지).
+
+### 6.3 트러블슈팅
+| 증상 | 원인 / 처치 |
+|------|------------|
+| `종료 (code=1006 reason=-)` | edge-{price,push,chart} 미기동 또는 CheckOrigin 거부 — `wtgctl edge start` + DevMode 빌드 확인 |
+| `401 X-WTG-User 헤더 필요` | edge 서버에 `UserFromQuery` 미들웨어 누락 — 최신 빌드 적용 |
+| `✗ 메시지가 비어있음` | input 비어있음. preset 칩 클릭 또는 default value 사용 |
+| 연결 OK but 시세 0 | edge-price 는 subscribe 안 하면 안 흐름. preset `+ subscribe ...` 클릭 후 전송 |
 
 ---
 

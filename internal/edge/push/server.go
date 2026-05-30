@@ -239,7 +239,10 @@ func (s *Server) BuildHandler() http.Handler {
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
-		CheckOrigin:     nil,
+		// 운영: nil = gorilla default (same-origin). DevMode: cross-origin 허용 (admin UI wsmon 등).
+	}
+	if s.cfg.DevMode {
+		upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 	}
 
 	mux := http.NewServeMux()
@@ -269,9 +272,11 @@ func (s *Server) BuildHandler() http.Handler {
 	})
 	mws := []middleware.Middleware{
 		authMW,
-		// ws 클라이언트는 Authorization 헤더 보내기 어려우므로 query 의 access_token 을
+		// ws 클라이언트는 Authorization 헤더 보내기 어려우므로 query 의 access_token / x_wtg_user 를
 		// 헤더로 변환. Auth 보다 안쪽 (실행 순서상 먼저) 에 위치.
+		// 운영(JWT): BearerFromQuery. DevMode: UserFromQuery.
 		middleware.BearerFromQuery(),
+		middleware.UserFromQuery(),
 		metrics.HTTPMiddleware(s.metrics, "mci-edge-push"),
 		middleware.AccessLog(s.logger),
 		middleware.RequestID(),

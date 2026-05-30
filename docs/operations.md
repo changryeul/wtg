@@ -19,6 +19,40 @@
 | **Redis** | 세션 / refresh token | 운영. dev 는 `pkg/auth/memstore.go` |
 | **매매 AP** (`test_service` / `WECHO` / `W*`/`BW*`) | 실제 transaction 처리 | broker 가 자동 기동하는 것은 broker 가 처리, 별도 AP 는 운영팀이 기동 |
 | **TLS 인증서** | mTLS (broker / DMZ↔Internal / 외부 HTTPS) | 운영. dev 는 plain TCP |
+| **TimescaleDB** (`quote_bars` hypertable) | 봉 영속 + 압축/retention | mci-chart 활성 시 필수 |
+
+### TimescaleDB 운영 점검
+
+`etc/sql/quote_bars.sql` 부트스트랩 후 정책 모니터링:
+
+```sql
+-- 정책 jobs 등록 확인
+SELECT job_id, application_name, schedule_interval, next_start
+FROM timescaledb_information.jobs
+WHERE application_name LIKE 'Columnstore%' OR application_name LIKE 'Retention%';
+
+-- 7일 이상 chunk 가 압축됐는지
+SELECT chunk_name, range_start::DATE, is_compressed
+FROM timescaledb_information.chunks
+WHERE hypertable_name='quote_bars'
+ORDER BY range_start DESC LIMIT 10;
+
+-- 압축률 실측
+SELECT
+  pg_size_pretty(SUM(before_compression_total_bytes)) AS uncompressed_eq,
+  pg_size_pretty(SUM(after_compression_total_bytes))  AS compressed_actual,
+  round((1 - SUM(after_compression_total_bytes)::numeric /
+            NULLIF(SUM(before_compression_total_bytes),0)) * 100, 1) AS savings_pct
+FROM chunk_compression_stats('quote_bars')
+WHERE after_compression_total_bytes IS NOT NULL;
+```
+
+기준값 (실측):
+- 압축률: ~75% (2584 kB → 648 kB)
+- 압축 정책: 7일 이상 chunk, 12h 주기
+- retention: 2년 이상 chunk drop, 1일 주기
+
+상세 + 검증 절차: `docs/chart-schema.md` 의 "운영 — 정책 검증 / 모니터링".
 
 ---
 

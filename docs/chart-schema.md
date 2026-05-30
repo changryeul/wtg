@@ -60,6 +60,89 @@ SELECT add_compression_policy('quote_bars', INTERVAL '7 days', if_not_exists => 
 SELECT add_retention_policy('quote_bars', INTERVAL '2 years', if_not_exists => TRUE);
 ```
 
+## 운영 — 정책 검증 / 모니터링
+
+### 등록된 정책 jobs
+
+```sql
+SELECT job_id, application_name, schedule_interval, next_start, config
+FROM timescaledb_information.jobs
+WHERE application_name LIKE 'Columnstore%' OR application_name LIKE 'Retention%';
+```
+
+정상 상태 예시 (확인 완료):
+
+```
+ job_id |    application_name      | schedule_interval |        next_start         |                config
+--------+--------------------------+-------------------+---------------------------+----------------------------------------
+   1000 | Columnstore Policy [1000]| 12:00:00          | 2026-05-30 19:45:42+00    | {"hypertable_id":1,"compress_after":"7 days"}
+   1001 | Retention Policy  [1001] | 1 day             | 2026-05-30 14:44:10+00    | {"drop_after":"2 years","hypertable_id":1}
+```
+
+> TimescaleDB 2.18+ 부터 압축 기능이 "Columnstore" 로 리브랜딩 — `add_compression_policy()` 호출은 그대로지만 job 이름이 "Columnstore Policy".
+
+### chunk 별 압축 상태
+
+```sql
+SELECT chunk_name, range_start::DATE, is_compressed
+FROM timescaledb_information.chunks
+WHERE hypertable_name = 'quote_bars'
+ORDER BY range_start;
+```
+
+7일 이상 chunk 만 `is_compressed = t` 이면 정상. 검증 결과:
+```
+   chunk_name      |   start    | is_compressed
+-------------------+------------+---------------
+ _hyper_1_13_chunk | 2026-05-21 | t              ← 9일 전 → 압축됨
+ _hyper_1_14_chunk | 2026-05-22 | t              ← 8일 전 → 압축됨
+ _hyper_1_15_chunk | 2026-05-23 | f              ← 7일 전 → 미압축 (정책 경계)
+ _hyper_1_16_chunk | 2026-05-24 | f              ← 6일 전 → 미압축
+ ...
+```
+
+### 압축률 (실측)
+
+```sql
+SELECT
+    pg_size_pretty(SUM(before_compression_total_bytes)) AS uncompressed_eq,
+    pg_size_pretty(SUM(after_compression_total_bytes)) AS compressed_actual,
+    round((1 - SUM(after_compression_total_bytes)::numeric / NULLIF(SUM(before_compression_total_bytes),0)) * 100, 1) AS savings_pct
+FROM chunk_compression_stats('quote_bars')
+WHERE after_compression_total_bytes IS NOT NULL;
+```
+
+검증 결과: **2584 kB → 648 kB = 74.9% 절감**. 압축 후 SegmentBy `(pair, tf)` 안에서 동일 segment 의 컬럼이 연속 저장되어 OHLC 가 좋은 압축률.
+
+### retention 실증 (수동 트리거)
+
+운영 중 retention 이 실제로 chunk 를 drop 하는지 검증:
+
+```sql
+-- 1) 3년 전 row 1건 삽입
+INSERT INTO quote_bars VALUES
+  ('TEST/RETENTION', '1m', '2023-05-30 00:00:00+00', '2023-05-30 00:01:00+00',
+   1, 1, 1, 1, 1, 1, 1, 1, 1);
+
+-- 2) retention 정책 즉시 실행
+SELECT drop_chunks('quote_bars', older_than => INTERVAL '2 years');
+
+-- 3) 사라졌는지
+SELECT COUNT(*) FROM quote_bars WHERE pair='TEST/RETENTION';
+-- → 0
+```
+
+### 압축된 chunk 에서 SELECT (mci-chart 호환)
+
+압축 chunk 도 일반 chunk 처럼 투명하게 읽힘 — `mci-chart` 의 `GET /v1/chart` 가 그대로 동작:
+
+```bash
+curl "http://127.0.0.1:8086/v1/chart?pair=USD%2FKRW&tf=1m&from=2026-05-21T11:00:00Z&to=2026-05-21T11:05:00Z&limit=5"
+# → 압축 chunk 안의 봉 5건 정상 반환
+```
+
+> 단, 압축 chunk 에 INSERT 시도 시 default 는 거부. Archiver 가 최신 chunk 만 쓰기 때문에 운영 시 안전. (필요하면 `ALTER TABLE quote_bars SET (timescaledb.compress_chunk_time_interval = ...)` 등으로 정책 변경 — 현재 미사용.)
+
 ## INSERT 패턴 (Archiver)
 
 봉이 닫힐 때마다:

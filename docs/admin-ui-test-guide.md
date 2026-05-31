@@ -182,6 +182,23 @@ mci-admin 의 어떤 endpoint 든 임의 호출. Postman 미니 버전.
 | 연결 OK but 시세 0 | edge-price 는 subscribe 안 하면 안 흐름. preset 칩 클릭 후 전송 |
 | chart 봉 메시지 0 | 시세 흐르는 시간대만 close 시점에 옴 (1s 봉이라도 시세 stale 이면 0). burst start |
 
+### 7.7 시세 publish path (broker 우회)
+
+quote-forwarder 가 시세를 mci-price 로 어떻게 보내는가:
+
+| mode | 설명 | 환경변수 |
+|------|------|---------|
+| **`grpc`** (default) | mci-price 의 `PriceService.PublishTick` gRPC stream 으로 직접 push. broker 의 시세 fan-out 부하 0 → broker 가 매매 RPC 에만 집중. | `WTG_FWD_PUBLISH_MODE=grpc` (default) |
+| `broker` | legacy 동작. broker `PRICE` exchange 로 publish → mci-price 가 subscribe. broker 가 1:N broadcast 책임. | `WTG_FWD_PUBLISH_MODE=broker` |
+| `both` | dual-write — broker + grpc 둘 다. 마이그레이션 진단용. | `WTG_FWD_PUBLISH_MODE=both` |
+
+**확인** — `curl -sS http://127.0.0.1:8082/v1/price-stats` 에서 `received` (broker path) vs `ticks` (envelope hot path) 비교:
+- grpc 모드: `received=0`, `ticks=N` (grpc 로만 도달)
+- broker 모드: `received=M`, `ticks=N` (broker subscribe 거침)
+- both 모드: `received=M`, `ticks=2N` (이중 ingest — 디버깅용)
+
+**기동 순서 (wtgctl)** — mci-price 가 forwarder 보다 먼저 떠야 grpc dial 성공. wtgctl 의 cmd_start 가 `WTG_PRICE=1` 시 mci-price → forwarder 순서로 띄움 (자동).
+
 ---
 
 ## 7. 시세 (`page-quote`)

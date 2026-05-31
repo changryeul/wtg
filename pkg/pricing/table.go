@@ -59,17 +59,20 @@ type SwapKey struct {
 	Tenor Tenor
 }
 
-// HQKey 는 (통화쌍, 고객등급) — 본점 마진은 등급에 의존.
+// HQKey 는 (통화쌍, 고객등급, 시간대) — 본점 마진은 등급 + 시간대에 의존.
+// Window="" 는 모든 시간대 적용 (backward compat).
 type HQKey struct {
-	Pair session.Pair
-	Tier session.Tier
+	Pair   session.Pair
+	Tier   session.Tier
+	Window string // P2 신규. 비면 모든 시간대. lowercase 정규화 (normalizeName 사용).
 }
 
-// SiteKey 는 (통화쌍, 채널, 거래주체) — 영업점/채널 마진은 채널·site 에 의존.
+// SiteKey 는 (통화쌍, 채널, 거래주체, 시간대).
 type SiteKey struct {
 	Pair    session.Pair
 	Channel session.Channel
 	Site    session.Site
+	Window  string // P2 신규.
 }
 
 // lookupSwap 은 (pair, tenor) 스왑포인트를 반환. 없으면 zero.
@@ -80,31 +83,84 @@ func (t *PricingTable) lookupSwap(pair session.Pair, tenor Tenor) Margin {
 	return Margin{}
 }
 
-// lookupHQ 는 본점 마진을 반환. 정확매치 → tier="" 와일드카드 → zero.
-func (t *PricingTable) lookupHQ(pair session.Pair, tier session.Tier) Margin {
-	if m, ok := t.HQMargin[HQKey{pair, tier}]; ok {
+// lookupHQ — 본점 마진. activeWindows 의 active window 매칭 우선, window="" fallback.
+//
+// Lookup 순서:
+//   1. activeWindows 의 각 window 에 대해 (pair, tier, window) 시도
+//   2. (pair, tier, "") — 모든 시간대 적용 entry
+//   3. activeWindows 의 각 window 에 대해 (pair, "", window) — tier 와일드카드
+//   4. (pair, "", "")
+//   5. zero
+//
+// activeWindows 는 nil 가능 (window 매칭 X, 기존 동작).
+func (t *PricingTable) lookupHQ(pair session.Pair, tier session.Tier, activeWindows []string) Margin {
+	// 1. (pair, tier, active_window)
+	for _, w := range activeWindows {
+		if m, ok := t.HQMargin[HQKey{pair, tier, w}]; ok {
+			return m
+		}
+	}
+	// 2. (pair, tier, "")
+	if m, ok := t.HQMargin[HQKey{pair, tier, ""}]; ok {
 		return m
 	}
-	if m, ok := t.HQMargin[HQKey{pair, ""}]; ok {
+	// 3. (pair, "", active_window)
+	for _, w := range activeWindows {
+		if m, ok := t.HQMargin[HQKey{pair, "", w}]; ok {
+			return m
+		}
+	}
+	// 4. (pair, "", "")
+	if m, ok := t.HQMargin[HQKey{pair, "", ""}]; ok {
 		return m
 	}
 	return Margin{}
 }
 
-// lookupSite 는 영업점/채널 마진을 반환.
-// fallback 순서: 정확매치 → channel="" → site="" → zero.
-// 우선순위는 "site 가 더 강한 식별자"라는 가정에 따른다 (영업점이 채널보다 정책상 명시적).
-func (t *PricingTable) lookupSite(pair session.Pair, channel session.Channel, site session.Site) Margin {
-	if m, ok := t.SiteMargin[SiteKey{pair, channel, site}]; ok {
-		return m
+// lookupSite — 영업점/채널 마진. window 매칭 + 기존 channel/site fallback chain.
+//
+// Lookup 순서 (각 단계는 activeWindows 별 window 매칭 → "" fallback):
+//   1. (pair, channel, site)
+//   2. (pair, "",      site)
+//   3. (pair, channel, "")
+//   4. zero
+//
+// 각 단계 내에서 window 매칭 우선 → 빈 window fallback (위 lookupHQ 와 동일 패턴).
+func (t *PricingTable) lookupSite(pair session.Pair, channel session.Channel, site session.Site, activeWindows []string) Margin {
+	type k struct {
+		c session.Channel
+		s session.Site
 	}
-	if m, ok := t.SiteMargin[SiteKey{pair, "", site}]; ok {
-		return m
-	}
-	if m, ok := t.SiteMargin[SiteKey{pair, channel, ""}]; ok {
-		return m
+	chain := []k{{channel, site}, {"", site}, {channel, ""}}
+	for _, kk := range chain {
+		// window 매칭
+		for _, w := range activeWindows {
+			if m, ok := t.SiteMargin[SiteKey{pair, kk.c, kk.s, w}]; ok {
+				return m
+			}
+		}
+		// window="" fallback
+		if m, ok := t.SiteMargin[SiteKey{pair, kk.c, kk.s, ""}]; ok {
+			return m
+		}
 	}
 	return Margin{}
+}
+
+// ActiveWindows — 현재 시각에 활성인 TimeWindow 이름 목록 (lowercase). 가장
+// specific 한 매칭이 먼저. window 미정의 환경에선 빈 슬라이스 — lookup 함수가
+// fallback path 만 사용.
+func (t *PricingTable) ActiveWindows(now time.Time) []string {
+	if len(t.TimeWindows) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(t.TimeWindows))
+	for name, w := range t.TimeWindows {
+		if w.IsActive(now, t.TimeWindows) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // IsActive — 본 TimeWindow 가 now 시점에 활성인지 판정.

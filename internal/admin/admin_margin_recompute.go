@@ -222,10 +222,12 @@ func PostMarginRecompute(deps *MarginRecomputeDeps) http.HandlerFunc {
 		}
 		count := 0
 
-		// applyPoint — profile 별 bid/ask 점에 PricingTable.Apply.
+		// applyPoint — profile 별 bid/ask 점에 PricingTable.ApplyAt.
+		// P2 — 봉의 openedAt 기준 time window 매칭. 분쟁 재산정 시 당시 시점의
+		// margin 을 재현해야 하므로 ApplyAt 필수.
 		applyPoint := func(p session.Profile, bid, ask float64, ts time.Time) (float64, float64) {
-			cq := tbl.Apply(quote.Quote{Pair: req.Pair, Bid: bid, Ask: ask, TS: ts},
-				p, pricing.TenorSpot)
+			cq := tbl.ApplyAt(quote.Quote{Pair: req.Pair, Bid: bid, Ask: ask, TS: ts},
+				p, pricing.TenorSpot, ts)
 			return cq.Bid, cq.Ask
 		}
 

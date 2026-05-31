@@ -29,10 +29,10 @@ func TestParsePricingTable_BasicRoundTrip(t *testing.T) {
 		t.Errorf("Version = %d", tbl.Version)
 	}
 
-	if m := tbl.lookupHQ("USD/KRW", session.TierVIP); m.BidAmount != 0.02 {
+	if m := tbl.lookupHQ("USD/KRW", session.TierVIP, nil); m.BidAmount != 0.02 {
 		t.Errorf("HQ VIP bid = %v", m.BidAmount)
 	}
-	if m := tbl.lookupSite("USD/KRW", session.ChannelWeb, session.SiteBranch); m.BidAmount != 0.05 {
+	if m := tbl.lookupSite("USD/KRW", session.ChannelWeb, session.SiteBranch, nil); m.BidAmount != 0.05 {
 		t.Errorf("Site WEB.BRANCH bid = %v", m.BidAmount)
 	}
 	if m := tbl.lookupSwap("USD/KRW", Tenor1M); m.BidAmount != -0.20 {

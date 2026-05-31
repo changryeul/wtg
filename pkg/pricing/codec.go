@@ -132,11 +132,11 @@ func BuildPricingTable(doc PricingTableDoc) *PricingTable {
 			Margin{BidAmount: e.BidAmount, AskAmount: e.AskAmount}
 	}
 	for _, e := range doc.HQMargin {
-		t.HQMargin[HQKey{Pair: e.Pair, Tier: e.Tier}] =
+		t.HQMargin[HQKey{Pair: e.Pair, Tier: e.Tier, Window: normalizeName(e.Window)}] =
 			Margin{BidAmount: e.BidAmount, AskAmount: e.AskAmount}
 	}
 	for _, e := range doc.SiteMargin {
-		t.SiteMargin[SiteKey{Pair: e.Pair, Channel: e.Channel, Site: e.Site}] =
+		t.SiteMargin[SiteKey{Pair: e.Pair, Channel: e.Channel, Site: e.Site, Window: normalizeName(e.Window)}] =
 			Margin{BidAmount: e.BidAmount, AskAmount: e.AskAmount}
 	}
 	// TimeWindows — 이름 lowercase 정규화.

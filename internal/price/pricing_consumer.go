@@ -190,7 +190,9 @@ func (c *PricingConsumer) OnTick(t *Tick) {
 			c.profilesSkipped.Add(1)
 			continue
 		}
-		cq := tbl.Apply(raw, prof, c.tenor)
+		// P2 — raw.TS 기준으로 time window 매칭. cooker 가 ts 를 채우지 않으면
+		// ApplyAt 내부 fallback (time.Now) 으로 떨어짐.
+		cq := tbl.ApplyAt(raw, prof, c.tenor, raw.TS)
 		c.attachQuoteID(&cq, prof)
 		if err := c.publisher.PublishQuote(prof, cq); err != nil {
 			c.publishErrors.Add(1)

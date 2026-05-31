@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/winwaysystems/wtg/pkg/session"
 )
 
 // P1 — schema 확장 단위 검증. Apply 통합은 Phase 2/3 에서.
@@ -142,6 +144,102 @@ func TestPricingTableDoc_RoundTrip(t *testing.T) {
 	if got.Version != 42 || len(got.CustomerMargin) != 1 || len(got.TimeWindows) != 1 {
 		t.Errorf("roundtrip: %+v", got)
 	}
+}
+
+// Phase 2 — ApplyAt 가 활성 window 에 따라 다른 HQ 마진을 선택하는지 검증.
+//
+// 시나리오:
+//   - regular (MON-FRI 09:00-15:30 KST) USD/KRW VIP HQ = 0.02
+//   - off_hours 동일 키 HQ = 0.10
+//   - MON 10:00 KST → regular 적용 (bid -0.02)
+//   - MON 18:00 KST → off_hours 적용 (bid -0.10)
+func TestApplyAt_TimeWindow_HQDifferentByWindow(t *testing.T) {
+	body := []byte(`{
+	  "version": 9,
+	  "time_windows": [
+	    {"name":"regular","start":"09:00","end":"15:30","tz":"Asia/Seoul","days":"MON-FRI"},
+	    {"name":"off_hours","complement_of":"regular"}
+	  ],
+	  "hq_margin": [
+	    {"pair":"USD/KRW","tier":"VIP","bid_amount":0.02,"ask_amount":0.02,"window":"regular"},
+	    {"pair":"USD/KRW","tier":"VIP","bid_amount":0.10,"ask_amount":0.10,"window":"off_hours"}
+	  ]
+	}`)
+	tbl, err := ParsePricingTable(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	raw := Quote{Pair: "USD/KRW", Bid: 1300.00, Ask: 1300.10}
+	prof := session.Profile{Tier: session.TierVIP}
+
+	mon10 := time.Date(2026, 6, 1, 10, 0, 0, 0, mustLoc("Asia/Seoul"))
+	cq := tbl.ApplyAt(raw, prof, TenorSpot, mon10)
+	if got := raw.Bid - cq.Bid; !approxEq(got, 0.02) {
+		t.Errorf("regular window: bid 차이 = %v, want 0.02", got)
+	}
+
+	mon18 := time.Date(2026, 6, 1, 18, 0, 0, 0, mustLoc("Asia/Seoul"))
+	cq = tbl.ApplyAt(raw, prof, TenorSpot, mon18)
+	if got := raw.Bid - cq.Bid; !approxEq(got, 0.10) {
+		t.Errorf("off_hours window: bid 차이 = %v, want 0.10", got)
+	}
+}
+
+// Phase 2 — window="" fallback. 활성 window 매칭 entry 가 없으면
+// (pair, tier, "") 로 떨어지는지.
+func TestApplyAt_TimeWindow_FallbackToUnscoped(t *testing.T) {
+	body := []byte(`{
+	  "version": 10,
+	  "time_windows": [
+	    {"name":"regular","start":"09:00","end":"15:30","tz":"Asia/Seoul","days":"MON-FRI"}
+	  ],
+	  "hq_margin": [
+	    {"pair":"USD/KRW","tier":"VIP","bid_amount":0.05,"ask_amount":0.05}
+	  ]
+	}`)
+	tbl, err := ParsePricingTable(body)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	raw := Quote{Pair: "USD/KRW", Bid: 1300.00, Ask: 1300.10}
+	prof := session.Profile{Tier: session.TierVIP}
+
+	// regular 활성 시각인데, regular 키 entry 가 없으므로 ""(전체) entry 가 적용.
+	mon10 := time.Date(2026, 6, 1, 10, 0, 0, 0, mustLoc("Asia/Seoul"))
+	cq := tbl.ApplyAt(raw, prof, TenorSpot, mon10)
+	if got := raw.Bid - cq.Bid; !approxEq(got, 0.05) {
+		t.Errorf("fallback to window=\"\": bid 차이 = %v, want 0.05", got)
+	}
+}
+
+// Phase 2 — Apply (now=time.Now wrapper) 도 동일 결과인지. backward compat.
+func TestApply_DelegatesToApplyAt(t *testing.T) {
+	// window 없는 환경 — Apply 와 ApplyAt 결과 동일해야.
+	doc := PricingTableDoc{
+		Version: 1,
+		HQMargin: []HQEntryDoc{
+			{Pair: "USD/KRW", Tier: "VIP", BidAmount: 0.03, AskAmount: 0.03},
+		},
+	}
+	tbl := BuildPricingTable(doc)
+	raw := Quote{Pair: "USD/KRW", Bid: 1300.00, Ask: 1300.10}
+	prof := session.Profile{Tier: session.TierVIP}
+
+	a := tbl.Apply(raw, prof, TenorSpot)
+	b := tbl.ApplyAt(raw, prof, TenorSpot, time.Now())
+	if a.Bid != b.Bid || a.Ask != b.Ask {
+		t.Errorf("Apply vs ApplyAt 결과 다름: %+v vs %+v", a, b)
+	}
+}
+
+// approxEq — 부동소수점 비교 epsilon (마진 단위 vs raw price 단위 차이로 인한
+// 정밀도 손실 허용).
+func approxEq(a, b float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d < 1e-9
 }
 
 func mustLoc(name string) *time.Location {

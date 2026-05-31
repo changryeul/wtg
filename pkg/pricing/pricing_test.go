@@ -73,16 +73,16 @@ func TestLookupHQ_Fallback(t *testing.T) {
 			{Pair: "USD/KRW", Tier: ""}:              {BidAmount: 0.10, AskAmount: 0.10}, // 와일드카드
 		},
 	}
-	// 정확매치
-	if m := tbl.lookupHQ("USD/KRW", session.TierVIP); m.BidAmount != 0.01 {
+	// 정확매치 (activeWindows=nil — P2 기존 동작)
+	if m := tbl.lookupHQ("USD/KRW", session.TierVIP, nil); m.BidAmount != 0.01 {
 		t.Errorf("VIP exact: bid = %v", m.BidAmount)
 	}
 	// 와일드카드 fallback
-	if m := tbl.lookupHQ("USD/KRW", session.TierStandard); m.BidAmount != 0.10 {
+	if m := tbl.lookupHQ("USD/KRW", session.TierStandard, nil); m.BidAmount != 0.10 {
 		t.Errorf("STD fallback: bid = %v", m.BidAmount)
 	}
 	// 미등록 pair → zero
-	if m := tbl.lookupHQ("EUR/KRW", session.TierVIP); m.BidAmount != 0 {
+	if m := tbl.lookupHQ("EUR/KRW", session.TierVIP, nil); m.BidAmount != 0 {
 		t.Errorf("EUR/KRW miss: bid = %v, want 0", m.BidAmount)
 	}
 }
@@ -96,20 +96,20 @@ func TestLookupSite_FallbackOrder(t *testing.T) {
 			{Pair: "USD/KRW", Channel: session.ChannelWeb, Site: session.SiteBranch}: {BidAmount: 0.10}, // exact
 		},
 	}
-	// exact
-	if m := tbl.lookupSite("USD/KRW", session.ChannelWeb, session.SiteBranch); m.BidAmount != 0.10 {
+	// exact (activeWindows=nil — P2 기존 동작)
+	if m := tbl.lookupSite("USD/KRW", session.ChannelWeb, session.SiteBranch, nil); m.BidAmount != 0.10 {
 		t.Errorf("exact: bid = %v", m.BidAmount)
 	}
 	// channel 미매치 → site-only fallback (site 가 channel 보다 우선)
-	if m := tbl.lookupSite("USD/KRW", session.ChannelCS, session.SiteBranch); m.BidAmount != 0.20 {
+	if m := tbl.lookupSite("USD/KRW", session.ChannelCS, session.SiteBranch, nil); m.BidAmount != 0.20 {
 		t.Errorf("site-only fallback: bid = %v", m.BidAmount)
 	}
 	// site 미매치 → channel-only fallback
-	if m := tbl.lookupSite("USD/KRW", session.ChannelMobile, session.SiteHQ); m.BidAmount != 0.30 {
+	if m := tbl.lookupSite("USD/KRW", session.ChannelMobile, session.SiteHQ, nil); m.BidAmount != 0.30 {
 		t.Errorf("channel-only fallback: bid = %v", m.BidAmount)
 	}
 	// 모두 미매치 → zero
-	if m := tbl.lookupSite("EUR/KRW", session.ChannelFIX, session.SiteHQ); m.BidAmount != 0 {
+	if m := tbl.lookupSite("EUR/KRW", session.ChannelFIX, session.SiteHQ, nil); m.BidAmount != 0 {
 		t.Errorf("miss: bid = %v, want 0", m.BidAmount)
 	}
 }

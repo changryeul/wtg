@@ -89,6 +89,16 @@ type Config struct {
 	// 좁히면 broker→edge 트래픽 절감.
 	QuoteProfileKeys []string
 
+	// EnableCustomerStream — Phase 4c. 활성 시:
+	//   - mci-price 와 장기 RegisterCustomer stream 유지 (customerRegManager).
+	//   - SubscribeCustomerQuote stream 으로 customer-tag 된 quote 수신.
+	//   - ws connect 시 Principal.Usid 를 customer-id 로 자동 등록,
+	//     disconnect 시 자동 해제.
+	//
+	// EnableQuoteStream 과 독립 — Profile-only quote / customer-specific quote
+	// 둘 다 받을 수도, 둘 중 하나만 받을 수도 있음.
+	EnableCustomerStream bool
+
 	// QuoteSeedPairs — Phase 2 권한 가드의 초기 시드. operator 가 알고 있는
 	// 운영 pair 카탈로그를 사전 등록해 첫 quote 도착 전에도 subscribe 가능하게.
 	// 비면 passive learning 만 — 첫 quote 까지는 어떤 pair 도 허용 안 됨.
@@ -199,6 +209,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_EPRICE_QUOTE_STREAM"); v == "1" || v == "true" {
 		cfg.EnableQuoteStream = true
 	}
+	if v := os.Getenv("WTG_EPRICE_CUSTOMER_STREAM"); v == "1" || v == "true" {
+		cfg.EnableCustomerStream = true
+	}
 	if v := os.Getenv("WTG_EPRICE_ENVELOPE_FORMAT"); v != "" {
 		cfg.EnvelopeFormat = v
 	}
@@ -242,6 +255,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "외부 TLS 서버 key PEM")
 	fs.StringVar(&cfg.TLSClientCAFile, "tls-client-ca", cfg.TLSClientCAFile, "외부 mTLS 클라이언트 CA bundle")
 	fs.BoolVar(&cfg.EnableQuoteStream, "quote-stream", cfg.EnableQuoteStream, "PriceService.SubscribeQuote 활성 (Profile-routed CustomerQuote)")
+	fs.BoolVar(&cfg.EnableCustomerStream, "customer-stream", cfg.EnableCustomerStream, "Phase 4c: RegisterCustomer + SubscribeCustomerQuote 활성 (customer-specific 마진)")
 	quoteProfStr := strings.Join(cfg.QuoteProfileKeys, ",")
 	fs.StringVar(&quoteProfStr, "quote-profiles", quoteProfStr, "수신할 profile_keys 화이트리스트 (콤마 구분, 빈값=모두)")
 	seedPairsStr = strings.Join(cfg.QuoteSeedPairs, ",")

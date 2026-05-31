@@ -11,16 +11,19 @@ import (
 
 // Subscriber 는 단일 ws 클라이언트의 fan-out 큐 + lifecycle.
 //
-// 두 fan-out 모델 동시 지원:
+// 세 fan-out 모델 동시 지원:
 //
 //   - raw tick broadcast — profileKey 무관, 전체 송신 (Registry.Broadcast).
 //   - quote per-profile  — profileKey 매칭만 수신 (Registry.SendByProfile).
+//   - quote per-customer — Phase 4c. customerID 매칭만 수신
+//                          (Registry.SendByCustomerID). customer-specific 마진
+//                          적용된 quote 전용 경로.
 //
-// profileKey 는 ws upgrade 시 결정되며 이후 immutable.
-// 빈값이면 quote 는 못 받고 raw broadcast 만 수신.
+// profileKey / customerID 는 ws upgrade 시 결정되며 이후 immutable.
 type Subscriber struct {
 	id         uint64
-	profileKey string // 예: "WEB.BRANCH.VIP"; 빈값 = quote 미수신
+	profileKey string // 예: "WEB.BRANCH.VIP"; 빈값 = profile 매칭 quote 미수신
+	customerID string // Phase 4c. 빈값 = customer-specific quote 미수신.
 	conn       *websocket.Conn
 	send       chan []byte
 	closed     atomic.Bool
@@ -39,6 +42,9 @@ type Subscriber struct {
 
 // ProfileKey 는 Subscriber 가 매칭될 quote profile key (immutable).
 func (s *Subscriber) ProfileKey() string { return s.profileKey }
+
+// CustomerID — Phase 4c. customer-specific quote 매칭에 사용 (immutable).
+func (s *Subscriber) CustomerID() string { return s.customerID }
 
 // MatchesPair — 이 subscriber 가 해당 pair 의 시세를 받기로 선언했는지.
 // pairs 가 nil (subscribe 한 적 없거나 unsubscribe 로 비워짐) 이면 모두 매칭.
@@ -130,6 +136,9 @@ type SubscriberOptions struct {
 	OnClose       func(*Subscriber)
 	// ProfileKey 는 quote fan-out 매칭에 사용. 빈값이면 quote 미수신.
 	ProfileKey string
+	// CustomerID — Phase 4c. customer-specific quote 매칭. 빈값이면
+	// customer-quote 미수신 (Profile-only quote 만).
+	CustomerID string
 }
 
 // NewSubscriber 는 Subscriber 를 구성한다 (read/write goroutine 은 caller 가 가동).
@@ -143,12 +152,17 @@ func NewSubscriber(ws *websocket.Conn, opts SubscriberOptions) *Subscriber {
 	s := &Subscriber{
 		id:         subIDSeq.Add(1),
 		profileKey: opts.ProfileKey,
+		customerID: opts.CustomerID,
 		conn:       ws,
 		send:       make(chan []byte, opts.SendQueueSize),
 		closeC:     make(chan struct{}),
 		onClose:    opts.OnClose,
 	}
-	s.logger = opts.Logger.With(slog.Uint64("sub_id", s.id), slog.String("profile", s.profileKey))
+	s.logger = opts.Logger.With(
+		slog.Uint64("sub_id", s.id),
+		slog.String("profile", s.profileKey),
+		slog.String("customer_id", s.customerID),
+	)
 	return s
 }
 
@@ -337,6 +351,51 @@ func (r *Registry) SendByProfile(profileKey, pair string, p []byte) (sent, dropp
 		if errors.Is(err, ErrSendQueueFull) {
 			r.logger.Warn("slow quote consumer 격리",
 				slog.Uint64("sub_id", s.id), slog.String("profile", profileKey))
+			s.Close()
+		}
+	}
+	r.totalSent.Add(uint64(sent))
+	r.totalDrop.Add(uint64(dropped))
+	return sent, dropped
+}
+
+// SendByCustomerID — Phase 4c. customer-tag 된 quote 를 customerID 매칭
+// subscriber 에게만 송신.
+//
+//   - customerID 빈 인자 : 함수 자체 noop (잘못된 호출 방어).
+//   - sub.customerID 빈값 : 절대 받지 않음 (customer 미등록 sub).
+//   - pair 필터          : SendByProfile 와 동일 — MatchesPair 통과 시만.
+//
+// slow consumer 는 격리. 일반 quote (SendByProfile) 경로와 독립 — 한 subscriber
+// 가 양쪽 매칭이면 두 종류의 quote 가 별도 메시지로 동시 도착할 수 있음.
+func (r *Registry) SendByCustomerID(customerID, pair string, p []byte) (sent, dropped int) {
+	if customerID == "" {
+		return 0, 0
+	}
+	r.mu.RLock()
+	snapshot := make([]*Subscriber, 0)
+	for _, s := range r.subs {
+		if s.customerID != customerID {
+			continue
+		}
+		if pair != "" && !s.MatchesPair(pair) {
+			continue
+		}
+		snapshot = append(snapshot, s)
+	}
+	r.mu.RUnlock()
+
+	for _, s := range snapshot {
+		err := s.Send(p)
+		if err == nil {
+			sent++
+			continue
+		}
+		dropped++
+		if errors.Is(err, ErrSendQueueFull) {
+			r.logger.Warn("slow customer-quote consumer 격리",
+				slog.Uint64("sub_id", s.id),
+				slog.String("customer_id", customerID))
 			s.Close()
 		}
 	}

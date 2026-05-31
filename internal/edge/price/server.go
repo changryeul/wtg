@@ -51,6 +51,11 @@ type Server struct {
 	// learning (consumeQuoteOnce 가 도착 quote.Pair 추가) 결합.
 	pairValidator PairValidator
 
+	// Phase 4c — customer-specific quote 경로. cfg.EnableCustomerStream 활성 시
+	// Start 에서 가동. ws upgrade 시 customerRegMgr.Register 호출,
+	// subscribeCustomerQuoteLoop 가 customer-tagged quote 를 Registry 로 전달.
+	customerRegMgr *customerRegManager
+
 	// Phase 4 liveness — pair 별 last_ts 추적 + stale 알림. nil 이면 비활성.
 	liveness *pairLiveness
 
@@ -124,6 +129,13 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.subscribeLoop(streamCtx)
 	if s.cfg.EnableQuoteStream {
 		go s.subscribeQuoteLoop(streamCtx)
+	}
+	// Phase 4c — customer-specific quote 경로 활성.
+	if s.cfg.EnableCustomerStream {
+		s.customerRegMgr = newCustomerRegManager(s.upstream, s.cfg.SubscriberID, s.logger)
+		s.customerRegMgr.Start(streamCtx)
+		go s.subscribeCustomerQuoteLoop(streamCtx)
+		s.logger.Info("Customer-specific quote 경로 활성")
 	}
 	// Phase 4 stale scanner — liveness 가 nil 이면 함수 자체가 early return.
 	go s.runStaleScanner(streamCtx)
@@ -213,6 +225,83 @@ func (s *Server) subscribeQuoteLoop(ctx context.Context) {
 	}
 }
 
+// subscribeCustomerQuoteLoop — Phase 4c. SubscribeCustomerQuote stream 유지 +
+// 끊김 시 재연결.
+func (s *Server) subscribeCustomerQuoteLoop(ctx context.Context) {
+	client := wtgpb.NewPriceServiceClient(s.upstream)
+	backoff := 500 * time.Millisecond
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		err := s.consumeCustomerQuoteOnce(ctx, client)
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return
+		}
+		s.logger.Warn("SubscribeCustomerQuote stream 끊김 — 재시도",
+			slog.Any("error", err),
+			slog.Duration("backoff", backoff),
+		)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > 10*time.Second {
+			backoff = 10 * time.Second
+		}
+	}
+}
+
+// consumeCustomerQuoteOnce — 단일 SubscribeCustomerQuote stream 의 lifecycle.
+//
+// edge 는 본 stream 으로 customer-tag 된 quote 를 받아 매칭 ws subscriber 에게
+// fan-out (Registry.SendByCustomerID). filter 는 빈 customer_ids = 모두 — 단일
+// edge 인스턴스가 자기가 등록한 customer 들의 quote 를 모두 받는 모델.
+//
+// 운영 최적화 (subscriber_id 기반 자동 ownership 매칭) 는 후속 단계.
+func (s *Server) consumeCustomerQuoteOnce(ctx context.Context, client wtgpb.PriceServiceClient) error {
+	req := &wtgpb.CustomerQuoteSubscribeRequest{
+		SubscriberId: s.cfg.SubscriberID,
+		// CustomerIds 비움 — 모두 수신. 서버측은 edge 가 자기 등록 customer 만
+		// 받을지 명시 customer_ids 로 좁힐 수 있도록 P4c 후속에서 옵션화 예정.
+	}
+	stream, err := client.SubscribeCustomerQuote(ctx, req)
+	if err != nil {
+		return err
+	}
+	s.logger.Info("SubscribeCustomerQuote 시작",
+		slog.String("subscriber_id", s.cfg.SubscriberID),
+	)
+
+	for {
+		cq, err := stream.Recv()
+		if err == io.EOF {
+			return errors.New("upstream customer-quote EOF")
+		}
+		if err != nil {
+			return err
+		}
+		payload, err := encodeCustomerQuoteJSON(cq)
+		if err != nil {
+			s.logger.Warn("customerQuote JSON 직렬화 실패 (customer)", slog.Any("error", err))
+			continue
+		}
+		// Phase 2 passive learning — customer 경로 pair 도 valid set 에 등록.
+		if mv, ok := s.pairValidator.(*MemoryPairValidator); ok && mv != nil {
+			mv.Add(cq.GetPair())
+		}
+		// liveness — customer 경로도 freshness 마킹.
+		if s.liveness != nil {
+			if became := s.liveness.Update(cq.GetPair(), time.Now()); became {
+				s.sendFreshNotification(cq.GetPair())
+			}
+		}
+		s.registry.SendByCustomerID(cq.GetCustomerId(), cq.GetPair(), payload)
+	}
+}
+
 // consumeQuoteOnce 는 단일 SubscribeQuote stream 의 lifecycle.
 func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceServiceClient) error {
 	req := &wtgpb.QuoteSubscribeRequest{
@@ -260,8 +349,8 @@ func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceService
 }
 
 // encodeCustomerQuoteJSON 은 proto CustomerQuote → 클라이언트 JSON.
-// QuoteID / ValidUntilUnixNano 는 mci-price 가 quoteid 활성일 때만 채워져
-// 오므로 omitempty 로 처리.
+// QuoteID / ValidUntilUnixNano / CustomerID 는 비활성 또는 무관 경로에선 빈
+// 값이므로 omitempty.
 func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 	out := struct {
 		Type               string  `json:"type"`
@@ -278,6 +367,7 @@ func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		TableVersion       int64   `json:"v"`
 		QuoteID            string  `json:"quote_id,omitempty"`
 		ValidUntilUnixNano int64   `json:"valid_until_unix_nano,omitempty"`
+		CustomerID         string  `json:"customer_id,omitempty"` // P4c
 	}{
 		Type:               "quote",
 		Pair:               cq.GetPair(),
@@ -293,6 +383,7 @@ func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		TableVersion:       cq.GetTableVersion(),
 		QuoteID:            cq.GetQuoteId(),
 		ValidUntilUnixNano: cq.GetValidUntilUnixNano(),
+		CustomerID:         cq.GetCustomerId(),
 	}
 	return json.Marshal(out)
 }
@@ -594,6 +685,13 @@ func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc
 			profileKey = r.URL.Query().Get("profile")
 		}
 
+		// Phase 4c — customer-specific quote 활성 시 ws 클라이언트의 customer
+		// 식별자 결정. Principal.Usid 가 자연스러운 customer key.
+		var customerID string
+		if s.cfg.EnableCustomerStream && s.customerRegMgr != nil && profileKey != "" {
+			customerID = p.Usid
+		}
+
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			s.logger.Warn("ws upgrade 실패", slog.Any("error", err))
@@ -603,11 +701,21 @@ func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc
 			SendQueueSize: s.cfg.SendQueueSize,
 			Logger:        s.logger,
 			ProfileKey:    profileKey,
+			CustomerID:    customerID,
 			OnClose: func(sb *Subscriber) {
 				s.registry.Remove(sb)
+				// Phase 4c — ws disconnect 시 customer 등록 해제.
+				if sb.customerID != "" && s.customerRegMgr != nil {
+					s.customerRegMgr.Unregister(sb.customerID)
+				}
 			},
 		})
 		s.registry.Add(sub)
+
+		// Phase 4c — ws connect 시 customer 등록 (비블로킹 enqueue).
+		if customerID != "" && s.customerRegMgr != nil {
+			s.customerRegMgr.Register(customerID, profileKey)
+		}
 
 		go s.writeLoop(sub)
 		go s.readLoop(sub)

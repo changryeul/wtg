@@ -22,6 +22,17 @@ type QuotePublisher interface {
 	PublishQuote(profile session.Profile, cq pricing.CustomerQuote) error
 }
 
+// CustomerQuotePublisher — Phase 4. customer-specific 마진이 적용된 quote 의
+// publish 경로. PricingConsumer 가 CustomerRegistry 에 등록된 customer 마다
+// ApplyForCustomer 호출 후 본 publisher 로 송신.
+//
+// 운영 구현 (Phase 4b) 은 customer 별 gRPC stream 또는 stream metadata 에
+// customer_id 를 태깅하는 형태가 될 예정. 본 PR (Phase 4a) 은 인터페이스 정의
+// + PricingConsumer 호출 경로 + metrics 만.
+type CustomerQuotePublisher interface {
+	PublishCustomerQuote(customerID string, profile session.Profile, cq pricing.CustomerQuote) error
+}
+
 // QuoteSubscriberSink 는 Phase 3 의 optional 확장. publisher 가 이 인터페이스
 // 까지 만족하면 PricingConsumer 가 매 tick 마다 prof 별로 HasSubscribers 를
 // 물어 구독자 0 인 Profile 의 PricingTable.Apply 호출을 skip 한다.
@@ -90,12 +101,21 @@ type PricingConsumer struct {
 	// type assertion 결과를 캐시 — 매 tick interface 변환 비용 회피.
 	sink QuoteSubscriberSink
 
-	ticksIn          atomic.Uint64
-	ticksDropped     atomic.Uint64 // sym 미등록 / inactive / decode 실패
-	quotesPublished  atomic.Uint64
-	publishErrors    atomic.Uint64
-	quoteRegErrors   atomic.Uint64 // Registry.Put 실패 카운트
-	profilesSkipped  atomic.Uint64 // Phase 3 — 구독자 0 으로 pruned 한 Profile 발행 횟수
+	// Phase 4a — customer fan-out 경로. 둘 다 nil 이면 customer publish skip
+	// (backward compat). 운영에서는 edge-price 가 ws 클라이언트 연결 시
+	// customerRegistry.Register(customerID, profile) 호출 → tick 마다
+	// ApplyForCustomer → customerPub.PublishCustomerQuote.
+	customerRegistry *CustomerRegistry
+	customerPub      CustomerQuotePublisher
+
+	ticksIn                   atomic.Uint64
+	ticksDropped              atomic.Uint64 // sym 미등록 / inactive / decode 실패
+	quotesPublished           atomic.Uint64
+	publishErrors             atomic.Uint64
+	quoteRegErrors            atomic.Uint64 // Registry.Put 실패 카운트
+	profilesSkipped           atomic.Uint64 // Phase 3 — 구독자 0 으로 pruned 한 Profile 발행 횟수
+	customerQuotesPublished   atomic.Uint64 // Phase 4a — customer fan-out 성공
+	customerPublishErrors     atomic.Uint64 // Phase 4a — customer publisher 실패
 }
 
 // PricingConsumerOptions 는 PricingConsumer 생성 옵션.
@@ -117,6 +137,11 @@ type PricingConsumerOptions struct {
 	QuoteValidity   time.Duration
 	// QuoteRegistryTimeout — Registry.Put 단위 timeout. default 200ms.
 	QuoteRegistryTimeout time.Duration
+
+	// Phase 4a — customer fan-out 의 (선택적) 등록부 + publisher. 둘 다 채워야
+	// 활성화. 한쪽만 채우면 customer 경로 미실행 + warn.
+	CustomerRegistry *CustomerRegistry
+	CustomerPub      CustomerQuotePublisher
 }
 
 // NewPricingConsumer 는 PricingConsumer 를 구성한다.
@@ -159,6 +184,13 @@ func NewPricingConsumer(opt PricingConsumerOptions) *PricingConsumer {
 	// Phase 3 optional pruning — publisher 가 QuoteSubscriberSink 만족 시.
 	if sink, ok := opt.Publisher.(QuoteSubscriberSink); ok {
 		pc.sink = sink
+	}
+	// Phase 4a — customer fan-out 활성화 조건. 둘 다 채워졌을 때만 동작.
+	if opt.CustomerRegistry != nil && opt.CustomerPub != nil {
+		pc.customerRegistry = opt.CustomerRegistry
+		pc.customerPub = opt.CustomerPub
+	} else if (opt.CustomerRegistry == nil) != (opt.CustomerPub == nil) {
+		logger.Warn("PricingConsumer: CustomerRegistry/CustomerPub 한쪽만 설정됨 — customer fan-out 비활성화")
 	}
 	return pc
 }
@@ -205,6 +237,30 @@ func (c *PricingConsumer) OnTick(t *Tick) {
 		}
 		c.quotesPublished.Add(1)
 	}
+
+	// Phase 4a — customer fan-out. 등록된 customer 가 0 이면 sync.Map.Range 가
+	// 즉시 종료되므로 lazy 보장.
+	if c.customerRegistry != nil && c.customerPub != nil && c.customerRegistry.Count() > 0 {
+		c.customerRegistry.Range(func(customerID string, prof session.Profile) bool {
+			ccq := tbl.ApplyForCustomer(raw, prof, c.tenor, raw.TS, customerID)
+			// quoteid 부착은 Profile-level 과 동일 로직. customer 별 token 발급은
+			// 별도 정책 — P4b 에서 결정. 현재는 Profile 토큰 그대로 + customer
+			// tag 만 publisher 에 전달.
+			c.attachQuoteID(&ccq, prof)
+			if err := c.customerPub.PublishCustomerQuote(customerID, prof, ccq); err != nil {
+				c.customerPublishErrors.Add(1)
+				c.logger.Warn("PricingConsumer: customer publish 실패",
+					slog.String("customer_id", customerID),
+					slog.String("profile", prof.Key()),
+					slog.String("pair", string(pair)),
+					slog.Any("error", err),
+				)
+				return true
+			}
+			c.customerQuotesPublished.Add(1)
+			return true
+		})
+	}
 }
 
 // attachQuoteID — Generator + Registry 가 활성이면 QuoteID 발급 + ValidUntil
@@ -243,23 +299,33 @@ func (c *PricingConsumer) attachQuoteID(cq *pricing.CustomerQuote, prof session.
 
 // PricingConsumerStats 는 누적 카운터 snapshot.
 type PricingConsumerStats struct {
-	TicksIn         uint64 `json:"ticks_in"`
-	TicksDropped    uint64 `json:"ticks_dropped"`
-	QuotesPublished uint64 `json:"quotes_published"`
-	PublishErrors   uint64 `json:"publish_errors"`
-	QuoteRegErrors  uint64 `json:"quote_register_errors"`
-	ProfilesSkipped uint64 `json:"profiles_skipped"` // Phase 3 — 구독자 0 으로 pruned
+	TicksIn                 uint64 `json:"ticks_in"`
+	TicksDropped            uint64 `json:"ticks_dropped"`
+	QuotesPublished         uint64 `json:"quotes_published"`
+	PublishErrors           uint64 `json:"publish_errors"`
+	QuoteRegErrors          uint64 `json:"quote_register_errors"`
+	ProfilesSkipped         uint64 `json:"profiles_skipped"` // Phase 3 — 구독자 0 으로 pruned
+	CustomerQuotesPublished uint64 `json:"customer_quotes_published"`
+	CustomerPublishErrors   uint64 `json:"customer_publish_errors"`
+	CustomersRegistered     int    `json:"customers_registered"`
 }
 
 // Stats 는 누적 카운터 snapshot 을 반환.
 func (c *PricingConsumer) Stats() PricingConsumerStats {
+	regCount := 0
+	if c.customerRegistry != nil {
+		regCount = c.customerRegistry.Count()
+	}
 	return PricingConsumerStats{
-		TicksIn:         c.ticksIn.Load(),
-		TicksDropped:    c.ticksDropped.Load(),
-		QuotesPublished: c.quotesPublished.Load(),
-		PublishErrors:   c.publishErrors.Load(),
-		QuoteRegErrors:  c.quoteRegErrors.Load(),
-		ProfilesSkipped: c.profilesSkipped.Load(),
+		TicksIn:                 c.ticksIn.Load(),
+		TicksDropped:            c.ticksDropped.Load(),
+		QuotesPublished:         c.quotesPublished.Load(),
+		PublishErrors:           c.publishErrors.Load(),
+		QuoteRegErrors:          c.quoteRegErrors.Load(),
+		ProfilesSkipped:         c.profilesSkipped.Load(),
+		CustomerQuotesPublished: c.customerQuotesPublished.Load(),
+		CustomerPublishErrors:   c.customerPublishErrors.Load(),
+		CustomersRegistered:     regCount,
 	}
 }
 

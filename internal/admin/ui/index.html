@@ -4830,7 +4830,7 @@ function hdApplyPreset(name) {
 // pkg/pricing/engine.go 의 ApplyForCustomer 와 동일 lookup chain 을 JS 로 미러링.
 // 백엔드 추가 없이 PricingTable JSON 만 fetch → 클라이언트에서 단계별 추적.
 
-const mcState = { wired: false, doc: null };
+const mcState = { wired: false, doc: null, holidaySet: new Set() };
 
 async function initMarginCalc() {
   if (!mcState.wired) {
@@ -4877,13 +4877,22 @@ function mcCurrentMode() {
   return checked ? checked.value : "tenor";
 }
 
-// ─── weekend-only 캘린더 (Go pricing.IsBusinessDay/AddBusinessDays/BusinessDaysBetween 미러) ───
+// ─── 캘린더 미러 (Go pricing.HolidayCalendar 와 동등) ───
+// mcState.holidaySet (PricingTable.holidays 의 set) 까지 비영업 처리.
 function mcStartOfDay(d) {
   return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 }
+function mcHolidayKey(d) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dy = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${dy}`;
+}
 function mcIsBusinessDay(d) {
   const wd = d.getUTCDay();
-  return wd >= 1 && wd <= 5; // MON~FRI
+  if (wd === 0 || wd === 6) return false; // weekend
+  if (mcState.holidaySet && mcState.holidaySet.has(mcHolidayKey(d))) return false;
+  return true;
 }
 function mcAddBusinessDays(d, n) {
   if (n === 0) return d;
@@ -4999,9 +5008,10 @@ async function mcLoadTable() {
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const doc = await resp.json();
     mcState.doc = doc;
+    mcState.holidaySet = new Set(doc.holidays || []);
     $("#mc-pt-version").textContent = "v" + (doc.version != null ? doc.version : "—");
     mcRefreshTenorOptions();
-    toast("PricingTable 로드 (v" + doc.version + ")", "ok");
+    toast(`PricingTable 로드 (v${doc.version}, holidays=${mcState.holidaySet.size})`, "ok");
   } catch (e) {
     toast("PricingTable 로드 실패: " + e.message, "err");
   }
@@ -5320,6 +5330,41 @@ function mcRender(r) {
     if (r.vd) {
       const v = r.vd;
       const fmtDate = (d) => d.toISOString().slice(0, 10);
+      // 활성 캘린더 정보 + SPOT~value_date 사이에 끼는 휴일 표시.
+      const calRow = h("div", { class: "mb-2 text-[11px] text-slate-500" },
+        "활성 캘린더: ",
+        mcState.holidaySet.size > 0
+          ? h("span", { class: "text-accent-400", text: `HolidayCalendar (${mcState.holidaySet.size}건 등록)` })
+          : h("span", { class: "text-slate-500", text: "WeekendCalendar (휴일 미등록)" }));
+      // 구간 안에 포함된 휴일 목록.
+      const inRange = [];
+      if (mcState.holidaySet.size > 0) {
+        const lo = v.spotDate, hi = v.valueDate;
+        for (const k of mcState.holidaySet) {
+          const d = new Date(k + "T00:00:00Z");
+          if (d > lo && d <= hi) {
+            const wd = HD_WEEKDAY[d.getUTCDay()];
+            const isWeekend = wd === "토" || wd === "일";
+            inRange.push({ key: k, wd, isWeekend });
+          }
+        }
+      }
+      if (inRange.length > 0) {
+        const list = h("div", { class: "mt-1 ml-3 text-[10px]" });
+        list.appendChild(h("span", { class: "text-slate-500", text: `구간 내 휴일 ${inRange.length}건: ` }));
+        for (let i = 0; i < inRange.length; i++) {
+          const v0 = inRange[i];
+          list.appendChild(h("span", {
+            class: v0.isWeekend ? "text-slate-600 line-through" : "text-warn",
+            text: v0.key + "(" + v0.wd + ")" + (v0.isWeekend ? "[주말중복]" : ""),
+          }));
+          if (i < inRange.length - 1) list.appendChild(document.createTextNode(", "));
+        }
+        list.appendChild(h("span", { class: "text-slate-500 ml-1",
+          text: "→ offset 에서 " + inRange.filter(x => !x.isWeekend).length + "일 추가 차감됨" }));
+        calRow.appendChild(list);
+      }
+      vdDiv.appendChild(calRow);
       vdDiv.appendChild(h("div", null,
         "value_date = ", h("span", { class: "text-accent-400", text: fmtDate(v.valueDate) }),
         " · SPOT(T+2) = ", h("span", { class: "text-accent-400", text: fmtDate(v.spotDate) }),

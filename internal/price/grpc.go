@@ -44,6 +44,13 @@ type GRPCServer struct {
 	bmu            sync.RWMutex
 	barSubscribers map[uint64]*barSubscriber
 
+	// Phase 4b — customer-tag 된 quote stream subscribers.
+	cqmu                 sync.RWMutex
+	customerQSubscribers map[uint64]*customerQuoteSubscriber
+
+	// Phase 4b — customer registry. NewGRPCServer 가 만들거나 외부 주입.
+	customerRegistry *CustomerRegistry
+
 	nextSubID atomic.Uint64
 
 	// 선택적 QuoteValidationService — nil 이면 Serve 가 register 안 함.
@@ -87,6 +94,22 @@ type barSubscriber struct {
 	srvID string
 }
 
+// customerQuoteSubscriber — Phase 4b. SubscribeCustomerQuote stream 의 상태.
+//
+// 필터:
+//   - subscriberID    : edge instance 식별. RegisterCustomer 의 subscriber_id 와 매칭.
+//                        본 subscriber 가 등록한 customer set 에 속하는 quote 만 수신.
+//   - customerIDs     : 명시적 customer 필터. 비어있으면 subscriberID 매핑 사용.
+//
+// RegisterCustomer / SubscribeCustomerQuote 는 별개 RPC — 둘 다 같은 subscriber_id
+// 로 호출하면 자동 연결. 운영 권장 패턴.
+type customerQuoteSubscriber struct {
+	id           uint64
+	subscriberID string
+	customerIDs  map[string]struct{} // 빈 set = subscriberID 매핑 사용
+	out          chan *wtgpb.CustomerQuote
+}
+
 // quoteSubscriber 는 단일 SubscribeQuote stream 의 상태.
 //
 // 필터:
@@ -112,12 +135,21 @@ func NewGRPCServer(logger *slog.Logger, bufSize int) *GRPCServer {
 		bufSize = 1024
 	}
 	return &GRPCServer{
-		logger:           logger,
-		bufSz:            bufSize,
-		subscribers:      make(map[uint64]*subscriber),
-		quoteSubscribers: make(map[uint64]*quoteSubscriber),
-		barSubscribers:   make(map[uint64]*barSubscriber),
+		logger:               logger,
+		bufSz:                bufSize,
+		subscribers:          make(map[uint64]*subscriber),
+		quoteSubscribers:     make(map[uint64]*quoteSubscriber),
+		barSubscribers:       make(map[uint64]*barSubscriber),
+		customerQSubscribers: make(map[uint64]*customerQuoteSubscriber),
+		customerRegistry:     NewCustomerRegistry(),
 	}
+}
+
+// CustomerRegistry — 본 GRPCServer 의 활성 customer 등록부. PricingConsumer
+// 가 CustomerPub 으로 본 server 를 받을 때 같은 registry 를 공유하도록
+// PricingConsumerOptions.CustomerRegistry 에도 주입.
+func (g *GRPCServer) CustomerRegistry() *CustomerRegistry {
+	return g.customerRegistry
 }
 
 // OnTick 은 Server (price.Server) 의 TickConsumer 인터페이스 구현.
@@ -347,6 +379,177 @@ func (g *GRPCServer) HasQuoteSubscribers(profileKey string) bool {
 		}
 	}
 	return false
+}
+
+// ─── Customer registration + customer-tagged quote (Phase 4b) ─────────────
+
+// RegisterCustomer — PriceService.RegisterCustomer RPC 구현.
+//
+// edge-price 가 본 stream 을 열고 (보통 instance 당 1개), ws 클라이언트의 customer
+// connect/disconnect 마다 CustomerRegistration{op, customer_id, profile_key} 를
+// send. 각 send 에 server 가 CustomerAck send-back. stream 종료 시 (edge crash /
+// 정상 disconnect) 본 stream 으로 등록한 모든 customer 자동 해제.
+//
+// 매 등록 = CustomerRegistry.Register(customerID, profile). Phase 4b 의 핵심 —
+// 등록부와 publish 경로를 같은 GRPCServer 인스턴스에서 묶음.
+//
+// SubscribeCustomerQuote 의 필터 자동 매칭 (subscriber_id ↔ ownership) 은 P4c
+// 에서 도입. 현재는 SubscribeCustomerQuote 의 명시적 customer_ids 사용 권장.
+func (g *GRPCServer) RegisterCustomer(stream wtgpb.PriceService_RegisterCustomerServer) error {
+	// 본 stream 으로 등록된 customer 집합 — close 시 일괄 해제용.
+	owned := make(map[string]struct{})
+
+	g.logger.Info("RegisterCustomer stream 시작")
+	defer func() {
+		// 미해제 customer 일괄 unregister.
+		for cid := range owned {
+			g.customerRegistry.Unregister(cid)
+		}
+		g.logger.Info("RegisterCustomer stream 종료",
+			slog.Int("auto_unregistered", len(owned)),
+		)
+	}()
+
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		cid := req.GetCustomerId()
+		switch req.GetOp() {
+		case wtgpb.CustomerRegistration_OP_REGISTER:
+			if cid == "" {
+				_ = stream.Send(&wtgpb.CustomerAck{CustomerId: cid, Ok: false, Error: "empty customer_id"})
+				continue
+			}
+			profile, perr := session.ParseProfileKey(req.GetProfileKey())
+			if perr != nil {
+				_ = stream.Send(&wtgpb.CustomerAck{CustomerId: cid, Ok: false, Error: "invalid profile_key: " + perr.Error()})
+				continue
+			}
+			g.customerRegistry.Register(cid, profile)
+			owned[cid] = struct{}{}
+			if err := stream.Send(&wtgpb.CustomerAck{CustomerId: cid, Ok: true}); err != nil {
+				return err
+			}
+		case wtgpb.CustomerRegistration_OP_UNREGISTER:
+			if _, has := owned[cid]; has {
+				g.customerRegistry.Unregister(cid)
+				delete(owned, cid)
+			}
+			if err := stream.Send(&wtgpb.CustomerAck{CustomerId: cid, Ok: true}); err != nil {
+				return err
+			}
+		default:
+			_ = stream.Send(&wtgpb.CustomerAck{CustomerId: cid, Ok: false, Error: "unknown op"})
+		}
+	}
+}
+
+// SubscribeCustomerQuote — PriceService.SubscribeCustomerQuote RPC 구현.
+//
+// 본 stream 은 customer-tag 된 quote 를 수신. 필터:
+//   - customer_ids 가 명시되면 그 set 만.
+//   - 비어있고 subscriber_id 가 채워졌으면 본 GRPCServer 의 ownership map 에서
+//     subscriber_id 매칭 (단, 본 구현 PR 에서는 단순화 — 명시적 customer_ids 사용 권장).
+//
+// 단순화: ownership 매칭은 PublishCustomerQuote 에서 직접 customerIDs filter
+// 와 비교. subscriber_id 매칭 자동화는 후속 개선 (TODO).
+func (g *GRPCServer) SubscribeCustomerQuote(req *wtgpb.CustomerQuoteSubscribeRequest, stream wtgpb.PriceService_SubscribeCustomerQuoteServer) error {
+	sub := &customerQuoteSubscriber{
+		id:           g.nextSubID.Add(1),
+		subscriberID: req.GetSubscriberId(),
+		customerIDs:  make(map[string]struct{}, len(req.GetCustomerIds())),
+		out:          make(chan *wtgpb.CustomerQuote, g.bufSz),
+	}
+	for _, c := range req.GetCustomerIds() {
+		sub.customerIDs[c] = struct{}{}
+	}
+
+	g.cqmu.Lock()
+	g.customerQSubscribers[sub.id] = sub
+	g.cqmu.Unlock()
+
+	g.logger.Info("gRPC customer-quote 구독 시작",
+		slog.Uint64("sub_id", sub.id),
+		slog.String("subscriber_id", sub.subscriberID),
+		slog.Int("customer_filter", len(sub.customerIDs)),
+	)
+
+	defer func() {
+		g.removeCustomerQSubscriber(sub.id)
+		g.logger.Info("gRPC customer-quote 구독 종료",
+			slog.Uint64("sub_id", sub.id),
+			slog.String("subscriber_id", sub.subscriberID),
+		)
+	}()
+
+	ctx := stream.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case cq, ok := <-sub.out:
+			if !ok {
+				return errors.New("price: slow customer-quote consumer")
+			}
+			if err := stream.Send(cq); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (g *GRPCServer) removeCustomerQSubscriber(id uint64) {
+	g.cqmu.Lock()
+	delete(g.customerQSubscribers, id)
+	g.cqmu.Unlock()
+}
+
+// CustomerQuoteSubscriberCount — 현재 SubscribeCustomerQuote 구독자 수.
+func (g *GRPCServer) CustomerQuoteSubscriberCount() int {
+	g.cqmu.RLock()
+	defer g.cqmu.RUnlock()
+	return len(g.customerQSubscribers)
+}
+
+// PublishCustomerQuote — CustomerQuotePublisher 인터페이스 구현.
+//
+// 매 customer-quote 를 customerIDs 필터에 매칭되는 활성 stream 으로 fan-out.
+// non-blocking enqueue, slow consumer 는 stream 종료로 격리. 항상 nil 반환.
+func (g *GRPCServer) PublishCustomerQuote(customerID string, profile session.Profile, cq pricing.CustomerQuote) error {
+	pb := customerQuoteToProto(profile, cq)
+	pb.CustomerId = customerID
+
+	g.cqmu.RLock()
+	subs := make([]*customerQuoteSubscriber, 0, len(g.customerQSubscribers))
+	for _, s := range g.customerQSubscribers {
+		subs = append(subs, s)
+	}
+	g.cqmu.RUnlock()
+
+	for _, s := range subs {
+		// customer 필터 — 빈 set 이면 모두 수신 (subscriber_id 매칭 자동화는 후속).
+		if len(s.customerIDs) > 0 {
+			if _, ok := s.customerIDs[customerID]; !ok {
+				continue
+			}
+		}
+		select {
+		case s.out <- pb:
+		default:
+			g.logger.Warn("gRPC customer-quote subscriber slow — stream 종료",
+				slog.Uint64("sub_id", s.id),
+				slog.String("subscriber_id", s.subscriberID),
+			)
+			close(s.out)
+			g.removeCustomerQSubscriber(s.id)
+		}
+	}
+	return nil
 }
 
 // ─── Bar stream ────────────────────────────────────────────────────────────

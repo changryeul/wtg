@@ -386,22 +386,29 @@ func wirePricingConsumerEtcd(
 	if grpcSrv != nil {
 		publishers = append(publishers, grpcSrv)
 	}
-	pc := price.NewPricingConsumer(price.PricingConsumerOptions{
-		Store:                  store,
-		Symbols:                symbols,
-		Decoder:                price.JSONCookerDecoder(),
-		Publisher:              price.NewMultiQuotePublisher(publishers...),
-		Profiles:               profSrc,
-		Logger:                 logger,
-		QuoteIDGen:             quoteIDGen,
-		QuoteIDRegistry:        quoteIDReg,
-		QuoteValidity:          cfg.QuoteIDValidity,
-		QuoteRegistryTimeout:   cfg.QuoteIDRegistryTimeout,
-	})
+	opts := price.PricingConsumerOptions{
+		Store:                store,
+		Symbols:              symbols,
+		Decoder:              price.JSONCookerDecoder(),
+		Publisher:            price.NewMultiQuotePublisher(publishers...),
+		Profiles:             profSrc,
+		Logger:               logger,
+		QuoteIDGen:           quoteIDGen,
+		QuoteIDRegistry:      quoteIDReg,
+		QuoteValidity:        cfg.QuoteIDValidity,
+		QuoteRegistryTimeout: cfg.QuoteIDRegistryTimeout,
+	}
+	// Phase 4b — gRPC 활성 시 customer fan-out path 동시 연결.
+	if grpcSrv != nil {
+		opts.CustomerRegistry = grpcSrv.CustomerRegistry()
+		opts.CustomerPub = grpcSrv
+	}
+	pc := price.NewPricingConsumer(opts)
 	logger.Info("PricingConsumer (etcd watch) 활성",
 		slog.String("table_key", cfg.EtcdPrefix+"pricing/table"),
 		slog.String("profile_prefix", cfg.EtcdPrefix+"price/profiles/"),
 		slog.Bool("grpc_publish", grpcSrv != nil),
+		slog.Bool("customer_fanout", grpcSrv != nil),
 	)
 	return pc, tblW, profSrc, nil
 }
@@ -439,24 +446,31 @@ func wirePricingConsumer(cfg price.Config, symbols *quote.SymbolMap, srv *price.
 		publishers = append(publishers, grpcSrv)
 	}
 
-	pc := price.NewPricingConsumer(price.PricingConsumerOptions{
-		Store:                  store,
-		Symbols:                symbols,
-		Decoder:                price.JSONCookerDecoder(),
-		Publisher:              price.NewMultiQuotePublisher(publishers...),
-		Profiles:               &price.StaticProfileSource{Profiles: profiles},
-		Logger:                 logger,
-		QuoteIDGen:             quoteIDGen,
-		QuoteIDRegistry:        quoteIDReg,
-		QuoteValidity:          cfg.QuoteIDValidity,
-		QuoteRegistryTimeout:   cfg.QuoteIDRegistryTimeout,
-	})
+	opts := price.PricingConsumerOptions{
+		Store:                store,
+		Symbols:              symbols,
+		Decoder:              price.JSONCookerDecoder(),
+		Publisher:            price.NewMultiQuotePublisher(publishers...),
+		Profiles:             &price.StaticProfileSource{Profiles: profiles},
+		Logger:               logger,
+		QuoteIDGen:           quoteIDGen,
+		QuoteIDRegistry:      quoteIDReg,
+		QuoteValidity:        cfg.QuoteIDValidity,
+		QuoteRegistryTimeout: cfg.QuoteIDRegistryTimeout,
+	}
+	// Phase 4b — gRPC 활성 시 customer fan-out path 동시 연결.
+	if grpcSrv != nil {
+		opts.CustomerRegistry = grpcSrv.CustomerRegistry()
+		opts.CustomerPub = grpcSrv
+	}
+	pc := price.NewPricingConsumer(opts)
 	logger.Info("PricingConsumer 활성",
 		slog.String("pricing", cfg.PricingFile),
 		slog.String("profiles", cfg.ProfilesFile),
 		slog.Int64("pricing_version", tbl.Version),
 		slog.Int("profile_count", len(profiles)),
 		slog.Bool("grpc_publish", grpcSrv != nil),
+		slog.Bool("customer_fanout", grpcSrv != nil),
 	)
 	return pc, nil
 }

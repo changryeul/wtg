@@ -29,6 +29,25 @@ service PriceService {
   // 클라이언트(mci-chart)는 (pair, tf) 필터를 옵션으로 지정.
   rpc SubscribeBar(BarSubscribeRequest) returns (stream Bar);
 
+  // RegisterCustomer — Phase 4b. edge-price 가 ws 클라이언트별로 customer
+  // 등록/해제 이벤트를 bidirectional stream 으로 보낸다. stream 종료 시 본
+  // stream 으로 등록한 모든 customer 자동 해제 — edge 재시작 / 끊김 시 stale
+  // 등록 방지.
+  //
+  // 흐름:
+  //   edge ─ CustomerRegistration{op=REGISTER,customer_id,profile_key} ─→ server
+  //   server ─ CustomerAck{ok=true} ─→ edge
+  //   ...
+  //   edge ─ CustomerRegistration{op=UNREGISTER,customer_id} ─→ server
+  //   ... (stream 유지 — ws 클라이언트 여러 개)
+  //   edge disconnect → server 가 등록 set 전체 unregister
+  rpc RegisterCustomer(stream CustomerRegistration) returns (stream CustomerAck);
+
+  // SubscribeCustomerQuote — Phase 4b. customer-tag 된 quote stream.
+  // PricingConsumer 의 customer fan-out 결과를 받는다. Profile-only quote
+  // (SubscribeQuote) 와 분리 — customer_id 기반 필터링 단순화.
+  rpc SubscribeCustomerQuote(CustomerQuoteSubscribeRequest) returns (stream CustomerQuote);
+
   // PublishTick 은 quote-forwarder 가 호출해서 mci-price 에 시세를 직접 push 하는
   // 양방향 stream. broker 의 PRICE exchange fan-out 을 우회 — broker 가 매매
   // transaction 에만 집중하도록 시세 부하를 분리한다.
@@ -151,4 +170,45 @@ message CustomerQuote {
   // ValidUntil — 토큰 만료 wallclock (Unix nano). 이 시점 이후 엔진은
   // 토큰을 거절해야 한다 (FX Global Code Principle 17 — last-look 한계).
   int64  valid_until_unix_nano = 13;
+
+  // Phase 4b — customer-specific 마진이 적용된 quote 인 경우의 customer 식별자.
+  // 빈 값이면 Profile-only quote (SubscribeQuote 경로). 채워지면
+  // SubscribeCustomerQuote 경로에서 customer 별 fan-out.
+  string customer_id = 14;
+}
+
+// CustomerRegistration — RegisterCustomer stream 의 단위 메시지. edge 가 ws
+// 클라이언트의 customer 연결/종료마다 1 건씩 send.
+message CustomerRegistration {
+  enum Op {
+    OP_UNSPECIFIED = 0;
+    OP_REGISTER    = 1;
+    OP_UNREGISTER  = 2;
+  }
+  Op op = 1;
+
+  // 등록/해제 대상 customer 식별자. ws 클라이언트의 user-id 또는 별도 customer-id.
+  string customer_id = 2;
+
+  // Profile key (REGISTER 시 필수). 예: "WEB.BRANCH.VIP".
+  // mci-price 가 이 값을 session.Profile 로 역파싱해 CustomerRegistry 에 저장.
+  string profile_key = 3;
+}
+
+// CustomerAck — RegisterCustomer 의 server → client 응답.
+message CustomerAck {
+  string customer_id = 1;
+  bool   ok          = 2;
+  // ok=false 일 때 사유 (예: "invalid profile key", "duplicate registration").
+  string error       = 3;
+}
+
+// CustomerQuoteSubscribeRequest — SubscribeCustomerQuote 옵션.
+message CustomerQuoteSubscribeRequest {
+  // edge instance 식별. RegisterCustomer 의 subscriber_id 와 같은 값을 쓰면
+  // 본 stream 으로 등록한 customer 들의 quote 만 받는다 (자동 매칭).
+  string subscriber_id = 1;
+
+  // 명시적 customer 필터. 비어있으면 본 subscriber_id 로 등록한 customer 들.
+  repeated string customer_ids = 2;
 }

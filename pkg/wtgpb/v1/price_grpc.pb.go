@@ -28,10 +28,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PriceService_Subscribe_FullMethodName      = "/wtg.v1.PriceService/Subscribe"
-	PriceService_SubscribeQuote_FullMethodName = "/wtg.v1.PriceService/SubscribeQuote"
-	PriceService_SubscribeBar_FullMethodName   = "/wtg.v1.PriceService/SubscribeBar"
-	PriceService_PublishTick_FullMethodName    = "/wtg.v1.PriceService/PublishTick"
+	PriceService_Subscribe_FullMethodName              = "/wtg.v1.PriceService/Subscribe"
+	PriceService_SubscribeQuote_FullMethodName         = "/wtg.v1.PriceService/SubscribeQuote"
+	PriceService_SubscribeBar_FullMethodName           = "/wtg.v1.PriceService/SubscribeBar"
+	PriceService_RegisterCustomer_FullMethodName       = "/wtg.v1.PriceService/RegisterCustomer"
+	PriceService_SubscribeCustomerQuote_FullMethodName = "/wtg.v1.PriceService/SubscribeCustomerQuote"
+	PriceService_PublishTick_FullMethodName            = "/wtg.v1.PriceService/PublishTick"
 )
 
 // PriceServiceClient is the client API for PriceService service.
@@ -51,6 +53,24 @@ type PriceServiceClient interface {
 	// Aggregator 가 closed 한 봉이 Archiver(DB) 와 병렬로 이 stream 으로도 push.
 	// 클라이언트(mci-chart)는 (pair, tf) 필터를 옵션으로 지정.
 	SubscribeBar(ctx context.Context, in *BarSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Bar], error)
+	// RegisterCustomer — Phase 4b. edge-price 가 ws 클라이언트별로 customer
+	// 등록/해제 이벤트를 bidirectional stream 으로 보낸다. stream 종료 시 본
+	// stream 으로 등록한 모든 customer 자동 해제 — edge 재시작 / 끊김 시 stale
+	// 등록 방지.
+	//
+	// 흐름:
+	//
+	//	edge ─ CustomerRegistration{op=REGISTER,customer_id,profile_key} ─→ server
+	//	server ─ CustomerAck{ok=true} ─→ edge
+	//	...
+	//	edge ─ CustomerRegistration{op=UNREGISTER,customer_id} ─→ server
+	//	... (stream 유지 — ws 클라이언트 여러 개)
+	//	edge disconnect → server 가 등록 set 전체 unregister
+	RegisterCustomer(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CustomerRegistration, CustomerAck], error)
+	// SubscribeCustomerQuote — Phase 4b. customer-tag 된 quote stream.
+	// PricingConsumer 의 customer fan-out 결과를 받는다. Profile-only quote
+	// (SubscribeQuote) 와 분리 — customer_id 기반 필터링 단순화.
+	SubscribeCustomerQuote(ctx context.Context, in *CustomerQuoteSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CustomerQuote], error)
 	// PublishTick 은 quote-forwarder 가 호출해서 mci-price 에 시세를 직접 push 하는
 	// 양방향 stream. broker 의 PRICE exchange fan-out 을 우회 — broker 가 매매
 	// transaction 에만 집중하도록 시세 부하를 분리한다.
@@ -130,9 +150,41 @@ func (c *priceServiceClient) SubscribeBar(ctx context.Context, in *BarSubscribeR
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PriceService_SubscribeBarClient = grpc.ServerStreamingClient[Bar]
 
+func (c *priceServiceClient) RegisterCustomer(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CustomerRegistration, CustomerAck], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PriceService_ServiceDesc.Streams[3], PriceService_RegisterCustomer_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CustomerRegistration, CustomerAck]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_RegisterCustomerClient = grpc.BidiStreamingClient[CustomerRegistration, CustomerAck]
+
+func (c *priceServiceClient) SubscribeCustomerQuote(ctx context.Context, in *CustomerQuoteSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CustomerQuote], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PriceService_ServiceDesc.Streams[4], PriceService_SubscribeCustomerQuote_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CustomerQuoteSubscribeRequest, CustomerQuote]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_SubscribeCustomerQuoteClient = grpc.ServerStreamingClient[CustomerQuote]
+
 func (c *priceServiceClient) PublishTick(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Tick, PublishAck], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &PriceService_ServiceDesc.Streams[3], PriceService_PublishTick_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &PriceService_ServiceDesc.Streams[5], PriceService_PublishTick_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -160,6 +212,24 @@ type PriceServiceServer interface {
 	// Aggregator 가 closed 한 봉이 Archiver(DB) 와 병렬로 이 stream 으로도 push.
 	// 클라이언트(mci-chart)는 (pair, tf) 필터를 옵션으로 지정.
 	SubscribeBar(*BarSubscribeRequest, grpc.ServerStreamingServer[Bar]) error
+	// RegisterCustomer — Phase 4b. edge-price 가 ws 클라이언트별로 customer
+	// 등록/해제 이벤트를 bidirectional stream 으로 보낸다. stream 종료 시 본
+	// stream 으로 등록한 모든 customer 자동 해제 — edge 재시작 / 끊김 시 stale
+	// 등록 방지.
+	//
+	// 흐름:
+	//
+	//	edge ─ CustomerRegistration{op=REGISTER,customer_id,profile_key} ─→ server
+	//	server ─ CustomerAck{ok=true} ─→ edge
+	//	...
+	//	edge ─ CustomerRegistration{op=UNREGISTER,customer_id} ─→ server
+	//	... (stream 유지 — ws 클라이언트 여러 개)
+	//	edge disconnect → server 가 등록 set 전체 unregister
+	RegisterCustomer(grpc.BidiStreamingServer[CustomerRegistration, CustomerAck]) error
+	// SubscribeCustomerQuote — Phase 4b. customer-tag 된 quote stream.
+	// PricingConsumer 의 customer fan-out 결과를 받는다. Profile-only quote
+	// (SubscribeQuote) 와 분리 — customer_id 기반 필터링 단순화.
+	SubscribeCustomerQuote(*CustomerQuoteSubscribeRequest, grpc.ServerStreamingServer[CustomerQuote]) error
 	// PublishTick 은 quote-forwarder 가 호출해서 mci-price 에 시세를 직접 push 하는
 	// 양방향 stream. broker 의 PRICE exchange fan-out 을 우회 — broker 가 매매
 	// transaction 에만 집중하도록 시세 부하를 분리한다.
@@ -190,6 +260,12 @@ func (UnimplementedPriceServiceServer) SubscribeQuote(*QuoteSubscribeRequest, gr
 }
 func (UnimplementedPriceServiceServer) SubscribeBar(*BarSubscribeRequest, grpc.ServerStreamingServer[Bar]) error {
 	return status.Error(codes.Unimplemented, "method SubscribeBar not implemented")
+}
+func (UnimplementedPriceServiceServer) RegisterCustomer(grpc.BidiStreamingServer[CustomerRegistration, CustomerAck]) error {
+	return status.Error(codes.Unimplemented, "method RegisterCustomer not implemented")
+}
+func (UnimplementedPriceServiceServer) SubscribeCustomerQuote(*CustomerQuoteSubscribeRequest, grpc.ServerStreamingServer[CustomerQuote]) error {
+	return status.Error(codes.Unimplemented, "method SubscribeCustomerQuote not implemented")
 }
 func (UnimplementedPriceServiceServer) PublishTick(grpc.BidiStreamingServer[Tick, PublishAck]) error {
 	return status.Error(codes.Unimplemented, "method PublishTick not implemented")
@@ -248,6 +324,24 @@ func _PriceService_SubscribeBar_Handler(srv interface{}, stream grpc.ServerStrea
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PriceService_SubscribeBarServer = grpc.ServerStreamingServer[Bar]
 
+func _PriceService_RegisterCustomer_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(PriceServiceServer).RegisterCustomer(&grpc.GenericServerStream[CustomerRegistration, CustomerAck]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_RegisterCustomerServer = grpc.BidiStreamingServer[CustomerRegistration, CustomerAck]
+
+func _PriceService_SubscribeCustomerQuote_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(CustomerQuoteSubscribeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(PriceServiceServer).SubscribeCustomerQuote(m, &grpc.GenericServerStream[CustomerQuoteSubscribeRequest, CustomerQuote]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_SubscribeCustomerQuoteServer = grpc.ServerStreamingServer[CustomerQuote]
+
 func _PriceService_PublishTick_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(PriceServiceServer).PublishTick(&grpc.GenericServerStream[Tick, PublishAck]{ServerStream: stream})
 }
@@ -276,6 +370,17 @@ var PriceService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "SubscribeBar",
 			Handler:       _PriceService_SubscribeBar_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "RegisterCustomer",
+			Handler:       _PriceService_RegisterCustomer_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "SubscribeCustomerQuote",
+			Handler:       _PriceService_SubscribeCustomerQuote_Handler,
 			ServerStreams: true,
 		},
 		{

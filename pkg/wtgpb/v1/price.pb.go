@@ -30,6 +30,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type CustomerRegistration_Op int32
+
+const (
+	CustomerRegistration_OP_UNSPECIFIED CustomerRegistration_Op = 0
+	CustomerRegistration_OP_REGISTER    CustomerRegistration_Op = 1
+	CustomerRegistration_OP_UNREGISTER  CustomerRegistration_Op = 2
+)
+
+// Enum value maps for CustomerRegistration_Op.
+var (
+	CustomerRegistration_Op_name = map[int32]string{
+		0: "OP_UNSPECIFIED",
+		1: "OP_REGISTER",
+		2: "OP_UNREGISTER",
+	}
+	CustomerRegistration_Op_value = map[string]int32{
+		"OP_UNSPECIFIED": 0,
+		"OP_REGISTER":    1,
+		"OP_UNREGISTER":  2,
+	}
+)
+
+func (x CustomerRegistration_Op) Enum() *CustomerRegistration_Op {
+	p := new(CustomerRegistration_Op)
+	*p = x
+	return p
+}
+
+func (x CustomerRegistration_Op) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CustomerRegistration_Op) Descriptor() protoreflect.EnumDescriptor {
+	return file_wtg_v1_price_proto_enumTypes[0].Descriptor()
+}
+
+func (CustomerRegistration_Op) Type() protoreflect.EnumType {
+	return &file_wtg_v1_price_proto_enumTypes[0]
+}
+
+func (x CustomerRegistration_Op) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CustomerRegistration_Op.Descriptor instead.
+func (CustomerRegistration_Op) EnumDescriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{7, 0}
+}
+
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와
 // 마지막 처리 시각을 알려 publisher 가 backpressure / 끊김 진단에 활용.
 type PublishAck struct {
@@ -549,8 +598,12 @@ type CustomerQuote struct {
 	// ValidUntil — 토큰 만료 wallclock (Unix nano). 이 시점 이후 엔진은
 	// 토큰을 거절해야 한다 (FX Global Code Principle 17 — last-look 한계).
 	ValidUntilUnixNano int64 `protobuf:"varint,13,opt,name=valid_until_unix_nano,json=validUntilUnixNano,proto3" json:"valid_until_unix_nano,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Phase 4b — customer-specific 마진이 적용된 quote 인 경우의 customer 식별자.
+	// 빈 값이면 Profile-only quote (SubscribeQuote 경로). 채워지면
+	// SubscribeCustomerQuote 경로에서 customer 별 fan-out.
+	CustomerId    string `protobuf:"bytes,14,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CustomerQuote) Reset() {
@@ -674,6 +727,196 @@ func (x *CustomerQuote) GetValidUntilUnixNano() int64 {
 	return 0
 }
 
+func (x *CustomerQuote) GetCustomerId() string {
+	if x != nil {
+		return x.CustomerId
+	}
+	return ""
+}
+
+// CustomerRegistration — RegisterCustomer stream 의 단위 메시지. edge 가 ws
+// 클라이언트의 customer 연결/종료마다 1 건씩 send.
+type CustomerRegistration struct {
+	state protoimpl.MessageState  `protogen:"open.v1"`
+	Op    CustomerRegistration_Op `protobuf:"varint,1,opt,name=op,proto3,enum=wtg.v1.CustomerRegistration_Op" json:"op,omitempty"`
+	// 등록/해제 대상 customer 식별자. ws 클라이언트의 user-id 또는 별도 customer-id.
+	CustomerId string `protobuf:"bytes,2,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
+	// Profile key (REGISTER 시 필수). 예: "WEB.BRANCH.VIP".
+	// mci-price 가 이 값을 session.Profile 로 역파싱해 CustomerRegistry 에 저장.
+	ProfileKey    string `protobuf:"bytes,3,opt,name=profile_key,json=profileKey,proto3" json:"profile_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CustomerRegistration) Reset() {
+	*x = CustomerRegistration{}
+	mi := &file_wtg_v1_price_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CustomerRegistration) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CustomerRegistration) ProtoMessage() {}
+
+func (x *CustomerRegistration) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CustomerRegistration.ProtoReflect.Descriptor instead.
+func (*CustomerRegistration) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CustomerRegistration) GetOp() CustomerRegistration_Op {
+	if x != nil {
+		return x.Op
+	}
+	return CustomerRegistration_OP_UNSPECIFIED
+}
+
+func (x *CustomerRegistration) GetCustomerId() string {
+	if x != nil {
+		return x.CustomerId
+	}
+	return ""
+}
+
+func (x *CustomerRegistration) GetProfileKey() string {
+	if x != nil {
+		return x.ProfileKey
+	}
+	return ""
+}
+
+// CustomerAck — RegisterCustomer 의 server → client 응답.
+type CustomerAck struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	CustomerId string                 `protobuf:"bytes,1,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
+	Ok         bool                   `protobuf:"varint,2,opt,name=ok,proto3" json:"ok,omitempty"`
+	// ok=false 일 때 사유 (예: "invalid profile key", "duplicate registration").
+	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CustomerAck) Reset() {
+	*x = CustomerAck{}
+	mi := &file_wtg_v1_price_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CustomerAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CustomerAck) ProtoMessage() {}
+
+func (x *CustomerAck) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CustomerAck.ProtoReflect.Descriptor instead.
+func (*CustomerAck) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CustomerAck) GetCustomerId() string {
+	if x != nil {
+		return x.CustomerId
+	}
+	return ""
+}
+
+func (x *CustomerAck) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *CustomerAck) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// CustomerQuoteSubscribeRequest — SubscribeCustomerQuote 옵션.
+type CustomerQuoteSubscribeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// edge instance 식별. RegisterCustomer 의 subscriber_id 와 같은 값을 쓰면
+	// 본 stream 으로 등록한 customer 들의 quote 만 받는다 (자동 매칭).
+	SubscriberId string `protobuf:"bytes,1,opt,name=subscriber_id,json=subscriberId,proto3" json:"subscriber_id,omitempty"`
+	// 명시적 customer 필터. 비어있으면 본 subscriber_id 로 등록한 customer 들.
+	CustomerIds   []string `protobuf:"bytes,2,rep,name=customer_ids,json=customerIds,proto3" json:"customer_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CustomerQuoteSubscribeRequest) Reset() {
+	*x = CustomerQuoteSubscribeRequest{}
+	mi := &file_wtg_v1_price_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CustomerQuoteSubscribeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CustomerQuoteSubscribeRequest) ProtoMessage() {}
+
+func (x *CustomerQuoteSubscribeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CustomerQuoteSubscribeRequest.ProtoReflect.Descriptor instead.
+func (*CustomerQuoteSubscribeRequest) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CustomerQuoteSubscribeRequest) GetSubscriberId() string {
+	if x != nil {
+		return x.SubscriberId
+	}
+	return ""
+}
+
+func (x *CustomerQuoteSubscribeRequest) GetCustomerIds() []string {
+	if x != nil {
+		return x.CustomerIds
+	}
+	return nil
+}
+
 var File_wtg_v1_price_proto protoreflect.FileDescriptor
 
 const file_wtg_v1_price_proto_rawDesc = "" +
@@ -721,7 +964,7 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\tclose_bid\x18\v \x01(\x01R\bcloseBid\x12\x1b\n" +
 	"\tclose_ask\x18\f \x01(\x01R\bcloseAsk\x12\x1d\n" +
 	"\n" +
-	"tick_count\x18\r \x01(\x05R\ttickCount\"\xe6\x02\n" +
+	"tick_count\x18\r \x01(\x05R\ttickCount\"\x87\x03\n" +
 	"\rCustomerQuote\x12\x12\n" +
 	"\x04pair\x18\x01 \x01(\tR\x04pair\x12\x18\n" +
 	"\achannel\x18\x02 \x01(\tR\achannel\x12\x12\n" +
@@ -737,11 +980,33 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	" \x01(\x01R\x06rawAsk\x12#\n" +
 	"\rtable_version\x18\v \x01(\x03R\ftableVersion\x12\x19\n" +
 	"\bquote_id\x18\f \x01(\tR\aquoteId\x121\n" +
-	"\x15valid_until_unix_nano\x18\r \x01(\x03R\x12validUntilUnixNano2\x80\x02\n" +
+	"\x15valid_until_unix_nano\x18\r \x01(\x03R\x12validUntilUnixNano\x12\x1f\n" +
+	"\vcustomer_id\x18\x0e \x01(\tR\n" +
+	"customerId\"\xc7\x01\n" +
+	"\x14CustomerRegistration\x12/\n" +
+	"\x02op\x18\x01 \x01(\x0e2\x1f.wtg.v1.CustomerRegistration.OpR\x02op\x12\x1f\n" +
+	"\vcustomer_id\x18\x02 \x01(\tR\n" +
+	"customerId\x12\x1f\n" +
+	"\vprofile_key\x18\x03 \x01(\tR\n" +
+	"profileKey\"<\n" +
+	"\x02Op\x12\x12\n" +
+	"\x0eOP_UNSPECIFIED\x10\x00\x12\x0f\n" +
+	"\vOP_REGISTER\x10\x01\x12\x11\n" +
+	"\rOP_UNREGISTER\x10\x02\"T\n" +
+	"\vCustomerAck\x12\x1f\n" +
+	"\vcustomer_id\x18\x01 \x01(\tR\n" +
+	"customerId\x12\x0e\n" +
+	"\x02ok\x18\x02 \x01(\bR\x02ok\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"g\n" +
+	"\x1dCustomerQuoteSubscribeRequest\x12#\n" +
+	"\rsubscriber_id\x18\x01 \x01(\tR\fsubscriberId\x12!\n" +
+	"\fcustomer_ids\x18\x02 \x03(\tR\vcustomerIds2\xa5\x03\n" +
 	"\fPriceService\x125\n" +
 	"\tSubscribe\x12\x18.wtg.v1.SubscribeRequest\x1a\f.wtg.v1.Tick0\x01\x12H\n" +
 	"\x0eSubscribeQuote\x12\x1d.wtg.v1.QuoteSubscribeRequest\x1a\x15.wtg.v1.CustomerQuote0\x01\x12:\n" +
-	"\fSubscribeBar\x12\x1b.wtg.v1.BarSubscribeRequest\x1a\v.wtg.v1.Bar0\x01\x123\n" +
+	"\fSubscribeBar\x12\x1b.wtg.v1.BarSubscribeRequest\x1a\v.wtg.v1.Bar0\x01\x12I\n" +
+	"\x10RegisterCustomer\x12\x1c.wtg.v1.CustomerRegistration\x1a\x13.wtg.v1.CustomerAck(\x010\x01\x12X\n" +
+	"\x16SubscribeCustomerQuote\x12%.wtg.v1.CustomerQuoteSubscribeRequest\x1a\x15.wtg.v1.CustomerQuote0\x01\x123\n" +
 	"\vPublishTick\x12\f.wtg.v1.Tick\x1a\x12.wtg.v1.PublishAck(\x010\x01B3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
 
 var (
@@ -756,30 +1021,40 @@ func file_wtg_v1_price_proto_rawDescGZIP() []byte {
 	return file_wtg_v1_price_proto_rawDescData
 }
 
-var file_wtg_v1_price_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_wtg_v1_price_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_wtg_v1_price_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_wtg_v1_price_proto_goTypes = []any{
-	(*PublishAck)(nil),            // 0: wtg.v1.PublishAck
-	(*SubscribeRequest)(nil),      // 1: wtg.v1.SubscribeRequest
-	(*Tick)(nil),                  // 2: wtg.v1.Tick
-	(*QuoteSubscribeRequest)(nil), // 3: wtg.v1.QuoteSubscribeRequest
-	(*BarSubscribeRequest)(nil),   // 4: wtg.v1.BarSubscribeRequest
-	(*Bar)(nil),                   // 5: wtg.v1.Bar
-	(*CustomerQuote)(nil),         // 6: wtg.v1.CustomerQuote
+	(CustomerRegistration_Op)(0),          // 0: wtg.v1.CustomerRegistration.Op
+	(*PublishAck)(nil),                    // 1: wtg.v1.PublishAck
+	(*SubscribeRequest)(nil),              // 2: wtg.v1.SubscribeRequest
+	(*Tick)(nil),                          // 3: wtg.v1.Tick
+	(*QuoteSubscribeRequest)(nil),         // 4: wtg.v1.QuoteSubscribeRequest
+	(*BarSubscribeRequest)(nil),           // 5: wtg.v1.BarSubscribeRequest
+	(*Bar)(nil),                           // 6: wtg.v1.Bar
+	(*CustomerQuote)(nil),                 // 7: wtg.v1.CustomerQuote
+	(*CustomerRegistration)(nil),          // 8: wtg.v1.CustomerRegistration
+	(*CustomerAck)(nil),                   // 9: wtg.v1.CustomerAck
+	(*CustomerQuoteSubscribeRequest)(nil), // 10: wtg.v1.CustomerQuoteSubscribeRequest
 }
 var file_wtg_v1_price_proto_depIdxs = []int32{
-	1, // 0: wtg.v1.PriceService.Subscribe:input_type -> wtg.v1.SubscribeRequest
-	3, // 1: wtg.v1.PriceService.SubscribeQuote:input_type -> wtg.v1.QuoteSubscribeRequest
-	4, // 2: wtg.v1.PriceService.SubscribeBar:input_type -> wtg.v1.BarSubscribeRequest
-	2, // 3: wtg.v1.PriceService.PublishTick:input_type -> wtg.v1.Tick
-	2, // 4: wtg.v1.PriceService.Subscribe:output_type -> wtg.v1.Tick
-	6, // 5: wtg.v1.PriceService.SubscribeQuote:output_type -> wtg.v1.CustomerQuote
-	5, // 6: wtg.v1.PriceService.SubscribeBar:output_type -> wtg.v1.Bar
-	0, // 7: wtg.v1.PriceService.PublishTick:output_type -> wtg.v1.PublishAck
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	0,  // 0: wtg.v1.CustomerRegistration.op:type_name -> wtg.v1.CustomerRegistration.Op
+	2,  // 1: wtg.v1.PriceService.Subscribe:input_type -> wtg.v1.SubscribeRequest
+	4,  // 2: wtg.v1.PriceService.SubscribeQuote:input_type -> wtg.v1.QuoteSubscribeRequest
+	5,  // 3: wtg.v1.PriceService.SubscribeBar:input_type -> wtg.v1.BarSubscribeRequest
+	8,  // 4: wtg.v1.PriceService.RegisterCustomer:input_type -> wtg.v1.CustomerRegistration
+	10, // 5: wtg.v1.PriceService.SubscribeCustomerQuote:input_type -> wtg.v1.CustomerQuoteSubscribeRequest
+	3,  // 6: wtg.v1.PriceService.PublishTick:input_type -> wtg.v1.Tick
+	3,  // 7: wtg.v1.PriceService.Subscribe:output_type -> wtg.v1.Tick
+	7,  // 8: wtg.v1.PriceService.SubscribeQuote:output_type -> wtg.v1.CustomerQuote
+	6,  // 9: wtg.v1.PriceService.SubscribeBar:output_type -> wtg.v1.Bar
+	9,  // 10: wtg.v1.PriceService.RegisterCustomer:output_type -> wtg.v1.CustomerAck
+	7,  // 11: wtg.v1.PriceService.SubscribeCustomerQuote:output_type -> wtg.v1.CustomerQuote
+	1,  // 12: wtg.v1.PriceService.PublishTick:output_type -> wtg.v1.PublishAck
+	7,  // [7:13] is the sub-list for method output_type
+	1,  // [1:7] is the sub-list for method input_type
+	1,  // [1:1] is the sub-list for extension type_name
+	1,  // [1:1] is the sub-list for extension extendee
+	0,  // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_wtg_v1_price_proto_init() }
@@ -792,13 +1067,14 @@ func file_wtg_v1_price_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wtg_v1_price_proto_rawDesc), len(file_wtg_v1_price_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   7,
+			NumEnums:      1,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_wtg_v1_price_proto_goTypes,
 		DependencyIndexes: file_wtg_v1_price_proto_depIdxs,
+		EnumInfos:         file_wtg_v1_price_proto_enumTypes,
 		MessageInfos:      file_wtg_v1_price_proto_msgTypes,
 	}.Build()
 	File_wtg_v1_price_proto = out.File

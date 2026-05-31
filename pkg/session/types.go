@@ -20,6 +20,8 @@
 //   - Tier:    Site 와 동일 — cookie_t 또는 별도 사용자 메타 트랜잭션에서 도출.
 package session
 
+import "fmt"
+
 // Channel 은 사용자가 접속한 채널.
 // edge 게이트웨이별로 1:1 매핑되므로 위·변조 불가능 (클라이언트가 못 고름).
 type Channel string
@@ -69,6 +71,37 @@ type Profile struct {
 // publish/subscribe topic 구성에 직접 사용된다.
 func (p Profile) Key() string {
 	return string(p.Channel) + "." + string(p.Site) + "." + string(p.Tier)
+}
+
+// ParseProfileKey 는 "CHANNEL.SITE.TIER" 형식 문자열을 Profile 로 역파싱한다.
+// gRPC RegisterCustomer 등에서 edge 가 client-side 로부터 받은 key 를 도메인
+// 객체로 복원할 때 사용. 토큰 수 != 3 이면 오류.
+//
+// 본 함수는 token 의 enum 유효성을 검증하지 않는다 — 호출자가 별도 검증.
+func ParseProfileKey(key string) (Profile, error) {
+	parts := profileKeySplit(key)
+	if len(parts) != 3 {
+		return Profile{}, fmt.Errorf("session: profile key 형식 오류 (CHANNEL.SITE.TIER 기대): %q", key)
+	}
+	return Profile{
+		Channel: Channel(parts[0]),
+		Site:    Site(parts[1]),
+		Tier:    Tier(parts[2]),
+	}, nil
+}
+
+// profileKeySplit — 점(.) 기준 split. strings 의존 회피용 미니 구현.
+func profileKeySplit(s string) []string {
+	out := make([]string, 0, 3)
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, s[start:])
+	return out
 }
 
 // Pair 는 통화쌍 표기 (예: "USD/KRW").

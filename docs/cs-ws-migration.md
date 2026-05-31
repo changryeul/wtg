@@ -279,3 +279,189 @@ websocat 'ws://localhost:8089/v1/subscribe?x_wtg_user=alice'
 | P4-1 | cs dual subscribe (shadow ws) | cs / 운영 | 1주 |
 | P4-2 | cs ws primary | cs / 운영 | 1주 |
 | P4-3 | broker subscribe 제거 | 운영 | 1일 |
+
+## 10. 운영 배포 시나리오
+
+dev 환경 (`ws://localhost:8089`) 을 운영으로 옮길 때 점검 표.
+
+### 10.1 TLS (wss://) 종단
+
+cs client → mci-edge-price 사이를 TLS 로 보호. 사내망이라도 cs framework 의
+보안 정책에 부합.
+
+```bash
+./build/bin/mci-edge-price \
+    --listen :8089 \
+    --upstream 127.0.0.1:50051 \
+    --envelope-format=legacy \
+    --tls-cert /etc/wtg/cert/edge-price.crt \
+    --tls-key  /etc/wtg/cert/edge-price.key \
+    --log-level=info
+```
+
+cs 측 URL: `wss://edge-price.example.com:8089/v1/subscribe?access_token=...`.
+
+운영 TLS 권장:
+- TLS 1.2+ (cert 발급 시 PEM 형식)
+- LetsEncrypt 또는 사내 CA
+- cert rotation — systemd unit + `--reload` (HUP) 또는 컨테이너 재기동
+
+### 10.2 IP allowlist + rate limit
+
+운영 cs client 의 출발 IP 범위로 제한 — 외부 노출 시 필수.
+
+```bash
+./build/bin/mci-edge-price \
+    --listen :8089 \
+    --envelope-format=legacy \
+    --allow-cidrs 10.0.0.0/24,10.0.1.0/24 \
+    --ip-rate 100 --ip-burst 200 \
+    ...
+```
+
+- `--allow-cidrs`: 콤마 구분 CIDR. 비면 모두 허용 (dev 만).
+- `--ip-rate`: IP 당 sustained tick/sec. 0 = 비활성.
+- `--ip-burst`: 단기 burst 허용량 (token bucket size).
+
+### 10.3 HA — 다중 인스턴스 + LB
+
+WebSocket 은 long-lived TCP. LB 가 sticky session 또는 stateless connection
+정책 가져야 함. nginx 예시:
+
+```nginx
+upstream edge_price_legacy {
+    least_conn;
+    server 10.0.10.1:8089 max_fails=3 fail_timeout=30s;
+    server 10.0.10.2:8089 max_fails=3 fail_timeout=30s;
+}
+
+server {
+    listen 443 ssl;
+    server_name edge-price.example.com;
+
+    ssl_certificate     /etc/nginx/cert/edge-price.crt;
+    ssl_certificate_key /etc/nginx/cert/edge-price.key;
+
+    location /v1/subscribe {
+        proxy_pass http://edge_price_legacy;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;     # 시세는 long-lived stream
+        proxy_send_timeout 3600s;
+    }
+}
+```
+
+mci-edge-price 인스턴스 둘 다 같은 mci-price gRPC 를 upstream 으로. 각 인스턴스는
+독립 subscriber_id (`--subscriber-id=edge-price-legacy-01` / `-02`) 로 grpc 등록
+— mci-price 가 양쪽에 모두 fan-out.
+
+### 10.4 monitoring + alert
+
+#### 10.4.1 핵심 지표
+
+| 지표 | endpoint | 임계 (alert) | 의미 |
+|------|----------|------------|------|
+| **e2e latency P99** | mci-price `/v1/price-stats` `.latency.bucket_*` | bucket_lt_100ms 비율 < 99% | broker 우회 path 의 지연 |
+| **forwarder publish drop** | forwarder `:9091/stats` `.publish_errors_total` | rate > 0.1% of pub | grpc 재연결 또는 broker 끊김 |
+| **grpc reconnect count** | forwarder logs (`PublishTick stream 재연결 OK total_reconnects=N`) | N 증가 (1시간 > 3) | mci-price 불안정 |
+| **edge-price subscriber count** | mci-edge-price `/v1/edge-stats` `.registry.count` | 갑작스러운 0 | LB / 네트워크 단절 |
+| **edge send dropped** | mci-edge-price `/v1/edge-stats` `.registry.dropped` | rate > 0 | slow consumer 격리 (운영 cs 의 처리 속도 ↓) |
+| **mci-price clock skew** | mci-price `/v1/price-stats` `.latency.negative_count` | 증가 | forwarder ↔ mci-price NTP 동기 점검 |
+
+#### 10.4.2 Prometheus / alert 예시
+
+```yaml
+# mci-edge-price 의 send_dropped 가 증가하면 cs client 가 느려진 것
+- alert: EdgePriceSlowConsumer
+  expr: rate(wtg_edge_price_registry_dropped[5m]) > 0
+  for: 2m
+  labels: { severity: warn }
+  annotations:
+    summary: "edge-price legacy 의 slow consumer drop 발생"
+
+# forwarder 의 grpc 재연결이 잦으면 mci-price 가 흔들리는 것
+- alert: ForwarderGRPCReconnectBurst
+  expr: increase(quote_forwarder_grpc_reconnects[1h]) > 3
+  for: 5m
+  labels: { severity: warn }
+  annotations:
+    summary: "1시간 안에 grpc 재연결 3회 초과"
+
+# latency P99 가 100ms 초과 — broker 우회 path 비정상
+- alert: PriceLatencyP99High
+  expr: |
+    1 - (
+      wtg_price_latency_bucket{le="100ms"}
+      / wtg_price_latency_count
+    ) > 0.01
+  for: 5m
+  labels: { severity: warn }
+```
+
+#### 10.4.3 운영 dashboard 권장 panel
+
+- forwarder published / publish_errors / queue_drops (시계열)
+- mci-price ticks/sec rate + latency avg/P99
+- edge-price registry count + sent/dropped (시계열)
+- forwarder grpc reconnect (누계)
+- mci-price clock skew negative_count
+
+#### 10.4.4 mci-admin UI 의 시세 통계 페이지
+
+운영 monitoring 보조 — 사이드바 진단 도구 → 시세 통계:
+- 6 카드 (received / matched / ticks / dropped / sub_drops / conflation symbols)
+- Latency 카드 (avg/max + bucket 분포 + clock skew)
+- BEST 산정 테이블 (symbol × source × spread)
+- 2초 polling 자동 갱신
+
+## 11. P4-1 envelope 일치 검증 — `quote-diff` 도구
+
+WTG 가 제공하는 자동 비교 도구. cs 마이그레이션 단계의 confidence 확보용.
+
+### 11.1 단독 검증 (legacy ↔ best 변환 정확도)
+
+WTG 단독 — legacy envelope 변환이 best 와 값 일치하는지:
+
+```bash
+./build/bin/quote-diff \
+    --source-a ws://localhost:8083/v1/subscribe \
+    --source-b ws://localhost:8089/v1/subscribe \
+    --pairs USD/KRW,EUR/KRW,JPY/KRW \
+    --duration 10m \
+    --user diff
+```
+
+`matched: ~100%`, `mismatched: 0`, `orphan: 0` 이면 변환 정확.
+
+### 11.2 P4-1 dual run (cs ws + cs broker)
+
+cs 가 양쪽 subscribe 한 envelope 을 동시 출력하면 동일 형식으로 비교 가능:
+- cs ws output → ws relay (cs 가 직접 quote-diff 호환 ws 노출)
+- cs broker output → ws relay
+- quote-diff 가 두 ws 비교
+
+또는 cs 가 양쪽 envelope 을 같은 파일에 dump → diff 스크립트 (jq + 비교).
+
+### 11.3 종료 코드
+
+- exit 0: mismatched = 0
+- exit 1: mismatched > 0 (CI 자동 fail)
+
+## 12. 점검 체크리스트 (운영 배포 직전)
+
+cs 가 P4-3 (broker subscribe 제거) 진입 전 마지막 확인:
+
+- [ ] mci-edge-price legacy 인스턴스 TLS cert 유효 (`openssl x509 -in cert.pem -noout -dates`)
+- [ ] `--allow-cidrs` 에 운영 cs 네트워크 포함
+- [ ] LB sticky session 설정 또는 stateless 정책 확정
+- [ ] Prometheus scrape target 등록 (mci-edge-price + mci-price + forwarder)
+- [ ] alert rule 배포 (위 §10.4.2)
+- [ ] quote-diff 24h 이상 mismatched=0 확인
+- [ ] mci-price `/v1/price-stats.latency.negative_count == 0` (NTP 동기 OK)
+- [ ] forwarder `quote_forwarder_grpc_reconnects` 추세 안정
+- [ ] cs framework 측 reconnect 로직 검증 (서버 재기동 시 자동 복구)
+- [ ] mci-edge-price-legacy 인스턴스 systemd unit 또는 컨테이너 manifest 영속화
+- [ ] runbook — 장애 시 broker subscribe 일시 복귀 절차 (`WTG_FWD_PUBLISH_MODE=both`)

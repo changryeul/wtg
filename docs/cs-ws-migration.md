@@ -37,12 +37,30 @@ cs client  ─WebSocket─→  mci-edge-price :8089
 
 ## 3. WTG 측 endpoint 설정 (운영팀)
 
+### 3.1 wtgctl 자동 기동 (권장)
+
+`wtgctl` (user-local `~/mymq/bin/wtgctl`) 에 `WTG_EDGE_LEGACY=1` env 처리 추가:
+
+```bash
+WTG_EDGE=1 WTG_EDGE_LEGACY=1 wtgctl start
+#   → mci-edge-price       :8083  (best, 신규 client 용)
+#   → mci-edge-price-legacy :8089  (legacy cs, broker subscribe schema 1:1)
+```
+
+같은 mci-price 를 upstream 으로 공유. 자원 부담 거의 없음 (각각 별도 grpc
+subscriber 로 등록 — subscriber_id: `mci-edge-price@host` vs `mci-edge-price-legacy`).
+
+wtgctl 의 status 표에도 `mci-edge-price-legacy :8089` 표시됨.
+
+### 3.2 직접 기동 (수동 / 운영 systemd)
+
 ```bash
 # legacy cs 전용 인스턴스 — 별도 포트로 분리
 ./build/bin/mci-edge-price \
     --listen :8089 \
     --upstream 127.0.0.1:50051 \
     --envelope-format=legacy \
+    --subscriber-id=mci-edge-price-legacy \
     --log-level=info
 ```
 

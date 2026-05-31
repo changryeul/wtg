@@ -335,10 +335,17 @@ func (s *Server) IngestEnvelopes(body []byte, baseTick *Tick) {
 			s.totalDrop.Add(1)
 			continue
 		}
+		// envelope 의 seq 를 우선 사용 — cooker/forwarder 가 매긴 cooker-side seq.
+		// baseTick.SeqNum 은 broker 측 batch 첫 envelope 만 반영하므로 batch 의
+		// 두 번째 envelope 부터 부정확. grpc PublishTick path 에선 0 으로 들어옴.
+		seqNum := uint32(env.Seq)
+		if seqNum == 0 {
+			seqNum = baseTick.SeqNum
+		}
 		sub := &Tick{
 			MarketID: baseTick.MarketID,
 			Symbol:   env.Sym,
-			SeqNum:   baseTick.SeqNum,
+			SeqNum:   seqNum,
 			Mask:     baseTick.Mask,
 			Type:     baseTick.Type,
 			Flag:     baseTick.Flag,

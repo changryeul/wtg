@@ -920,12 +920,24 @@
                 class="flex-1 px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px]" />
               <span class="text-[10px] text-slate-500 pt-1">미등록 profile = 매칭 안 됨</span>
             </div>
+            <!-- Customer ID 안내 — edge-price 의 customer-stream 활성 시 Principal.Usid (= DevMode 의 x_wtg_user)
+                 가 customer-id 로 mci-price 에 자동 등록되어 5-layer 마진 quote 수신 가능.
+                 별도 입력 X — x_wtg_user 가 곧 customer-id. -->
+            <div class="flex items-center gap-2 text-xs text-slate-500">
+              <div class="flex flex-col">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Customer-ID (5-layer)</span>
+                <span class="text-[10px] text-slate-600">DevMode = x_wtg_user · edge-price --customer-stream 활성 필요</span>
+              </div>
+              <code id="q-customer-id" class="flex-1 px-2 py-1.5 rounded bg-ink-800/40 border border-ink-700/60 font-mono text-[11px] text-accent-400">(미설정)</code>
+              <span class="text-[10px] text-slate-500 pt-1">5L = HQ+Site+Customer+Window</span>
+            </div>
             <div class="flex flex-wrap items-center gap-4 text-xs text-slate-400">
               <span>총 메시지 <span id="q-stat-total" class="font-mono text-slate-200">0</span></span>
               <span>tick/sec <span id="q-stat-rate" class="font-mono text-slate-200">0</span></span>
               <span>통화쌍 <span id="q-stat-symbols" class="font-mono text-slate-200">0</span></span>
               <span>체결 <span id="q-stat-trades" class="font-mono text-slate-200">0</span></span>
               <span>customer quote <span id="q-stat-quotes" class="font-mono text-accent-400">0</span></span>
+              <span>5L quote <span id="q-stat-quotes-5l" class="font-mono text-indigo-400">0</span></span>
             </div>
           </div>
 
@@ -5573,10 +5585,12 @@ function wsmonRenderEntry(e, jsonOnly) {
 
 const quoteState = {
   sock: null, wired: false,
-  symbols: new Map(),   // symbol → { feed, ts, bid, bidQty, ask, askQty, last, lastQty, prevBid, prevAsk }
+  symbols: new Map(),   // symbol → { feed, ts, bid, bidQty, ask, askQty, last, lastQty, prevBid, prevAsk, custBid/Ask (P3), cust5Bid/Ask (P4 5L) }
   trades: [],           // 최근 체결 (최대 50)
   allowed: null,        // q-pairs 기반 필터 set — null 이면 모두 허용. {sym→true} (USDKRW + USD/KRW 둘 다)
   total: 0, rate: 0, rateBucket: 0, rateTimer: null,
+  quotesReceived: 0,    // Profile-only customer quote (SubscribeQuote 경로)
+  quotes5LReceived: 0,  // 5-Layer customer quote (SubscribeCustomerQuote 경로 — P4c)
   TRADE_LIMIT: 50,
 };
 
@@ -5589,9 +5603,13 @@ function initQuote() {
       quoteState.symbols.clear();
       quoteState.trades = [];
       quoteState.total = 0;
+      quoteState.quotesReceived = 0;
+      quoteState.quotes5LReceived = 0;
       quoteRender(); quoteRenderTrades();
       $("#q-stat-total").textContent = "0";
       $("#q-stat-trades").textContent = "0";
+      $("#q-stat-quotes").textContent = "0";
+      $("#q-stat-quotes-5l").textContent = "0";
     };
   }
   quoteSetState("idle");
@@ -5633,6 +5651,10 @@ function quoteConnect() {
   // 빈값이면 미첨부 → Principal.ProfileKey() 빈값 → quote 미수신, BEST 만.
   const profile = ($("#q-profile") && $("#q-profile").value.trim()) || "";
   if (profile && !/[?&]profile=/.test(url)) url += sep() + "profile=" + encodeURIComponent(profile);
+  // Customer-ID 표시 — edge-price 가 customer-stream 활성이면 x_wtg_user 를 customer-id 로
+  // 자동 등록. 별도 query 첨부 X (server-side derive). 운영 (JWT) 에서는 Principal.Usid.
+  const userForCust = isDev ? (localStorage.getItem(LS_USER) || "") : "(JWT.usid)";
+  if ($("#q-customer-id")) $("#q-customer-id").textContent = userForCust || "(미설정)";
   quoteSetState("connecting");
   let sock;
   try { sock = new WebSocket(url); }
@@ -5721,6 +5743,11 @@ function handleQuoteFrame(raw) {
 // applyCustomerQuote — 마진 적용된 customer quote 를 symbol row 에 흡수.
 // edge-price 의 encodeCustomerQuoteJSON 출력 형식. pair 는 "USD/KRW" 형식,
 // BEST tick 은 "USDKRW" 형식 — applyBestTick 의 row key 와 매칭하기 위해 slash 제거.
+//
+// 두 종류의 quote 를 구분:
+//   - customer_id 빈값 / undefined → Profile-only (HQ+Site+Swap) — SubscribeQuote 경로
+//   - customer_id 채워짐 → 5-Layer (HQ+Site+Customer+Window+Swap) — SubscribeCustomerQuote 경로
+// 같은 ws 로 둘 다 도착할 수 있고, 카드에 양쪽 row 모두 표시해 마진 차이 시각화.
 function applyCustomerQuote(q) {
   if (!q.pair) return;
   const sym = q.pair.replace(/\//g, "");                  // "USD/KRW" → "USDKRW"
@@ -5732,16 +5759,26 @@ function applyCustomerQuote(q) {
             last: 0, lastQty: 0, prevBid: 0, prevAsk: 0, prevLast: 0, priceHistory: [] };
     quoteState.symbols.set(sym, row);
   }
-  // customer quote 만의 필드 — 별도 보관, BEST 값과 별개.
-  row.custBid = typeof q.bid === "number" ? q.bid : row.custBid;
-  row.custAsk = typeof q.ask === "number" ? q.ask : row.custAsk;
-  row.custRawBid = typeof q.raw_bid === "number" ? q.raw_bid : row.custRawBid;
-  row.custRawAsk = typeof q.raw_ask === "number" ? q.raw_ask : row.custRawAsk;
   row.profile = (q.chan || "") + "." + (q.site || "") + "." + (q.tier || "");
   row.tenor = q.tenor || row.tenor;
-  // 카운터 + 갱신.
-  quoteState.quotesReceived = (quoteState.quotesReceived || 0) + 1;
-  $("#q-stat-quotes").textContent = String(quoteState.quotesReceived);
+  if (q.customer_id) {
+    // P4c — 5-Layer (HQ+Site+Customer+Window) — SubscribeCustomerQuote 경로.
+    row.cust5Bid = typeof q.bid === "number" ? q.bid : row.cust5Bid;
+    row.cust5Ask = typeof q.ask === "number" ? q.ask : row.cust5Ask;
+    row.cust5RawBid = typeof q.raw_bid === "number" ? q.raw_bid : row.cust5RawBid;
+    row.cust5RawAsk = typeof q.raw_ask === "number" ? q.raw_ask : row.cust5RawAsk;
+    row.cust5CustomerID = q.customer_id;
+    quoteState.quotes5LReceived = (quoteState.quotes5LReceived || 0) + 1;
+    $("#q-stat-quotes-5l").textContent = String(quoteState.quotes5LReceived);
+  } else {
+    // P3 — Profile-only (HQ+Site) — SubscribeQuote 경로.
+    row.custBid = typeof q.bid === "number" ? q.bid : row.custBid;
+    row.custAsk = typeof q.ask === "number" ? q.ask : row.custAsk;
+    row.custRawBid = typeof q.raw_bid === "number" ? q.raw_bid : row.custRawBid;
+    row.custRawAsk = typeof q.raw_ask === "number" ? q.raw_ask : row.custRawAsk;
+    quoteState.quotesReceived = (quoteState.quotesReceived || 0) + 1;
+    $("#q-stat-quotes").textContent = String(quoteState.quotesReceived);
+  }
   $("#q-stat-symbols").textContent = String(quoteState.symbols.size);
   quoteRender();
 }
@@ -5840,13 +5877,12 @@ function quoteRender() {
     grid3.appendChild(quoteCell("ASK", r.ask, r.askQty, r.ask - r.prevAsk, "text-bad"));
     card.appendChild(grid3);
 
-    // customer quote (마진 적용 시세) row — 활성 profile 이 매칭되면 표시.
-    // raw bid/ask vs customer bid/ask 차이 = 적용된 마진. profile 라벨도 같이.
+    // Profile-only customer quote row (P3 — HQ+Site) — SubscribeQuote 경로.
     if (typeof r.custBid === "number" && typeof r.custAsk === "number") {
       const bidMargin = r.custRawBid ? (r.custRawBid - r.custBid) : 0;
       const askMargin = r.custRawAsk ? (r.custAsk - r.custRawAsk) : 0;
       const cqHead = h("div", { class: "flex items-center justify-between mt-2 mb-1" },
-        h("div", { class: "text-[10px] uppercase tracking-widest text-accent-400", text: "Customer (마진 적용)" }),
+        h("div", { class: "text-[10px] uppercase tracking-widest text-accent-400", text: "Profile (HQ + Site)" }),
         h("div", { class: "text-[10px] font-mono text-slate-500", text: r.profile + (r.tenor ? " · " + r.tenor : "") }),
       );
       card.appendChild(cqHead);
@@ -5862,6 +5898,39 @@ function quoteRender() {
       if (askMargin) cask.appendChild(h("div", { class: "text-[10px] font-mono text-slate-500", text: "+ " + askMargin.toFixed(4) }));
       cgrid.appendChild(cask);
       card.appendChild(cgrid);
+    }
+
+    // 5-Layer customer quote row (P4 — HQ+Site+Customer+Window) — SubscribeCustomerQuote 경로.
+    // customer_id 가 있을 때만 표시. Profile row 와 별도 — 마진 차이로 customer 가중치 시각화.
+    if (typeof r.cust5Bid === "number" && typeof r.cust5Ask === "number") {
+      const bid5Margin = r.cust5RawBid ? (r.cust5RawBid - r.cust5Bid) : 0;
+      const ask5Margin = r.cust5RawAsk ? (r.cust5Ask - r.cust5RawAsk) : 0;
+      // Profile 마진과 5-Layer 마진의 차이 — customer-specific 가중치만 추출.
+      const bidDelta5 = (typeof r.custBid === "number" && typeof r.cust5Bid === "number") ? (r.custBid - r.cust5Bid) : null;
+      const askDelta5 = (typeof r.custAsk === "number" && typeof r.cust5Ask === "number") ? (r.cust5Ask - r.custAsk) : null;
+      const cq5Head = h("div", { class: "flex items-center justify-between mt-2 mb-1" },
+        h("div", { class: "text-[10px] uppercase tracking-widest text-indigo-400", text: "5-Layer (HQ+Site+Customer+Window)" }),
+        h("div", { class: "text-[10px] font-mono text-slate-500", text: "cust:" + r.cust5CustomerID }),
+      );
+      card.appendChild(cq5Head);
+      const c5grid = h("div", { class: "grid grid-cols-2 gap-2 text-xs font-mono" });
+      const c5bid = h("div", { class: "p-2 rounded-md bg-indigo-500/10 border border-indigo-500/20" });
+      c5bid.appendChild(h("div", { class: "text-[10px] uppercase tracking-widest text-slate-400", text: "5L Bid" }));
+      c5bid.appendChild(h("div", { class: "font-mono text-sm text-indigo-300", text: r.cust5Bid.toFixed(4) }));
+      if (bid5Margin) c5bid.appendChild(h("div", { class: "text-[10px] font-mono text-slate-500", text: "− " + bid5Margin.toFixed(4) }));
+      if (bidDelta5 !== null && Math.abs(bidDelta5) > 1e-9)
+        c5bid.appendChild(h("div", { class: "text-[10px] font-mono " + (bidDelta5 >= 0 ? "text-good" : "text-bad"),
+          text: "Δ vs Profile " + (bidDelta5 >= 0 ? "+" : "") + bidDelta5.toFixed(4) }));
+      c5grid.appendChild(c5bid);
+      const c5ask = h("div", { class: "p-2 rounded-md bg-indigo-500/10 border border-indigo-500/20" });
+      c5ask.appendChild(h("div", { class: "text-[10px] uppercase tracking-widest text-slate-400", text: "5L Ask" }));
+      c5ask.appendChild(h("div", { class: "font-mono text-sm text-indigo-300", text: r.cust5Ask.toFixed(4) }));
+      if (ask5Margin) c5ask.appendChild(h("div", { class: "text-[10px] font-mono text-slate-500", text: "+ " + ask5Margin.toFixed(4) }));
+      if (askDelta5 !== null && Math.abs(askDelta5) > 1e-9)
+        c5ask.appendChild(h("div", { class: "text-[10px] font-mono " + (askDelta5 >= 0 ? "text-bad" : "text-good"),
+          text: "Δ vs Profile " + (askDelta5 >= 0 ? "+" : "") + askDelta5.toFixed(4) }));
+      c5grid.appendChild(c5ask);
+      card.appendChild(c5grid);
     }
 
     // sparkline — 최근 60틱 mid price 추이. canvas 직접 그리기 (Chart.js

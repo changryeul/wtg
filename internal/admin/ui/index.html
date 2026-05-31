@@ -300,6 +300,7 @@
         <div class="space-y-0.5 mb-3">
           <button data-page="symbols"         class="nav-btn nav-item"><span class="nav-ico">🔤</span>통화쌍</button>
           <button data-page="pricing"         class="nav-btn nav-item"><span class="nav-ico">💰</span>마진 테이블</button>
+          <button data-page="swap"            class="nav-btn nav-item"><span class="nav-ico">📅</span>선물환 스왑</button>
           <button data-page="profiles"        class="nav-btn nav-item"><span class="nav-ico">🧩</span>프로파일</button>
           <button data-page="users"           class="nav-btn nav-item"><span class="nav-ico">👥</span>사용자 프로파일</button>
           <button data-page="quoteid-engines" class="nav-btn nav-item"><span class="nav-ico">🔑</span>QuoteID 엔진</button>
@@ -1033,6 +1034,48 @@
               style="height: 60vh; resize: vertical;"
               placeholder='{"version":1,"time_windows":[],"hq_margin":[],"site_margin":[],"customer_margin":[],"swap_point":[]}'></textarea>
             <div id="pricing-error" class="hidden text-xs text-bad font-mono"></div>
+          </div>
+        </div>
+
+        <!-- 선물환 스왑 (swap) — swap_point 만 별도 편집. pricing 페이지의 전체 JSON 편집보다 운영 친화. -->
+        <div id="page-swap" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">선물환 스왑 (swap point)</h3>
+              <p class="text-sm text-slate-400">tenor × pair 그리드 편집. 셀 값 수정 → 저장 시 PricingTable 의 <code>swap_point</code> 항목만 교체. mci-price 가 etcd watch 로 즉시 hot reload. forward snapshot endpoint 가 새 값으로 응답.</p>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-slate-400">PricingTable</span>
+              <span id="sw-version" class="font-mono text-accent-400">—</span>
+              <button id="sw-reload" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">↻ 새로고침</button>
+            </div>
+          </div>
+
+          <!-- 그리드 + 컨트롤 -->
+          <div class="border-gradient rounded-2xl p-4 space-y-3">
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <span class="text-slate-400 uppercase tracking-widest text-[10px]">행 (pair) / 열 (tenor) 추가</span>
+              <input id="sw-add-pair" placeholder="새 pair (예: GBP/KRW)"
+                class="px-2 py-1 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px]" />
+              <button id="sw-add-pair-btn" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">+ 행</button>
+              <input id="sw-add-tenor" placeholder="새 tenor (예: 6M)"
+                class="px-2 py-1 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px]" />
+              <button id="sw-add-tenor-btn" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">+ 열</button>
+              <div class="grow"></div>
+              <span id="sw-dirty-count" class="text-[10px] text-warn font-mono"></span>
+              <button id="sw-discard" class="px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:bg-bad/20 hover:text-bad text-xs">변경 취소</button>
+              <button id="sw-save" class="px-4 py-1.5 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-xs hover:from-accent-400">▶ 저장</button>
+            </div>
+            <div class="text-[10px] text-slate-500">셀 안의 두 값: <span class="text-good">bid_amount</span> / <span class="text-bad">ask_amount</span>. 빈 값 입력 시 해당 (pair,tenor) 의 swap entry 제거.</div>
+            <div id="sw-grid-wrap" class="overflow-x-auto">
+              <table id="sw-grid" class="font-mono text-xs border-separate" style="border-spacing: 0;">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="sw-empty" class="hidden p-6 text-center text-slate-500 text-sm">
+              아직 swap_point entry 가 없습니다. 위에서 "+ 행" 으로 pair 를 추가하세요.
+            </div>
           </div>
         </div>
 
@@ -2291,7 +2334,8 @@ function goPage(name) {
   const titles = { dashboard: "대시보드", routes: "라우팅 룰", policy: "정책 엔진",
                    broker: "브로커 명령",
                    tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
-                   symbols: "통화쌍", pricing: "마진 테이블", profiles: "프로파일",
+                   symbols: "통화쌍", pricing: "마진 테이블", swap: "선물환 스왑",
+                   profiles: "프로파일",
                    users: "사용자 프로파일",
                    svcio: "서비스 명세", pricestats: "시세 통계",
                    margin: "마진 재계산", "margin-calc": "마진 계산기 (5-Layer)",
@@ -2305,6 +2349,7 @@ function goPage(name) {
   if (name === "quote")     initQuote();
   if (name === "symbols")   loadSymbols();
   if (name === "pricing")   loadPricing();
+  if (name === "swap")      initSwap();
   if (name === "profiles")  loadProfiles();
   if (name === "users")     loadUserProfiles();
   if (name === "quoteid-engines") loadQEngines();
@@ -4200,6 +4245,283 @@ const svcioState = {
 };
 // 호출 형식 localStorage 보존 — 페이지 reload 후에도 유지. 라우팅 화면과 공유.
 const LS_SVCIO_FORMAT = "wtg_svcio_format";
+
+// ───────── 선물환 스왑 (swap_point 전용 편집) ─────────
+//
+// 운영자가 tenor × pair 그리드에서 swap 값만 빠르게 수정. PricingTable 의
+// 다른 layer (HQ/Site/Customer) 는 건드리지 않음 — GET → swap_point 만 교체
+// → PUT. mci-price 의 etcd watch 가 자동 hot reload.
+
+const swState = {
+  wired: false,
+  doc: null,           // 전체 PricingTable doc (저장 시 다른 layer 보존용)
+  pairs: [],           // 정렬된 pair 목록
+  tenors: [],          // 정렬된 tenor 목록 (관행: SPOT, 1W, 1M, 3M, 6M, 1Y)
+  cells: new Map(),    // "pair|tenor" → { bid, ask } — 현재 값 (사용자 편집 반영)
+  baseline: new Map(), // 같은 키 → 서버에서 받은 원본. dirty 비교용
+};
+
+async function initSwap() {
+  if (!swState.wired) {
+    swState.wired = true;
+    $("#sw-reload").addEventListener("click", swLoad);
+    $("#sw-save").addEventListener("click", swSave);
+    $("#sw-discard").addEventListener("click", swDiscard);
+    $("#sw-add-pair-btn").addEventListener("click", swAddPair);
+    $("#sw-add-tenor-btn").addEventListener("click", swAddTenor);
+  }
+  await swLoad();
+}
+
+const SW_TENOR_ORDER = ["SPOT","ON","TN","SN","1W","2W","1M","2M","3M","6M","9M","1Y"];
+function swTenorRank(t) {
+  const i = SW_TENOR_ORDER.indexOf(t);
+  return i < 0 ? 99 + t.charCodeAt(0) : i;
+}
+
+async function swLoad() {
+  try {
+    const resp = await fetch("/v1/admin/pricing/table", { credentials: "same-origin", headers: authHeaders() });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const doc = await resp.json();
+    swState.doc = doc;
+    $("#sw-version").textContent = "v" + (doc.version != null ? doc.version : "—");
+
+    // swap_point → cells/baseline.
+    swState.cells.clear();
+    swState.baseline.clear();
+    const pairSet = new Set();
+    const tenorSet = new Set();
+    for (const e of (doc.swap_point || [])) {
+      const k = e.pair + "|" + e.tenor;
+      const v = { bid: e.bid_amount, ask: e.ask_amount };
+      swState.cells.set(k, { ...v });
+      swState.baseline.set(k, { ...v });
+      pairSet.add(e.pair);
+      tenorSet.add(e.tenor);
+    }
+    swState.pairs = Array.from(pairSet).sort();
+    swState.tenors = Array.from(tenorSet).sort((a,b) => swTenorRank(a) - swTenorRank(b));
+
+    swRenderGrid();
+    swUpdateDirty();
+  } catch (e) {
+    toast("swap 로드 실패: " + e.message, "err");
+  }
+}
+
+function swCellKey(pair, tenor) { return pair + "|" + tenor; }
+
+function swRenderGrid() {
+  const tbl = $("#sw-grid");
+  const thead = tbl.querySelector("thead");
+  const tbody = tbl.querySelector("tbody");
+  thead.replaceChildren();
+  tbody.replaceChildren();
+
+  if (swState.pairs.length === 0 || swState.tenors.length === 0) {
+    $("#sw-empty").classList.remove("hidden");
+    tbl.classList.add("hidden");
+    return;
+  }
+  $("#sw-empty").classList.add("hidden");
+  tbl.classList.remove("hidden");
+
+  // 헤더 — pair 컬럼 + tenor 컬럼들 + 삭제 컬럼.
+  const trh = h("tr");
+  trh.appendChild(h("th", { class: "px-3 py-2 text-left text-slate-500 uppercase tracking-widest text-[10px] sticky left-0 bg-ink-900", text: "pair / tenor" }));
+  for (const tn of swState.tenors) {
+    const th = h("th", { class: "px-3 py-2 text-center text-accent-400 border-l border-ink-700/40" });
+    th.appendChild(h("span", { text: tn }));
+    th.appendChild(h("button", {
+      class: "ml-1 text-[10px] text-slate-600 hover:text-bad",
+      title: "열 (" + tn + ") 삭제",
+      onClick: () => swDeleteTenor(tn),
+      text: "✕",
+    }));
+    trh.appendChild(th);
+  }
+  trh.appendChild(h("th", { class: "px-2 py-2 text-slate-600 border-l border-ink-700/40", text: " " }));
+  thead.appendChild(trh);
+
+  // 행 — pair 별
+  for (const p of swState.pairs) {
+    const tr = h("tr");
+    tr.appendChild(h("td", { class: "px-3 py-2 sticky left-0 bg-ink-900 border-r border-ink-700/40 text-accent-400", text: p }));
+    for (const tn of swState.tenors) {
+      const k = swCellKey(p, tn);
+      const v = swState.cells.get(k);
+      const cell = h("td", { class: "px-2 py-1 border-l border-ink-700/40" });
+      const grp = h("div", { class: "flex items-center gap-1" });
+      const bidIn = h("input", {
+        type: "number", step: "0.0001",
+        class: "w-20 px-1 py-0.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px] text-good",
+        value: v ? String(v.bid) : "",
+        placeholder: "bid",
+      });
+      bidIn.addEventListener("input", () => swCellEdit(p, tn, "bid", bidIn.value));
+      const slash = h("span", { class: "text-slate-600", text: "/" });
+      const askIn = h("input", {
+        type: "number", step: "0.0001",
+        class: "w-20 px-1 py-0.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px] text-bad",
+        value: v ? String(v.ask) : "",
+        placeholder: "ask",
+      });
+      askIn.addEventListener("input", () => swCellEdit(p, tn, "ask", askIn.value));
+      grp.appendChild(bidIn);
+      grp.appendChild(slash);
+      grp.appendChild(askIn);
+      cell.appendChild(grp);
+      // dirty 표시 — baseline 과 다른가.
+      if (swIsDirty(p, tn)) cell.classList.add("bg-warn/10");
+      tr.appendChild(cell);
+    }
+    // 행 삭제 버튼
+    const del = h("td", { class: "px-2 border-l border-ink-700/40" });
+    del.appendChild(h("button", {
+      class: "text-[11px] text-slate-600 hover:text-bad",
+      title: "행 (" + p + ") 삭제",
+      onClick: () => swDeletePair(p),
+      text: "✕",
+    }));
+    tr.appendChild(del);
+    tbody.appendChild(tr);
+  }
+}
+
+function swIsDirty(pair, tenor) {
+  const k = swCellKey(pair, tenor);
+  const a = swState.cells.get(k);
+  const b = swState.baseline.get(k);
+  if (!a && !b) return false;
+  if (!a || !b) return true; // 한쪽만 존재 = 추가 또는 삭제
+  return a.bid !== b.bid || a.ask !== b.ask;
+}
+
+function swCellEdit(pair, tenor, side, raw) {
+  const k = swCellKey(pair, tenor);
+  raw = (raw || "").trim();
+  const cur = swState.cells.get(k) || { bid: 0, ask: 0 };
+  if (raw === "") {
+    // 둘 다 비면 셀 제거 (delete).
+    if (side === "bid") cur.bid = NaN;
+    else cur.ask = NaN;
+  } else {
+    const v = parseFloat(raw);
+    if (isNaN(v)) return;
+    cur[side] = v;
+  }
+  // 둘 다 NaN 이면 entry 제거.
+  if (isNaN(cur.bid) && isNaN(cur.ask)) {
+    swState.cells.delete(k);
+  } else {
+    // 한쪽 NaN 이면 0 으로.
+    if (isNaN(cur.bid)) cur.bid = 0;
+    if (isNaN(cur.ask)) cur.ask = 0;
+    swState.cells.set(k, cur);
+  }
+  swUpdateDirty();
+  // 셀 하나만 dirty 표시 변경 — 가벼운 re-paint 위해 row 다시 그리지 않고
+  // td 만 색 토글.
+  // 간단히 전체 grid re-render (행/열 수십 단위라 충분히 빠름).
+  swRenderGrid();
+}
+
+function swDeletePair(pair) {
+  if (!confirm(`pair "${pair}" 의 모든 tenor 항목을 삭제합니다. 계속?`)) return;
+  for (const tn of swState.tenors) swState.cells.delete(swCellKey(pair, tn));
+  swState.pairs = swState.pairs.filter(p => p !== pair);
+  swRenderGrid();
+  swUpdateDirty();
+}
+
+function swDeleteTenor(tenor) {
+  if (!confirm(`tenor "${tenor}" 의 모든 pair 항목을 삭제합니다. 계속?`)) return;
+  for (const p of swState.pairs) swState.cells.delete(swCellKey(p, tenor));
+  swState.tenors = swState.tenors.filter(t => t !== tenor);
+  swRenderGrid();
+  swUpdateDirty();
+}
+
+function swAddPair() {
+  const v = $("#sw-add-pair").value.trim().toUpperCase();
+  if (!v) return;
+  if (!v.includes("/")) { toast("pair 형식은 BASE/QUOTE (예: USD/KRW)", "warn"); return; }
+  if (swState.pairs.includes(v)) { toast("이미 존재: " + v, "warn"); return; }
+  swState.pairs.push(v);
+  swState.pairs.sort();
+  $("#sw-add-pair").value = "";
+  swRenderGrid();
+}
+
+function swAddTenor() {
+  const v = $("#sw-add-tenor").value.trim().toUpperCase();
+  if (!v) return;
+  if (swState.tenors.includes(v)) { toast("이미 존재: " + v, "warn"); return; }
+  swState.tenors.push(v);
+  swState.tenors.sort((a,b) => swTenorRank(a) - swTenorRank(b));
+  $("#sw-add-tenor").value = "";
+  swRenderGrid();
+}
+
+function swUpdateDirty() {
+  let n = 0;
+  const keys = new Set([...swState.cells.keys(), ...swState.baseline.keys()]);
+  for (const k of keys) {
+    const [p, t] = k.split("|");
+    if (swIsDirty(p, t)) n++;
+  }
+  const el = $("#sw-dirty-count");
+  if (n === 0) el.textContent = "";
+  else el.textContent = "● 변경 " + n + " 건";
+}
+
+async function swDiscard() {
+  if (!confirm("편집 중인 변경을 모두 버립니다. 계속?")) return;
+  await swLoad();
+}
+
+async function swSave() {
+  if (!swState.doc) { toast("PricingTable 미로드", "warn"); return; }
+  // 변경 set 계산.
+  let dirtyCount = 0;
+  const keys = new Set([...swState.cells.keys(), ...swState.baseline.keys()]);
+  for (const k of keys) {
+    const [p, t] = k.split("|");
+    if (swIsDirty(p, t)) dirtyCount++;
+  }
+  if (dirtyCount === 0) { toast("변경 없음", "info"); return; }
+  if (!confirm(`swap_point ${dirtyCount} 건 변경을 PricingTable 에 반영합니다. 계속?`)) return;
+
+  // 현재 cells → swap_point 배열 (정렬 안정성: pair / tenor 순).
+  const swapArr = [];
+  for (const p of swState.pairs) {
+    for (const tn of swState.tenors) {
+      const v = swState.cells.get(swCellKey(p, tn));
+      if (!v) continue;
+      swapArr.push({ pair: p, tenor: tn, bid_amount: v.bid, ask_amount: v.ask });
+    }
+  }
+  // 기존 doc 의 다른 layer 는 보존, swap_point + version 만 갱신.
+  const newDoc = { ...swState.doc, swap_point: swapArr };
+  newDoc.version = (swState.doc.version || 0) + 1;
+  try {
+    const resp = await fetch("/v1/admin/pricing/table", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(newDoc),
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error("HTTP " + resp.status + ": " + t);
+    }
+    toast(`swap_point 저장 완료 (v${newDoc.version}, ${dirtyCount}건)`, "ok");
+    await swLoad();
+  } catch (e) {
+    toast("저장 실패: " + e.message, "err");
+  }
+}
 
 // ───────── 마진 계산기 (5-Layer) ─────────
 //

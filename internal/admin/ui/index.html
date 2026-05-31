@@ -1651,6 +1651,44 @@
             </div>
           </div>
 
+          <!-- Latency 카드 — envelope.ts → IngestEnvelopes 진입. broker vs grpc path 정량 비교. -->
+          <div class="border-gradient rounded-2xl p-4">
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-xs uppercase tracking-widest text-slate-400">e2e latency (envelope ts → mci-price)</div>
+              <span id="ps-lat-count" class="text-[10px] text-slate-500 font-mono">0 samples</span>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs">
+              <div class="rounded bg-ink-800/40 px-2 py-1.5">
+                <div class="text-[10px] text-slate-400">avg</div>
+                <div id="ps-lat-avg" class="font-mono text-slate-200">—</div>
+              </div>
+              <div class="rounded bg-ink-800/40 px-2 py-1.5">
+                <div class="text-[10px] text-slate-400">max</div>
+                <div id="ps-lat-max" class="font-mono text-slate-200">—</div>
+              </div>
+              <div class="rounded bg-ink-800/40 px-2 py-1.5">
+                <div class="text-[10px] text-slate-500">&lt; 1ms</div>
+                <div id="ps-lat-b1ms" class="font-mono text-good">0</div>
+              </div>
+              <div class="rounded bg-ink-800/40 px-2 py-1.5">
+                <div class="text-[10px] text-slate-500">&lt; 10ms</div>
+                <div id="ps-lat-b10ms" class="font-mono text-good">0</div>
+              </div>
+              <div class="rounded bg-ink-800/40 px-2 py-1.5">
+                <div class="text-[10px] text-slate-500">&lt; 100ms</div>
+                <div id="ps-lat-b100ms" class="font-mono text-slate-200">0</div>
+              </div>
+              <div class="rounded bg-ink-800/40 px-2 py-1.5">
+                <div class="text-[10px] text-slate-500">&lt; 1s</div>
+                <div id="ps-lat-b1s" class="font-mono text-warn">0</div>
+              </div>
+            </div>
+            <div class="mt-2 text-[10px] text-slate-500">
+              ≥1s: <span id="ps-lat-bge1s" class="font-mono text-bad">0</span> &nbsp;·&nbsp;
+              clock skew (negative): <span id="ps-lat-neg" class="font-mono text-slate-500">0</span>
+            </div>
+          </div>
+
           <!-- best-stats 테이블 — symbol 별 best bid/ask + feed source. -->
           <div class="border-gradient rounded-2xl overflow-hidden">
             <div class="px-4 py-2 border-b border-ink-700/60 flex items-center justify-between">
@@ -4958,6 +4996,17 @@ function renderPriceStats(d) {
   $("#ps-dropped").textContent  = (d.dropped ?? 0).toLocaleString();
   $("#ps-subdrops").textContent = (d.sub_drops ?? 0).toLocaleString();
   $("#ps-conf-syms").textContent = (d.conflation && d.conflation.Symbols) || 0;
+  // Latency 카드 — envelope.ts → IngestEnvelopes.
+  const lat = d.latency || {};
+  $("#ps-lat-count").textContent = (lat.count ?? 0).toLocaleString() + " samples";
+  $("#ps-lat-avg").textContent   = lat.count ? (lat.avg_ms ?? 0).toFixed(2) + " ms" : "—";
+  $("#ps-lat-max").textContent   = lat.count ? (lat.max_ms ?? 0).toFixed(2) + " ms" : "—";
+  $("#ps-lat-b1ms").textContent   = (lat.bucket_lt_1ms   ?? 0).toLocaleString();
+  $("#ps-lat-b10ms").textContent  = (lat.bucket_lt_10ms  ?? 0).toLocaleString();
+  $("#ps-lat-b100ms").textContent = (lat.bucket_lt_100ms ?? 0).toLocaleString();
+  $("#ps-lat-b1s").textContent    = (lat.bucket_lt_1s    ?? 0).toLocaleString();
+  $("#ps-lat-bge1s").textContent  = (lat.bucket_ge_1s    ?? 0).toLocaleString();
+  $("#ps-lat-neg").textContent    = (lat.negative_count  ?? 0).toLocaleString();
 }
 
 function renderBestStats(d) {

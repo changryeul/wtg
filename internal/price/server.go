@@ -73,6 +73,10 @@ type Server struct {
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
 	totalDrop  atomic.Uint64 // 디코딩 실패 등
 	totalTicks atomic.Uint64 // 실제 처리된 envelope (tick) 수.
+
+	// e2e latency — envelope.ts (cooker 측 시각) vs IngestEnvelopes 진입 시각.
+	// 운영 가시화 — broker vs grpc path 의 정량적 비교, P99 추세 모니터링.
+	latency LatencyTracker
 	// batch 1개 broker message 가 N envelope 을 담을 수 있으므로
 	// totalRecv (broker message 수) 와 분리. delivery% 측정 시 sent UDP
 	// 와 비교할 대상은 totalTicks 쪽.
@@ -326,7 +330,10 @@ func (s *Server) IngestEnvelopes(body []byte, baseTick *Tick) {
 		return
 	}
 
+	ingressTS := time.Now()
 	for _, env := range envs {
+		// e2e latency — cooker 가 매긴 ts vs 본 함수 진입 시각.
+		s.latency.Observe(env.TS, ingressTS)
 		// envelope 별 sub-tick — Symbol/Source 를 envelope 으로 덮어쓴다.
 		// (batch 일 때 baseTick.Symbol 은 첫 envelope 만 반영하므로 per-envelope
 		// sym 으로 SymbolMap lookup 해야 정확.)
@@ -404,6 +411,10 @@ type Stats struct {
 	// 를 늘리거나 subscribeLoop 처리 속도 개선 필요.
 	SubDrops      uint64 `json:"sub_drops"`
 	SubBufferSize int    `json:"sub_buffer_size"`
+
+	// Latency — envelope.ts → IngestEnvelopes 진입 시각 e2e 지연.
+	// broker vs grpc path 의 정량적 비교 지표.
+	Latency LatencySnapshot `json:"latency"`
 }
 
 // Stats 는 외부 노출용 카운터.
@@ -422,6 +433,7 @@ func (s *Server) Stats() Stats {
 		Conf:          s.conflation.Stats(),
 		SubDrops:      subDrops,
 		SubBufferSize: subBuf,
+		Latency:       s.latency.Snapshot(),
 	}
 }
 

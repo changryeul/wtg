@@ -909,11 +909,23 @@
                 class="flex-1 px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px]" />
               <span class="text-[10px] text-slate-500 pt-1">8083=edge-price ✓ / 8081=mci-push ✗</span>
             </div>
+            <!-- Profile (마진 적용 customer quote 수신) — DevMode 에서 ?profile= query 로 전달.
+                 운영 (JWT) 에서는 Principal claim 으로 자동 결정. 빈값이면 customer quote 미수신 (BEST 만). -->
+            <div class="flex items-center gap-2 text-xs">
+              <div class="flex flex-col">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Profile (customer quote)</span>
+                <span class="text-[10px] text-slate-600">DevMode: ?profile= / 운영: JWT claim</span>
+              </div>
+              <input id="q-profile" value="WEB.BRANCH.VIP" placeholder="Channel.Site.Tier (비면 BEST 만 수신)"
+                class="flex-1 px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px]" />
+              <span class="text-[10px] text-slate-500 pt-1">미등록 profile = 매칭 안 됨</span>
+            </div>
             <div class="flex flex-wrap items-center gap-4 text-xs text-slate-400">
               <span>총 메시지 <span id="q-stat-total" class="font-mono text-slate-200">0</span></span>
               <span>tick/sec <span id="q-stat-rate" class="font-mono text-slate-200">0</span></span>
               <span>통화쌍 <span id="q-stat-symbols" class="font-mono text-slate-200">0</span></span>
               <span>체결 <span id="q-stat-trades" class="font-mono text-slate-200">0</span></span>
+              <span>customer quote <span id="q-stat-quotes" class="font-mono text-accent-400">0</span></span>
             </div>
           </div>
 
@@ -5598,6 +5610,10 @@ function quoteConnect() {
     const t = localStorage.getItem(LS_TOKEN);
     if (t && !/[?&]access_token=/.test(url)) url += sep() + "access_token=" + encodeURIComponent(t);
   }
+  // Profile query — DevMode 의 customer quote (마진 적용) 수신 — 운영은 JWT claim.
+  // 빈값이면 미첨부 → Principal.ProfileKey() 빈값 → quote 미수신, BEST 만.
+  const profile = ($("#q-profile") && $("#q-profile").value.trim()) || "";
+  if (profile && !/[?&]profile=/.test(url)) url += sep() + "profile=" + encodeURIComponent(profile);
   quoteSetState("connecting");
   let sock;
   try { sock = new WebSocket(url); }
@@ -5654,6 +5670,14 @@ function handleQuoteFrame(raw) {
   let outer; try { outer = JSON.parse(raw); } catch (_) { return; }
   if (!outer || typeof outer !== "object") return;
 
+  // path C — customer quote (마진 적용 시세) — edge-price quote-stream 의 출력.
+  // {type:"quote", pair, chan, site, tier, bid, ask, raw_bid, raw_ask, v, ts_unix_nano}
+  // outer.data 없음 (평면). control echo (subscribed) 와 구분 — outer.pair 가 키.
+  if (outer.type === "quote" && outer.pair) {
+    applyCustomerQuote(outer);
+    return;
+  }
+
   // control echo (예: {"type":"subscribed","pairs":[...]}) — 무시.
   if (outer.type && !outer.data) return;
 
@@ -5673,6 +5697,34 @@ function handleQuoteFrame(raw) {
     applyQuoteEnvelope(env);
     return;
   }
+}
+
+// applyCustomerQuote — 마진 적용된 customer quote 를 symbol row 에 흡수.
+// edge-price 의 encodeCustomerQuoteJSON 출력 형식. pair 는 "USD/KRW" 형식,
+// BEST tick 은 "USDKRW" 형식 — applyBestTick 의 row key 와 매칭하기 위해 slash 제거.
+function applyCustomerQuote(q) {
+  if (!q.pair) return;
+  const sym = q.pair.replace(/\//g, "");                  // "USD/KRW" → "USDKRW"
+  if (quoteState.allowed && !quoteState.allowed[sym]) return;
+  let row = quoteState.symbols.get(sym);
+  if (!row) {
+    // BEST tick 이 먼저 와야 row 가 생기지만, customer quote 가 먼저 와도 빈 row 생성.
+    row = { feed: "BEST", ts: "", bid: 0, bidQty: 0, ask: 0, askQty: 0,
+            last: 0, lastQty: 0, prevBid: 0, prevAsk: 0, prevLast: 0, priceHistory: [] };
+    quoteState.symbols.set(sym, row);
+  }
+  // customer quote 만의 필드 — 별도 보관, BEST 값과 별개.
+  row.custBid = typeof q.bid === "number" ? q.bid : row.custBid;
+  row.custAsk = typeof q.ask === "number" ? q.ask : row.custAsk;
+  row.custRawBid = typeof q.raw_bid === "number" ? q.raw_bid : row.custRawBid;
+  row.custRawAsk = typeof q.raw_ask === "number" ? q.raw_ask : row.custRawAsk;
+  row.profile = (q.chan || "") + "." + (q.site || "") + "." + (q.tier || "");
+  row.tenor = q.tenor || row.tenor;
+  // 카운터 + 갱신.
+  quoteState.quotesReceived = (quoteState.quotesReceived || 0) + 1;
+  $("#q-stat-quotes").textContent = String(quoteState.quotesReceived);
+  $("#q-stat-symbols").textContent = String(quoteState.symbols.size);
+  quoteRender();
 }
 
 // applyBestTick — mci-price BEST tick 1건 반영. 호가 (bid/ask) 만, 체결 없음.
@@ -5768,6 +5820,30 @@ function quoteRender() {
     grid3.appendChild(quoteCell("LAST", r.last, r.lastQty, r.last - r.prevLast, "text-accent-400"));
     grid3.appendChild(quoteCell("ASK", r.ask, r.askQty, r.ask - r.prevAsk, "text-bad"));
     card.appendChild(grid3);
+
+    // customer quote (마진 적용 시세) row — 활성 profile 이 매칭되면 표시.
+    // raw bid/ask vs customer bid/ask 차이 = 적용된 마진. profile 라벨도 같이.
+    if (typeof r.custBid === "number" && typeof r.custAsk === "number") {
+      const bidMargin = r.custRawBid ? (r.custRawBid - r.custBid) : 0;
+      const askMargin = r.custRawAsk ? (r.custAsk - r.custRawAsk) : 0;
+      const cqHead = h("div", { class: "flex items-center justify-between mt-2 mb-1" },
+        h("div", { class: "text-[10px] uppercase tracking-widest text-accent-400", text: "Customer (마진 적용)" }),
+        h("div", { class: "text-[10px] font-mono text-slate-500", text: r.profile + (r.tenor ? " · " + r.tenor : "") }),
+      );
+      card.appendChild(cqHead);
+      const cgrid = h("div", { class: "grid grid-cols-2 gap-2 text-xs font-mono" });
+      const cbid = h("div", { class: "p-2 rounded-md bg-good/10 border border-good/20" });
+      cbid.appendChild(h("div", { class: "text-[10px] uppercase tracking-widest text-slate-400", text: "Cust Bid" }));
+      cbid.appendChild(h("div", { class: "font-mono text-sm text-good", text: r.custBid.toFixed(4) }));
+      if (bidMargin) cbid.appendChild(h("div", { class: "text-[10px] font-mono text-slate-500", text: "− " + bidMargin.toFixed(4) }));
+      cgrid.appendChild(cbid);
+      const cask = h("div", { class: "p-2 rounded-md bg-bad/10 border border-bad/20" });
+      cask.appendChild(h("div", { class: "text-[10px] uppercase tracking-widest text-slate-400", text: "Cust Ask" }));
+      cask.appendChild(h("div", { class: "font-mono text-sm text-bad", text: r.custAsk.toFixed(4) }));
+      if (askMargin) cask.appendChild(h("div", { class: "text-[10px] font-mono text-slate-500", text: "+ " + askMargin.toFixed(4) }));
+      cgrid.appendChild(cask);
+      card.appendChild(cgrid);
+    }
 
     // sparkline — 최근 60틱 mid price 추이. canvas 직접 그리기 (Chart.js
     // 인스턴스 N 개는 무거움). 카드마다 작은 line.

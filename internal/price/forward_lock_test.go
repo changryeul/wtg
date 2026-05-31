@@ -105,11 +105,12 @@ func TestForwardLock_BadRequests(t *testing.T) {
 	srv := httptest.NewServer(ForwardLockHandler(deps, true))
 	defer srv.Close()
 
+	// P5 5단계 2차: tenor / value_date 둘 다 비면 SPOT 으로 fallback (의도된 동작) —
+	// 그 case 는 더 이상 400 아님. pair / profile 자체 누락 + invalid profile 만 검증.
 	bodies := []ForwardLockRequest{
-		{Tenor: "1M", Profile: "WEB.BRANCH.VIP"},                   // pair 누락
-		{Pair: "USD/KRW", Profile: "WEB.BRANCH.VIP"},               // tenor 누락
-		{Pair: "USD/KRW", Tenor: "1M"},                             // profile 누락
-		{Pair: "USD/KRW", Tenor: "1M", Profile: "INVALID"},         // profile 형식
+		{Tenor: "1M", Profile: "WEB.BRANCH.VIP"},           // pair 누락
+		{Pair: "USD/KRW", Tenor: "1M"},                     // profile 누락
+		{Pair: "USD/KRW", Tenor: "1M", Profile: "INVALID"}, // profile 형식
 	}
 	for i, b := range bodies {
 		body, _ := json.Marshal(b)
@@ -130,6 +131,134 @@ func TestForwardLock_GET_MethodNotAllowed(t *testing.T) {
 		t.Errorf("GET status = %d, want 405", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// P5 5단계 2차 — value_date 흐름. broken-date 보간.
+func TestForwardLock_ValueDate_BrokenDate(t *testing.T) {
+	deps := newLockDeps(t)
+	srv := httptest.NewServer(ForwardLockHandler(deps, true))
+	defer srv.Close()
+
+	// 픽스처의 swap_point: 1W(7), 1M(30), 3M(91). 보간을 위한 offsetDays=15
+	// 가 되도록 value_date 계산해서 보낸다 — 단, 현재 시각이 매번 바뀌므로
+	// "오늘로부터 충분히 멀고 보간 가능한 범위" 위주로 확인.
+	// 가장 단순한 검증: value_date 가 1M(30 영업일) 와 일치하지 않으나
+	// 보간 범위 안에 있어 broken-date 응답이 반환되는지 + Interpolation 필드 채워짐.
+	now := time.Now()
+	spot := pricing.SpotDate(now, 2)
+	// SPOT + 15 영업일.
+	vd := pricing.AddBusinessDays(spot, 15)
+	body, _ := json.Marshal(ForwardLockRequest{
+		Pair:       "USD/KRW",
+		ValueDate:  vd.Format("2006-01-02"),
+		Profile:    "WEB.BRANCH.VIP",
+		CustomerID: "alice",
+	})
+	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var got ForwardLockResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Interpolation == nil {
+		t.Fatalf("Interpolation 필드 누락: %+v", got)
+	}
+	ip := got.Interpolation
+	if ip.OffsetDays != 15 {
+		t.Errorf("OffsetDays = %d, want 15", ip.OffsetDays)
+	}
+	// 픽스처는 swap 1W=0.05/0.07, 1M=0.15/0.25, 3M=0.40/0.55. 15일 → 1W~1M 사이.
+	if ip.From != "1W" || ip.To != "1M" {
+		t.Errorf("interpolation range: from=%s to=%s, want 1W~1M", ip.From, ip.To)
+	}
+	wantW := float64(15-7) / float64(30-7) // 8/23
+	if !near(ip.Weight, wantW) {
+		t.Errorf("weight = %v, want %v", ip.Weight, wantW)
+	}
+	// alice add: HQ(0.02)+Site(0.05)+cust(-0.01)+swap_bid(0.05+(0.15-0.05)*8/23) = 0.06 + 0.0848 = 0.1448
+	wantSwapBid := 0.05 + (0.15-0.05)*wantW
+	if !near(ip.SwapBid, wantSwapBid) {
+		t.Errorf("swap_bid = %v, want %v", ip.SwapBid, wantSwapBid)
+	}
+	// 최종 bid 차이 = 0.06 + swap_bid 보간값.
+	wantBidDiff := 0.06 + wantSwapBid
+	if !near(got.RawBid-got.Bid, wantBidDiff) {
+		t.Errorf("final bid 차이 = %v, want %v", got.RawBid-got.Bid, wantBidDiff)
+	}
+
+	// Registry 의 Record 에도 보간 정보 보존됐는지.
+	rec, err := deps.Reg.Get(context.Background(), quoteid.QuoteID(got.QuoteID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.OffsetDays != 15 || rec.InterpolatedFrom != "1W" || rec.InterpolatedTo != "1M" {
+		t.Errorf("Record 보간정보 누락: %+v", rec)
+	}
+	if !near(rec.InterpolationWeight, wantW) {
+		t.Errorf("Record weight = %v, want %v", rec.InterpolationWeight, wantW)
+	}
+}
+
+// value_date 가 SPOT (offset=0) 일 때 — Exact 매칭이지만 swap 0/0 미등록 → out of range.
+// 픽스처에는 SPOT swap 없으니 1W 부터. offset=0 (value=spot) 보내면 out of range.
+func TestForwardLock_ValueDate_OutOfRange_TooSmall(t *testing.T) {
+	deps := newLockDeps(t)
+	srv := httptest.NewServer(ForwardLockHandler(deps, true))
+	defer srv.Close()
+	now := time.Now()
+	spot := pricing.SpotDate(now, 2)
+	body, _ := json.Marshal(ForwardLockRequest{
+		Pair: "USD/KRW", ValueDate: spot.Format("2006-01-02"),
+		Profile: "WEB.BRANCH.VIP", CustomerID: "alice",
+	})
+	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Errorf("status = %d, want 400 (out of range)", resp.StatusCode)
+	}
+}
+
+// value_date 가 standard tenor 와 정확 일치 → Exact 응답.
+func TestForwardLock_ValueDate_Exact(t *testing.T) {
+	deps := newLockDeps(t)
+	srv := httptest.NewServer(ForwardLockHandler(deps, true))
+	defer srv.Close()
+	now := time.Now()
+	spot := pricing.SpotDate(now, 2)
+	vd := pricing.AddBusinessDays(spot, 30) // 1M
+	body, _ := json.Marshal(ForwardLockRequest{
+		Pair: "USD/KRW", ValueDate: vd.Format("2006-01-02"),
+		Profile: "WEB.BRANCH.VIP", CustomerID: "alice",
+	})
+	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	var got ForwardLockResponse
+	_ = json.NewDecoder(resp.Body).Decode(&got)
+	if got.Interpolation == nil || !got.Interpolation.Exact {
+		t.Fatalf("Exact 매칭 안 됨: %+v", got.Interpolation)
+	}
+	if got.Tenor != "1M" {
+		t.Errorf("Exact 시 Tenor = %q, want 1M", got.Tenor)
+	}
+}
+
+// invalid value_date 형식 → 400.
+func TestForwardLock_ValueDate_BadFormat(t *testing.T) {
+	deps := newLockDeps(t)
+	srv := httptest.NewServer(ForwardLockHandler(deps, true))
+	defer srv.Close()
+	body, _ := json.Marshal(ForwardLockRequest{
+		Pair: "USD/KRW", ValueDate: "not-a-date",
+		Profile: "WEB.BRANCH.VIP",
+	})
+	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	defer resp.Body.Close()
+	if resp.StatusCode != 400 {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
 }
 
 func TestForwardLock_MarkConsumedFlow(t *testing.T) {

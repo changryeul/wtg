@@ -3,6 +3,7 @@ package price
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -28,9 +29,13 @@ import (
 // last-look 의 본질. 분쟁 시 Record 가 권위 소스.
 
 // ForwardLockRequest — 요청 본문.
+//
+// Tenor / ValueDate 둘 다 비면 SPOT. 둘 다 채워지면 ValueDate 우선 (broken-date
+// 처리). 운영자/UI 는 보통 하나만 보냄.
 type ForwardLockRequest struct {
 	Pair       string `json:"pair"`
-	Tenor      string `json:"tenor"`
+	Tenor      string `json:"tenor,omitempty"`      // "SPOT" | "1W" | "1M" ... (선택)
+	ValueDate  string `json:"value_date,omitempty"` // "2026-06-15" (RFC3339 date) — broken-date 시 우선
 	Profile    string `json:"profile"`
 	CustomerID string `json:"customer_id,omitempty"`
 	// side, amount 는 metadata — Record 에는 안 들어가지만 audit 로그에 남길 수 있음.
@@ -40,12 +45,13 @@ type ForwardLockRequest struct {
 
 // ForwardLockResponse — 응답.
 type ForwardLockResponse struct {
-	QuoteID    string  `json:"quote_id"`
-	Pair       string  `json:"pair"`
-	Tenor      string  `json:"tenor"`
-	Profile    string  `json:"profile"`
-	CustomerID string  `json:"customer_id,omitempty"`
-	Side       string  `json:"side,omitempty"`
+	QuoteID    string `json:"quote_id"`
+	Pair       string `json:"pair"`
+	Tenor      string `json:"tenor,omitempty"`      // exact tenor (보간 안 됐을 때).
+	ValueDate  string `json:"value_date,omitempty"` // 요청 echo (broken-date 일 때).
+	Profile    string `json:"profile"`
+	CustomerID string `json:"customer_id,omitempty"`
+	Side       string `json:"side,omitempty"`
 
 	Bid    float64 `json:"bid"`     // customer-applied (lock 시점)
 	Ask    float64 `json:"ask"`
@@ -56,6 +62,21 @@ type ForwardLockResponse struct {
 	ValidUntilUnixNano int64 `json:"valid_until_unix_nano"`
 
 	TableVersion int64 `json:"table_version"`
+
+	// 보간 정보 (broken-date 일 때만 채워짐). Exact 매칭이면 InterpolatedFrom 만,
+	// 보간된 경우 From + To + Weight + 보간 swap.
+	Interpolation *ForwardLockInterpolation `json:"interpolation,omitempty"`
+}
+
+// ForwardLockInterpolation — broken-date 보간 audit.
+type ForwardLockInterpolation struct {
+	OffsetDays int     `json:"offset_days"`
+	From       string  `json:"from"` // tenor (예: "1W")
+	To         string  `json:"to"`   // tenor (예: "1M"); Exact 일 때는 From 과 동일.
+	Weight     float64 `json:"weight"`
+	SwapBid    float64 `json:"swap_bid"`
+	SwapAsk    float64 `json:"swap_ask"`
+	Exact      bool    `json:"exact,omitempty"`
 }
 
 // ForwardLockDeps — handler 의존성.
@@ -97,10 +118,15 @@ func ForwardLockHandler(deps ForwardLockDeps, devMode bool) http.HandlerFunc {
 		}
 		req.Pair = strings.TrimSpace(req.Pair)
 		req.Tenor = strings.TrimSpace(req.Tenor)
+		req.ValueDate = strings.TrimSpace(req.ValueDate)
 		req.Profile = strings.TrimSpace(req.Profile)
-		if req.Pair == "" || req.Tenor == "" || req.Profile == "" {
-			writeForwardErr(w, http.StatusBadRequest, "pair, tenor, profile 필수")
+		if req.Pair == "" || req.Profile == "" {
+			writeForwardErr(w, http.StatusBadRequest, "pair, profile 필수")
 			return
+		}
+		// tenor / value_date 둘 다 비면 SPOT.
+		if req.Tenor == "" && req.ValueDate == "" {
+			req.Tenor = "SPOT"
 		}
 		profile, perr := session.ParseProfileKey(req.Profile)
 		if perr != nil {
@@ -134,7 +160,30 @@ func ForwardLockHandler(deps ForwardLockDeps, devMode bool) http.HandlerFunc {
 			Ask:  spotStat.BestAsk,
 			TS:   now,
 		}
-		cq := tbl.ApplyForCustomer(raw, profile, pricing.Tenor(req.Tenor), now, req.CustomerID)
+
+		// value_date 우선 → ApplyForValueDate (보간), 없으면 tenor → ApplyForCustomer.
+		var cq pricing.CustomerQuote
+		var interp pricing.SwapInterpolation
+		var brokenDate bool
+		if req.ValueDate != "" {
+			vd, err := parseValueDate(req.ValueDate)
+			if err != nil {
+				writeForwardErr(w, http.StatusBadRequest, "invalid value_date: "+err.Error())
+				return
+			}
+			// SPOT 일수 — Phase 5 1차는 T+2 고정. pair 별 SPOT 컨벤션 (USD/CAD T+1)
+			// 은 후속에서 PricingTable 에 spot_days 필드로 확장.
+			spotDays := 2
+			var perr error
+			cq, interp, perr = tbl.ApplyForValueDate(raw, profile, vd, now, spotDays, req.CustomerID)
+			if perr != nil {
+				writeForwardErr(w, http.StatusBadRequest, "value_date 처리: "+perr.Error())
+				return
+			}
+			brokenDate = true
+		} else {
+			cq = tbl.ApplyForCustomer(raw, profile, pricing.Tenor(req.Tenor), now, req.CustomerID)
+		}
 
 		// QuoteID 발급 + Registry.Put.
 		var quoteIDStr string
@@ -150,13 +199,24 @@ func ForwardLockHandler(deps ForwardLockDeps, devMode bool) http.HandlerFunc {
 				QuoteID:    id,
 				Pair:       cq.Pair,
 				Profile:    profile,
-				Tenor:      req.Tenor,
+				Tenor:      string(cq.Tenor),
 				Bid:        cq.Bid,
 				Ask:        cq.Ask,
 				IssuedAt:   now.UnixNano(),
 				ValidUntil: validUntil.UnixNano(),
 				Sequence:   deps.Gen.NextSequence(),
 				Issuer:     deps.Gen.Instance(),
+			}
+			// broken-date 면 보간 정보 보존.
+			if brokenDate {
+				vd, _ := parseValueDate(req.ValueDate)
+				rec.ValueDateUnixNano = vd.UnixNano()
+				rec.OffsetDays = interp.OffsetDays
+				rec.InterpolatedFrom = string(interp.From)
+				rec.InterpolatedTo = string(interp.To)
+				rec.InterpolationWeight = interp.Weight
+				rec.InterpolatedSwapBid = interp.Margin.BidAmount
+				rec.InterpolatedSwapAsk = interp.Margin.AskAmount
 			}
 			putTimeout := deps.PutTimeout
 			if putTimeout <= 0 {
@@ -169,21 +229,46 @@ func ForwardLockHandler(deps ForwardLockDeps, devMode bool) http.HandlerFunc {
 		}
 
 		out := ForwardLockResponse{
-			QuoteID:    quoteIDStr,
-			Pair:       req.Pair,
-			Tenor:      req.Tenor,
-			Profile:    req.Profile,
-			CustomerID: req.CustomerID,
-			Side:       req.Side,
-			Bid:        cq.Bid,
-			Ask:        cq.Ask,
-			RawBid:     spotStat.BestBid,
-			RawAsk:     spotStat.BestAsk,
+			QuoteID:            quoteIDStr,
+			Pair:               req.Pair,
+			Tenor:              string(cq.Tenor),
+			ValueDate:          req.ValueDate,
+			Profile:            req.Profile,
+			CustomerID:         req.CustomerID,
+			Side:               req.Side,
+			Bid:                cq.Bid,
+			Ask:                cq.Ask,
+			RawBid:             spotStat.BestBid,
+			RawAsk:             spotStat.BestAsk,
 			IssuedUnixNano:     now.UnixNano(),
 			ValidUntilUnixNano: validUntil.UnixNano(),
 			TableVersion:       tbl.Version,
 		}
+		if brokenDate {
+			out.Interpolation = &ForwardLockInterpolation{
+				OffsetDays: interp.OffsetDays,
+				From:       string(interp.From),
+				To:         string(interp.To),
+				Weight:     interp.Weight,
+				SwapBid:    interp.Margin.BidAmount,
+				SwapAsk:    interp.Margin.AskAmount,
+				Exact:      interp.Exact,
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)
 	}
+}
+
+// parseValueDate — "YYYY-MM-DD" (RFC3339 date-only) 또는 RFC3339 datetime 둘 다.
+// 결과는 UTC 자정으로 정규화.
+func parseValueDate(s string) (time.Time, error) {
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		// 자정 정렬.
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC), nil
+	}
+	return time.Time{}, errors.New("date 형식 (YYYY-MM-DD 또는 RFC3339)")
 }

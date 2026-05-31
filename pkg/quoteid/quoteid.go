@@ -36,17 +36,30 @@ type QuoteID string
 //
 // MiFID II RTS 27 best-execution 감사의 원본 — 사용자가 본 가격, 그 시점,
 // 어느 Profile 의 stream 이었는지, 만료시각이 모두 저장된다.
+//
+// Broken-date forward (P5 5단계) 일 때 ValueDateUnixNano + OffsetDays +
+// Interpolation* 필드가 채워진다 — 인접 standard tenor 의 swap 을 선형 보간한
+// 근거를 audit 으로 보존. Standard tenor (SPOT/1W/1M/...) 일 때는 0/빈값.
 type Record struct {
 	QuoteID    QuoteID         `json:"quote_id"`
 	Pair       session.Pair    `json:"pair"`
 	Profile    session.Profile `json:"profile"`
-	Tenor      string          `json:"tenor"` // "SPOT" / "1W" / "1M" ...
+	Tenor      string          `json:"tenor"` // "SPOT" / "1W" / "1M" ... ; broken-date 시 "" 또는 "VD"
 	Bid        float64         `json:"bid"`
 	Ask        float64         `json:"ask"`
 	IssuedAt   int64           `json:"issued_unix_nano"`
 	ValidUntil int64           `json:"valid_until_unix_nano"`
 	Sequence   uint64          `json:"sequence"`
 	Issuer     string          `json:"issuer"` // 인스턴스 prefix
+
+	// P5 5단계 — broken-date 추적용. 표준 tenor 호출은 모두 0/빈값.
+	ValueDateUnixNano    int64   `json:"value_date_unix_nano,omitempty"`
+	OffsetDays           int     `json:"offset_days,omitempty"`
+	InterpolatedFrom     string  `json:"interpolated_from,omitempty"` // 보간 하한 tenor (예: "1W")
+	InterpolatedTo       string  `json:"interpolated_to,omitempty"`   // 보간 상한 tenor (예: "1M")
+	InterpolationWeight  float64 `json:"interpolation_weight,omitempty"`
+	InterpolatedSwapBid  float64 `json:"interpolated_swap_bid,omitempty"`
+	InterpolatedSwapAsk  float64 `json:"interpolated_swap_ask,omitempty"`
 }
 
 // ValidAt 은 시각 t 가 [IssuedAt, ValidUntil) 범위에 있는지 본다.

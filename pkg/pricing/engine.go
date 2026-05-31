@@ -96,6 +96,72 @@ func (t *PricingTable) ApplyForCustomer(raw Quote, profile session.Profile, teno
 	}
 }
 
+// ApplyForValueDate — P5 5단계. 결제일 (value_date) 기반 broken-date 마진 적용.
+//
+// 흐름:
+//   1. SpotDate(now, spotDays) → 거래일 기준 SPOT 결제일.
+//   2. BusinessDaysBetween(spot, valueDate) → offsetDays (weekend-only).
+//   3. InterpolateSwap(pair, offsetDays) → SwapInterpolation (선형 보간).
+//      - offsetDays 가 standard tenor 와 정확 일치 → Exact (보간 X, lookupSwap 동등).
+//      - 그 사이 → 선형 보간된 swap.
+//      - 양 끝 → ErrOutOfRange.
+//      - 본 pair 의 swap_point 미등록 → ErrNoSwap.
+//   4. HQ/Site/Customer 는 ApplyForCustomer 와 동일 (보간 swap 만 lookupSwap 대체).
+//
+// CustomerQuote.Tenor 는 broken-date 시 빈값 — interpolation 정보는 별도 반환.
+// 호출자가 quoteid.Record 에 SwapInterpolation 의 필드를 보존 (감사 추적).
+func (t *PricingTable) ApplyForValueDate(raw Quote, profile session.Profile,
+	valueDate time.Time, now time.Time, spotDays int, customerID string,
+) (CustomerQuote, SwapInterpolation, error) {
+
+	if now.IsZero() {
+		now = time.Now()
+	}
+	spotDate := SpotDate(now, spotDays)
+	offsetDays := BusinessDaysBetween(spotDate, valueDate)
+	interp, err := t.InterpolateSwap(raw.Pair, offsetDays)
+	if err != nil {
+		return CustomerQuote{}, SwapInterpolation{OffsetDays: offsetDays}, err
+	}
+
+	activeWindows := t.ActiveWindows(now)
+	rule, ok := t.matchCustomerRule(customerID, raw.Pair, activeWindows)
+
+	var totalBid, totalAsk float64
+	if ok && rule.Mode == "override" {
+		totalBid = interp.Margin.BidAmount + rule.BidDelta
+		totalAsk = interp.Margin.AskAmount + rule.AskDelta
+	} else {
+		hq := t.lookupHQ(raw.Pair, profile.Tier, activeWindows)
+		site := t.lookupSite(raw.Pair, profile.Channel, profile.Site, activeWindows)
+		totalBid = interp.Margin.BidAmount + hq.BidAmount + site.BidAmount
+		totalAsk = interp.Margin.AskAmount + hq.AskAmount + site.AskAmount
+		if ok {
+			totalBid += rule.BidDelta
+			totalAsk += rule.AskDelta
+		}
+	}
+
+	// CustomerQuote.Tenor — Exact 일 때는 매칭 tenor, 아닐 때 빈값.
+	// Record 에 SwapInterpolation 의 모든 필드가 보존되므로 빈값이어도 OK.
+	tenor := Tenor("")
+	if interp.Exact {
+		tenor = interp.From
+	}
+
+	return CustomerQuote{
+		Pair:         raw.Pair,
+		Profile:      profile,
+		Tenor:        tenor,
+		Bid:          raw.Bid - totalBid,
+		Ask:          raw.Ask + totalAsk,
+		TS:           raw.TS,
+		RawBid:       raw.Bid,
+		RawAsk:       raw.Ask,
+		TableVersion: t.Version,
+	}, interp, nil
+}
+
 // matchCustomerRule — priority desc 정렬된 CustomerMargin 순회하며 첫 매칭 반환.
 // 매칭 없으면 zero rule + false.
 //

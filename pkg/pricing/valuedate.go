@@ -118,8 +118,13 @@ func BusinessDaysBetween(from, to time.Time) int {
 	return n * sign
 }
 
+// startOfDay — t 의 calendar date 의 자정을 UTC 로 정규화.
+//
+// 두 input 의 location 이 달라도 (예: KST spot vs UTC parsed value_date) 같은
+// 기준으로 비교해야 영업일 카운터가 일관됨. weekday 도 calendar date 그대로
+// (KST 자정의 weekday == UTC 자정의 weekday) 보존되어 IsBusinessDay 영향 X.
 func startOfDay(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // SpotDate — 거래일 (now) 기준 SPOT 결제일. 일반적으로 T+2 (영업일).

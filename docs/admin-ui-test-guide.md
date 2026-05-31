@@ -221,6 +221,44 @@ backward compatibility 로 처리.
 | 입력한 pair 외 다른 통화 표시 | (해결됨) edge-price raw fanout 이 무차별 broadcast — UI 측 필터로 차단. 최신 빌드면 정상 |
 | `종료 (code=1006)` | edge-price 미기동 / CheckOrigin — `wtgctl edge start` |
 
+### 7.5 시세 schema 종류
+
+| 형식 | 출처 | envelope 필드 | 마진 |
+|------|------|------------|-----|
+| **BEST tick** | mci-price BestConsumer → edge-price raw fanout | `{sym, bid, ask, ts, src:"BEST", seq}` (outer 안 data) | ✗ raw |
+| **Customer Quote** | mci-price PricingConsumer → edge-price quote-stream | `{type:"quote", pair, chan, site, tier, bid, ask, raw_bid, raw_ask, v}` | ✓ Profile 별 적용 |
+
+### 7.6 라이브 customer quote 활성 (마진 적용 시세)
+
+기본은 BEST tick 만 흐름. 마진 적용된 시세 (Profile 매칭) 를 받으려면 mci-price + edge-price 양쪽 setup 필요:
+
+**1. mci-price 가 PricingTable 로딩 (`--pricing`)**
+
+wtgctl 가 자동 주입 — `/etc/pricing.json` 있으면 `--pricing=...` 박힘. 부팅 로그에 다음이 보여야:
+```
+"PricingConsumer 활성","pricing_version":1,"profile_count":10,"grpc_publish":true
+```
+없으면 `PricingConsumer 비활성` → 마진 적용 안 됨.
+
+**2. edge-price 의 quote-stream 활성 (`--quote-stream`)**
+
+wtgctl 의 edge-price 가 `--quote-stream` 박혀 떠야. WTG_EDGE_QUOTE_PROFILES env 로 필터:
+```bash
+WTG_EDGE_QUOTE_PROFILES=WEB.BRANCH.VIP,WEB.HQ.VIP wtgctl edge start
+```
+부팅 로그에 다음이 보여야:
+```
+"SubscribeQuote 시작","profile_filter":["WEB.BRANCH.VIP"]
+```
+
+**3. WS 모니터에서 받기**
+
+edge-price preset 으로 연결 후 — BEST tick 과 함께 `{type:"quote",...}` envelope 이 같은 ws 로 흐름. 두 schema 가 한 stream 에 섞임. JSON 정렬 체크 후 `"type":"quote"` 매칭 메시지가 customer quote.
+
+**4. 사후 검증 (read-only)**
+
+라이브 등록 없이도 **§13 마진 재계산** 페이지에서 과거 봉에 PricingTable 적용해 customer quote 재구성 가능. 분쟁 시 핵심 도구.
+
 ---
 
 ## 8. 통화쌍 (`page-symbols`)

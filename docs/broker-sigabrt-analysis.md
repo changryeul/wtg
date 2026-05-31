@@ -222,6 +222,80 @@ stack 정보:
 | 중기 | cs WS 마이그레이션 P4-3 완료 → broker 가 매매 RPC 만 (부하 매우 낮음) → svc SEGV 거의 trigger 안 됨 |
 | 장기 (선택) | libmymq client receive path 정확한 SEGV 위치 짚기 — ASAN backtrace 가 frame corruption 으로 비어있어 추가 방법 필요: gdb live attach + watchpoint, valgrind, 또는 svc code 정독 |
 
+### 6.7 libmymq receive path 코드 정독 (장기 진단 출발점)
+
+ASAN backtrace 가 비어있어 정확한 line 못 짚지만, mq_recv → frame2content →
+frame_body 의 hot path 정독에서 강한 의심 위치 발견.
+
+**`src/lib/mymq/mq_frame.c:241-248` (`frame_body` 의 `_GET_` 분기)**:
+
+```c
+mqhdr = (mqhdr_t *)this->rcvb;
+if ((xoff = CHAR2OFF(mqhdr->body.doff)) <= 0)  // body offset
+    return(0);
+msgl = this->done - xoff;                       // body length — 음수 가능!
+this->done = xoff;
+if ((zipf = mqhdr->body.zipf) == 0 || ...) {
+    if (msgl > size)                            // size 는 양수, msgl 음수면 통과
+        msgl = size;
+    memcpy(msgb, &this->rcvb[xoff], msgl);      // ← memcpy 의 3번째 인자 size_t
+}                                               //   음수 → 거대 양수 → buffer overflow → SEGV
+```
+
+**SEGV 메커니즘**:
+
+1. broker 가 publish broadcast 한 메시지를 svc 가 받음 (pktbuf_full)
+2. pktbuf 의 mqhdr->body.doff 가 corrupted (race 또는 거대 fan-out 시 packet 누락/부정확 길이)
+3. xoff = doff = 거대값 또는 this->done 보다 큰 값
+4. msgl = done - xoff = **음수**
+5. `if (msgl > size)` 검사 통과 (음수 int < 양수 int)
+6. memcpy(msgb, &rcvb[xoff], msgl) — size_t cast 시 거대 양수
+7. xoff 도 garbage 라 rcvb[xoff] 가 out-of-bounds — **SEGV at garbage address**
+
+ASAN report 의 `0x000100001180` 와 일치 — out-of-bounds read 의 흔한 주소 패턴.
+
+**최소 fix sample (참고용, CLAUDE.md C 엔진 무수정 위반)**:
+
+```c
+msgl = this->done - xoff;
+if (msgl <= 0 || xoff < 0 || xoff > this->blen)  // 음수 / 거대 xoff 거부
+    return(-1);
+if (msgl > size)
+    msgl = size;
+if (xoff + msgl > this->blen)                     // out-of-bounds 추가 검사
+    msgl = this->blen - xoff;
+memcpy(msgb, &this->rcvb[xoff], msgl);
+```
+
+**왜 부하 시에만 trigger 되나**:
+
+- 정상 부하 (1,600 msg/s): packet 의 doff 가 정확 — frame 무결성 유지
+- 고부하 (17,600 msg/s = forwarder raw + customer quote × 10 profile):
+  - broker 의 publish_q (MAX_PUBLISH_Q=40) overflow → 부분 처리 / corruption 가능성
+  - svc 의 pktbuf_full 가 일부 frame 의 끝부분만 잡거나, 다음 frame 의 시작과 합쳐서 본 가능
+  - 결과 doff 가 다른 frame 의 offset 으로 corrupted
+
+### 6.8 추가 정밀 진단 절차 (필요 시)
+
+1. **gdb live attach + watchpoint**
+   - container 에 gdbserver 설치
+   - attach to test_service / WECHO PID
+   - `watch *((int*)&this->rcvb[xoff])` — corrupted doff write 추적
+   - hard 한 작업 + container 안 debug symbols 필요
+
+2. **valgrind** (memcheck)
+   - ASAN 보다 detail 풍부. 단 50~100배 느림 — reproduce window 더 작아질 수 있음
+   - `valgrind --tool=memcheck --track-origins=yes ./test_service ...`
+
+3. **frame 자체 dump**
+   - svc 의 frame2content 진입 시점에 pktbuf->buff 의 hex dump 추가 + doff 값 log
+   - corrupted frame 형태 catch
+   - 코드 patch 필요 (C 엔진 무수정 위반)
+
+4. **libmymq 의 mq_packet.c 정독**
+   - pktbuf_full 의 packet 누적 / split 처리
+   - frame boundary 검출 정확성
+
 ### 6.6 운영 권장
 
 - **forwarder `--publish-mode=grpc`** (default) 유지

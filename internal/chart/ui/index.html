@@ -694,10 +694,19 @@ class ChartCell {
   async loadHistorical() {
     const to = new Date();
     const from = new Date(to.getTime() - rangeToDuration(this.range));
-    const url = "/v1/chart?pair=" + encodeURIComponent(this.pair) +
-      "&tf=" + encodeURIComponent(this.tf) +
-      "&from=" + encodeURIComponent(from.toISOString()) +
-      "&to=" + encodeURIComponent(to.toISOString()) + "&limit=5000";
+    // page URL 의 인증 query 를 REST fetch 에도 전달 (edge-chart 의 DevMode 인증).
+    const passQuery = new URLSearchParams();
+    const pageQuery = new URLSearchParams(window.location.search);
+    for (const k of ["x_wtg_user", "access_token"]) {
+      const v = pageQuery.get(k);
+      if (v) passQuery.set(k, v);
+    }
+    passQuery.set("pair", this.pair);
+    passQuery.set("tf", this.tf);
+    passQuery.set("from", from.toISOString());
+    passQuery.set("to", to.toISOString());
+    passQuery.set("limit", "5000");
+    const url = "/v1/chart?" + passQuery.toString();
     try {
       const resp = await fetch(url, { credentials: "same-origin" });
       if (!resp.ok) {
@@ -776,9 +785,18 @@ class ChartCell {
     if (this.ws) { try { this.ws.close(); } catch (_) {} }
     if (this.destroyed) return;
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = proto + "//" + window.location.host + "/v1/chart/stream"
-      + "?pairs=" + encodeURIComponent(this.pair)
-      + "&tfs=" + encodeURIComponent(this.tf);
+    // page URL 의 query (x_wtg_user / access_token 등 인증 토큰) 를 ws 에 그대로 전달.
+    // edge-chart 같은 DMZ proxy 가 BearerFromQuery / UserFromQuery 미들웨어로
+    // 헤더 변환 — 브라우저 WebSocket API 가 헤더 못 주는 한계 우회.
+    const passQuery = new URLSearchParams();
+    const pageQuery = new URLSearchParams(window.location.search);
+    for (const k of ["x_wtg_user", "access_token"]) {
+      const v = pageQuery.get(k);
+      if (v) passQuery.set(k, v);
+    }
+    passQuery.set("pairs", this.pair);
+    passQuery.set("tfs", this.tf);
+    const url = proto + "//" + window.location.host + "/v1/chart/stream?" + passQuery.toString();
     this.ws = new WebSocket(url);
     this._setWsState("text-muted", "연결 중");
     this.ws.onopen = () => {

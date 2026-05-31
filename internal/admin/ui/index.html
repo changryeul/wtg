@@ -312,27 +312,25 @@
           <button data-page="broker" class="nav-btn nav-item"><span class="nav-ico">🖥</span>브로커 명령</button>
           <button data-page="wsmon"  class="nav-btn nav-item"><span class="nav-ico">📡</span>WS 모니터</button>
           <button data-page="quote"  class="nav-btn nav-item"><span class="nav-ico">💱</span>시세</button>
-          <button data-page="margin" class="nav-btn nav-item"><span class="nav-ico">🧮</span>마진 재계산</button>
-          <button data-page="svcio"  class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
+          <button data-page="margin"     class="nav-btn nav-item"><span class="nav-ico">🧮</span>마진 재계산</button>
+          <button data-page="svcio"      class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
+          <button data-page="pricestats" class="nav-btn nav-item"><span class="nav-ico">📊</span>시세 통계 (mci-price)</button>
         </div>
 
         <!-- 외부 도구 — 별도 서비스의 UI 새 탭으로 열기. SPA 페이지 전환 아님. -->
         <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">외부 도구</div>
         <div class="space-y-0.5 mb-3">
-          <a href="http://localhost:8086/" target="_blank" rel="noopener" class="nav-item" title="mci-chart — TradingView lightweight-charts UI (사내망 직접 접속)">
+          <!-- 외부 chart UI 새 탭 — 클릭 시 현재 인증 정보 (dev: x_wtg_user, 운영: access_token)
+               를 query 로 첨부. chart UI 가 그 query 를 ws connect 시 그대로 전달 → edge-chart
+               의 UserFromQuery/BearerFromQuery 미들웨어가 헤더로 변환 → 인증 통과. -->
+          <a href="#" target="_blank" rel="noopener" class="nav-item" title="mci-chart — TradingView lightweight-charts UI (사내망 직접 접속)"
+             onclick="event.preventDefault();window.open(chartLinkURL('http://localhost:8086/'),'_blank','noopener');">
             <span class="nav-ico">📈</span>차트 (mci-chart)
             <span class="ml-auto text-[10px] text-slate-600">↗</span>
           </a>
-          <a href="http://localhost:8087/" target="_blank" rel="noopener" class="nav-item" title="mci-edge-chart — DMZ proxy 경유 (인증 / IP allowlist 적용)">
+          <a href="#" target="_blank" rel="noopener" class="nav-item" title="mci-edge-chart — DMZ proxy 경유 (인증 / IP allowlist 적용)"
+             onclick="event.preventDefault();window.open(chartLinkURL('http://localhost:8087/'),'_blank','noopener');">
             <span class="nav-ico">📈</span>차트 (edge-chart)
-            <span class="ml-auto text-[10px] text-slate-600">↗</span>
-          </a>
-          <a href="http://localhost:8082/v1/price-stats" target="_blank" rel="noopener" class="nav-item" title="mci-price 통계 (raw tick recv/match/drop/conflation) — JSON">
-            <span class="nav-ico">📊</span>price-stats
-            <span class="ml-auto text-[10px] text-slate-600">↗</span>
-          </a>
-          <a href="http://localhost:8082/v1/best-stats" target="_blank" rel="noopener" class="nav-item" title="mci-price BestConsumer 통계 — 다중시장 best 산정 결과">
-            <span class="nav-ico">📊</span>best-stats
             <span class="ml-auto text-[10px] text-slate-600">↗</span>
           </a>
         </div>
@@ -1601,6 +1599,87 @@
           </div>
         </div>
 
+        <!-- 시세 통계 — mci-price (8082) 의 monitoring endpoint 를 admin proxy 로 조회.
+             raw JSON 대신 카드/표로 시각화 + 2초 polling. -->
+        <div id="page-pricestats" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">시세 통계 (mci-price)</h3>
+              <p class="text-sm text-slate-400">raw tick 수신/매칭/드롭 + 다중시장 BEST 산정 결과. admin same-origin proxy 경유. 2초마다 자동 갱신.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400">마지막 갱신 <span id="ps-updated" class="font-mono text-slate-200">—</span></span>
+              <label class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer">
+                <input id="ps-auto" type="checkbox" class="w-4 h-4 accent-accent-500" checked />
+                자동 갱신
+              </label>
+              <button id="ps-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻</button>
+            </div>
+          </div>
+
+          <!-- price-stats 카드 row -->
+          <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div class="border-gradient rounded-xl p-3">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">received</div>
+              <div id="ps-received" class="text-xl font-semibold mt-1 font-mono">—</div>
+              <div class="text-[10px] text-slate-500 mt-1">broker message</div>
+            </div>
+            <div class="border-gradient rounded-xl p-3">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">matched</div>
+              <div id="ps-matched" class="text-xl font-semibold mt-1 font-mono">—</div>
+              <div class="text-[10px] text-slate-500 mt-1">parser 성공</div>
+            </div>
+            <div class="border-gradient rounded-xl p-3">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">ticks</div>
+              <div id="ps-ticks" class="text-xl font-semibold mt-1 font-mono">—</div>
+              <div class="text-[10px] text-slate-500 mt-1">envelope (batch 풀린)</div>
+            </div>
+            <div class="border-gradient rounded-xl p-3">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">dropped</div>
+              <div id="ps-dropped" class="text-xl font-semibold mt-1 font-mono">—</div>
+              <div class="text-[10px] text-slate-500 mt-1">parse 실패</div>
+            </div>
+            <div class="border-gradient rounded-xl p-3">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">sub_drops</div>
+              <div id="ps-subdrops" class="text-xl font-semibold mt-1 font-mono">—</div>
+              <div class="text-[10px] text-slate-500 mt-1">backpressure</div>
+            </div>
+            <div class="border-gradient rounded-xl p-3">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">conflation symbols</div>
+              <div id="ps-conf-syms" class="text-xl font-semibold mt-1 font-mono">—</div>
+              <div class="text-[10px] text-slate-500 mt-1">활성 sym</div>
+            </div>
+          </div>
+
+          <!-- best-stats 테이블 — symbol 별 best bid/ask + feed source. -->
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <div class="px-4 py-2 border-b border-ink-700/60 flex items-center justify-between">
+              <div class="text-xs uppercase tracking-widest text-slate-400">BEST 산정 — symbol × source</div>
+              <span id="ps-best-count" class="text-xs text-slate-500 font-mono">0 symbol</span>
+            </div>
+            <div class="max-h-[60vh] overflow-auto">
+              <table class="w-full text-sm">
+                <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60 sticky top-0">
+                  <tr class="border-b border-ink-700/60">
+                    <th class="text-left px-4 py-2 font-medium">Symbol</th>
+                    <th class="text-right px-4 py-2 font-medium">best bid</th>
+                    <th class="text-left px-2 py-2 font-medium text-[10px]">src</th>
+                    <th class="text-right px-4 py-2 font-medium">best ask</th>
+                    <th class="text-left px-2 py-2 font-medium text-[10px]">src</th>
+                    <th class="text-right px-4 py-2 font-medium">spread</th>
+                    <th class="text-right px-4 py-2 font-medium">tick</th>
+                    <th class="text-right px-4 py-2 font-medium">cross</th>
+                  </tr>
+                </thead>
+                <tbody id="ps-best-tbody"></tbody>
+              </table>
+              <div id="ps-best-empty" class="hidden p-6 text-center text-slate-500 text-sm">
+                BEST 데이터 없음 — 시세 흐르지 않거나 BestConsumer 비활성. <code>wtgctl burst start walk</code> 후 다시.
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Audit timeline -->
         <div id="page-audit" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -1992,6 +2071,22 @@ function showApp() {
 }
 
 // ───────── Routing ─────────
+// chartLinkURL — 외부 chart UI 새 탭 열 때 인증 query 자동 첨부.
+// dev: ?x_wtg_user=<usid>, 운영: ?access_token=<jwt>. chart UI 가 ws connect 시
+// page query 를 그대로 전달 → edge 미들웨어가 헤더로 변환 → 인증 통과.
+function chartLinkURL(baseURL) {
+  const params = new URLSearchParams();
+  if (localStorage.getItem(LS_DEV) === "1") {
+    const u = localStorage.getItem(LS_USER);
+    if (u) params.set("x_wtg_user", u);
+  } else {
+    const t = localStorage.getItem(LS_TOKEN);
+    if (t) params.set("access_token", t);
+  }
+  const sep = baseURL.includes("?") ? "&" : "?";
+  return params.toString() ? baseURL + sep + params.toString() : baseURL;
+}
+
 function goPage(name) {
   $$(".page").forEach(p => p.classList.add("hidden"));
   const pg = document.getElementById("page-" + name);
@@ -2002,7 +2097,8 @@ function goPage(name) {
                    tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
                    symbols: "통화쌍", pricing: "마진 테이블", profiles: "프로파일",
                    users: "사용자 프로파일",
-                   svcio: "서비스 명세", audit: "감사 로그", guide: "운영 가이드" };
+                   svcio: "서비스 명세", pricestats: "시세 통계",
+                   audit: "감사 로그", guide: "운영 가이드" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
   if (name === "dashboard") loadDashboard();
@@ -2017,6 +2113,8 @@ function goPage(name) {
   if (name === "quoteid-engines") loadQEngines();
   if (name === "margin")    initMarginRecompute();
   if (name === "svcio")     initSvcIO();
+  if (name !== "pricestats") stopPriceStatsPoller();
+  if (name === "pricestats") initPriceStats();
   if (name !== "audit")     stopAuditPoller();
   if (name === "audit")     initAudit();
   if (name === "policy")    loadPolicy();
@@ -4813,6 +4911,92 @@ auto rsp = req.send();
 # ${wtgctlHint.split("\n").join("\n# ")}`;
   },
 };
+
+// ───────── Price Stats (mci-price proxy) ─────────
+const psState = { wired: false, poller: null };
+
+function initPriceStats() {
+  if (!psState.wired) {
+    psState.wired = true;
+    $("#ps-refresh").onclick = loadPriceStats;
+    $("#ps-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startPriceStatsPoller(); else stopPriceStatsPoller();
+    });
+  }
+  loadPriceStats();
+  if ($("#ps-auto").checked) startPriceStatsPoller();
+}
+
+function startPriceStatsPoller() {
+  if (psState.poller) return;
+  psState.poller = setInterval(loadPriceStats, 2000);
+}
+function stopPriceStatsPoller() {
+  if (psState.poller) { clearInterval(psState.poller); psState.poller = null; }
+}
+
+async function loadPriceStats() {
+  // 두 endpoint 병렬 fetch — admin same-origin proxy.
+  try {
+    const [ps, bs] = await Promise.all([
+      api("/v1/admin/price/price-stats"),
+      api("/v1/admin/price/best-stats"),
+    ]);
+    renderPriceStats(ps);
+    renderBestStats(bs);
+    $("#ps-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    $("#ps-updated").textContent = "로드 실패: " + e.message;
+  }
+}
+
+function renderPriceStats(d) {
+  if (!d || typeof d !== "object") return;
+  $("#ps-received").textContent = (d.received ?? 0).toLocaleString();
+  $("#ps-matched").textContent  = (d.matched ?? 0).toLocaleString();
+  $("#ps-ticks").textContent    = (d.ticks ?? 0).toLocaleString();
+  $("#ps-dropped").textContent  = (d.dropped ?? 0).toLocaleString();
+  $("#ps-subdrops").textContent = (d.sub_drops ?? 0).toLocaleString();
+  $("#ps-conf-syms").textContent = (d.conflation && d.conflation.Symbols) || 0;
+}
+
+function renderBestStats(d) {
+  const tbody = $("#ps-best-tbody");
+  const empty = $("#ps-best-empty");
+  if (!tbody || !empty) return;
+  tbody.replaceChildren();
+  const syms = (d && d.symbols) || {};
+  const keys = Object.keys(syms).sort();
+  if (keys.length === 0) {
+    empty.classList.remove("hidden");
+    $("#ps-best-count").textContent = "0 symbol";
+    return;
+  }
+  empty.classList.add("hidden");
+  $("#ps-best-count").textContent = keys.length + " symbol";
+
+  for (const sym of keys) {
+    const s = syms[sym] || {};
+    const bid = s.best_bid ?? s.bid ?? 0;
+    const ask = s.best_ask ?? s.ask ?? 0;
+    const bidSrc = s.bid_src || s.best_bid_src || "";
+    const askSrc = s.ask_src || s.best_ask_src || "";
+    const spread = (bid && ask) ? (ask - bid) : 0;
+    const tick = s.tick_count ?? s.ticks ?? 0;
+    const cross = !!s.cross || (bid && ask && bid > ask);
+
+    const tr = h("tr", { class: "border-b border-ink-800/60 hover:bg-ink-800/30" });
+    tr.appendChild(h("td", { class: "px-4 py-1.5 font-mono", text: sym }));
+    tr.appendChild(h("td", { class: "px-4 py-1.5 text-right font-mono text-good", text: bid ? bid.toFixed(4) : "—" }));
+    tr.appendChild(h("td", { class: "px-2 py-1.5 text-[10px] text-slate-500 font-mono", text: bidSrc }));
+    tr.appendChild(h("td", { class: "px-4 py-1.5 text-right font-mono text-bad", text: ask ? ask.toFixed(4) : "—" }));
+    tr.appendChild(h("td", { class: "px-2 py-1.5 text-[10px] text-slate-500 font-mono", text: askSrc }));
+    tr.appendChild(h("td", { class: "px-4 py-1.5 text-right font-mono " + (spread < 0 ? "text-bad" : "text-slate-300"), text: spread ? spread.toFixed(4) : "—" }));
+    tr.appendChild(h("td", { class: "px-4 py-1.5 text-right font-mono text-slate-400", text: tick.toLocaleString() }));
+    tr.appendChild(h("td", { class: "px-4 py-1.5 text-right font-mono " + (cross ? "text-bad" : "text-slate-500"), text: cross ? "⚠ cross" : "✓" }));
+    tbody.appendChild(tr);
+  }
+}
 
 // ───────── Audit Timeline ─────────
 const auditState = { entries: [], poller: null, wired: false, resource: null };

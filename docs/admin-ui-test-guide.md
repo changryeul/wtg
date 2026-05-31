@@ -149,30 +149,38 @@ mci-admin 의 어떤 endpoint 든 임의 호출. Postman 미니 버전.
 ## 6. WebSocket 모니터 (`page-wsmon`)
 
 ### 6.1 무엇을 하는가
-edge-push / edge-price / mci-push 등 ws endpoint 에 직접 연결해서
-실시간 메시지 + 통계 (메시지 수 / B/sec / peak / drop / uptime) 관찰.
+5개 ws endpoint (mci-push / edge-price / edge-push / mci-chart / edge-chart) 를
+**동시에** 모니터링. 각 endpoint 독립 WebSocket + 단일 통합 log + 합계 통계.
 
-### 6.2 테스트 시나리오
-1. **프리셋 선택** — `edge-price (8083)` → URL 자동 채움 (또는 `mci-push (8081)`).
-2. **연결** — `▶ 연결` → 상태 dot 초록 + `connected`.
-3. **시세 subscribe** (edge-price) — "메시지 전송" 펼침 → preset 칩 `+ subscribe USD/EUR/JPY KRW` 클릭 → **전송** → inline status `✓ 전송됨` → stream 에 시세 envelope 흘러옴 → B/sec / 메시지 카운터 증가.
-4. **메시지 도착** — broker → 서버로 push 흐르면 로그에 누적, B/sec 증가.
-5. **일시정지** — 체크 → 화면 freeze, peak 는 계속 갱신.
-6. **자동 스크롤** — 해제 시 사용자 스크롤 유지.
+### 6.2 화면 요소
+- **엔드포인트** 영역 — 5개 카드. 각 카드: status dot + label + 메시지 수 + 토글 버튼.
+- **▶ 전체 연결** / **■ 전체 종료** — 모든 endpoint 일괄.
+- **필터 / 일시정지 / 자동 스크롤 / JSON 정렬 / 메시지 비우기** toolbar.
+- **합계 통계** — 5개 합산 (메시지 수 / B/sec / peak / drop).
+- **메시지 전송** (collapsible) — target select + preset 칩 + input + inline status.
+- **통합 스트림** — 모든 endpoint 메시지를 한 log 에 누적. source 칩 (색깔 별) prefix.
+
+### 6.3 테스트 시나리오
+0. **시세 부하** — 시세 endpoint 메시지를 보려면 forwarder published 가 증가 중이어야. 정체 시 `wtgctl burst start walk`.
+1. **전체 연결** — `▶ 전체 연결` → 5개 카드 모두 초록 dot + `connected`.
+2. **메시지 도착** — chart 는 봉 close 시점에 메시지, edge-price 는 subscribe 후, mci-push 는 broker push 흐를 때. source 칩 별로 색깔 다름.
+3. **subscribe** (edge-price) — "메시지 전송" 펼침 → target `edge-price` → preset `+ subscribe USD/EUR/JPY KRW` → 전송 → inline status `✓ edge-price 로 전송`.
+4. **개별 토글** — 한 endpoint 만 끊기/연결.
+5. **필터** — `edge-price` 입력 → source 매칭 메시지만. `"sym":"USDKRW"` 입력 → 본문 매칭.
+6. **일시정지** — 새 메시지 drop 카운터로 누적 (화면 freeze).
 7. **JSON 정렬** — 체크 시 메시지가 pretty.
-8. **필터** — 텍스트 입력 → 매칭 메시지만 표시.
-9. **메시지 전송 형식** — edge-price 는 `{"type":"subscribe","pairs":["USD/KRW",...]}` 또는 `{"type":"unsubscribe","pairs":[...]}` 만 받음. 다른 형식은 `bad_request` 응답. mci-push/edge-push 는 단방향 — client 메시지 무시.
-10. **unsubscribe** — preset `− unsubscribe USD/KRW` → 전송 → 해당 통화쌍 메시지 중단.
-11. **종료** — `■ 종료` → 상태 dot 회색.
-12. **메시지 비우기** — log 영역 초기화 (통계는 유지).
+8. **메시지 전송 형식** — edge-price 만 양방향 (`subscribe`/`unsubscribe`). 나머지는 단방향 — client 메시지 무시.
+9. **메시지 비우기** — log 만 초기화 (endpoint 연결 유지).
+10. **전체 종료** — `■ 전체 종료` → 5개 모두 회색 dot.
 
-### 6.3 트러블슈팅
+### 6.4 트러블슈팅
 | 증상 | 원인 / 처치 |
 |------|------------|
-| `종료 (code=1006 reason=-)` | edge-{price,push,chart} 미기동 또는 CheckOrigin 거부 — `wtgctl edge start` + DevMode 빌드 확인 |
+| `종료 (code=1006 reason=-)` | endpoint 서버 미기동 또는 CheckOrigin 거부 — `wtgctl edge start` + DevMode 빌드 확인 |
 | `401 X-WTG-User 헤더 필요` | edge 서버에 `UserFromQuery` 미들웨어 누락 — 최신 빌드 적용 |
-| `✗ 메시지가 비어있음` | input 비어있음. preset 칩 클릭 또는 default value 사용 |
-| 연결 OK but 시세 0 | edge-price 는 subscribe 안 하면 안 흐름. preset `+ subscribe ...` 클릭 후 전송 |
+| `✗ ... 연결되어 있지 않음` | endpoint 칩에서 ▶ 연결 먼저 |
+| 연결 OK but 시세 0 | edge-price 는 subscribe 안 하면 안 흐름. preset 칩 클릭 후 전송 |
+| chart 봉 메시지 0 | 시세 흐르는 시간대만 close 시점에 옴 (1s 봉이라도 시세 stale 이면 0). burst start |
 
 ---
 

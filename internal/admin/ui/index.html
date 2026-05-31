@@ -316,6 +316,19 @@
           <button data-page="svcio"  class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
         </div>
 
+        <!-- 외부 도구 — 별도 서비스의 UI 새 탭으로 열기. SPA 페이지 전환 아님. -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">외부 도구</div>
+        <div class="space-y-0.5 mb-3">
+          <a href="http://localhost:8086/" target="_blank" rel="noopener" class="nav-item" title="mci-chart — TradingView lightweight-charts UI (사내망 직접 접속)">
+            <span class="nav-ico">📈</span>차트 (mci-chart)
+            <span class="ml-auto text-[10px] text-slate-600">↗</span>
+          </a>
+          <a href="http://localhost:8087/" target="_blank" rel="noopener" class="nav-item" title="mci-edge-chart — DMZ proxy 경유 (인증 / IP allowlist 적용)">
+            <span class="nav-ico">📈</span>차트 (edge-chart)
+            <span class="ml-auto text-[10px] text-slate-600">↗</span>
+          </a>
+        </div>
+
         <!-- 감사 & 도움말 -->
         <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">감사 & 도움말</div>
         <div class="space-y-0.5 mb-2">
@@ -756,50 +769,32 @@
           </div>
         </div>
 
-        <!-- WS Live Monitor -->
+        <!-- WS Live Monitor — multi-endpoint 동시 모니터링 -->
         <div id="page-wsmon" class="page hidden space-y-4">
           <div>
             <h3 class="text-lg font-semibold">WebSocket 모니터</h3>
-            <p class="text-sm text-slate-400">edge-push / edge-price 등 ws 엔드포인트에 연결해 실시간 메시지를 확인합니다.</p>
+            <p class="text-sm text-slate-400">여러 ws endpoint 를 동시에 모니터링. 각 endpoint 칩에서 개별 연결/해제, 또는 전체 일괄 제어.</p>
           </div>
 
-          <!-- Connection bar -->
-          <div class="border-gradient rounded-2xl p-4 space-y-3">
-            <div class="flex flex-wrap items-center gap-2">
-              <select id="ws-preset" class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 outline-none text-sm"
-                onchange="if(this.value){var u=document.getElementById('ws-url');u.value=this.value;u.dispatchEvent(new Event('input'));}">
-                <option value="">— 프리셋 —</option>
-                <option value="ws://localhost:8081/v1/subscribe">mci-push (8081)</option>
-                <option value="ws://localhost:8083/v1/subscribe">edge-price (8083)</option>
-                <option value="ws://localhost:8084/v1/subscribe">edge-push (8084)</option>
-              </select>
-              <input id="ws-url" placeholder="ws://host:port/path" value="ws://localhost:8081/v1/subscribe"
-                class="flex-1 min-w-[260px] px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
-              <!-- 토큰 첨부 — dev 모드는 x_wtg_user 자동 첨부라 숨김. 운영 JWT 환경에서만 노출. -->
-              <label id="ws-auth-wrap" class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer hidden">
-                <input id="ws-auth" type="checkbox" class="w-4 h-4 accent-accent-500" />
-                토큰 첨부
-              </label>
-              <button id="ws-connect" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">▶ 연결</button>
-              <button id="ws-disconnect" class="px-4 py-2 rounded-lg bg-ink-800 border border-ink-700 hover:bg-bad/20 hover:text-bad text-sm hidden">■ 종료</button>
+          <!-- Endpoint chips — 5개 endpoint 카드. 클릭으로 토글 (해당 endpoint 만), 우측 버튼으로 전체 일괄. -->
+          <div class="border-gradient rounded-2xl p-3">
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-xs uppercase tracking-widest text-slate-400">엔드포인트</div>
+              <div class="flex gap-1.5">
+                <button id="ws-all-connect" type="button" onclick="wsmonConnectAll()"
+                  class="px-3 py-1 rounded-md bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-xs hover:from-accent-400">▶ 전체 연결</button>
+                <button id="ws-all-disconnect" type="button" onclick="wsmonDisconnectAll()"
+                  class="px-3 py-1 rounded-md bg-ink-800 border border-ink-700 hover:bg-bad/20 hover:text-bad text-xs">■ 전체 종료</button>
+              </div>
             </div>
-            <div class="flex items-center gap-4 text-xs">
-              <span class="flex items-center gap-2">
-                상태:
-                <span id="ws-state-dot" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
-                <span id="ws-state-text" class="font-mono text-slate-300">disconnected</span>
-              </span>
-              <span class="text-slate-500">메시지 <span id="ws-stat-total" class="text-slate-200 font-mono">0</span></span>
-              <span class="text-slate-500">B/sec <span id="ws-stat-rate" class="text-slate-200 font-mono">0</span></span>
-              <span class="text-slate-500">peak <span id="ws-stat-peak" class="text-slate-200 font-mono">0</span></span>
-              <span class="text-slate-500">drop <span id="ws-stat-dropped" class="text-slate-200 font-mono">0</span></span>
-              <span class="text-slate-500 ml-auto">uptime <span id="ws-stat-uptime" class="text-slate-200 font-mono">—</span></span>
+            <div id="ws-endpoints" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              <!-- JS 가 렌더링 -->
             </div>
           </div>
 
           <!-- Toolbar -->
           <div class="flex flex-wrap items-center gap-2">
-            <input id="ws-filter" placeholder="필터 (포함하는 텍스트)"
+            <input id="ws-filter" placeholder="필터 (포함하는 텍스트 / source)"
               class="flex-1 min-w-[200px] px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm" />
             <label class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer">
               <input id="ws-pause" type="checkbox" class="w-4 h-4 accent-accent-500" />
@@ -813,19 +808,25 @@
               <input id="ws-jsononly" type="checkbox" class="w-4 h-4 accent-accent-500" />
               JSON 정렬
             </label>
-            <button id="ws-clear" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-xs">메시지 비우기</button>
+            <button id="ws-clear" type="button" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-xs">메시지 비우기</button>
           </div>
 
-          <!-- Send — 평소엔 접힘. 양방향 ws (예: edge-price subscribe) 에서만 사용.
-               server 가 클라이언트 메시지 형식을 강제하므로 임의 텍스트는 무시되거나 bad_request 응답. -->
+          <!-- 합계 통계 row -->
+          <div class="flex items-center gap-4 text-xs px-1">
+            <span class="text-slate-500">합계 메시지 <span id="ws-stat-total" class="text-slate-200 font-mono">0</span></span>
+            <span class="text-slate-500">B/sec <span id="ws-stat-rate" class="text-slate-200 font-mono">0</span></span>
+            <span class="text-slate-500">peak <span id="ws-stat-peak" class="text-slate-200 font-mono">0</span></span>
+            <span class="text-slate-500">drop <span id="ws-stat-dropped" class="text-slate-200 font-mono">0</span></span>
+          </div>
+
+          <!-- Send — 평소엔 접힘. 보낼 endpoint 를 select 로 선택. -->
           <details class="border-gradient rounded-2xl">
             <summary class="cursor-pointer px-3 py-2 text-xs uppercase tracking-widest text-slate-400 hover:text-slate-200 select-none flex items-center justify-between">
-              <span>메시지 전송 <span class="text-[10px] text-slate-500 normal-case">(양방향 ws — 예: edge-price subscribe)</span></span>
+              <span>메시지 전송 <span class="text-[10px] text-slate-500 normal-case">(양방향 ws — 보낼 endpoint 를 선택)</span></span>
               <span class="text-[10px] text-slate-600">▾</span>
             </summary>
-            <div class="px-3 pb-3 pt-1">
-              <!-- 자주 쓰는 메시지 — 클릭 한 번으로 input 채움. edge-price 의 subscribe/unsubscribe 가 90% 케이스. -->
-              <div class="flex flex-wrap gap-1.5 mb-2 text-[11px]" id="ws-send-presets">
+            <div class="px-3 pb-3 pt-1 space-y-2">
+              <div class="flex flex-wrap gap-1.5 text-[11px]">
                 <button type="button" class="px-2 py-0.5 rounded bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 font-mono"
                   onclick="document.getElementById('ws-send-input').value=this.dataset.body"
                   data-body='{"type":"subscribe","pairs":["USD/KRW","EUR/KRW","JPY/KRW"]}'>+ subscribe USD/EUR/JPY KRW</button>
@@ -837,30 +838,32 @@
                   data-body='{"type":"unsubscribe","pairs":["USD/KRW"]}'>− unsubscribe USD/KRW</button>
               </div>
               <div class="flex gap-2">
-                <input id="ws-send-input" placeholder='{"type":"subscribe","pairs":["USD/KRW","EUR/KRW"]}'
+                <select id="ws-send-target"
+                  class="px-2 py-2 rounded-lg bg-ink-800 border border-ink-700 outline-none font-mono text-xs"></select>
+                <input id="ws-send-input"
+                  placeholder='{"type":"subscribe","pairs":["USD/KRW","EUR/KRW"]}'
                   value='{"type":"subscribe","pairs":["USD/KRW","EUR/KRW"]}'
                   onkeydown="if(event.key==='Enter'){event.preventDefault();wsmonSend();}"
                   class="flex-1 px-3 py-2 rounded-lg bg-ink-900 border border-ink-700 focus:border-accent-500 outline-none font-mono text-xs" />
                 <button id="ws-send-btn" type="button" onclick="wsmonSend()"
                   class="px-4 py-2 rounded-lg bg-ink-800 border border-ink-700 hover:bg-ink-700 text-xs">전송</button>
               </div>
-              <!-- inline status — toast 가 안 보일 때도 사용자가 즉시 결과 확인. -->
-              <div id="ws-send-status" class="mt-1.5 text-[11px] font-mono text-slate-500">전송 결과가 여기에 표시됩니다.</div>
-              <div class="mt-1.5 text-[10px] text-slate-500">
+              <div id="ws-send-status" class="text-[11px] font-mono text-slate-500">전송 결과가 여기에 표시됩니다.</div>
+              <div class="text-[10px] text-slate-500">
                 · edge-price: <code class="text-accent-400">{"type":"subscribe","pairs":["USD/KRW",...]}</code> 또는 <code class="text-accent-400">{"type":"unsubscribe","pairs":[...]}</code><br/>
-                · mci-push / edge-push: 단방향 — client 메시지 무시
+                · mci-push / edge-push / chart: 단방향 — client 메시지 무시
               </div>
             </div>
           </details>
 
-          <!-- Message log -->
+          <!-- Message log — 모든 endpoint 메시지가 한 stream 에. [source] 칩 prefix. -->
           <div class="border-gradient rounded-2xl">
             <div class="px-4 py-2 border-b border-ink-700/60 flex items-center justify-between text-xs">
-              <span class="text-slate-400 uppercase tracking-widest">스트림</span>
+              <span class="text-slate-400 uppercase tracking-widest">통합 스트림</span>
               <span id="ws-msg-count" class="text-slate-500 font-mono">0 / 0</span>
             </div>
             <div id="ws-log" class="overflow-auto max-h-[55vh] divide-y divide-ink-700/30">
-              <div class="p-6 text-center text-slate-500 text-sm">아직 메시지가 없습니다. 위에서 연결을 시작하세요.</div>
+              <div class="p-6 text-center text-slate-500 text-sm">아직 메시지가 없습니다. 위 endpoint 칩에서 연결을 시작하세요.</div>
             </div>
           </div>
         </div>
@@ -5019,153 +5022,182 @@ function renderAuditEntry(e) {
 }
 
 // ───────── WS Live Monitor ─────────
+// ───────── WS Live Monitor — multi-endpoint ─────────
+//
+// 5개 endpoint 를 동시에 모니터링. 각 endpoint 는 독립 WebSocket 보유, 메시지는
+// 단일 통합 log 에 [source] 칩 prefix 와 함께 누적. 통계는 합계 (메시지 수 /
+// B/sec / peak / drop).
+
 let wsmonInited = false;
+const WSMON_ENDPOINTS = [
+  { id: "mci-push",   label: "mci-push (8081)",       color: "indigo",  url: "ws://localhost:8081/v1/subscribe" },
+  { id: "edge-price", label: "edge-price (8083)",     color: "accent",  url: "ws://localhost:8083/v1/subscribe" },
+  { id: "edge-push",  label: "edge-push (8084)",      color: "violet",  url: "ws://localhost:8084/v1/subscribe" },
+  { id: "mci-chart",  label: "mci-chart (8086) 봉",   color: "amber",   url: "ws://localhost:8086/v1/chart/stream" },
+  { id: "edge-chart", label: "edge-chart (8087) DMZ", color: "teal",    url: "ws://localhost:8087/v1/chart/stream" },
+];
 const wsmon = {
-  sock: null,
-  total: 0, dropped: 0, bytesWindow: 0, peakRate: 0,
-  startedAt: 0,
-  rateTimer: null, uptimeTimer: null,
-  log: [],          // 최근 메시지 (최대 N).
-  MAX_LOG: 200,
+  endpoints: {}, // id → { def, sock, state, total, bytesWindow, dropped }
+  log: [],
+  MAX_LOG: 300,
+  rateTimer: null,
+  peakRate: 0,
 };
 
 function initWSMon() {
   if (wsmonInited) return;
   wsmonInited = true;
+  // endpoint state 초기화.
+  for (const def of WSMON_ENDPOINTS) {
+    wsmon.endpoints[def.id] = {
+      def, sock: null, state: "disconnected",
+      total: 0, bytesWindow: 0, dropped: 0,
+    };
+  }
+  wsmonRenderEndpoints();
+  wsmonRenderSendTarget();
+  // rate timer — 1초마다 모든 endpoint 의 byte 합산 → B/sec 표시.
+  if (!wsmon.rateTimer) wsmon.rateTimer = setInterval(wsmonTickRate, 1000);
 }
 
 function wireWSMon() {
-  // dev 모드면 x_wtg_user 자동 첨부라 "토큰 첨부" 체크박스 불필요. 운영(JWT)에서만 노출.
-  // 조회 실패해도 wiring 이 중단되지 않도록 안전 처리.
-  try {
-    if (localStorage.getItem(LS_DEV) !== "1") {
-      const w = document.getElementById("ws-auth-wrap");
-      if (w) w.classList.remove("hidden");
-    }
-  } catch (_) {}
-  $("#ws-preset").addEventListener("change", (e) => {
-    if (e.target.value) $("#ws-url").value = e.target.value;
-  });
-  $("#ws-connect").onclick = wsmonConnect;
-  $("#ws-disconnect").onclick = wsmonDisconnect;
-  $("#ws-clear").onclick = () => { wsmon.log = []; wsmonRender(); };
-  // ws-send-btn / ws-send-input 은 inline onclick/onkeydown 로 backup 됨.
   $("#ws-filter").addEventListener("input", wsmonRender);
   $("#ws-jsononly").addEventListener("change", wsmonRender);
+  $("#ws-clear").onclick = () => { wsmon.log = []; wsmonRender(); };
 }
 
-function wsmonSetState(state) {
-  const text = $("#ws-state-text");
-  const dot = $("#ws-state-dot");
-  text.textContent = state;
-  dot.className = "w-2.5 h-2.5 rounded-full " + ({
-    connected: "bg-good",
-    connecting: "bg-warn animate-pulse",
-    disconnected: "bg-slate-600",
-    error: "bg-bad",
-    closed: "bg-slate-500",
-  }[state] || "bg-slate-600");
-  if (state === "connected") {
-    $("#ws-connect").classList.add("hidden");
-    $("#ws-disconnect").classList.remove("hidden");
-  } else {
-    $("#ws-connect").classList.remove("hidden");
-    $("#ws-disconnect").classList.add("hidden");
+// endpoint 칩 row 렌더링. 각 칩 = 카드 (status dot + label + 메시지 수 + 토글 버튼).
+function wsmonRenderEndpoints() {
+  const wrap = $("#ws-endpoints");
+  if (!wrap) return;
+  wrap.replaceChildren();
+  for (const def of WSMON_ENDPOINTS) {
+    const ep = wsmon.endpoints[def.id];
+    const connected = ep.state === "connected";
+    const stateCls = {
+      connected: "bg-good", connecting: "bg-warn animate-pulse",
+      disconnected: "bg-slate-600", error: "bg-bad", closed: "bg-slate-500",
+    }[ep.state] || "bg-slate-600";
+
+    const card = h("div", { class: "flex items-center gap-2 px-3 py-2 rounded-lg bg-ink-800/40 border border-ink-700/60" });
+    const dot = h("span", { class: "w-2 h-2 rounded-full shrink-0 " + stateCls });
+    const lab = h("div", { class: "flex-1 min-w-0" },
+      h("div", { class: "text-xs font-medium text-slate-200 truncate", text: def.label }),
+      h("div", { class: "text-[10px] text-slate-500 font-mono truncate", text: "msg " + ep.total + " · " + ep.state }),
+    );
+    const btn = h("button", {
+      class: "px-2 py-1 rounded-md text-[11px] font-semibold shrink-0 " +
+        (connected ? "bg-ink-700 hover:bg-bad/20 hover:text-bad text-slate-300" : "bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950"),
+    }, connected ? "■ 끊기" : "▶ 연결");
+    btn.onclick = () => connected ? wsmonDisconnect(def.id) : wsmonConnect(def.id);
+    card.appendChild(dot); card.appendChild(lab); card.appendChild(btn);
+    wrap.appendChild(card);
   }
 }
 
-function wsmonConnect() {
-  let url = $("#ws-url").value.trim();
-  if (!url) { toast("URL 이 비어있습니다", "warn"); return; }
-  if (!/^wss?:\/\//.test(url)) { toast("ws:// 또는 wss:// 로 시작해야 합니다", "warn"); return; }
+// 메시지 전송 target select 렌더링.
+function wsmonRenderSendTarget() {
+  const sel = $("#ws-send-target");
+  if (!sel) return;
+  sel.replaceChildren();
+  for (const def of WSMON_ENDPOINTS) {
+    const ep = wsmon.endpoints[def.id];
+    const opt = document.createElement("option");
+    opt.value = def.id;
+    opt.textContent = def.label + (ep.state === "connected" ? " ✓" : "");
+    sel.appendChild(opt);
+  }
+}
 
-  // 인증 query 자동 첨부 — 브라우저 WebSocket 은 사용자 정의 헤더 주입을 못 하므로
-  // query 로 전달한다. 서버 미들웨어 (BearerFromQuery / UserFromQuery) 가 헤더로 변환.
-  //   DevMode: ?x_wtg_user=<id>      운영(JWT): ?access_token=<token>
-  // "토큰 첨부" 체크박스가 켜져 있거나 dev 모드는 자동 첨부.
-  const isDev = localStorage.getItem(LS_DEV) === "1";
+function wsmonConnect(epId) {
+  const ep = wsmon.endpoints[epId];
+  if (!ep || (ep.sock && ep.sock.readyState <= 1)) return;
+  let url = ep.def.url;
+  // 인증 query 자동 첨부 — dev: x_wtg_user, 운영: access_token.
   const sep = () => url.includes("?") ? "&" : "?";
-  if (isDev) {
+  if (localStorage.getItem(LS_DEV) === "1") {
     const u = localStorage.getItem(LS_USER);
-    if (u && !/[?&]x_wtg_user=/.test(url))
-      url = url + sep() + "x_wtg_user=" + encodeURIComponent(u);
-  } else if ($("#ws-auth").checked) {
+    if (u) url = url + sep() + "x_wtg_user=" + encodeURIComponent(u);
+  } else {
     const t = localStorage.getItem(LS_TOKEN);
-    if (t && !/[?&]access_token=/.test(url))
-      url = url + sep() + "access_token=" + encodeURIComponent(t);
+    if (t) url = url + sep() + "access_token=" + encodeURIComponent(t);
   }
+  ep.state = "connecting";
+  ep.total = 0; ep.bytesWindow = 0; ep.dropped = 0;
+  wsmonRenderEndpoints();
 
-  // 통계 리셋.
-  wsmon.total = 0; wsmon.dropped = 0; wsmon.bytesWindow = 0; wsmon.peakRate = 0;
-  wsmon.startedAt = Date.now();
-  $("#ws-stat-total").textContent   = "0";
-  $("#ws-stat-rate").textContent    = "0";
-  $("#ws-stat-peak").textContent    = "0";
-  $("#ws-stat-dropped").textContent = "0";
-
-  wsmonSetState("connecting");
   let sock;
-  try { sock = new WebSocket(url); } catch (e) {
-    wsmonSetState("error");
-    toast("연결 실패: " + e.message, "err");
+  try { sock = new WebSocket(url); }
+  catch (e) {
+    ep.state = "error"; wsmonRenderEndpoints();
+    wsmonAppend({ src: epId, kind: "err", text: "연결 생성 실패: " + e.message, ts: Date.now() });
     return;
   }
-  wsmon.sock = sock;
-  sock.addEventListener("open",  () => {
-    wsmonSetState("connected");
-    wsmonAppend({ kind: "info", text: "✓ 연결됨 — " + url, ts: Date.now() });
-    if (!wsmon.rateTimer) wsmon.rateTimer = setInterval(wsmonTickRate, 1000);
-    if (!wsmon.uptimeTimer) wsmon.uptimeTimer = setInterval(wsmonTickUptime, 1000);
+  ep.sock = sock;
+  sock.addEventListener("open", () => {
+    ep.state = "connected"; wsmonRenderEndpoints(); wsmonRenderSendTarget();
+    wsmonAppend({ src: epId, kind: "info", text: "✓ 연결됨 — " + url, ts: Date.now() });
   });
   sock.addEventListener("close", (e) => {
-    wsmonSetState("closed");
-    wsmonAppend({ kind: "info", text: "✕ 종료 (code=" + e.code + " reason=" + (e.reason || "-") + ")", ts: Date.now() });
-    wsmonStopTimers();
+    ep.state = "closed"; ep.sock = null; wsmonRenderEndpoints(); wsmonRenderSendTarget();
+    wsmonAppend({ src: epId, kind: "info",
+      text: "✕ 종료 (code=" + e.code + " reason=" + (e.reason || "-") + ")", ts: Date.now() });
   });
   sock.addEventListener("error", () => {
-    wsmonSetState("error");
-    wsmonAppend({ kind: "err", text: "전송 오류", ts: Date.now() });
+    ep.state = "error"; wsmonRenderEndpoints();
+    wsmonAppend({ src: epId, kind: "err", text: "ws 에러", ts: Date.now() });
   });
   sock.addEventListener("message", (e) => {
-    if ($("#ws-pause").checked) { wsmon.dropped++; $("#ws-stat-dropped").textContent = wsmon.dropped; return; }
+    if ($("#ws-pause") && $("#ws-pause").checked) {
+      ep.dropped++; wsmonUpdateTotals(); return;
+    }
     const data = String(e.data ?? "");
-    wsmon.total++;
-    wsmon.bytesWindow += data.length;
-    $("#ws-stat-total").textContent = wsmon.total;
-    wsmonAppend({ kind: "in", text: data, ts: Date.now() });
+    ep.total++; ep.bytesWindow += data.length;
+    wsmonUpdateTotals(); wsmonRenderEndpoints();
+    wsmonAppend({ src: epId, kind: "in", text: data, ts: Date.now() });
   });
 }
 
-function wsmonDisconnect() {
-  if (wsmon.sock) {
-    try { wsmon.sock.close(1000, "user"); } catch (_) {}
-    wsmon.sock = null;
+function wsmonDisconnect(epId) {
+  const ep = wsmon.endpoints[epId];
+  if (!ep || !ep.sock) return;
+  try { ep.sock.close(1000, "user"); } catch (_) {}
+  ep.sock = null;
+}
+
+function wsmonConnectAll() {
+  for (const def of WSMON_ENDPOINTS) {
+    const ep = wsmon.endpoints[def.id];
+    if (!ep.sock || ep.sock.readyState > 1) wsmonConnect(def.id);
   }
-  wsmonStopTimers();
+}
+function wsmonDisconnectAll() {
+  for (const def of WSMON_ENDPOINTS) wsmonDisconnect(def.id);
 }
 
-function wsmonStopTimers() {
-  if (wsmon.rateTimer)   { clearInterval(wsmon.rateTimer);   wsmon.rateTimer = null; }
-  if (wsmon.uptimeTimer) { clearInterval(wsmon.uptimeTimer); wsmon.uptimeTimer = null; }
+// 합계 통계 row 갱신.
+function wsmonUpdateTotals() {
+  let total = 0, dropped = 0;
+  for (const id in wsmon.endpoints) {
+    total   += wsmon.endpoints[id].total;
+    dropped += wsmon.endpoints[id].dropped;
+  }
+  if ($("#ws-stat-total"))   $("#ws-stat-total").textContent   = String(total);
+  if ($("#ws-stat-dropped")) $("#ws-stat-dropped").textContent = String(dropped);
 }
 
+// 1초 마다 모든 endpoint 의 byte 합산 → B/sec + peak.
 function wsmonTickRate() {
-  const r = wsmon.bytesWindow;
-  wsmon.bytesWindow = 0;
-  $("#ws-stat-rate").textContent = r;
-  if (r > wsmon.peakRate) {
-    wsmon.peakRate = r;
-    $("#ws-stat-peak").textContent = wsmon.peakRate;
+  let rate = 0;
+  for (const id in wsmon.endpoints) {
+    rate += wsmon.endpoints[id].bytesWindow;
+    wsmon.endpoints[id].bytesWindow = 0;
   }
-}
-
-function wsmonTickUptime() {
-  if (!wsmon.startedAt) return;
-  const sec = Math.floor((Date.now() - wsmon.startedAt) / 1000);
-  const h = String(Math.floor(sec / 3600)).padStart(2, "0");
-  const m = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
-  const s = String(sec % 60).padStart(2, "0");
-  $("#ws-stat-uptime").textContent = h + ":" + m + ":" + s;
+  if ($("#ws-stat-rate")) $("#ws-stat-rate").textContent = String(rate);
+  if (rate > wsmon.peakRate) {
+    wsmon.peakRate = rate;
+    if ($("#ws-stat-peak")) $("#ws-stat-peak").textContent = String(rate);
+  }
 }
 
 function wsmonSend() {
@@ -5173,20 +5205,21 @@ function wsmonSend() {
   const setStatus = (msg, kind) => {
     if (!st) return;
     st.textContent = msg;
-    st.className = "mt-1.5 text-[11px] font-mono " +
+    st.className = "text-[11px] font-mono " +
       (kind === "err" ? "text-bad" : kind === "ok" ? "text-good" : "text-slate-500");
   };
-  if (!wsmon.sock || wsmon.sock.readyState !== WebSocket.OPEN) {
-    setStatus("✗ 연결되어 있지 않음 — 먼저 ▶ 연결 버튼을 누르세요", "err");
-    toast("연결되어 있지 않음", "warn");
+  const target = $("#ws-send-target") && $("#ws-send-target").value;
+  const ep = target && wsmon.endpoints[target];
+  if (!ep || !ep.sock || ep.sock.readyState !== WebSocket.OPEN) {
+    setStatus("✗ " + (target || "(none)") + " — 연결되어 있지 않음. endpoint 칩에서 ▶ 연결 먼저", "err");
     return;
   }
   const v = $("#ws-send-input").value;
   if (!v) { setStatus("✗ 메시지가 비어있음", "err"); return; }
-  try { wsmon.sock.send(v); }
-  catch (e) { setStatus("✗ 전송 실패: " + e.message, "err"); toast("전송 실패: " + e.message, "err"); return; }
-  wsmonAppend({ kind: "out", text: v, ts: Date.now() });
-  setStatus("✓ 전송됨 (" + v.length + " bytes) — 응답은 stream 영역에서 확인", "ok");
+  try { ep.sock.send(v); }
+  catch (e) { setStatus("✗ 전송 실패: " + e.message, "err"); return; }
+  wsmonAppend({ src: target, kind: "out", text: v, ts: Date.now() });
+  setStatus("✓ " + target + " 로 전송 (" + v.length + " bytes)", "ok");
   $("#ws-send-input").value = "";
 }
 
@@ -5205,14 +5238,29 @@ function wsmonRender() {
   log.replaceChildren();
   let shown = 0;
   for (const e of wsmon.log) {
-    if (filter && !e.text.toLowerCase().includes(filter)) continue;
+    if (filter) {
+      const hay = (e.text + " " + (e.src || "")).toLowerCase();
+      if (!hay.includes(filter)) continue;
+    }
     log.appendChild(wsmonRenderEntry(e, jsonOnly));
     shown++;
   }
+  if (shown === 0 && wsmon.log.length > 0) {
+    log.appendChild(h("div", { class: "p-6 text-center text-slate-500 text-sm",
+      text: "필터 조건에 일치하는 메시지 없음." }));
+  }
   $("#ws-msg-count").textContent = shown + " / " + wsmon.log.length;
-
   if ($("#ws-autoscroll").checked) log.scrollTop = log.scrollHeight;
 }
+
+// source → 칩 색 매핑. endpoint 정의의 color 와 1:1.
+const WSMON_SRC_CHIP = {
+  "mci-push":   "bg-indigo-500/15 text-indigo-300 border-indigo-500/30",
+  "edge-price": "bg-accent-500/15 text-accent-300 border-accent-500/30",
+  "edge-push":  "bg-violet-500/15 text-violet-300 border-violet-500/30",
+  "mci-chart":  "bg-amber-500/15 text-amber-300 border-amber-500/30",
+  "edge-chart": "bg-teal-500/15 text-teal-300 border-teal-500/30",
+};
 
 function wsmonRenderEntry(e, jsonOnly) {
   const kindCls = {
@@ -5230,10 +5278,16 @@ function wsmonRenderEntry(e, jsonOnly) {
     try { body = JSON.stringify(JSON.parse(e.text), null, 2); } catch (_) {}
   }
 
+  const srcCls = WSMON_SRC_CHIP[e.src] || "bg-ink-800 text-slate-400 border-ink-700";
+  const srcChip = h("span", {
+    class: "px-1.5 py-0.5 rounded text-[10px] font-mono border shrink-0 " + srcCls,
+    text: e.src || "?",
+  });
   const ts = h("span", { class: "text-[10px] font-mono text-slate-500 shrink-0", text: t });
   const ar = h("span", { class: "font-mono w-4 shrink-0 " + kindCls, text: arrow });
   const tx = h("pre", { class: "codepanel flex-1 whitespace-pre-wrap break-all " + kindCls, text: body });
-  return h("div", { class: "px-4 py-1.5 flex gap-2 items-start hover:bg-ink-800/30 transition" }, ts, ar, tx);
+  return h("div", { class: "px-3 py-1.5 flex gap-2 items-start hover:bg-ink-800/30 transition" },
+    ts, srcChip, ar, tx);
 }
 
 // ───────── Quote (시세) ─────────

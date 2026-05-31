@@ -173,7 +173,9 @@ func (s *Server) handleChartStream(w http.ResponseWriter, r *http.Request) {
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
-		CheckOrigin:     nil,
+		// mci-chart 는 인증 없는 사내망 서비스 (운영에선 mci-edge-chart 가 DMZ 인증 책임).
+		// 모든 origin 허용 — admin UI(:9090) / 직접 접속(:8086) / edge-chart proxy 모두 통과.
+		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

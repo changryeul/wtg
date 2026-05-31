@@ -453,6 +453,12 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	// BestConsumer 활성 시 per-symbol best snapshot 노출 (디버그 / 운영 가시성).
 	if s.best != nil {
 		mux.HandleFunc("GET /v1/best-stats", func(w http.ResponseWriter, r *http.Request) {
+			// DevMode 한정 CORS 허용 — 같은 호스트의 다른 포트 (mci-admin 9090)
+			// 가 자기 origin 으로 직접 fetch 할 수 있게. 운영은 reverse-proxy 단일
+			// origin 권장 (Access-Control-* 헤더 노출 X).
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
 			writeJSON(w, http.StatusOK, s.best.Stats())
 		})
 	}

@@ -4211,20 +4211,31 @@ const mcState = { wired: false, doc: null };
 async function initMarginCalc() {
   if (!mcState.wired) {
     mcState.wired = true;
-    $("#mc-reload").onclick = mcLoadTable;
-    $("#mc-calc").onclick = mcCompute;
-    $("#mc-now").onclick = () => { $("#mc-when").value = mcNowLocal(); };
-    $("#mc-fill-best").onclick = mcFillBest;
-    $("#mc-when").value = mcNowLocal();
+    $("#mc-reload").addEventListener("click", mcLoadTable);
+    $("#mc-calc").addEventListener("click", mcCompute);
+    $("#mc-now").addEventListener("click", mcSetNow);
+    $("#mc-fill-best").addEventListener("click", mcFillBest);
   }
+  // 페이지 진입 시마다 when 을 현재 시각으로 (이전 페이지 stale 값 덮어쓰기).
+  mcSetNow();
   await mcLoadTable();
 }
 
+// datetime-local 의 표준 value 는 "YYYY-MM-DDTHH:MM" — 일부 브라우저 (Safari) 가
+// timezone 포함 ISO 를 거부하므로 local 분해 후 직접 조립.
 function mcNowLocal() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
-  return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate())
-       + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function mcSetNow() {
+  const el = $("#mc-when");
+  if (!el) return;
+  const v = mcNowLocal();
+  el.value = v;
+  // datetime-local input.value 가 setter 만으로 안 반영되는 브라우저 대비.
+  el.setAttribute("value", v);
 }
 
 async function mcLoadTable() {
@@ -4241,19 +4252,27 @@ async function mcLoadTable() {
 }
 
 async function mcFillBest() {
-  try {
-    const r = await fetch("http://127.0.0.1:8082/v1/best-stats");
-    const j = await r.json();
-    const pair = $("#mc-pair").value.trim();
-    const sym = pair.replace(/\//g, "");
-    const e = j.symbols && j.symbols[sym];
-    if (!e) { toast("BEST 데이터 없음: " + sym, "warn"); return; }
-    $("#mc-raw-bid").value = String(e.best_bid);
-    $("#mc-raw-ask").value = String(e.best_ask);
-    toast("BEST 자동 입력 (" + sym + ")", "ok");
-  } catch (err) {
-    toast("BEST 가져오기 실패: " + err.message, "err");
+  // 우선순위:
+  //  1. /v1/admin/best-stats — admin backend proxy (있으면 같은 origin, 권장)
+  //  2. http://<host>:8082/v1/best-stats — DevMode 한정 CORS 허용 직접 호출
+  const tryUrls = ["/v1/admin/best-stats", "http://" + location.hostname + ":8082/v1/best-stats"];
+  let j = null, lastErr = null;
+  for (const u of tryUrls) {
+    try {
+      const r = await fetch(u, { credentials: u.startsWith("/") ? "same-origin" : "omit",
+                                  headers: u.startsWith("/") ? authHeaders() : {} });
+      if (r.ok) { j = await r.json(); break; }
+      lastErr = new Error("HTTP " + r.status);
+    } catch (e) { lastErr = e; }
   }
+  if (!j) { toast("BEST 가져오기 실패: " + (lastErr ? lastErr.message : "no source"), "err"); return; }
+  const pair = $("#mc-pair").value.trim();
+  const sym = pair.replace(/\//g, "");
+  const e = j.symbols && j.symbols[sym];
+  if (!e) { toast("BEST 데이터 없음: " + sym, "warn"); return; }
+  $("#mc-raw-bid").value = String(e.best_bid);
+  $("#mc-raw-ask").value = String(e.best_ask);
+  toast("BEST 자동 입력 (" + sym + ")", "ok");
 }
 
 // 미니 helpers — Go 측 normalizeName / parseHHMM / parseDays 미러.

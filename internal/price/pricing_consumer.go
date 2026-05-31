@@ -196,6 +196,11 @@ func NewPricingConsumer(opt PricingConsumerOptions) *PricingConsumer {
 }
 
 // OnTick 은 TickConsumer 인터페이스.
+// Store — 본 consumer 가 보유한 PricingTable Store 노출 (forward-snapshot
+// endpoint 등 외부 read-only 사용). 같은 store 를 공유해 hot reload 시점에
+// 일관된 snapshot 보장.
+func (c *PricingConsumer) Store() *pricing.Store { return c.store }
+
 func (c *PricingConsumer) OnTick(t *Tick) {
 	if t == nil {
 		return

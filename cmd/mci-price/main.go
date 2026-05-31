@@ -304,6 +304,10 @@ func main() {
 	default:
 		logger.Info("PricingConsumer 비활성 (etcd / 정적 파일 모두 미설정)")
 	}
+	// forward-snapshot endpoint 활성화 — Store 공유로 hot reload 자동 반영.
+	if pc != nil {
+		srv.AttachPricing(pc.Store())
+	}
 	if etcdTblWatch != nil {
 		defer etcdTblWatch.Close()
 	}

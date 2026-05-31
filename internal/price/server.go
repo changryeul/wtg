@@ -19,6 +19,7 @@ import (
 
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
+	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
@@ -68,6 +69,10 @@ type Server struct {
 	// HTTP (이 필드) 양쪽에 attach 가능 — 두 transport 가 같은 카운터 / 같은
 	// Registry 를 공유.
 	quoteValidator *QuoteValidationServer
+
+	// pricingStore — forward-snapshot endpoint 등 외부 노출용. AttachPricing 으로
+	// 주입. nil 이면 forward-snapshot 라우트 미등록.
+	pricingStore *pricing.Store
 
 	totalRecv  atomic.Uint64
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
@@ -144,6 +149,12 @@ func (s *Server) AttachGRPC(g *GRPCServer) {
 
 // AttachQuoteValidator — QuoteValidationServer 를 HTTP gateway 로도 노출.
 // nil 이면 무시. Start 전에 호출.
+// AttachPricing — forward-snapshot endpoint 가 사용할 PricingTable Store 주입.
+// cmd/mci-price 의 bootstrap 에서 호출. 미주입이면 forward-snapshot 미노출 (404).
+func (s *Server) AttachPricing(store *pricing.Store) {
+	s.pricingStore = store
+}
+
 func (s *Server) AttachQuoteValidator(v *QuoteValidationServer) {
 	s.quoteValidator = v
 }
@@ -461,6 +472,13 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			}
 			writeJSON(w, http.StatusOK, s.best.Stats())
 		})
+	}
+
+	// Forward 시세 snapshot — pricingStore 가 주입돼 있고 best 가 활성일 때만 노출.
+	if s.pricingStore != nil && s.best != nil {
+		mux.HandleFunc("GET /v1/quote/forward-snapshot",
+			ForwardSnapshotHandler(ForwardSnapshotDeps{Store: s.pricingStore, Best: s.best}, s.cfg.DevMode))
+		s.logger.Info("Forward snapshot endpoint 활성 — GET /v1/quote/forward-snapshot")
 	}
 	mux.Handle("GET /metrics", s.metrics.Handler())
 

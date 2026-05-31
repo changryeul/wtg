@@ -27,6 +27,11 @@ type PricingTable struct {
 	SiteMargin     map[SiteKey]Margin
 	CustomerMargin []CustomerRule   // P1 — 다중 매칭 + priority 정렬 필요해 슬라이스
 	TimeWindows    map[string]TimeWindowRule
+
+	// Calendar — 영업일 캘린더. nil 이면 WeekendCalendar 사용 (Cal() 메소드 통해).
+	// 운영자가 admin UI 에서 휴일 등록 → PricingTableDoc.Holidays → BuildPricingTable
+	// 시점에 HolidayCalendar 빌드.
+	Calendar Calendar
 }
 
 // CustomerRule — 빌드된 customer override 규칙. Doc 의 CustomerEntryDoc 의 in-memory 형태.

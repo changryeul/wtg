@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/winwaysystems/wtg/pkg/session"
 )
@@ -28,6 +29,10 @@ type PricingTableDoc struct {
 	HQMargin       []HQEntryDoc         `json:"hq_margin,omitempty"`
 	SiteMargin     []SiteEntryDoc       `json:"site_margin,omitempty"`
 	CustomerMargin []CustomerEntryDoc   `json:"customer_margin,omitempty"`  // P1 신규
+
+	// P5 6단계 — 영업일 캘린더의 휴일 set ("YYYY-MM-DD" 문자열).
+	// 비어있으면 weekend-only. value_date 보간 / SPOT 결제일 산정에 영향.
+	Holidays []string `json:"holidays,omitempty"`
 }
 
 // TimeWindowDoc — 시간대 범위 정의 (예: regular = 평일 09:00~15:30 KST).
@@ -174,6 +179,19 @@ func BuildPricingTable(doc PricingTableDoc) *PricingTable {
 	for i := 1; i < len(t.CustomerMargin); i++ {
 		for j := i; j > 0 && t.CustomerMargin[j-1].Priority < t.CustomerMargin[j].Priority; j-- {
 			t.CustomerMargin[j-1], t.CustomerMargin[j] = t.CustomerMargin[j], t.CustomerMargin[j-1]
+		}
+	}
+	// P5 6단계 — 휴일 캘린더 빌드. 빈 set 이면 Calendar 는 nil 유지 → Cal() 이
+	// WeekendCalendar 반환.
+	if len(doc.Holidays) > 0 {
+		dates := make([]time.Time, 0, len(doc.Holidays))
+		for _, s := range doc.Holidays {
+			if d, err := ParseHolidayDate(s); err == nil {
+				dates = append(dates, d)
+			}
+		}
+		if len(dates) > 0 {
+			t.Calendar = NewHolidayCalendar(dates)
 		}
 	}
 	return t

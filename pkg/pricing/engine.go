@@ -117,8 +117,9 @@ func (t *PricingTable) ApplyForValueDate(raw Quote, profile session.Profile,
 	if now.IsZero() {
 		now = time.Now()
 	}
-	spotDate := SpotDate(now, spotDays)
-	offsetDays := BusinessDaysBetween(spotDate, valueDate)
+	cal := t.Cal()
+	spotDate := SpotDateCal(now, spotDays, cal)
+	offsetDays := BusinessDaysBetweenCal(spotDate, valueDate, cal)
 	interp, err := t.InterpolateSwap(raw.Pair, offsetDays)
 	if err != nil {
 		return CustomerQuote{}, SwapInterpolation{OffsetDays: offsetDays}, err

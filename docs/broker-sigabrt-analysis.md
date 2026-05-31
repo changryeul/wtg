@@ -161,14 +161,74 @@ mymqreboot 의 `--rm` 제거 (이미 patch 됨) — 컨테이너 죽어도 evide
 | `dispatch.c` 의 routing | 같은 thread 안 — race 적음 |
 | `mmapq.c` / `shmq.c` | shared memory queue — broker 가 사용 안 하면 무관 |
 
-## 6. 결론
+## 6. 결론 (ASAN 진단 후 갱신)
 
-| 항목 | 결과 |
+### 6.1 ASAN 진단 결과 — 가설 수정
+
+ASAN 빌드 (`wtg-mymqd:asan`) 로 같은 부하 reproduce 후 발견:
+
+```
+==227==ERROR: AddressSanitizer: SEGV on unknown address 0x000100001180
+==227==The signal is caused by a READ memory access.
+    <empty stack>
+/opt/mymq/bin/start-broker-with-echo.sh: line 95: 227 Aborted "$ECHO_SVC" ...
+```
+
+- **PID 227 = test_service** (entrypoint 의 `$ECHO_SVC`)
+- **PID 228 = WECHO**
+- broker (PID 8) 는 살아있음. **죽는 건 client (svc)**.
+
+→ §3 의 가설 (publish.c 의 publisher race) 은 **틀림**. broker 자체는 정상.
+
+### 6.2 진짜 root cause
+
+`broker → publish broadcast → test_service / WECHO 받는 동안 libmymq client
+receive path 에서 SEGV` — garbage address 읽기. stale pointer / use-after-free
+/ corrupted buffer 등.
+
+stack 정보:
+- ASAN 의 `<empty stack>` — frame corruption
+- `bp == sp` — stack pointer 가 망가짐
+- 즉 receive path 안에서 memory corruption 이 진행되어 stack frame 자체 invalid
+
+위치 추정:
+- `src/lib/mymq/pubsub.c` 의 receive callback / unsolicited 디스패치
+- 또는 client.c 의 message handler / subCh enqueue
+
+### 6.3 reproduce trigger 정확화
+
+| 조건 | broker SIGABRT |
+|------|--------------|
+| forwarder broker mode + customer quote broker publish 활성 (~17,600 msg/s) | **확정 reproducible** |
+| forwarder broker mode 만 (1,600 msg/s) | 안 죽음 |
+| forwarder grpc mode (broker 우회) | broker 부하 0 |
+
+부하 양 자체보다 **N profile × tick 의 multiplexed publish + concurrent svc receive** 가 trigger.
+
+### 6.4 함의 — broker 우회 path 가 정답
+
+| 옵션 | 효과 |
 |------|------|
-| 정확한 SIGABRT 위치 | **A (clientmap race) 또는 D (double-free) 가능성 높음** — 코드 분석만으론 확정 불가 |
-| 다음 단계 | **ASAN 빌드 + reproduce 가 최단 path** (3~5시간) |
-| 운영 우선순위 | 현재 critical 아님 — broker 가 매매 RPC 만 처리 (부하 매우 낮음) |
-| 장기 fix | Go mci-broker 로 마이그레이션 (Phase 2a, 1~2주) — SIGABRT 위험 영구 제거 |
+| **현재 broker 우회 path** (`94a78b2` / `e8f67a4`) | svc 가 받는 부하 줄임 → SEGV trigger 사라짐. **정확한 해결** |
+| Go mci-broker (Phase 2a) | **무효** — 같은 svc 가 receive 하면 똑같이 죽음. broker 측이 문제 아니므로 |
+| svc 자체 수정 (libmymq client) | CLAUDE.md "C 엔진 무수정" 원칙 위반. 별도 진단 + 패치 필요 |
+| svc 부하 줄이기 | 현 broker 우회가 이미 이 방향 |
+
+### 6.5 다음 단계
+
+| 우선도 | 작업 |
+|--------|------|
+| 현재 | broker 우회 path 유지 — 운영 안정 |
+| 중기 | cs WS 마이그레이션 P4-3 완료 → broker 가 매매 RPC 만 (부하 매우 낮음) → svc SEGV 거의 trigger 안 됨 |
+| 장기 (선택) | libmymq client receive path 정확한 SEGV 위치 짚기 — ASAN backtrace 가 frame corruption 으로 비어있어 추가 방법 필요: gdb live attach + watchpoint, valgrind, 또는 svc code 정독 |
+
+### 6.6 운영 권장
+
+- **forwarder `--publish-mode=grpc`** (default) 유지
+- **mci-price `--quote-publish-broker=false`** (default) 유지
+- **broker 가 매매 RPC 만 처리** → SEGV trigger 안 됨
+- broker 죽으면 즉시 alert + 매매 정지 — runbook 필요
+- mymqreboot 의 `--rm` 제거 (이미 적용) — 죽어도 evidence 보존
 
 ## 7. 참고
 

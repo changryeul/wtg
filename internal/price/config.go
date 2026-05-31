@@ -30,6 +30,12 @@ type Config struct {
 	// gRPC subscriber 별 큐 크기. 기본 1024.
 	GRPCBufSize int
 
+	// QuotePublishBroker — true 면 customer quote 를 broker ExchangeQuote 로도 publish
+	// (legacy fan-out path). false 면 gRPC SubscribeQuote stream 만 사용 — broker
+	// 의 시세 부하 0. 시세는 broker bypass 권장 (broker SIGABRT 회피).
+	// default true (backward compat) — wtgctl 가 false 로 override 권장.
+	QuotePublishBroker bool
+
 	// MyMQ broker.
 	BrokerHost string
 	BrokerPort int
@@ -220,9 +226,10 @@ type Config struct {
 // DefaultConfig 는 합리적인 디폴트.
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr:       ":8082",
-		GRPCAddr:         "",
-		GRPCBufSize:      1024,
+		ListenAddr:         ":8082",
+		GRPCAddr:           "",
+		GRPCBufSize:        1024,
+		QuotePublishBroker: true,
 		BrokerHost:       "127.0.0.1",
 		BrokerPort:       11217,
 		ApplName:         "mci-price",
@@ -448,6 +455,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
 	fs.StringVar(&cfg.GRPCAddr, "grpc", cfg.GRPCAddr, "gRPC PriceService listen 주소 (비어있으면 비활성)")
+	fs.BoolVar(&cfg.QuotePublishBroker, "quote-publish-broker", cfg.QuotePublishBroker, "customer quote 를 broker 로도 publish (legacy). false 면 gRPC SubscribeQuote 만 사용 — broker 부하 분리")
 	fs.IntVar(&cfg.GRPCBufSize, "grpc-buf", cfg.GRPCBufSize, "gRPC 구독자별 큐 크기")
 	fs.StringVar(&cfg.BrokerHost, "broker-host", cfg.BrokerHost, "mymqd 호스트")
 	fs.IntVar(&cfg.BrokerPort, "broker-port", cfg.BrokerPort, "mymqd 포트")

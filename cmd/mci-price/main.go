@@ -376,7 +376,13 @@ func wirePricingConsumerEtcd(
 		return nil, nil, nil, fmt.Errorf("ProfileSource watcher: %w", err)
 	}
 
-	publishers := []price.QuotePublisher{price.NewMymqQuotePublisher(srv)}
+	// Customer quote publisher 구성 — broker 부하 분리 옵션.
+	//   QuotePublishBroker=true  : broker + gRPC (legacy)
+	//   QuotePublishBroker=false : gRPC 만 (broker 시세 부하 0 — broker SIGABRT 회피)
+	var publishers []price.QuotePublisher
+	if cfg.QuotePublishBroker {
+		publishers = append(publishers, price.NewMymqQuotePublisher(srv))
+	}
 	if grpcSrv != nil {
 		publishers = append(publishers, grpcSrv)
 	}
@@ -422,7 +428,13 @@ func wirePricingConsumer(cfg price.Config, symbols *quote.SymbolMap, srv *price.
 	}
 
 	// Publisher fan-out — broker 항상, gRPC 는 옵션.
-	publishers := []price.QuotePublisher{price.NewMymqQuotePublisher(srv)}
+	// Customer quote publisher 구성 — broker 부하 분리 옵션.
+	//   QuotePublishBroker=true  : broker + gRPC (legacy)
+	//   QuotePublishBroker=false : gRPC 만 (broker 시세 부하 0 — broker SIGABRT 회피)
+	var publishers []price.QuotePublisher
+	if cfg.QuotePublishBroker {
+		publishers = append(publishers, price.NewMymqQuotePublisher(srv))
+	}
 	if grpcSrv != nil {
 		publishers = append(publishers, grpcSrv)
 	}

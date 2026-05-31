@@ -313,6 +313,7 @@
           <button data-page="wsmon"  class="nav-btn nav-item"><span class="nav-ico">📡</span>WS 모니터</button>
           <button data-page="quote"  class="nav-btn nav-item"><span class="nav-ico">💱</span>시세</button>
           <button data-page="margin"     class="nav-btn nav-item"><span class="nav-ico">🧮</span>마진 재계산</button>
+          <button data-page="margin-calc" class="nav-btn nav-item"><span class="nav-ico">🔬</span>마진 계산기 (5-Layer)</button>
           <button data-page="svcio"      class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
           <button data-page="pricestats" class="nav-btn nav-item"><span class="nav-ico">📊</span>시세 통계 (mci-price)</button>
         </div>
@@ -1435,6 +1436,124 @@
           </div>
         </div>
 
+        <!-- 마진 계산기 (margin-calc) — 5-Layer 산식 단계별 트레이스 -->
+        <div id="page-margin-calc" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">마진 계산기 (5-Layer)</h3>
+              <p class="text-sm text-slate-400">현재 PricingTable 로 임의 입력값에 대해 5-Layer 마진 적용 산식을 단계별로 추적. <code>pkg/pricing.ApplyForCustomer</code> 와 동일 lookup 로직을 JS 로 미러링 — 운영 검증 / 분쟁 재현 / 신규 customer entry 효과 사전 검증용.</p>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-slate-400">PricingTable</span>
+              <span id="mc-pt-version" class="font-mono text-accent-400">—</span>
+              <button id="mc-reload" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">↻ 재로드</button>
+            </div>
+          </div>
+
+          <!-- 입력 폼 -->
+          <div class="border-gradient rounded-2xl p-4 space-y-3">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+              <label class="block">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">통화쌍 (pair)</span>
+                <input id="mc-pair" value="USD/KRW" placeholder="USD/KRW"
+                  class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </label>
+              <label class="block">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Profile (Channel.Site.Tier)</span>
+                <input id="mc-profile" value="WEB.BRANCH.VIP" placeholder="WEB.BRANCH.VIP"
+                  class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </label>
+              <label class="block">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Customer ID (선택)</span>
+                <input id="mc-customer" value="alice" placeholder="비우면 Profile-only (HQ+Site)"
+                  class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </label>
+              <label class="block">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Tenor</span>
+                <select id="mc-tenor" class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
+                  <option value="SPOT">SPOT</option>
+                  <option value="1W">1W</option>
+                  <option value="1M">1M</option>
+                  <option value="3M">3M</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Raw Bid</span>
+                <input id="mc-raw-bid" type="number" step="0.0001" value="1378.65"
+                  class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </label>
+              <label class="block">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Raw Ask</span>
+                <input id="mc-raw-ask" type="number" step="0.0001" value="1378.69"
+                  class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </label>
+              <label class="block md:col-span-2">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">시각 (window 매칭용)</span>
+                <input id="mc-when" type="datetime-local"
+                  class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </label>
+              <div class="flex items-end gap-2">
+                <button id="mc-fill-best" type="button" class="px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 text-xs">📡 BEST 자동</button>
+                <button id="mc-now" type="button" class="px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 text-xs">⏱ now</button>
+              </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+              <button id="mc-calc" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">▶ 계산</button>
+            </div>
+          </div>
+
+          <!-- 결과 영역 -->
+          <div id="mc-result" class="space-y-3 hidden">
+            <!-- 0. Inputs -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">0. 입력</div>
+              <div id="mc-inputs" class="text-xs font-mono"></div>
+            </div>
+
+            <!-- 1. Active TimeWindows -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">1. Active TimeWindows</div>
+              <div id="mc-windows" class="text-xs font-mono space-y-1"></div>
+            </div>
+
+            <!-- 2. Swap -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">2. Swap Point — lookup(pair, tenor)</div>
+              <div id="mc-swap" class="text-xs font-mono"></div>
+            </div>
+
+            <!-- 3. HQ -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">3. HQ Margin — lookup(pair, tier, window) + fallback</div>
+              <div id="mc-hq" class="text-xs font-mono"></div>
+            </div>
+
+            <!-- 4. Site -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">4. Site Margin — lookup(pair, channel, site, window) + fallback</div>
+              <div id="mc-site" class="text-xs font-mono"></div>
+            </div>
+
+            <!-- 5. Customer -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">5. Customer Margin — priority desc 매칭</div>
+              <div id="mc-customer-out" class="text-xs font-mono"></div>
+            </div>
+
+            <!-- 6. Final 산식 -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">6. 산식 + 최종 Quote</div>
+              <div id="mc-final" class="text-sm font-mono"></div>
+            </div>
+
+            <!-- 누적 마진 시각화 (옵션) -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">layer 별 기여도 (단위 = 원)</div>
+              <div id="mc-chart" class="text-xs font-mono"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- 서비스 명세 (svcio) -->
         <div id="page-svcio" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -2175,6 +2294,7 @@ function goPage(name) {
                    symbols: "통화쌍", pricing: "마진 테이블", profiles: "프로파일",
                    users: "사용자 프로파일",
                    svcio: "서비스 명세", pricestats: "시세 통계",
+                   margin: "마진 재계산", "margin-calc": "마진 계산기 (5-Layer)",
                    audit: "감사 로그", guide: "운영 가이드" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
@@ -2189,6 +2309,7 @@ function goPage(name) {
   if (name === "users")     loadUserProfiles();
   if (name === "quoteid-engines") loadQEngines();
   if (name === "margin")    initMarginRecompute();
+  if (name === "margin-calc") initMarginCalc();
   if (name === "svcio")     initSvcIO();
   if (name !== "pricestats") stopPriceStatsPoller();
   if (name === "pricestats") initPriceStats();
@@ -4079,6 +4200,439 @@ const svcioState = {
 };
 // 호출 형식 localStorage 보존 — 페이지 reload 후에도 유지. 라우팅 화면과 공유.
 const LS_SVCIO_FORMAT = "wtg_svcio_format";
+
+// ───────── 마진 계산기 (5-Layer) ─────────
+//
+// pkg/pricing/engine.go 의 ApplyForCustomer 와 동일 lookup chain 을 JS 로 미러링.
+// 백엔드 추가 없이 PricingTable JSON 만 fetch → 클라이언트에서 단계별 추적.
+
+const mcState = { wired: false, doc: null };
+
+async function initMarginCalc() {
+  if (!mcState.wired) {
+    mcState.wired = true;
+    $("#mc-reload").onclick = mcLoadTable;
+    $("#mc-calc").onclick = mcCompute;
+    $("#mc-now").onclick = () => { $("#mc-when").value = mcNowLocal(); };
+    $("#mc-fill-best").onclick = mcFillBest;
+    $("#mc-when").value = mcNowLocal();
+  }
+  await mcLoadTable();
+}
+
+function mcNowLocal() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate())
+       + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+}
+
+async function mcLoadTable() {
+  try {
+    const resp = await fetch("/v1/admin/pricing/table", { credentials: "same-origin", headers: authHeaders() });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const doc = await resp.json();
+    mcState.doc = doc;
+    $("#mc-pt-version").textContent = "v" + (doc.version != null ? doc.version : "—");
+    toast("PricingTable 로드 (v" + doc.version + ")", "ok");
+  } catch (e) {
+    toast("PricingTable 로드 실패: " + e.message, "err");
+  }
+}
+
+async function mcFillBest() {
+  try {
+    const r = await fetch("http://127.0.0.1:8082/v1/best-stats");
+    const j = await r.json();
+    const pair = $("#mc-pair").value.trim();
+    const sym = pair.replace(/\//g, "");
+    const e = j.symbols && j.symbols[sym];
+    if (!e) { toast("BEST 데이터 없음: " + sym, "warn"); return; }
+    $("#mc-raw-bid").value = String(e.best_bid);
+    $("#mc-raw-ask").value = String(e.best_ask);
+    toast("BEST 자동 입력 (" + sym + ")", "ok");
+  } catch (err) {
+    toast("BEST 가져오기 실패: " + err.message, "err");
+  }
+}
+
+// 미니 helpers — Go 측 normalizeName / parseHHMM / parseDays 미러.
+function mcNorm(s) { return (s || "").toLowerCase().trim(); }
+function mcParseHHMM(s) {
+  s = (s || "").trim();
+  if (!s) return -1;
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return -1;
+  const h = parseInt(m[1], 10), mn = parseInt(m[2], 10);
+  if (h < 0 || h > 24 || mn < 0 || mn >= 60) return -1;
+  if (h === 24 && mn === 0) return 1440;
+  return h * 60 + mn;
+}
+function mcParseDays(s) {
+  s = (s || "").toUpperCase().trim();
+  if (!s || s === "*") return 0xFF;
+  const idx = { SUN:0, MON:1, TUE:2, WED:3, THU:4, FRI:5, SAT:6 };
+  let mask = 0;
+  if (s.includes("-") && !s.includes(",")) {
+    const [a, b] = s.split("-");
+    const fi = idx[a], ti = idx[b];
+    if (fi == null || ti == null) return 0;
+    for (let d = fi; ; d = (d + 1) % 7) {
+      mask |= 1 << d;
+      if (d === ti) break;
+    }
+    return mask;
+  }
+  for (const t of s.split(",")) {
+    const k = idx[t.trim()];
+    if (k != null) mask |= 1 << k;
+  }
+  return mask;
+}
+
+function mcInTZ(date, tz) {
+  try {
+    const fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz || "UTC", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+    const parts = fmt.formatToParts(date);
+    const wd = parts.find(p => p.type === "weekday").value;
+    const h = parseInt(parts.find(p => p.type === "hour").value, 10);
+    const m = parseInt(parts.find(p => p.type === "minute").value, 10);
+    const dayIdx = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 }[wd];
+    return { dayIdx, mn: (h % 24) * 60 + m };
+  } catch (_) {
+    return { dayIdx: date.getUTCDay(), mn: date.getUTCHours() * 60 + date.getUTCMinutes() };
+  }
+}
+
+function mcWindowIsActive(rule, now, allWindows) {
+  if (rule.complement_of) {
+    const other = allWindows.find(w => mcNorm(w.name) === mcNorm(rule.complement_of));
+    return other ? !mcWindowIsActive(other, now, allWindows) : false;
+  }
+  const { dayIdx, mn } = mcInTZ(now, rule.tz);
+  const mask = mcParseDays(rule.days);
+  if (mask !== 0 && mask !== 0xFF) {
+    if (!(mask & (1 << dayIdx))) return false;
+  }
+  const start = mcParseHHMM(rule.start);
+  const end = mcParseHHMM(rule.end);
+  if (start < 0 || end <= start) return true;
+  return mn >= start && mn < end;
+}
+
+function mcActiveWindows(now, allWindows) {
+  if (!allWindows || !allWindows.length) return [];
+  const out = [];
+  for (const w of allWindows) {
+    if (mcWindowIsActive(w, now, allWindows)) out.push(mcNorm(w.name));
+  }
+  return out;
+}
+
+// HQ lookup chain — Go 의 lookupHQ 미러.
+function mcLookupHQ(doc, pair, tier, active) {
+  const entries = doc.hq_margin || [];
+  const findKey = (p, t, win) => entries.find(e => e.pair === p && (e.tier || "") === t && mcNorm(e.window) === win);
+  const path = [];
+  for (const w of active) {
+    const e = findKey(pair, tier, w);
+    path.push({ step: `pair=${pair}, tier=${tier}, window=${w}`, hit: !!e });
+    if (e) return { entry: e, path };
+  }
+  const e2 = findKey(pair, tier, "");
+  path.push({ step: `pair=${pair}, tier=${tier}, window=(빈)`, hit: !!e2 });
+  if (e2) return { entry: e2, path };
+  for (const w of active) {
+    const e = findKey(pair, "", w);
+    path.push({ step: `pair=${pair}, tier=(와일드카드), window=${w}`, hit: !!e });
+    if (e) return { entry: e, path };
+  }
+  const e4 = findKey(pair, "", "");
+  path.push({ step: `pair=${pair}, tier=(와일드카드), window=(빈)`, hit: !!e4 });
+  if (e4) return { entry: e4, path };
+  return { entry: null, path };
+}
+
+// Site lookup chain — Go 의 lookupSite 미러.
+function mcLookupSite(doc, pair, channel, site, active) {
+  const entries = doc.site_margin || [];
+  const findKey = (p, c, s, win) => entries.find(e => e.pair === p && (e.channel || "") === c && (e.site || "") === s && mcNorm(e.window) === win);
+  const chain = [
+    { c: channel, s: site },
+    { c: "", s: site },
+    { c: channel, s: "" },
+  ];
+  const path = [];
+  for (const k of chain) {
+    for (const w of active) {
+      const e = findKey(pair, k.c, k.s, w);
+      path.push({ step: `pair=${pair}, channel=${k.c||"(*)"}, site=${k.s||"(*)"}, window=${w}`, hit: !!e });
+      if (e) return { entry: e, path };
+    }
+    const e0 = findKey(pair, k.c, k.s, "");
+    path.push({ step: `pair=${pair}, channel=${k.c||"(*)"}, site=${k.s||"(*)"}, window=(빈)`, hit: !!e0 });
+    if (e0) return { entry: e0, path };
+  }
+  return { entry: null, path };
+}
+
+// Customer match — priority desc 정렬 + 첫 매칭. Go 의 matchCustomerRule 미러.
+function mcMatchCustomer(doc, customerID, pair, active) {
+  if (!customerID) return { rule: null, scan: [] };
+  const rules = (doc.customer_margin || []).slice();
+  rules.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+  const scan = [];
+  for (const r of rules) {
+    if (r.customer_id !== customerID) { scan.push({ rule: r, reason: "customer_id 불일치", hit: false }); continue; }
+    if (r.pair && r.pair !== pair) { scan.push({ rule: r, reason: "pair 불일치", hit: false }); continue; }
+    if (r.window && !active.includes(mcNorm(r.window))) {
+      scan.push({ rule: r, reason: `window=${r.window} 비활성`, hit: false }); continue;
+    }
+    scan.push({ rule: r, reason: "매칭", hit: true });
+    return { rule: r, scan };
+  }
+  return { rule: null, scan };
+}
+
+function mcSwapLookup(doc, pair, tenor) {
+  return (doc.swap_point || []).find(e => e.pair === pair && e.tenor === tenor) || null;
+}
+
+function mcCompute() {
+  const doc = mcState.doc;
+  if (!doc) { toast("PricingTable 미로드", "warn"); return; }
+
+  const pair = $("#mc-pair").value.trim();
+  const profileKey = $("#mc-profile").value.trim();
+  const customer = $("#mc-customer").value.trim();
+  const tenor = $("#mc-tenor").value;
+  const rawBid = parseFloat($("#mc-raw-bid").value);
+  const rawAsk = parseFloat($("#mc-raw-ask").value);
+  const whenStr = $("#mc-when").value;
+  const when = whenStr ? new Date(whenStr) : new Date();
+
+  if (!pair || !profileKey || isNaN(rawBid) || isNaN(rawAsk)) {
+    toast("필수 입력 누락", "warn"); return;
+  }
+  const parts = profileKey.split(".");
+  if (parts.length !== 3) { toast("profile 은 CHANNEL.SITE.TIER 형식", "err"); return; }
+  const [channel, site, tier] = parts;
+
+  const active = mcActiveWindows(when, doc.time_windows || []);
+  const swap = mcSwapLookup(doc, pair, tenor);
+  const sBid = swap ? (swap.bid_amount || 0) : 0;
+  const sAsk = swap ? (swap.ask_amount || 0) : 0;
+
+  const hq = mcLookupHQ(doc, pair, tier, active);
+  const hBid = hq.entry ? (hq.entry.bid_amount || 0) : 0;
+  const hAsk = hq.entry ? (hq.entry.ask_amount || 0) : 0;
+
+  const si = mcLookupSite(doc, pair, channel, site, active);
+  const stBid = si.entry ? (si.entry.bid_amount || 0) : 0;
+  const stAsk = si.entry ? (si.entry.ask_amount || 0) : 0;
+
+  const cm = mcMatchCustomer(doc, customer, pair, active);
+  const cMode = cm.rule ? (cm.rule.mode || "add") : "—";
+  const cBid = cm.rule ? (cm.rule.bid_delta || 0) : 0;
+  const cAsk = cm.rule ? (cm.rule.ask_delta || 0) : 0;
+
+  let layers;
+  if (cm.rule && cMode === "override") {
+    layers = [
+      { name: "Swap",     bid: sBid, ask: sAsk },
+      { name: "Customer", bid: cBid, ask: cAsk },
+    ];
+  } else {
+    layers = [
+      { name: "Swap", bid: sBid, ask: sAsk },
+      { name: "HQ",   bid: hBid, ask: hAsk },
+      { name: "Site", bid: stBid, ask: stAsk },
+    ];
+    if (cm.rule) layers.push({ name: "Customer (add)", bid: cBid, ask: cAsk });
+  }
+  const sumBid = layers.reduce((a, l) => a + l.bid, 0);
+  const sumAsk = layers.reduce((a, l) => a + l.ask, 0);
+  const finalBid = rawBid - sumBid;
+  const finalAsk = rawAsk + sumAsk;
+
+  mcRender({
+    inputs: { pair, profileKey, channel, site, tier, customer, tenor, rawBid, rawAsk, when },
+    active, allWindows: doc.time_windows || [],
+    swap: { entry: swap, sBid, sAsk },
+    hq: Object.assign({}, hq, { hBid, hAsk }),
+    site: Object.assign({}, si, { stBid, stAsk }),
+    customer: Object.assign({}, cm, { cMode, cBid, cAsk, customer }),
+    layers, sumBid, sumAsk, finalBid, finalAsk,
+  });
+}
+
+function mcFmt(v) { return v == null ? "—" : v.toFixed(4); }
+
+function mcRender(r) {
+  $("#mc-result").classList.remove("hidden");
+
+  // 0. inputs
+  const inG = h("div", { class: "grid grid-cols-2 md:grid-cols-3 gap-2" },
+    h("div", null, "pair = ", h("span", { class: "text-accent-400", text: r.inputs.pair })),
+    h("div", null, "profile = ",
+      h("span", { class: "text-accent-400", text: r.inputs.profileKey }),
+      " ",
+      h("span", { class: "text-slate-500", text: `(${r.inputs.channel}/${r.inputs.site}/${r.inputs.tier})` })),
+    h("div", null, "customer = ", h("span", { class: "text-indigo-400", text: r.inputs.customer || "(빈)" })),
+    h("div", null, "tenor = ", h("span", { class: "text-accent-400", text: r.inputs.tenor })),
+    h("div", null, "raw_bid = ", h("span", { class: "text-good", text: mcFmt(r.inputs.rawBid) })),
+    h("div", null, "raw_ask = ", h("span", { class: "text-bad", text: mcFmt(r.inputs.rawAsk) })),
+    h("div", { class: "md:col-span-3 text-slate-500", text: "when = " + r.inputs.when.toISOString() }),
+  );
+  $("#mc-inputs").replaceChildren(inG);
+
+  // 1. windows
+  const wDiv = $("#mc-windows"); wDiv.replaceChildren();
+  if (!r.allWindows.length) {
+    wDiv.appendChild(h("div", { class: "text-slate-500", text: "time_windows 미정의 — 모든 시간대 적용 entry 만 매칭." }));
+  } else {
+    const row = h("div", null, "활성: ");
+    if (r.active.length) {
+      for (const w of r.active) row.appendChild(h("span", { class: "px-2 py-0.5 rounded bg-good/20 text-good mr-1", text: w }));
+    } else {
+      row.appendChild(h("span", { class: "text-slate-500", text: "(없음)" }));
+    }
+    wDiv.appendChild(row);
+    const det = h("details", { class: "mt-1" }, h("summary", { class: "cursor-pointer text-slate-500", text: `정의 보기 (${r.allWindows.length})` }));
+    const inner = h("div", { class: "mt-1 space-y-0.5" });
+    for (const w of r.allWindows) {
+      const isActive = r.active.includes(mcNorm(w.name));
+      const tag = h("span", { class: isActive ? "text-good" : "text-slate-600", text: isActive ? "●" : "○" });
+      const txt = w.complement_of
+        ? `complement_of=${w.complement_of}`
+        : `${w.start||"-"}~${w.end||"-"} ${w.tz||""} ${w.days||"*"}`;
+      inner.appendChild(h("div", { class: "text-[11px]" }, tag, " ", h("span", { class: "text-accent-400", text: w.name }), " — " + txt));
+    }
+    det.appendChild(inner);
+    wDiv.appendChild(det);
+  }
+
+  // 2. swap
+  const sDiv = $("#mc-swap"); sDiv.replaceChildren();
+  if (r.swap.entry) {
+    sDiv.appendChild(h("div", null, "매칭 entry: ", h("code", { class: "text-accent-400", text: JSON.stringify(r.swap.entry) })));
+    sDiv.appendChild(h("div", { class: "mt-1" }, "기여: bid -", h("span", { class: "text-good", text: mcFmt(r.swap.sBid) }), " · ask +", h("span", { class: "text-bad", text: mcFmt(r.swap.sAsk) })));
+  } else {
+    sDiv.appendChild(h("div", { class: "text-slate-500", text: "매칭 없음 — 기여 0" }));
+  }
+
+  // 3. HQ
+  const hDiv = $("#mc-hq"); hDiv.replaceChildren();
+  const hPath = h("div", { class: "space-y-0.5 mb-1" });
+  for (const p of r.hq.path) {
+    hPath.appendChild(h("div", { class: "text-[11px]" },
+      h("span", { class: p.hit ? "text-good" : "text-slate-600", text: p.hit ? "✓" : "×" }),
+      " " + p.step));
+  }
+  hDiv.appendChild(hPath);
+  if (r.hq.entry) {
+    hDiv.appendChild(h("div", null, "매칭 entry: ", h("code", { class: "text-accent-400", text: JSON.stringify(r.hq.entry) })));
+    hDiv.appendChild(h("div", { class: "mt-1" }, "기여: bid -", h("span", { class: "text-good", text: mcFmt(r.hq.hBid) }), " · ask +", h("span", { class: "text-bad", text: mcFmt(r.hq.hAsk) })));
+  } else {
+    hDiv.appendChild(h("div", { class: "text-slate-500", text: "매칭 없음 — 기여 0" }));
+  }
+
+  // 4. Site
+  const stDiv = $("#mc-site"); stDiv.replaceChildren();
+  const stPath = h("div", { class: "space-y-0.5 mb-1" });
+  for (const p of r.site.path) {
+    stPath.appendChild(h("div", { class: "text-[11px]" },
+      h("span", { class: p.hit ? "text-good" : "text-slate-600", text: p.hit ? "✓" : "×" }),
+      " " + p.step));
+  }
+  stDiv.appendChild(stPath);
+  if (r.site.entry) {
+    stDiv.appendChild(h("div", null, "매칭 entry: ", h("code", { class: "text-accent-400", text: JSON.stringify(r.site.entry) })));
+    stDiv.appendChild(h("div", { class: "mt-1" }, "기여: bid -", h("span", { class: "text-good", text: mcFmt(r.site.stBid) }), " · ask +", h("span", { class: "text-bad", text: mcFmt(r.site.stAsk) })));
+  } else {
+    stDiv.appendChild(h("div", { class: "text-slate-500", text: "매칭 없음 — 기여 0" }));
+  }
+
+  // 5. customer
+  const cDiv = $("#mc-customer-out"); cDiv.replaceChildren();
+  if (!r.customer.customer) {
+    cDiv.appendChild(h("div", { class: "text-slate-500", text: "customer_id 빈값 — Profile-only 모드 (HQ + Site)." }));
+  } else {
+    const scanWrap = h("div", { class: "space-y-0.5 mb-1" });
+    for (const s of r.customer.scan) {
+      const prio = s.rule.priority || 0;
+      const win = s.rule.window ? ` window=${s.rule.window}` : "";
+      const pairTag = s.rule.pair ? ` pair=${s.rule.pair}` : " pair=(*)";
+      const line = h("div", { class: "text-[11px]" },
+        h("span", { class: s.hit ? "text-good" : "text-slate-600", text: s.hit ? "✓" : "×" }),
+        ` priority=${prio} customer=${s.rule.customer_id}${pairTag}${win} mode=${s.rule.mode||"add"} — `,
+        h("span", { class: "text-slate-500", text: s.reason }));
+      scanWrap.appendChild(line);
+    }
+    cDiv.appendChild(scanWrap);
+    if (r.customer.rule) {
+      cDiv.appendChild(h("div", null, "매칭 룰: ", h("code", { class: "text-indigo-400", text: JSON.stringify(r.customer.rule) })));
+      const modeLine = h("div", { class: "mt-1" }, "mode=",
+        h("span", { class: "text-indigo-400", text: r.customer.cMode }),
+        r.customer.cMode === "override"
+          ? h("span", { class: "text-warn", text: " — HQ + Site 마진 무시, customer delta + swap 단독." })
+          : " — HQ + Site 에 누계.");
+      cDiv.appendChild(modeLine);
+      cDiv.appendChild(h("div", { class: "mt-1" }, "기여: bid_delta -",
+        h("span", { class: "text-good", text: mcFmt(r.customer.cBid) }),
+        " · ask_delta +",
+        h("span", { class: "text-bad", text: mcFmt(r.customer.cAsk) })));
+    } else {
+      cDiv.appendChild(h("div", { class: "text-slate-500", text: "매칭 룰 없음 — Profile-only fallback (HQ + Site)." }));
+    }
+  }
+
+  // 6. final
+  const fDiv = $("#mc-final"); fDiv.replaceChildren();
+  const bidTerms = r.layers.map(l => `${l.name} ${mcFmt(l.bid)}`).join("  +  ");
+  const askTerms = r.layers.map(l => `${l.name} ${mcFmt(l.ask)}`).join("  +  ");
+  fDiv.appendChild(h("div", null,
+    h("span", { class: "text-slate-500", text: "bid =" }),
+    ` raw_bid (${mcFmt(r.inputs.rawBid)}) − ( ${bidTerms} ) = `,
+    h("span", { class: "text-good text-base", text: mcFmt(r.finalBid) }),
+  ));
+  fDiv.appendChild(h("div", null,
+    h("span", { class: "text-slate-500", text: "ask =" }),
+    ` raw_ask (${mcFmt(r.inputs.rawAsk)}) + ( ${askTerms} ) = `,
+    h("span", { class: "text-bad text-base", text: mcFmt(r.finalAsk) }),
+  ));
+  fDiv.appendChild(h("div", { class: "text-slate-500 text-xs mt-2",
+    text: `총 마진: bid -${mcFmt(r.sumBid)} · ask +${mcFmt(r.sumAsk)} · spread = ${mcFmt(r.finalAsk - r.finalBid)}` }));
+
+  // layer 별 텍스트 바 (chart 의존성 회피).
+  const chDiv = $("#mc-chart"); chDiv.replaceChildren();
+  const maxAbs = Math.max(...r.layers.map(l => Math.max(Math.abs(l.bid), Math.abs(l.ask))), 0.001);
+  const bar = (v) => {
+    const n = Math.round(Math.abs(v) / maxAbs * 30);
+    return "█".repeat(n) + " ".repeat(30 - n);
+  };
+  const tbl = h("table", { class: "font-mono text-[11px]" });
+  const thead = h("thead", null, h("tr", { class: "text-slate-500" },
+    h("th", { class: "px-2 text-left", text: "layer" }),
+    h("th", { class: "px-2 text-right", text: "bid −" }),
+    h("th", { class: "px-2", text: "bar" }),
+    h("th", { class: "px-2 text-right", text: "ask +" }),
+    h("th", { class: "px-2", text: "bar" }),
+  ));
+  const tbody = h("tbody");
+  for (const l of r.layers) {
+    tbody.appendChild(h("tr", null,
+      h("td", { class: "px-2 text-accent-400", text: l.name }),
+      h("td", { class: "px-2 text-right text-good", text: mcFmt(l.bid) }),
+      h("td", { class: "px-2 text-good", text: bar(l.bid) }),
+      h("td", { class: "px-2 text-right text-bad", text: mcFmt(l.ask) }),
+      h("td", { class: "px-2 text-bad", text: bar(l.ask) }),
+    ));
+  }
+  tbl.appendChild(thead);
+  tbl.appendChild(tbody);
+  chDiv.appendChild(tbl);
+}
 
 async function initSvcIO() {
   if (!svcioState.wired) {

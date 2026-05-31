@@ -1512,13 +1512,11 @@
                   class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
               </label>
               <label class="block">
-                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Tenor</span>
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Tenor (단일 계산)</span>
                 <select id="mc-tenor" class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
                   <option value="SPOT">SPOT</option>
-                  <option value="1W">1W</option>
-                  <option value="1M">1M</option>
-                  <option value="3M">3M</option>
                 </select>
+                <span class="text-[10px] text-slate-600 mt-0.5 block">PricingTable swap_point 에서 동적 로드</span>
               </label>
               <label class="block">
                 <span class="text-slate-500 uppercase tracking-widest text-[10px]">Raw Bid</span>
@@ -1593,6 +1591,24 @@
             <div class="border-gradient rounded-2xl p-4">
               <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">layer 별 기여도 (단위 = 원)</div>
               <div id="mc-chart" class="text-xs font-mono"></div>
+            </div>
+
+            <!-- 전체 tenor 비교 표 — 본 pair 의 모든 tenor 한 번에 본다 (forward-snapshot UI 동등). -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="flex items-center justify-between mb-2">
+                <div class="text-[11px] uppercase tracking-widest text-slate-400">전체 tenor 비교 (SPOT + 모든 swap_point tenor)</div>
+                <div class="text-[10px] text-slate-500">Profile-only vs 5-Layer (customer 적용) — 마진 차이 시각화</div>
+              </div>
+              <div id="mc-tenor-compare" class="text-xs font-mono overflow-x-auto"></div>
+            </div>
+
+            <!-- 라이브 검증 — server 의 /v1/quote/forward-snapshot 응답과 클라이언트 계산 비교. -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="flex items-center justify-between mb-2">
+                <div class="text-[11px] uppercase tracking-widest text-slate-400">라이브 검증 (server forward-snapshot 응답과 1e-9 일치)</div>
+                <button id="mc-verify" type="button" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 text-[11px]">📡 서버 호출</button>
+              </div>
+              <div id="mc-verify-result" class="text-xs font-mono text-slate-500">버튼 클릭 시 서버 forward-snapshot 호출 → 본 페이지 계산과 비교.</div>
             </div>
           </div>
         </div>
@@ -4537,10 +4553,35 @@ async function initMarginCalc() {
     $("#mc-calc").addEventListener("click", mcCompute);
     $("#mc-now").addEventListener("click", mcSetNow);
     $("#mc-fill-best").addEventListener("click", mcFillBest);
+    $("#mc-verify").addEventListener("click", mcVerifyAgainstServer);
+    // pair 변경 시 tenor select 갱신.
+    $("#mc-pair").addEventListener("change", mcRefreshTenorOptions);
+    $("#mc-pair").addEventListener("blur", mcRefreshTenorOptions);
   }
   // 페이지 진입 시마다 when 을 현재 시각으로 (이전 페이지 stale 값 덮어쓰기).
   mcSetNow();
   await mcLoadTable();
+}
+
+// pair 의 swap_point 에서 등록된 tenor 만 select 옵션으로. SPOT 은 swap entry
+// 가 없어도 기본 포함 (PricingConsumer 가 매 tick SPOT 으로 publish 하므로).
+function mcRefreshTenorOptions() {
+  if (!mcState.doc) return;
+  const pair = $("#mc-pair").value.trim();
+  const sel = $("#mc-tenor");
+  const prev = sel.value;
+  const tenors = new Set(["SPOT"]);
+  for (const e of (mcState.doc.swap_point || [])) {
+    if (!pair || e.pair === pair) tenors.add(e.tenor);
+  }
+  const sorted = Array.from(tenors).sort((a, b) => swTenorRank(a) - swTenorRank(b));
+  sel.replaceChildren(...sorted.map(t => {
+    const o = document.createElement("option");
+    o.value = t; o.textContent = t;
+    return o;
+  }));
+  // 이전 선택값 유지 가능하면 복원.
+  if (sorted.includes(prev)) sel.value = prev;
 }
 
 // datetime-local 의 표준 value 는 "YYYY-MM-DDTHH:MM" — 일부 브라우저 (Safari) 가
@@ -4567,6 +4608,7 @@ async function mcLoadTable() {
     const doc = await resp.json();
     mcState.doc = doc;
     $("#mc-pt-version").textContent = "v" + (doc.version != null ? doc.version : "—");
+    mcRefreshTenorOptions();
     toast("PricingTable 로드 (v" + doc.version + ")", "ok");
   } catch (e) {
     toast("PricingTable 로드 실패: " + e.message, "err");
@@ -4973,6 +5015,176 @@ function mcRender(r) {
   tbl.appendChild(thead);
   tbl.appendChild(tbody);
   chDiv.appendChild(tbl);
+
+  // 전체 tenor 비교 표 — SPOT + 모든 swap_point tenor 의 forward 호가.
+  mcRenderTenorCompare(r.inputs, r.active);
+}
+
+// 전체 tenor 비교 — 본 pair 의 swap_point 에 등록된 모든 tenor 에 대해
+// Profile-only / Customer (5L) 호가를 한 표로. forward-snapshot 응답의 UI 동등.
+function mcRenderTenorCompare(inputs, activeWindows) {
+  const out = $("#mc-tenor-compare");
+  out.replaceChildren();
+  const doc = mcState.doc;
+  if (!doc) { out.textContent = "PricingTable 미로드"; return; }
+  const pair = inputs.pair;
+  const tenors = ["SPOT"];
+  for (const e of (doc.swap_point || [])) {
+    if (e.pair === pair && !tenors.includes(e.tenor)) tenors.push(e.tenor);
+  }
+  tenors.sort((a, b) => swTenorRank(a) - swTenorRank(b));
+
+  const tbl = h("table", { class: "min-w-full" });
+  const thead = h("thead", null,
+    h("tr", { class: "text-slate-500 text-[10px] uppercase tracking-widest" },
+      h("th", { class: "px-2 py-1 text-left", text: "tenor" }),
+      h("th", { class: "px-2 py-1 text-right", text: "raw_bid" }),
+      h("th", { class: "px-2 py-1 text-right", text: "raw_ask" }),
+      h("th", { class: "px-2 py-1 text-right border-l border-ink-700/40", text: "swap_bid" }),
+      h("th", { class: "px-2 py-1 text-right", text: "swap_ask" }),
+      h("th", { class: "px-2 py-1 text-right border-l border-ink-700/40 text-accent-400", text: "Profile bid" }),
+      h("th", { class: "px-2 py-1 text-right text-accent-400", text: "Profile ask" }),
+      h("th", { class: "px-2 py-1 text-right border-l border-ink-700/40 text-indigo-400", text: "5L bid" }),
+      h("th", { class: "px-2 py-1 text-right text-indigo-400", text: "5L ask" }),
+      h("th", { class: "px-2 py-1 text-right border-l border-ink-700/40", text: "Δ vs Profile bid" }),
+      h("th", { class: "px-2 py-1 text-right", text: "Δ vs Profile ask" }),
+    ));
+  const tbody = h("tbody");
+  for (const tn of tenors) {
+    // Profile-only (customer "" )
+    const pOnly = mcComputeForTenor(doc, inputs, activeWindows, tn, "");
+    // 5L (customer 적용)
+    const cust = mcComputeForTenor(doc, inputs, activeWindows, tn, inputs.customer);
+    const sw = (doc.swap_point || []).find(e => e.pair === pair && e.tenor === tn);
+    const swB = sw ? (sw.bid_amount || 0) : 0;
+    const swA = sw ? (sw.ask_amount || 0) : 0;
+    const dB = cust.finalBid - pOnly.finalBid;
+    const dA = cust.finalAsk - pOnly.finalAsk;
+    tbody.appendChild(h("tr", { class: "hover:bg-ink-800/40" },
+      h("td", { class: "px-2 py-1 font-mono text-accent-400", text: tn }),
+      h("td", { class: "px-2 py-1 text-right text-slate-400", text: mcFmt(inputs.rawBid) }),
+      h("td", { class: "px-2 py-1 text-right text-slate-400", text: mcFmt(inputs.rawAsk) }),
+      h("td", { class: "px-2 py-1 text-right text-slate-500 border-l border-ink-700/40", text: mcFmt(swB) }),
+      h("td", { class: "px-2 py-1 text-right text-slate-500", text: mcFmt(swA) }),
+      h("td", { class: "px-2 py-1 text-right text-good border-l border-ink-700/40", text: mcFmt(pOnly.finalBid) }),
+      h("td", { class: "px-2 py-1 text-right text-bad", text: mcFmt(pOnly.finalAsk) }),
+      h("td", { class: "px-2 py-1 text-right text-good border-l border-ink-700/40", text: mcFmt(cust.finalBid) }),
+      h("td", { class: "px-2 py-1 text-right text-bad", text: mcFmt(cust.finalAsk) }),
+      h("td", { class: "px-2 py-1 text-right border-l border-ink-700/40 " + (dB >= 0 ? "text-good" : "text-bad"), text: (dB >= 0 ? "+" : "") + mcFmt(dB) }),
+      h("td", { class: "px-2 py-1 text-right " + (dA >= 0 ? "text-bad" : "text-good"), text: (dA >= 0 ? "+" : "") + mcFmt(dA) }),
+    ));
+  }
+  tbl.appendChild(thead);
+  tbl.appendChild(tbody);
+  out.appendChild(tbl);
+}
+
+// mcComputeForTenor — mcCompute 의 산식만 추출해 임의 tenor / customer 조합 계산.
+// 비교 표가 N tenor × 2 (Profile/5L) = 2N 번 호출하므로 가볍게.
+function mcComputeForTenor(doc, inputs, active, tenor, customerID) {
+  const swap = (doc.swap_point || []).find(e => e.pair === inputs.pair && e.tenor === tenor);
+  const sBid = swap ? (swap.bid_amount || 0) : 0;
+  const sAsk = swap ? (swap.ask_amount || 0) : 0;
+  const hq = mcLookupHQ(doc, inputs.pair, inputs.tier, active);
+  const hBid = hq.entry ? (hq.entry.bid_amount || 0) : 0;
+  const hAsk = hq.entry ? (hq.entry.ask_amount || 0) : 0;
+  const si = mcLookupSite(doc, inputs.pair, inputs.channel, inputs.site, active);
+  const stBid = si.entry ? (si.entry.bid_amount || 0) : 0;
+  const stAsk = si.entry ? (si.entry.ask_amount || 0) : 0;
+  const cm = mcMatchCustomer(doc, customerID, inputs.pair, active);
+  const cBid = cm.rule ? (cm.rule.bid_delta || 0) : 0;
+  const cAsk = cm.rule ? (cm.rule.ask_delta || 0) : 0;
+  const isOverride = cm.rule && (cm.rule.mode || "add") === "override";
+  let sumB, sumA;
+  if (isOverride) {
+    sumB = sBid + cBid; sumA = sAsk + cAsk;
+  } else {
+    sumB = sBid + hBid + stBid + (cm.rule ? cBid : 0);
+    sumA = sAsk + hAsk + stAsk + (cm.rule ? cAsk : 0);
+  }
+  return { finalBid: inputs.rawBid - sumB, finalAsk: inputs.rawAsk + sumA };
+}
+
+// 서버 forward-snapshot 호출 결과 vs 클라이언트 계산 비교. drift 검출 = 서버
+// pricing 와 admin pricing 의 etcd 동기화 안 됐거나 산식 mismatch.
+async function mcVerifyAgainstServer() {
+  const pair = $("#mc-pair").value.trim();
+  const profile = $("#mc-profile").value.trim();
+  const customer = $("#mc-customer").value.trim();
+  const out = $("#mc-verify-result");
+  if (!pair || !profile) { out.textContent = "pair / profile 입력 필요"; return; }
+  const url = `http://${location.hostname}:8082/v1/quote/forward-snapshot?pair=${encodeURIComponent(pair)}&profile=${encodeURIComponent(profile)}` +
+              (customer ? `&customer_id=${encodeURIComponent(customer)}` : "");
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const srv = await r.json();
+    out.replaceChildren();
+    // 서버 SPOT raw 를 받아 동일 계산.
+    const inputs = mcCurrentInputs();
+    inputs.rawBid = srv.spot.raw_bid;
+    inputs.rawAsk = srv.spot.raw_ask;
+    const active = mcActiveWindows(inputs.when, mcState.doc.time_windows || []);
+
+    const rows = [{ tenor: "SPOT (customer)", server: { bid: srv.spot.bid, ask: srv.spot.ask },
+                    client: mcComputeForTenor(mcState.doc, inputs, active, "SPOT", customer) }];
+    for (const t of srv.tenors) {
+      rows.push({ tenor: t.tenor + " (customer)",
+                  server: { bid: t.bid, ask: t.ask },
+                  client: mcComputeForTenor(mcState.doc, inputs, active, t.tenor, customer) });
+    }
+    let drift = 0;
+    const tbl = h("table", { class: "min-w-full text-[11px]" },
+      h("thead", null, h("tr", { class: "text-slate-500 text-[10px]" },
+        h("th", { class: "px-2 py-1 text-left", text: "tenor" }),
+        h("th", { class: "px-2 py-1 text-right", text: "server bid" }),
+        h("th", { class: "px-2 py-1 text-right", text: "client bid" }),
+        h("th", { class: "px-2 py-1 text-right", text: "Δbid" }),
+        h("th", { class: "px-2 py-1 text-right", text: "server ask" }),
+        h("th", { class: "px-2 py-1 text-right", text: "client ask" }),
+        h("th", { class: "px-2 py-1 text-right", text: "Δask" }),
+      )),
+    );
+    const tbody = h("tbody");
+    for (const r of rows) {
+      const dB = r.server.bid - r.client.finalBid;
+      const dA = r.server.ask - r.client.finalAsk;
+      if (Math.abs(dB) >= 1e-9 || Math.abs(dA) >= 1e-9) drift++;
+      const ok = (Math.abs(dB) < 1e-9 && Math.abs(dA) < 1e-9);
+      tbody.appendChild(h("tr", null,
+        h("td", { class: "px-2 py-0.5 text-accent-400", text: r.tenor }),
+        h("td", { class: "px-2 py-0.5 text-right", text: mcFmt(r.server.bid) }),
+        h("td", { class: "px-2 py-0.5 text-right", text: mcFmt(r.client.finalBid) }),
+        h("td", { class: "px-2 py-0.5 text-right " + (Math.abs(dB) < 1e-9 ? "text-good" : "text-bad"), text: (Math.abs(dB) < 1e-9 ? "✓" : mcFmt(dB)) }),
+        h("td", { class: "px-2 py-0.5 text-right", text: mcFmt(r.server.ask) }),
+        h("td", { class: "px-2 py-0.5 text-right", text: mcFmt(r.client.finalAsk) }),
+        h("td", { class: "px-2 py-0.5 text-right " + (Math.abs(dA) < 1e-9 ? "text-good" : "text-bad"), text: (Math.abs(dA) < 1e-9 ? "✓" : mcFmt(dA)) }),
+      ));
+    }
+    tbl.appendChild(tbody);
+    out.appendChild(h("div", { class: "mb-1 " + (drift === 0 ? "text-good" : "text-warn") },
+      drift === 0 ? "✓ 서버와 일치 (모든 tenor)" : `⚠ drift ${drift} 건 — etcd 동기화 또는 산식 불일치`));
+    out.appendChild(h("div", { class: "text-slate-500 mb-1",
+      text: `server table_version=${srv.table_version} · admin table_version=${mcState.doc.version} · ${(srv.table_version !== mcState.doc.version) ? "(불일치 — admin reload 권장)" : "(동일)"}` }));
+    out.appendChild(tbl);
+  } catch (e) {
+    out.replaceChildren(h("div", { class: "text-bad", text: "검증 실패: " + e.message }));
+  }
+}
+
+// mcCurrentInputs — UI 의 현재 입력값을 객체로 (mcCompute 내부 추출 재사용).
+function mcCurrentInputs() {
+  const pair = $("#mc-pair").value.trim();
+  const profileKey = $("#mc-profile").value.trim();
+  const parts = profileKey.split(".");
+  const [channel, site, tier] = parts.length === 3 ? parts : ["", "", ""];
+  const customer = $("#mc-customer").value.trim();
+  const tenor = $("#mc-tenor").value;
+  const rawBid = parseFloat($("#mc-raw-bid").value) || 0;
+  const rawAsk = parseFloat($("#mc-raw-ask").value) || 0;
+  const whenStr = $("#mc-when").value;
+  const when = whenStr ? new Date(whenStr) : new Date();
+  return { pair, profileKey, channel, site, tier, customer, tenor, rawBid, rawAsk, when };
 }
 
 async function initSvcIO() {

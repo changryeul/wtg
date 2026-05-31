@@ -33,11 +33,16 @@ type Quote = quote.Quote
 type Tenor string
 
 const (
+	TenorTOD  Tenor = "TOD" // T+0 (당일 결제)
+	TenorTOM  Tenor = "TOM" // T+1
 	TenorSpot Tenor = "SPOT"
 	Tenor1W   Tenor = "1W"
+	Tenor2W   Tenor = "2W"
 	Tenor1M   Tenor = "1M"
+	Tenor2M   Tenor = "2M"
 	Tenor3M   Tenor = "3M"
 	Tenor6M   Tenor = "6M"
+	Tenor9M   Tenor = "9M"
 	Tenor1Y   Tenor = "1Y"
 )
 

@@ -1511,12 +1511,31 @@
                 <input id="mc-customer" value="alice" placeholder="비우면 Profile-only (HQ+Site)"
                   class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
               </label>
+              <div class="block md:col-span-1">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">계산 모드</span>
+                <div class="mt-1 flex gap-1 text-[11px]">
+                  <label class="flex-1 flex items-center gap-1 px-2 py-1.5 rounded bg-ink-800 border border-ink-700 cursor-pointer">
+                    <input type="radio" name="mc-mode" value="tenor" checked class="accent-accent-500" />
+                    <span>tenor</span>
+                  </label>
+                  <label class="flex-1 flex items-center gap-1 px-2 py-1.5 rounded bg-ink-800 border border-ink-700 cursor-pointer">
+                    <input type="radio" name="mc-mode" value="value_date" class="accent-accent-500" />
+                    <span>value_date</span>
+                  </label>
+                </div>
+              </div>
               <label class="block">
-                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Tenor (단일 계산)</span>
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Tenor</span>
                 <select id="mc-tenor" class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono">
                   <option value="SPOT">SPOT</option>
                 </select>
                 <span class="text-[10px] text-slate-600 mt-0.5 block">PricingTable swap_point 에서 동적 로드</span>
+              </label>
+              <label class="block">
+                <span class="text-slate-500 uppercase tracking-widest text-[10px]">Value Date (broken-date)</span>
+                <input id="mc-value-date" type="date"
+                  class="mt-1 w-full px-2 py-1.5 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono disabled:opacity-40" disabled />
+                <span class="text-[10px] text-slate-600 mt-0.5 block">SPOT (T+2) 영업일 기준 자동 offset</span>
               </label>
               <label class="block">
                 <span class="text-slate-500 uppercase tracking-widest text-[10px]">Raw Bid</span>
@@ -1557,9 +1576,15 @@
               <div id="mc-windows" class="text-xs font-mono space-y-1"></div>
             </div>
 
+            <!-- 1.5 Value Date 보간 (value_date 모드만 표시) -->
+            <div id="mc-vd-card" class="border-gradient rounded-2xl p-4 hidden">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">1.5 Value Date 보간 (SPOT → value_date 영업일 offset + 선형 보간)</div>
+              <div id="mc-vd" class="text-xs font-mono"></div>
+            </div>
+
             <!-- 2. Swap -->
             <div class="border-gradient rounded-2xl p-4">
-              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">2. Swap Point — lookup(pair, tenor)</div>
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">2. Swap Point — lookup(pair, tenor) 또는 보간</div>
               <div id="mc-swap" class="text-xs font-mono"></div>
             </div>
 
@@ -4557,10 +4582,116 @@ async function initMarginCalc() {
     // pair 변경 시 tenor select 갱신.
     $("#mc-pair").addEventListener("change", mcRefreshTenorOptions);
     $("#mc-pair").addEventListener("blur", mcRefreshTenorOptions);
+    // 모드 토글 — tenor 비활성/value_date 활성 등.
+    for (const r of $$('input[name="mc-mode"]')) {
+      r.addEventListener("change", mcOnModeChange);
+    }
   }
   // 페이지 진입 시마다 when 을 현재 시각으로 (이전 페이지 stale 값 덮어쓰기).
   mcSetNow();
+  mcSetDefaultValueDate();
+  mcOnModeChange();
   await mcLoadTable();
+}
+
+function mcSetDefaultValueDate() {
+  // 기본 value_date = SPOT(now, 2) + 영업일 1M(30) — 보간 가능한 기본값.
+  const d = new Date();
+  const spot = mcAddBusinessDays(mcStartOfDay(d), 2);
+  const vd = mcAddBusinessDays(spot, 30);
+  const pad = (n) => String(n).padStart(2, "0");
+  $("#mc-value-date").value = `${vd.getFullYear()}-${pad(vd.getMonth()+1)}-${pad(vd.getDate())}`;
+}
+
+function mcOnModeChange() {
+  const mode = mcCurrentMode();
+  const isVD = mode === "value_date";
+  $("#mc-tenor").disabled = isVD;
+  $("#mc-value-date").disabled = !isVD;
+  $("#mc-vd-card").classList.toggle("hidden", !isVD);
+}
+
+function mcCurrentMode() {
+  const checked = $('input[name="mc-mode"]:checked');
+  return checked ? checked.value : "tenor";
+}
+
+// ─── weekend-only 캘린더 (Go pricing.IsBusinessDay/AddBusinessDays/BusinessDaysBetween 미러) ───
+function mcStartOfDay(d) {
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+function mcIsBusinessDay(d) {
+  const wd = d.getUTCDay();
+  return wd >= 1 && wd <= 5; // MON~FRI
+}
+function mcAddBusinessDays(d, n) {
+  if (n === 0) return d;
+  const step = n > 0 ? 1 : -1;
+  const cnt = Math.abs(n);
+  let cur = new Date(d.getTime());
+  for (let i = 0; i < cnt; i++) {
+    cur.setUTCDate(cur.getUTCDate() + step);
+    while (!mcIsBusinessDay(cur)) cur.setUTCDate(cur.getUTCDate() + step);
+  }
+  return cur;
+}
+function mcBusinessDaysBetween(from, to) {
+  if (from.getTime() === to.getTime()) return 0;
+  let sign = 1;
+  let a = mcStartOfDay(from), b = mcStartOfDay(to);
+  if (b.getTime() < a.getTime()) { [a, b] = [b, a]; sign = -1; }
+  let n = 0;
+  const cur = new Date(a.getTime());
+  while (cur.getTime() < b.getTime()) {
+    cur.setUTCDate(cur.getUTCDate() + 1);
+    if (mcIsBusinessDay(cur)) n++;
+  }
+  return n * sign;
+}
+
+// Go 의 DefaultTenorDays 미러.
+const MC_TENOR_DAYS = {
+  TOD: -2, TOM: -1, SPOT: 0,
+  "1W": 7, "2W": 14,
+  "1M": 30, "2M": 61, "3M": 91,
+  "6M": 183, "9M": 274, "1Y": 365,
+};
+
+// InterpolateSwap 미러 — pkg/pricing/valuedate.go 와 동일 로직.
+// 반환: { entry, from, to, fromDays, toDays, weight, offsetDays, exact, error }
+function mcInterpolateSwap(doc, pair, offsetDays) {
+  const items = [];
+  for (const e of (doc.swap_point || [])) {
+    if (e.pair !== pair) continue;
+    const days = MC_TENOR_DAYS[e.tenor];
+    if (days == null) continue;
+    items.push({ tenor: e.tenor, days, bid: e.bid_amount || 0, ask: e.ask_amount || 0 });
+  }
+  if (!items.length) return { error: "no_swap" };
+  items.sort((a, b) => a.days - b.days);
+  for (const it of items) {
+    if (it.days === offsetDays) {
+      return {
+        bid: it.bid, ask: it.ask, from: it.tenor, to: it.tenor,
+        fromDays: it.days, toDays: it.days,
+        offsetDays, weight: 0, exact: true,
+      };
+    }
+  }
+  let prev = null, next = null;
+  for (const it of items) {
+    if (it.days < offsetDays) prev = it;
+    if (it.days > offsetDays && next === null) { next = it; break; }
+  }
+  if (!prev || !next) return { error: "out_of_range", offsetDays };
+  const w = (offsetDays - prev.days) / (next.days - prev.days);
+  return {
+    bid: prev.bid + (next.bid - prev.bid) * w,
+    ask: prev.ask + (next.ask - prev.ask) * w,
+    from: prev.tenor, to: next.tenor,
+    fromDays: prev.days, toDays: next.days,
+    offsetDays, weight: w, exact: false,
+  };
 }
 
 // pair 의 swap_point 에서 등록된 tenor 만 select 옵션으로. SPOT 은 swap entry
@@ -4793,6 +4924,8 @@ function mcCompute() {
   const rawAsk = parseFloat($("#mc-raw-ask").value);
   const whenStr = $("#mc-when").value;
   const when = whenStr ? new Date(whenStr) : new Date();
+  const mode = mcCurrentMode();
+  const valueDateStr = $("#mc-value-date").value;
 
   if (!pair || !profileKey || isNaN(rawBid) || isNaN(rawAsk)) {
     toast("필수 입력 누락", "warn"); return;
@@ -4802,9 +4935,32 @@ function mcCompute() {
   const [channel, site, tier] = parts;
 
   const active = mcActiveWindows(when, doc.time_windows || []);
-  const swap = mcSwapLookup(doc, pair, tenor);
-  const sBid = swap ? (swap.bid_amount || 0) : 0;
-  const sAsk = swap ? (swap.ask_amount || 0) : 0;
+
+  // 모드별 swap 결정.
+  // tenor mode: mcSwapLookup(doc, pair, tenor) → entry 단순 조회.
+  // value_date mode: SpotDate(now,2) + BusinessDaysBetween + InterpolateSwap.
+  let swap = null, sBid = 0, sAsk = 0;
+  let vdResult = null; // { offsetDays, from, to, weight, exact, ... }
+  if (mode === "value_date") {
+    if (!valueDateStr) { toast("value_date 입력 필요", "warn"); return; }
+    const vd = new Date(valueDateStr + "T00:00:00Z");
+    const spot = mcAddBusinessDays(mcStartOfDay(when), 2);
+    const offset = mcBusinessDaysBetween(spot, vd);
+    const ip = mcInterpolateSwap(doc, pair, offset);
+    if (ip.error === "no_swap") { toast("본 pair 의 swap_point 미등록", "err"); return; }
+    if (ip.error === "out_of_range") {
+      toast(`value_date offset ${offset} 일이 등록 tenor 범위 밖 (extrapolation 비활성)`, "err");
+      return;
+    }
+    sBid = ip.bid; sAsk = ip.ask;
+    swap = { pair, tenor: ip.exact ? ip.from : `interpolated(${ip.from}~${ip.to})`,
+             bid_amount: sBid, ask_amount: sAsk };
+    vdResult = { ...ip, valueDate: vd, spotDate: spot };
+  } else {
+    swap = mcSwapLookup(doc, pair, tenor);
+    sBid = swap ? (swap.bid_amount || 0) : 0;
+    sAsk = swap ? (swap.ask_amount || 0) : 0;
+  }
 
   const hq = mcLookupHQ(doc, pair, tier, active);
   const hBid = hq.entry ? (hq.entry.bid_amount || 0) : 0;
@@ -4839,9 +4995,10 @@ function mcCompute() {
   const finalAsk = rawAsk + sumAsk;
 
   mcRender({
-    inputs: { pair, profileKey, channel, site, tier, customer, tenor, rawBid, rawAsk, when },
+    inputs: { pair, profileKey, channel, site, tier, customer, tenor, rawBid, rawAsk, when, mode, valueDate: valueDateStr },
     active, allWindows: doc.time_windows || [],
     swap: { entry: swap, sBid, sAsk },
+    vd: vdResult,
     hq: Object.assign({}, hq, { hBid, hAsk }),
     site: Object.assign({}, si, { stBid, stAsk }),
     customer: Object.assign({}, cm, { cMode, cBid, cAsk, customer }),
@@ -4895,9 +5052,50 @@ function mcRender(r) {
     wDiv.appendChild(det);
   }
 
+  // 1.5 Value Date 보간 (value_date 모드 한정).
+  const vdDiv = $("#mc-vd");
+  if (vdDiv) {
+    vdDiv.replaceChildren();
+    if (r.vd) {
+      const v = r.vd;
+      const fmtDate = (d) => d.toISOString().slice(0, 10);
+      vdDiv.appendChild(h("div", null,
+        "value_date = ", h("span", { class: "text-accent-400", text: fmtDate(v.valueDate) }),
+        " · SPOT(T+2) = ", h("span", { class: "text-accent-400", text: fmtDate(v.spotDate) }),
+        " · ", h("span", { class: "text-good", text: "offset_days = " + v.offsetDays + " (영업일)" }),
+      ));
+      if (v.exact) {
+        vdDiv.appendChild(h("div", { class: "mt-1" },
+          "✓ Exact 매칭: ", h("span", { class: "text-accent-400", text: v.from + " (" + v.fromDays + " 영업일)" }),
+          " — 보간 X, lookup 결과 사용.",
+        ));
+      } else {
+        vdDiv.appendChild(h("div", { class: "mt-1" },
+          "선형 보간: ",
+          h("span", { class: "text-accent-400", text: v.from + " (" + v.fromDays + "d)" }),
+          " ~ ",
+          h("span", { class: "text-accent-400", text: v.to + " (" + v.toDays + "d)" }),
+          " · weight = ", h("span", { class: "text-indigo-400", text: v.weight.toFixed(4) }),
+        ));
+        vdDiv.appendChild(h("div", { class: "mt-1 text-slate-500" },
+          "산식: swap = ", v.from, " + (", v.to, " − ", v.from, ") × weight"));
+      }
+      vdDiv.appendChild(h("div", { class: "mt-1" },
+        "보간 swap: bid -", h("span", { class: "text-good", text: mcFmt(v.bid) }),
+        " · ask +", h("span", { class: "text-bad", text: mcFmt(v.ask) }),
+      ));
+    }
+  }
+
   // 2. swap
   const sDiv = $("#mc-swap"); sDiv.replaceChildren();
-  if (r.swap.entry) {
+  if (r.vd) {
+    // value_date 모드 — 보간 결과를 그대로 swap layer 로 사용.
+    sDiv.appendChild(h("div", null,
+      "value_date 보간 결과 사용: ",
+      h("code", { class: "text-accent-400", text: JSON.stringify({ from: r.vd.from, to: r.vd.to, weight: +r.vd.weight.toFixed(6), bid: +r.vd.bid.toFixed(6), ask: +r.vd.ask.toFixed(6) }) })));
+    sDiv.appendChild(h("div", { class: "mt-1" }, "기여: bid -", h("span", { class: "text-good", text: mcFmt(r.swap.sBid) }), " · ask +", h("span", { class: "text-bad", text: mcFmt(r.swap.sAsk) })));
+  } else if (r.swap.entry) {
     sDiv.appendChild(h("div", null, "매칭 entry: ", h("code", { class: "text-accent-400", text: JSON.stringify(r.swap.entry) })));
     sDiv.appendChild(h("div", { class: "mt-1" }, "기여: bid -", h("span", { class: "text-good", text: mcFmt(r.swap.sBid) }), " · ask +", h("span", { class: "text-bad", text: mcFmt(r.swap.sAsk) })));
   } else {
@@ -5105,9 +5303,11 @@ function mcComputeForTenor(doc, inputs, active, tenor, customerID) {
   return { finalBid: inputs.rawBid - sumB, finalAsk: inputs.rawAsk + sumA };
 }
 
-// 서버 forward-snapshot 호출 결과 vs 클라이언트 계산 비교. drift 검출 = 서버
-// pricing 와 admin pricing 의 etcd 동기화 안 됐거나 산식 mismatch.
+// 서버 forward-snapshot (tenor 모드) / forward/lock (value_date 모드) 호출 결과
+// vs 클라이언트 계산 비교. drift 검출 = etcd 동기화 안 됐거나 산식 mismatch.
 async function mcVerifyAgainstServer() {
+  const mode = mcCurrentMode();
+  if (mode === "value_date") return mcVerifyValueDate();
   const pair = $("#mc-pair").value.trim();
   const profile = $("#mc-profile").value.trim();
   const customer = $("#mc-customer").value.trim();
@@ -5167,6 +5367,85 @@ async function mcVerifyAgainstServer() {
     out.appendChild(h("div", { class: "text-slate-500 mb-1",
       text: `server table_version=${srv.table_version} · admin table_version=${mcState.doc.version} · ${(srv.table_version !== mcState.doc.version) ? "(불일치 — admin reload 권장)" : "(동일)"}` }));
     out.appendChild(tbl);
+  } catch (e) {
+    out.replaceChildren(h("div", { class: "text-bad", text: "검증 실패: " + e.message }));
+  }
+}
+
+// value_date 모드 라이브 검증 — POST /v1/quote/forward/lock 호출 (quote_id 도 발급됨,
+// short-lived TTL 이라 audit log 만 살짝 더 남는 부수 효과 — 정상).
+async function mcVerifyValueDate() {
+  const out = $("#mc-verify-result");
+  const pair = $("#mc-pair").value.trim();
+  const profile = $("#mc-profile").value.trim();
+  const customer = $("#mc-customer").value.trim();
+  const vd = $("#mc-value-date").value;
+  if (!pair || !profile || !vd) { out.textContent = "pair / profile / value_date 입력 필요"; return; }
+  try {
+    const r = await fetch(`http://${location.hostname}:8082/v1/quote/forward/lock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pair, profile, customer_id: customer || undefined, value_date: vd }),
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error("HTTP " + r.status + ": " + txt);
+    }
+    const srv = await r.json();
+    out.replaceChildren();
+
+    // 클라이언트 동일 계산.
+    const inputs = mcCurrentInputs();
+    inputs.rawBid = srv.raw_bid;
+    inputs.rawAsk = srv.raw_ask;
+    const vdDate = new Date(vd + "T00:00:00Z");
+    const spot = mcAddBusinessDays(mcStartOfDay(inputs.when), 2);
+    const offset = mcBusinessDaysBetween(spot, vdDate);
+    const ip = mcInterpolateSwap(mcState.doc, pair, offset);
+    if (ip.error) { out.replaceChildren(h("div", { class: "text-bad", text: "client 보간 실패: " + ip.error })); return; }
+    const active = mcActiveWindows(inputs.when, mcState.doc.time_windows || []);
+    // ApplyForCustomer 와 동일 합산 (swap layer 는 보간값으로).
+    const hq = mcLookupHQ(mcState.doc, pair, inputs.tier, active);
+    const si = mcLookupSite(mcState.doc, pair, inputs.channel, inputs.site, active);
+    const cm = mcMatchCustomer(mcState.doc, customer, pair, active);
+    const isOv = cm.rule && (cm.rule.mode || "add") === "override";
+    let sumB, sumA;
+    if (isOv) {
+      sumB = ip.bid + (cm.rule.bid_delta || 0);
+      sumA = ip.ask + (cm.rule.ask_delta || 0);
+    } else {
+      sumB = ip.bid + (hq.entry?.bid_amount || 0) + (si.entry?.bid_amount || 0) + (cm.rule ? (cm.rule.bid_delta || 0) : 0);
+      sumA = ip.ask + (hq.entry?.ask_amount || 0) + (si.entry?.ask_amount || 0) + (cm.rule ? (cm.rule.ask_delta || 0) : 0);
+    }
+    const cBid = inputs.rawBid - sumB;
+    const cAsk = inputs.rawAsk + sumA;
+
+    const dB = srv.bid - cBid;
+    const dA = srv.ask - cAsk;
+    const ok = Math.abs(dB) < 1e-9 && Math.abs(dA) < 1e-9;
+
+    const srvIP = srv.interpolation || {};
+    const dW = (srvIP.weight || 0) - ip.weight;
+    const dSB = (srvIP.swap_bid || 0) - ip.bid;
+    const dSA = (srvIP.swap_ask || 0) - ip.ask;
+    const ipOK = Math.abs(dW) < 1e-9 && Math.abs(dSB) < 1e-9 && Math.abs(dSA) < 1e-9;
+
+    out.appendChild(h("div", { class: "mb-1 " + (ok && ipOK ? "text-good" : "text-warn") },
+      (ok && ipOK) ? "✓ 서버와 일치 (final + interpolation)" : "⚠ drift 발견"));
+    out.appendChild(h("div", { class: "text-slate-500", text: `quote_id=${srv.quote_id} · table_version=${srv.table_version} (admin v${mcState.doc.version})` }));
+    out.appendChild(h("div", null,
+      "final bid: server=", mcFmt(srv.bid), " client=", mcFmt(cBid),
+      " Δ=", h("span", { class: Math.abs(dB) < 1e-9 ? "text-good" : "text-bad", text: mcFmt(dB) })));
+    out.appendChild(h("div", null,
+      "final ask: server=", mcFmt(srv.ask), " client=", mcFmt(cAsk),
+      " Δ=", h("span", { class: Math.abs(dA) < 1e-9 ? "text-good" : "text-bad", text: mcFmt(dA) })));
+    out.appendChild(h("div", null,
+      "offset_days: server=", String(srvIP.offset_days || 0), " client=", String(ip.offsetDays),
+      " · from=", srvIP.from || "?", " to=", srvIP.to || "?",
+      " · weight Δ=", h("span", { class: Math.abs(dW) < 1e-9 ? "text-good" : "text-bad", text: mcFmt(dW) })));
+    out.appendChild(h("div", null,
+      "swap_bid Δ=", h("span", { class: Math.abs(dSB) < 1e-9 ? "text-good" : "text-bad", text: mcFmt(dSB) }),
+      " · swap_ask Δ=", h("span", { class: Math.abs(dSA) < 1e-9 ? "text-good" : "text-bad", text: mcFmt(dSA) })));
   } catch (e) {
     out.replaceChildren(h("div", { class: "text-bad", text: "검증 실패: " + e.message }));
   }

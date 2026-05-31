@@ -984,7 +984,20 @@
           <div class="flex items-center justify-between">
             <div>
               <h3 class="text-lg font-semibold">마진 테이블</h3>
-              <p class="text-sm text-slate-400">swap point / 본점 / 영업점·채널 마진을 담은 단일 JSON. 저장 시 모든 mci-price 가 atomic 으로 새 테이블로 전환. Version 은 운영자가 손으로 1씩 올리는 게 좋습니다 (감사용).</p>
+              <p class="text-sm text-slate-400">5-layer 마진 + 시간대를 담은 단일 JSON. 저장 시 모든 mci-price 가 atomic 으로 새 테이블로 전환. Version 은 운영자가 손으로 1씩 올리는 게 좋습니다 (감사용).</p>
+              <details class="mt-2 text-xs">
+                <summary class="cursor-pointer text-slate-400 hover:text-slate-200">📘 schema 안내 (5-layer + time window)</summary>
+                <div class="mt-2 p-3 rounded bg-ink-900/40 border border-ink-700/50 text-slate-400 leading-relaxed">
+                  <code class="text-accent-400">hq_margin</code>: 본점 마진 (pair × tier). Tier="" = 와일드카드.<br/>
+                  <code class="text-accent-400">site_margin</code>: 영업점·채널 마진 (pair × channel × site).<br/>
+                  <code class="text-accent-400">customer_margin</code> <span class="text-good">[신규]</span>: 고객별 추가/대체 마진. mode="add" (default) | "override". priority 큰 값 우선.<br/>
+                  <code class="text-accent-400">swap_point</code>: 만기별 forward 마진 (pair × tenor).<br/>
+                  <code class="text-accent-400">time_windows</code> <span class="text-good">[신규]</span>: 시간대 정의. 각 margin entry 의 <code>window</code> 필드가 참조.<br/>
+                  · 모든 entry 의 <code>window</code> 는 optional — 비면 모든 시간대 적용.<br/>
+                  · <code>customer_margin.mode="override"</code> 는 HQ+Site 무시하고 customer 마진 단독.<br/>
+                  · <code>time_windows[].complement_of</code> 로 보집합 정의 (예: off_hours = regular 반대).
+                </div>
+              </details>
             </div>
             <div class="flex items-center gap-2">
               <button id="pricing-reload" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 다시 읽기</button>
@@ -993,17 +1006,19 @@
             </div>
           </div>
           <div class="border-gradient rounded-2xl p-4 space-y-3">
-            <div class="flex items-center gap-3 text-xs text-slate-400">
+            <div class="flex items-center gap-3 text-xs text-slate-400 flex-wrap">
               <span>현재 Version: <span id="pricing-version" class="font-mono text-slate-200">—</span></span>
-              <span>HQ entries: <span id="pricing-count-hq" class="font-mono text-slate-200">—</span></span>
-              <span>Site entries: <span id="pricing-count-site" class="font-mono text-slate-200">—</span></span>
-              <span>Swap entries: <span id="pricing-count-swap" class="font-mono text-slate-200">—</span></span>
+              <span>HQ: <span id="pricing-count-hq" class="font-mono text-slate-200">—</span></span>
+              <span>Site: <span id="pricing-count-site" class="font-mono text-slate-200">—</span></span>
+              <span>Customer: <span id="pricing-count-cust" class="font-mono text-good">—</span></span>
+              <span>Swap: <span id="pricing-count-swap" class="font-mono text-slate-200">—</span></span>
+              <span>TimeWindow: <span id="pricing-count-tw" class="font-mono text-good">—</span></span>
             </div>
             <textarea id="pricing-editor"
               spellcheck="false"
               class="w-full font-mono text-xs bg-ink-900 border border-ink-700 rounded-lg p-3 outline-none focus:border-accent-500"
               style="height: 60vh; resize: vertical;"
-              placeholder='{"version":1,"hq_margin":[],"site_margin":[],"swap_point":[]}'></textarea>
+              placeholder='{"version":1,"time_windows":[],"hq_margin":[],"site_margin":[],"customer_margin":[],"swap_point":[]}'></textarea>
             <div id="pricing-error" class="hidden text-xs text-bad font-mono"></div>
           </div>
         </div>
@@ -2702,7 +2717,9 @@ async function loadPricing() {
       $("#pricing-version").textContent = "(미등록)";
       $("#pricing-count-hq").textContent = "0";
       $("#pricing-count-site").textContent = "0";
+      $("#pricing-count-cust").textContent = "0";
       $("#pricing-count-swap").textContent = "0";
+      $("#pricing-count-tw").textContent = "0";
       return;
     }
     if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -2713,7 +2730,9 @@ async function loadPricing() {
       $("#pricing-version").textContent = doc.version != null ? String(doc.version) : "—";
       $("#pricing-count-hq").textContent = (doc.hq_margin || []).length;
       $("#pricing-count-site").textContent = (doc.site_margin || []).length;
+      $("#pricing-count-cust").textContent = (doc.customer_margin || []).length;
       $("#pricing-count-swap").textContent = (doc.swap_point || []).length;
+      $("#pricing-count-tw").textContent = (doc.time_windows || []).length;
     } catch (_) {}
     $("#pricing-error").classList.add("hidden");
   } catch (e) {

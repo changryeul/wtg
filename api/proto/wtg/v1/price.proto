@@ -28,6 +28,29 @@ service PriceService {
   // Aggregator 가 closed 한 봉이 Archiver(DB) 와 병렬로 이 stream 으로도 push.
   // 클라이언트(mci-chart)는 (pair, tf) 필터를 옵션으로 지정.
   rpc SubscribeBar(BarSubscribeRequest) returns (stream Bar);
+
+  // PublishTick 은 quote-forwarder 가 호출해서 mci-price 에 시세를 직접 push 하는
+  // 양방향 stream. broker 의 PRICE exchange fan-out 을 우회 — broker 가 매매
+  // transaction 에만 집중하도록 시세 부하를 분리한다.
+  //
+  // 흐름:
+  //   forwarder (gRPC client) ─→ stream Tick ─→ mci-price (gRPC server)
+  //                                                │
+  //                                                └─→ BestConsumer / Aggregator / PricingConsumer
+  //
+  // ack: 주기적 (batch) 으로 server 가 publisher 에 ack 회신 — backpressure / 통계용.
+  rpc PublishTick(stream Tick) returns (stream PublishAck);
+}
+
+// PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와
+// 마지막 처리 시각을 알려 publisher 가 backpressure / 끊김 진단에 활용.
+message PublishAck {
+  // 본 stream 에서 server 가 누적 처리한 tick 수.
+  uint64 accepted = 1;
+  // 본 stream 에서 server 가 drop 한 tick 수 (backpressure / 검증 실패 등).
+  uint64 dropped = 2;
+  // 마지막 ack 시점의 server unix nano.
+  int64 server_unix_nano = 3;
 }
 
 // SubscribeRequest 는 edge 가 보내는 구독 옵션 (1차는 빈 메시지).

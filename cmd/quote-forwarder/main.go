@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -128,6 +129,8 @@ func main() {
 		batchMax     = flag.Int("batch-max", 14, "한 broker message 에 묶을 envelope 최대 개수 (1=batch 비활성). pushdata.msgb 1512B 한계 — typical envelope 105B × 14 = 1485B (마진 27B). over-size 시 split fallback 으로 안전.")
 		batchTimeout = flag.Duration("batch-timeout", 10*time.Millisecond, "batch 가 batch-max 에 도달 못해도 이 시간 후 강제 flush")
 		feedBuffer   = flag.Int("feed-buffer", 8192, "feed 별 reader → worker 채널 버퍼 크기. 가득 차면 reader 가 명시적 drop (kernel silent drop 회피, queue_drop 카운터로 가시화).")
+		publishMode  = flag.String("publish-mode", "broker", "envelope publish 전송 path: broker (PRICE exchange, 기본) | grpc (mci-price 직접 PublishTick) | both (dual-write 진단)")
+		priceGRPCURL = flag.String("price-grpc", "127.0.0.1:50051", "grpc/both 모드에서 사용할 mci-price gRPC 주소. ws 가 아니라 grpc — host:port")
 	)
 	flag.Parse()
 
@@ -156,9 +159,37 @@ func main() {
 		go startMetricsServer(ctx, logger, *metricsAddr, reg, feeds, *brokerHost, *brokerPort)
 	}
 
+	// publish mode 결정 — broker (기존) / grpc (mci-price 직접) / both (dual-write).
+	// grpc 모드는 broker 의 시세 fan-out 부하를 분리해서 broker 가 매매 RPC 에만
+	// 집중하도록 한다.
+	mode := strings.ToLower(*publishMode)
+	if mode != "broker" && mode != "grpc" && mode != "both" {
+		logger.Error("--publish-mode 는 broker / grpc / both 중 하나", slog.String("got", mode))
+		os.Exit(2)
+	}
+	logger.Info("publish 설정",
+		slog.String("mode", mode),
+		slog.String("broker", fmt.Sprintf("%s:%d", *brokerHost, *brokerPort)),
+		slog.String("price_grpc", *priceGRPCURL),
+	)
+
+	// grpc publisher — broker 와 별도로 mci-price 1개에 직접 send. 4 feed 가 공유.
+	// broker 와 달리 stream 1개로 모든 feed 의 envelope 합치므로 send 는 sendMu 직렬.
+	// 운영에서 mci-price 다중화 시는 round-robin LB 또는 stream 분리 (Phase 2 대상).
+	var sharedGRPCPub *grpcPublisher
+	if mode == "grpc" || mode == "both" {
+		gp, gerr := newGRPCPublisher(ctx, logger, *priceGRPCURL)
+		if gerr != nil {
+			logger.Error("grpc publisher 초기화 실패", slog.Any("err", gerr))
+			os.Exit(1)
+		}
+		sharedGRPCPub = gp
+		defer sharedGRPCPub.Close()
+	}
+
 	// 각 feed 마다 (UDP listener + 독립 broker connection) goroutine.
 	//
-	// 왜 feed 별 독립 connection 인가:
+	// 왜 feed 별 독립 broker connection 인가:
 	//   pkg/mymq.Client.writeFrame 가 writeMu 로 직렬화한다 (단일 connection
 	//   thread-safety 보장). 모든 feed 가 1개 connection 을 공유하면 4 goroutine
 	//   이 한 writeMu 를 경쟁 → broker Send 가 사실상 single-threaded ~4k tick/s
@@ -168,6 +199,8 @@ func main() {
 	// Instance 번호는 *instance 를 base 로 feed 인덱스를 더해서 broker 측에서
 	// 4 connection 이 서로 다른 ApplName ("quote-fwd-01" ~ "quote-fwd-04") 으로
 	// 보이도록 한다.
+	//
+	// grpc mode 는 broker connection 자체를 skip — broker 부하 0.
 	for i, f := range feeds {
 		i, f := i, f
 		addr, err := net.ResolveUDPAddr("udp", f.Addr)
@@ -201,32 +234,45 @@ func main() {
 		)
 		qm.rcvBuf.WithLabelValues(f.Label).Set(float64(actualBuf))
 
-		// feed별 독립 broker connection — ApplName="<base>-<NN>" 으로 broker
-		// 측에서 4 connection 이 별개 client 로 보이게.
-		mq, err := mymq.Open(ctx, *brokerHost, *brokerPort, mymq.Options{
-			ApplName:         *appl,
-			Instance:         *instance + i, // base + feed 인덱스
-			Channel:          mymq.ChannelAdmin,
-			HandshakeTimeout: 5 * time.Second,
-			Logger:           logger,
-			Reconnect: &mymq.ReconnectOptions{
-				InitialBackoff: 1 * time.Second,
-				MaxBackoff:     30 * time.Second,
-				BackoffFactor:  2.0,
-			},
-		})
-		if err != nil {
-			logger.Error("broker 연결 실패", slog.String("feed", f.Label), slog.Any("err", err))
-			os.Exit(1)
+		// feed별 publisher — mode 에 따라 broker / grpc / both 구성.
+		var pub Publisher
+		if mode == "broker" || mode == "both" {
+			// feed별 독립 broker connection — ApplName="<base>-<NN>" 으로 broker
+			// 측에서 4 connection 이 별개 client 로 보이게.
+			mq, err := mymq.Open(ctx, *brokerHost, *brokerPort, mymq.Options{
+				ApplName:         *appl,
+				Instance:         *instance + i, // base + feed 인덱스
+				Channel:          mymq.ChannelAdmin,
+				HandshakeTimeout: 5 * time.Second,
+				Logger:           logger,
+				Reconnect: &mymq.ReconnectOptions{
+					InitialBackoff: 1 * time.Second,
+					MaxBackoff:     30 * time.Second,
+					BackoffFactor:  2.0,
+				},
+			})
+			if err != nil {
+				logger.Error("broker 연결 실패", slog.String("feed", f.Label), slog.Any("err", err))
+				os.Exit(1)
+			}
+			defer mq.Close()
+			si := mq.SessionInfo()
+			logger.Info("broker 연결 OK",
+				slog.String("feed", f.Label),
+				slog.Int("instance", *instance+i),
+				slog.Int("scid", int(si.ConnectionID)),
+			)
+			bp := newBrokerPublisher(mq)
+			if mode == "both" {
+				pub = newMultiPublisher(bp, sharedGRPCPub)
+			} else {
+				pub = bp
+			}
+		} else {
+			// grpc mode — broker connection 자체 skip. 4 feed 가 공유하는 grpc stream.
+			pub = sharedGRPCPub
 		}
-		defer mq.Close()
-		si := mq.SessionInfo()
-		logger.Info("broker 연결 OK",
-			slog.String("feed", f.Label),
-			slog.Int("instance", *instance+i),
-			slog.Int("scid", int(si.ConnectionID)),
-		)
-		go feedLoop(ctx, logger, mq, conn, f.Label, *includeFix, qm, *batchMax, *batchTimeout, *feedBuffer)
+		go feedLoop(ctx, logger, pub, conn, f.Label, *includeFix, qm, *batchMax, *batchTimeout, *feedBuffer)
 	}
 
 	<-ctx.Done()
@@ -311,7 +357,7 @@ type rawPacket struct {
 	seq  uint64
 }
 
-func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *net.UDPConn, label string, includeFix bool, qm *quoteMetrics, batchMax int, batchTimeout time.Duration, feedBuffer int) {
+func feedLoop(ctx context.Context, logger *slog.Logger, pub Publisher, conn *net.UDPConn, label string, includeFix bool, qm *quoteMetrics, batchMax int, batchTimeout time.Duration, feedBuffer int) {
 	go func() {
 		<-ctx.Done()
 		_ = conn.SetReadDeadline(time.Now())
@@ -370,17 +416,9 @@ func feedLoop(ctx context.Context, logger *slog.Logger, mq *mymq.Client, conn *n
 	// publishOne — batch (또는 sub-batch) 1 회 publish. ErrPushdataPayloadTooLong
 	// 만 별도 처리해 caller 가 split 재시도 가능하게 분리 신호.
 	publishOne := func(envs []quote.JSONEnvelope) error {
-		var wire []byte
-		var err error
-		if len(envs) == 1 {
-			wire, err = quote.EncodePushdataV1(envs[0])
-		} else {
-			wire, err = quote.EncodePushdataBatch(envs)
-		}
-		if err != nil {
-			return err
-		}
-		if err := publishBroadcast(mq, wire); err != nil {
+		// transport (broker/grpc/both) 캡슐화는 Publisher 안에서. 여기서는
+		// batch encoding policy + 통계만.
+		if err := pub.Publish(envs); err != nil {
 			return err
 		}
 		totalPubOK.Add(uint64(len(envs)))

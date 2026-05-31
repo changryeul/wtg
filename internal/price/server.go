@@ -135,6 +135,7 @@ func (s *Server) AttachGRPC(g *GRPCServer) {
 	}
 	s.grpcSrv = g
 	s.AddConsumer(g)
+	g.AttachServer(s) // PublishTick handler 가 hot path 에 dispatch 할 수 있도록.
 }
 
 // AttachQuoteValidator — QuoteValidationServer 를 HTTP gateway 로도 노출.
@@ -224,6 +225,7 @@ func (s *Server) Start(ctx context.Context) error {
 			// 외부에서 AttachGRPC 호출 없으면 auto-create (back-compat).
 			s.grpcSrv = NewGRPCServer(s.logger, s.cfg.GRPCBufSize)
 			s.AddConsumer(s.grpcSrv)
+			s.grpcSrv.AttachServer(s) // PublishTick handler dispatch path.
 		}
 
 		var grpcOpts []grpc.ServerOption
@@ -301,36 +303,46 @@ func (s *Server) handleUnsolicited(msg *mymq.Unsolicited) {
 		)
 		return
 	}
+	s.IngestEnvelopes(tick.Body, tick)
+}
 
-	// pushdata.msgb 에서 v1 envelope 들 추출 — 단일 객체 또는 배열 (forwarder
-	// batch publish). 1 broker message = N tick 가능.
-	envs, err := ParseEnvelopes(tick.Body)
+// IngestEnvelopes 는 raw envelope body (pushdata.msgb 또는 grpc Tick.body) 를
+// 받아 v1 envelope 들로 파싱한 뒤 hot path consumer (BestConsumer) 에 dispatch.
+//
+// 두 진입점이 공유:
+//   1. broker subscribe (handleUnsolicited) — pushdata 디코딩 후 호출
+//   2. PublishTick gRPC (GRPCServer.PublishTick) — forwarder 가 broker 우회로 직접 push
+//
+// baseTick 은 메타데이터 (MarketID/SeqNum/Mask/Type/Flag) 만 사용 — Body 는
+// 본 함수가 envelope 별로 새로 인코딩하므로 무시.
+func (s *Server) IngestEnvelopes(body []byte, baseTick *Tick) {
+	envs, err := ParseEnvelopes(body)
 	if err != nil {
 		s.totalDrop.Add(1)
 		s.logger.Debug("envelope 파싱 실패",
 			slog.Any("error", err),
-			slog.Int("body_len", len(tick.Body)),
+			slog.Int("body_len", len(body)),
 		)
 		return
 	}
 
 	for _, env := range envs {
 		// envelope 별 sub-tick — Symbol/Source 를 envelope 으로 덮어쓴다.
-		// (batch 일 때 pushmsg.symb 는 첫 envelope 만 반영하므로 per-envelope
+		// (batch 일 때 baseTick.Symbol 은 첫 envelope 만 반영하므로 per-envelope
 		// sym 으로 SymbolMap lookup 해야 정확.)
-		body, mErr := quote.EncodeJSONEnvelope(env)
+		encBody, mErr := quote.EncodeJSONEnvelope(env)
 		if mErr != nil {
 			s.totalDrop.Add(1)
 			continue
 		}
 		sub := &Tick{
-			MarketID: tick.MarketID,
+			MarketID: baseTick.MarketID,
 			Symbol:   env.Sym,
-			SeqNum:   tick.SeqNum,
-			Mask:     tick.Mask,
-			Type:     tick.Type,
-			Flag:     tick.Flag,
-			Body:     body,
+			SeqNum:   baseTick.SeqNum,
+			Mask:     baseTick.Mask,
+			Type:     baseTick.Type,
+			Flag:     baseTick.Flag,
+			Body:     encBody,
 			Source:   env.Src,
 			Received: time.Now(),
 		}

@@ -3,12 +3,16 @@ package price
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
@@ -45,6 +49,20 @@ type GRPCServer struct {
 	// 선택적 QuoteValidationService — nil 이면 Serve 가 register 안 함.
 	// 같은 gRPC 서버 / 같은 listen 포트에 합쳐서 노출 (RFC §3 결정).
 	validator *QuoteValidationServer
+
+	// serv 는 PublishTick handler 가 받은 tick 을 hot path 에 dispatch 하기 위한
+	// Server 참조. AttachServer 로 주입. nil 이면 PublishTick 비활성 (Unimplemented).
+	serv *Server
+
+	// PublishTick 통계.
+	publishAccepted atomic.Uint64
+	publishDropped  atomic.Uint64
+}
+
+// AttachServer — PublishTick handler 가 dispatch 할 Server 주입.
+// Server.AttachGRPC 의 대칭 — Server 가 GRPCServer 를 consumer 로 등록할 때 같이 호출.
+func (g *GRPCServer) AttachServer(s *Server) {
+	g.serv = s
 }
 
 // AttachValidator — Serve 호출 전에 옵션 등록.
@@ -509,6 +527,71 @@ func barToProto(b *quote.Bar) *wtgpb.Bar {
 }
 
 // customerQuoteToProto 는 pricing.CustomerQuote 를 proto CustomerQuote 로 매핑.
+// PublishTick — quote-forwarder 가 broker 우회로 시세를 mci-price 에 직접 push 하는
+// 양방향 stream. broker 의 PRICE exchange fan-out 부하를 분리 — broker 가 매매
+// transaction RPC 에만 집중하도록 한다.
+//
+// 흐름:
+//   1. forwarder 가 Tick (body=raw envelope JSON) 을 stream 으로 push
+//   2. Server.IngestEnvelopes 로 broker subscribe path 와 동일 hot path 진입
+//   3. ack 는 매 100건 또는 1초마다 한 번 (저빈도 — 통계/끊김 진단용)
+//
+// AttachServer 가 호출 안 됐으면 Unimplemented 반환.
+func (g *GRPCServer) PublishTick(stream wtgpb.PriceService_PublishTickServer) error {
+	if g.serv == nil {
+		return status.Error(codes.Unimplemented, "PublishTick: Server 미주입 (AttachServer 필요)")
+	}
+	g.logger.Info("PublishTick 시작")
+	defer g.logger.Info("PublishTick 종료",
+		slog.Uint64("accepted_total", g.publishAccepted.Load()),
+		slog.Uint64("dropped_total", g.publishDropped.Load()),
+	)
+
+	var localAccepted, localDropped uint64
+	lastAck := time.Now()
+	const ackEvery = 100
+	const ackInterval = 1 * time.Second
+
+	for {
+		tick, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if len(tick.GetBody()) == 0 {
+			localDropped++
+			g.publishDropped.Add(1)
+			continue
+		}
+		base := &Tick{
+			MarketID: tick.GetMarketId(),
+			Symbol:   tick.GetSymbol(),
+			SeqNum:   tick.GetSeqNum(),
+			Mask:     tick.GetMask(),
+			Type:     uint8(tick.GetType()),
+			Flag:     uint8(tick.GetFlag()),
+		}
+		g.serv.IngestEnvelopes(tick.GetBody(), base)
+		localAccepted++
+		g.publishAccepted.Add(1)
+
+		// ack 주기 — N tick 또는 T 시간 (먼저 도달한 쪽).
+		if localAccepted%ackEvery == 0 || time.Since(lastAck) >= ackInterval {
+			ack := &wtgpb.PublishAck{
+				Accepted:       localAccepted,
+				Dropped:        localDropped,
+				ServerUnixNano: time.Now().UnixNano(),
+			}
+			if err := stream.Send(ack); err != nil {
+				return err
+			}
+			lastAck = time.Now()
+		}
+	}
+}
+
 func customerQuoteToProto(profile session.Profile, cq pricing.CustomerQuote) *wtgpb.CustomerQuote {
 	pb := &wtgpb.CustomerQuote{
 		Pair:         string(cq.Pair),

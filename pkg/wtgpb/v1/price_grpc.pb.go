@@ -31,6 +31,7 @@ const (
 	PriceService_Subscribe_FullMethodName      = "/wtg.v1.PriceService/Subscribe"
 	PriceService_SubscribeQuote_FullMethodName = "/wtg.v1.PriceService/SubscribeQuote"
 	PriceService_SubscribeBar_FullMethodName   = "/wtg.v1.PriceService/SubscribeBar"
+	PriceService_PublishTick_FullMethodName    = "/wtg.v1.PriceService/PublishTick"
 )
 
 // PriceServiceClient is the client API for PriceService service.
@@ -50,6 +51,18 @@ type PriceServiceClient interface {
 	// Aggregator 가 closed 한 봉이 Archiver(DB) 와 병렬로 이 stream 으로도 push.
 	// 클라이언트(mci-chart)는 (pair, tf) 필터를 옵션으로 지정.
 	SubscribeBar(ctx context.Context, in *BarSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Bar], error)
+	// PublishTick 은 quote-forwarder 가 호출해서 mci-price 에 시세를 직접 push 하는
+	// 양방향 stream. broker 의 PRICE exchange fan-out 을 우회 — broker 가 매매
+	// transaction 에만 집중하도록 시세 부하를 분리한다.
+	//
+	// 흐름:
+	//
+	//	forwarder (gRPC client) ─→ stream Tick ─→ mci-price (gRPC server)
+	//	                                             │
+	//	                                             └─→ BestConsumer / Aggregator / PricingConsumer
+	//
+	// ack: 주기적 (batch) 으로 server 가 publisher 에 ack 회신 — backpressure / 통계용.
+	PublishTick(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Tick, PublishAck], error)
 }
 
 type priceServiceClient struct {
@@ -117,6 +130,19 @@ func (c *priceServiceClient) SubscribeBar(ctx context.Context, in *BarSubscribeR
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PriceService_SubscribeBarClient = grpc.ServerStreamingClient[Bar]
 
+func (c *priceServiceClient) PublishTick(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Tick, PublishAck], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PriceService_ServiceDesc.Streams[3], PriceService_PublishTick_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[Tick, PublishAck]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_PublishTickClient = grpc.BidiStreamingClient[Tick, PublishAck]
+
 // PriceServiceServer is the server API for PriceService service.
 // All implementations must embed UnimplementedPriceServiceServer
 // for forward compatibility.
@@ -134,6 +160,18 @@ type PriceServiceServer interface {
 	// Aggregator 가 closed 한 봉이 Archiver(DB) 와 병렬로 이 stream 으로도 push.
 	// 클라이언트(mci-chart)는 (pair, tf) 필터를 옵션으로 지정.
 	SubscribeBar(*BarSubscribeRequest, grpc.ServerStreamingServer[Bar]) error
+	// PublishTick 은 quote-forwarder 가 호출해서 mci-price 에 시세를 직접 push 하는
+	// 양방향 stream. broker 의 PRICE exchange fan-out 을 우회 — broker 가 매매
+	// transaction 에만 집중하도록 시세 부하를 분리한다.
+	//
+	// 흐름:
+	//
+	//	forwarder (gRPC client) ─→ stream Tick ─→ mci-price (gRPC server)
+	//	                                             │
+	//	                                             └─→ BestConsumer / Aggregator / PricingConsumer
+	//
+	// ack: 주기적 (batch) 으로 server 가 publisher 에 ack 회신 — backpressure / 통계용.
+	PublishTick(grpc.BidiStreamingServer[Tick, PublishAck]) error
 	mustEmbedUnimplementedPriceServiceServer()
 }
 
@@ -152,6 +190,9 @@ func (UnimplementedPriceServiceServer) SubscribeQuote(*QuoteSubscribeRequest, gr
 }
 func (UnimplementedPriceServiceServer) SubscribeBar(*BarSubscribeRequest, grpc.ServerStreamingServer[Bar]) error {
 	return status.Error(codes.Unimplemented, "method SubscribeBar not implemented")
+}
+func (UnimplementedPriceServiceServer) PublishTick(grpc.BidiStreamingServer[Tick, PublishAck]) error {
+	return status.Error(codes.Unimplemented, "method PublishTick not implemented")
 }
 func (UnimplementedPriceServiceServer) mustEmbedUnimplementedPriceServiceServer() {}
 func (UnimplementedPriceServiceServer) testEmbeddedByValue()                      {}
@@ -207,6 +248,13 @@ func _PriceService_SubscribeBar_Handler(srv interface{}, stream grpc.ServerStrea
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PriceService_SubscribeBarServer = grpc.ServerStreamingServer[Bar]
 
+func _PriceService_PublishTick_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(PriceServiceServer).PublishTick(&grpc.GenericServerStream[Tick, PublishAck]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_PublishTickServer = grpc.BidiStreamingServer[Tick, PublishAck]
+
 // PriceService_ServiceDesc is the grpc.ServiceDesc for PriceService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -229,6 +277,12 @@ var PriceService_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "SubscribeBar",
 			Handler:       _PriceService_SubscribeBar_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "PublishTick",
+			Handler:       _PriceService_PublishTick_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "wtg/v1/price.proto",

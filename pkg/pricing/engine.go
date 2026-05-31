@@ -34,19 +34,54 @@ func (t *PricingTable) Apply(raw Quote, profile session.Profile, tenor Tenor) Cu
 //   2. lookupHQ / lookupSite 가 window 매칭 우선 + window="" fallback
 //   3. 누계 + raw 적용
 //
-// Phase 2 — customer margin 은 미통합. Phase 3 에서 ApplyAt 의 customerID
-// 인자 추가 예정.
+// customer margin 미적용 — customer ID 가 있는 경로는 ApplyForCustomer 사용.
 func (t *PricingTable) ApplyAt(raw Quote, profile session.Profile, tenor Tenor, now time.Time) CustomerQuote {
+	return t.ApplyForCustomer(raw, profile, tenor, now, "")
+}
+
+// ApplyForCustomer — Phase 3. customer-specific margin 까지 적용한 quote 산출.
+//
+// customerID == "" 면 ApplyAt 과 동일 (HQ + Site + Swap).
+//
+// customerID 매칭 시 다음 산식:
+//
+//	add 모드:    bid -= swap + HQ + Site + customer.BidDelta
+//	             ask += swap + HQ + Site + customer.AskDelta
+//	override:    bid -= swap + customer.BidDelta             (HQ/Site 무시)
+//	             ask += swap + customer.AskDelta
+//
+// 매칭 규칙 (priority desc 순회, 첫 매칭):
+//   - rule.CustomerID == customerID
+//   - rule.Pair == raw.Pair  또는  rule.Pair == "" (와일드카드)
+//   - rule.Window == ""  또는  rule.Window ∈ activeWindows
+//
+// swap 은 override 에서도 항상 적용 — 만기 비용은 마진과 독립.
+func (t *PricingTable) ApplyForCustomer(raw Quote, profile session.Profile, tenor Tenor, now time.Time, customerID string) CustomerQuote {
 	if now.IsZero() {
 		now = time.Now()
 	}
 	activeWindows := t.ActiveWindows(now)
 	swap := t.lookupSwap(raw.Pair, tenor)
-	hq := t.lookupHQ(raw.Pair, profile.Tier, activeWindows)
-	site := t.lookupSite(raw.Pair, profile.Channel, profile.Site, activeWindows)
 
-	totalBid := swap.BidAmount + hq.BidAmount + site.BidAmount
-	totalAsk := swap.AskAmount + hq.AskAmount + site.AskAmount
+	// customer 매칭 시도 (있을 때만).
+	rule, ok := t.matchCustomerRule(customerID, raw.Pair, activeWindows)
+
+	var totalBid, totalAsk float64
+	if ok && rule.Mode == "override" {
+		// HQ/Site 무시. swap + customer 만.
+		totalBid = swap.BidAmount + rule.BidDelta
+		totalAsk = swap.AskAmount + rule.AskDelta
+	} else {
+		// add 모드 또는 customer 미매칭 — HQ/Site 누계.
+		hq := t.lookupHQ(raw.Pair, profile.Tier, activeWindows)
+		site := t.lookupSite(raw.Pair, profile.Channel, profile.Site, activeWindows)
+		totalBid = swap.BidAmount + hq.BidAmount + site.BidAmount
+		totalAsk = swap.AskAmount + hq.AskAmount + site.AskAmount
+		if ok { // mode=add
+			totalBid += rule.BidDelta
+			totalAsk += rule.AskDelta
+		}
+	}
 
 	return CustomerQuote{
 		Pair:         raw.Pair,
@@ -59,4 +94,41 @@ func (t *PricingTable) ApplyAt(raw Quote, profile session.Profile, tenor Tenor, 
 		RawAsk:       raw.Ask,
 		TableVersion: t.Version,
 	}
+}
+
+// matchCustomerRule — priority desc 정렬된 CustomerMargin 순회하며 첫 매칭 반환.
+// 매칭 없으면 zero rule + false.
+//
+// 매칭 조건:
+//   - rule.CustomerID == customerID
+//   - rule.Pair == pair  또는  rule.Pair == ""
+//   - rule.Window == ""  또는  rule.Window ∈ activeWindows
+//
+// customerID 가 "" 이면 무조건 false — customer-anonymous 경로 (ApplyAt) 보호.
+func (t *PricingTable) matchCustomerRule(customerID string, pair session.Pair, activeWindows []string) (CustomerRule, bool) {
+	if customerID == "" {
+		return CustomerRule{}, false
+	}
+	for _, r := range t.CustomerMargin {
+		if r.CustomerID != customerID {
+			continue
+		}
+		if r.Pair != "" && r.Pair != pair {
+			continue
+		}
+		if r.Window != "" {
+			matched := false
+			for _, w := range activeWindows {
+				if w == r.Window {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		return r, true
+	}
+	return CustomerRule{}, false
 }

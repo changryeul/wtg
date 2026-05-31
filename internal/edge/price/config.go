@@ -104,6 +104,24 @@ type Config struct {
 	// 비면 모든 admin 요청 거부 (default secure). AllowCIDRs (일반 ws) 와
 	// 별도로 좁게 운영망에서만 허용 권장.
 	AdminAllowCIDRs []*net.IPNet
+
+	// EnvelopeFormat — ws 클라이언트에 어떤 JSON 형식으로 BEST tick 을 송신할지.
+	//
+	//   "best"   (default) : 현 신규 형식 — {market_id, symbol, seq_num,
+	//                        data:{sym, bid, ask, src:"BEST", seq, ts}}
+	//                        브라우저 / 신규 클라이언트가 사용.
+	//
+	//   "legacy" : forwarder/broker subscribe 호환 — {ts, feed:"BEST", seq,
+	//              msgtype:"incremental", symbol, entries:[
+	//                  {type:"bid", px, qty:0},
+	//                  {type:"ask", px, qty:0}
+	//              ]}
+	//              legacy cs framework 가 mymqd broker subscribe 시 받던 schema
+	//              와 1:1. cs 의 parser 코드 변경 없이 ws 로 마이그레이션 가능.
+	//
+	// 두 형식이 같은 ws endpoint 에서 mix 되진 않는다 — instance 단위 설정.
+	// 필요 시 두 인스턴스 (best / legacy) 를 별도 포트에 띄워 운영.
+	EnvelopeFormat string
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -127,6 +145,7 @@ func DefaultConfig() Config {
 		EnableQuoteStream: false,
 		StaleThreshold:    30 * time.Second,
 		StaleScanInterval: 5 * time.Second,
+		EnvelopeFormat:    "best",
 	}
 }
 
@@ -180,6 +199,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_EPRICE_QUOTE_STREAM"); v == "1" || v == "true" {
 		cfg.EnableQuoteStream = true
 	}
+	if v := os.Getenv("WTG_EPRICE_ENVELOPE_FORMAT"); v != "" {
+		cfg.EnvelopeFormat = v
+	}
 	if v := os.Getenv("WTG_EPRICE_QUOTE_PROFILES"); v != "" {
 		for _, p := range strings.Split(v, ",") {
 			p = strings.TrimSpace(p)
@@ -226,6 +248,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&seedPairsStr, "quote-seed-pairs", seedPairsStr, "Phase 2 권한 가드 초기 시드 pair (콤마 구분, 빈값=passive learning 만)")
 	fs.DurationVar(&cfg.StaleThreshold, "stale-threshold", cfg.StaleThreshold, "Phase 4 stale 알림 임계 (0=비활성, default 30s)")
 	fs.DurationVar(&cfg.StaleScanInterval, "stale-scan", cfg.StaleScanInterval, "stale scanner 주기 (default 5s)")
+	fs.StringVar(&cfg.EnvelopeFormat, "envelope-format", cfg.EnvelopeFormat, "ws envelope 형식 — 'best' (default, 신규) 또는 'legacy' (broker subscribe 호환, msgtype/entries)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

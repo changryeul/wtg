@@ -317,16 +317,25 @@ func (s *Server) consumeOnce(ctx context.Context, client wtgpb.PriceServiceClien
 			return err
 		}
 		s.totalRecv.Add(1)
-		payload, err := encodeTickJSON(tick)
+		// format 분기 — "legacy" 면 forwarder/broker subscribe 호환 형식,
+		// 그 외 default "best".
+		var payload []byte
+		if s.cfg.EnvelopeFormat == "legacy" {
+			payload, err = encodeTickLegacyJSON(tick)
+		} else {
+			payload, err = encodeTickJSON(tick)
+		}
 		if err != nil {
-			s.logger.Warn("tick JSON 직렬화 실패", slog.Any("error", err))
+			s.logger.Warn("tick JSON 직렬화 실패",
+				slog.String("format", s.cfg.EnvelopeFormat),
+				slog.Any("error", err))
 			continue
 		}
 		s.registry.Broadcast(payload)
 	}
 }
 
-// encodeTickJSON 은 proto Tick → 클라이언트 JSON envelope.
+// encodeTickJSON 은 proto Tick → 클라이언트 JSON envelope (default "best" 형식).
 //
 // data(body) 는 cooker 페이로드 raw bytes 그대로. JSON 이면 RawMessage,
 // 아니면 string-wrap.
@@ -361,6 +370,71 @@ func encodeTickJSON(t *wtgpb.Tick) ([]byte, error) {
 			}
 			out.Data = b
 		}
+	}
+	return json.Marshal(out)
+}
+
+// encodeTickLegacyJSON — legacy cs framework 호환 envelope.
+//
+// cs framework 가 mymqd broker subscribe 시 받던 형식 (quote-forwarder 의 출력):
+//
+//	{
+//	  "ts":      "<RFC3339 nano>",
+//	  "feed":    "BEST",            // 다중시장 산정 후 합성 source
+//	  "seq":     <seq_num>,
+//	  "msgtype": "incremental",
+//	  "symbol":  "USDKRW",
+//	  "entries": [
+//	    {"type":"bid", "px":<bid>, "qty":0},
+//	    {"type":"ask", "px":<ask>, "qty":0}
+//	  ]
+//	}
+//
+// best tick (proto Tick.body) 의 평면 {sym, bid, ask, src, seq, ts} 를 위 형식으로
+// 변환. 단방향 (best → legacy). 한쪽 호가만 있으면 그것만 entry 추가.
+func encodeTickLegacyJSON(t *wtgpb.Tick) ([]byte, error) {
+	body := t.GetBody()
+	if len(body) == 0 || !json.Valid(body) {
+		// best tick 이 아닌 raw 페이로드 — passthrough 불가. drop 신호로 빈 결과.
+		return nil, fmt.Errorf("legacy 변환 불가: body 가 JSON 아님")
+	}
+	var probe struct {
+		Sym string  `json:"sym"`
+		Bid float64 `json:"bid"`
+		Ask float64 `json:"ask"`
+		Src string  `json:"src"`
+		Seq uint32  `json:"seq"`
+		TS  string  `json:"ts"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return nil, fmt.Errorf("legacy 변환 unmarshal: %w", err)
+	}
+	type mdEntry struct {
+		Type string  `json:"type"`
+		Px   float64 `json:"px"`
+		Qty  float64 `json:"qty"`
+	}
+	type legacyEnvelope struct {
+		TS      string    `json:"ts,omitempty"`
+		Feed    string    `json:"feed,omitempty"`
+		Seq     uint32    `json:"seq,omitempty"`
+		MsgType string    `json:"msgtype"`
+		Symbol  string    `json:"symbol,omitempty"`
+		Entries []mdEntry `json:"entries"`
+	}
+	out := legacyEnvelope{
+		TS:      probe.TS,
+		Feed:    probe.Src, // "BEST"
+		Seq:     probe.Seq,
+		MsgType: "incremental",
+		Symbol:  probe.Sym,
+		Entries: make([]mdEntry, 0, 2),
+	}
+	if probe.Bid != 0 {
+		out.Entries = append(out.Entries, mdEntry{Type: "bid", Px: probe.Bid})
+	}
+	if probe.Ask != 0 {
+		out.Entries = append(out.Entries, mdEntry{Type: "ask", Px: probe.Ask})
 	}
 	return json.Marshal(out)
 }

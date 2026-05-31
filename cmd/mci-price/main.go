@@ -308,6 +308,10 @@ func main() {
 	if pc != nil {
 		srv.AttachPricing(pc.Store())
 	}
+	// forward/lock endpoint 활성화 — quoteid Generator/Registry 가 있을 때만.
+	if quoteIDGen != nil && quoteIDReg != nil {
+		srv.AttachQuoteID(quoteIDGen, quoteIDReg, cfg.QuoteIDValidity)
+	}
 	if etcdTblWatch != nil {
 		defer etcdTblWatch.Close()
 	}

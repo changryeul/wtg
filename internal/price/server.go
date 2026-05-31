@@ -21,6 +21,7 @@ import (
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
+	"github.com/winwaysystems/wtg/pkg/quoteid"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
 
@@ -73,6 +74,12 @@ type Server struct {
 	// pricingStore — forward-snapshot endpoint 등 외부 노출용. AttachPricing 으로
 	// 주입. nil 이면 forward-snapshot 라우트 미등록.
 	pricingStore *pricing.Store
+
+	// QuoteID 발급/등록 — forward/lock endpoint 용. AttachQuoteID 로 주입.
+	// 모두 nil 이면 lock endpoint 미등록.
+	quoteIDGen      *quoteid.Generator
+	quoteIDReg      quoteid.Registry
+	quoteIDValidity time.Duration
 
 	totalRecv  atomic.Uint64
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
@@ -153,6 +160,17 @@ func (s *Server) AttachGRPC(g *GRPCServer) {
 // cmd/mci-price 의 bootstrap 에서 호출. 미주입이면 forward-snapshot 미노출 (404).
 func (s *Server) AttachPricing(store *pricing.Store) {
 	s.pricingStore = store
+}
+
+// AttachQuoteID — forward/lock endpoint 의 QuoteID 발급/등록자 주입. validity 가
+// 0 이면 500ms default. gen+reg 둘 다 있어야 endpoint 활성.
+func (s *Server) AttachQuoteID(gen *quoteid.Generator, reg quoteid.Registry, validity time.Duration) {
+	s.quoteIDGen = gen
+	s.quoteIDReg = reg
+	if validity <= 0 {
+		validity = 500 * time.Millisecond
+	}
+	s.quoteIDValidity = validity
 }
 
 func (s *Server) AttachQuoteValidator(v *QuoteValidationServer) {
@@ -479,6 +497,19 @@ func (s *Server) startHTTP(ctx context.Context) error {
 		mux.HandleFunc("GET /v1/quote/forward-snapshot",
 			ForwardSnapshotHandler(ForwardSnapshotDeps{Store: s.pricingStore, Best: s.best}, s.cfg.DevMode))
 		s.logger.Info("Forward snapshot endpoint 활성 — GET /v1/quote/forward-snapshot")
+	}
+	// Forward quote lock — pricingStore + best + quoteID gen/reg 모두 있을 때.
+	if s.pricingStore != nil && s.best != nil && s.quoteIDGen != nil && s.quoteIDReg != nil {
+		mux.HandleFunc("POST /v1/quote/forward/lock",
+			ForwardLockHandler(ForwardLockDeps{
+				Store:    s.pricingStore,
+				Best:     s.best,
+				Gen:      s.quoteIDGen,
+				Reg:      s.quoteIDReg,
+				Validity: s.quoteIDValidity,
+			}, s.cfg.DevMode))
+		s.logger.Info("Forward quote-lock endpoint 활성 — POST /v1/quote/forward/lock",
+			slog.Duration("validity", s.quoteIDValidity))
 	}
 	mux.Handle("GET /metrics", s.metrics.Handler())
 

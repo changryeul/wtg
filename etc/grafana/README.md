@@ -1,5 +1,56 @@
 # WTG Grafana Dashboards
 
+## p6-cross-master-dashboard.json — WTG P6 Cross-rate & Pricing fan-out
+
+mci-price 의 `/metrics` 에서 노출되는 `wtg_cross_*`, `wtg_pricing_*`,
+`wtg_master_*` (총 20개) 를 시각화. 23 패널 (4 row + 14 stat + 5 timeseries).
+
+### Variable
+
+- `$DS_PROMETHEUS` — Prometheus data source.
+- `$rate_window` — rate() 윈도우 (1m / 5m / 15m / 1h). default 5m.
+
+### 패널 구성
+
+| Row | Panel | 의도 |
+|-----|-------|------|
+| Overview | Currency / Pair total / Pair active / Cross formulas / Customers (5L) / Tick processed | 마스터 / 활성 상태 한눈 |
+| Cross-rate | Cross emit rate (timeseries) | 합성 throughput |
+| Cross-rate | Skipped breakdown (debounce/missing_leg/stale/unknown_pair) | 원인별 추적 |
+| Cross-rate | Errors / Unknown pair (alert) / Hit rate % / Stale (cooker 끊김) | 운영 health |
+| Pricing | Tick in/drop rate (timeseries) | 입력 부하 + drop 비율 |
+| Pricing | Profile-only vs 5-Layer publish rate | customer fan-out 분리 추세 |
+| Pricing | Publish errors / Registry.Put failures / Profiles skipped / Drop ratio % | 에러 / 효율 |
+| Master | sizes over time (timeseries) | fx-sync sync 상태 추적 |
+
+### Import / Provisioning
+
+위 quoteid-dashboard 와 동일 — Grafana UI Import 또는 API:
+```bash
+curl -X POST http://grafana.local/api/dashboards/db \
+  -H "Authorization: Bearer $GRAFANA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @<(jq '{dashboard: ., overwrite: true}' etc/grafana/p6-cross-master-dashboard.json)
+```
+
+### 운영 권장 alert (별도 alert 파일 신설 가능)
+
+```promql
+# Cross 합성 오류 (산식 / 데이터 이상)
+wtg_cross_errors_total > 0    [for 1m] → page
+
+# cooker 데이터 끊김
+rate(wtg_cross_skipped_stale_total[5m]) > 1   [for 5m] → warn
+
+# fx-sync 지연 (PairMaster 비어있음)
+wtg_master_pair_active_count == 0  [for 5m] → page
+
+# Publish 실패 (broker / gRPC 끊김)
+rate(wtg_pricing_publish_errors_total[5m]) > 0.1  → warn
+```
+
+---
+
 ## quoteid-dashboard.json — WTG QuoteValidationService
 
 mci-price 의 `/metrics` endpoint 에서 노출되는 `wtg_quoteid_*` 시리즈를

@@ -1,0 +1,236 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "WTG P6 — Cross-rate / Pricing fan-out / Master 동기화 운영 모니터링. mci-price 의 /metrics 의 wtg_cross_*, wtg_pricing_*, wtg_master_* 시각화.",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["wtg", "cross-rate", "fx", "p6"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "prometheus"},
+        "label": "Data source",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"selected": false, "text": "5m", "value": "5m"},
+        "label": "Rate window",
+        "name": "rate_window",
+        "options": [
+          {"selected": false, "text": "1m", "value": "1m"},
+          {"selected": true,  "text": "5m", "value": "5m"},
+          {"selected": false, "text": "15m", "value": "15m"},
+          {"selected": false, "text": "1h", "value": "1h"}
+        ],
+        "query": "1m,5m,15m,1h",
+        "type": "custom"
+      }
+    ]
+  },
+  "title": "WTG P6 — Cross-rate & Pricing fan-out",
+  "uid": "wtg-p6-cross",
+  "panels": [
+    {"type": "row", "title": "Overview — Master sizes", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 100},
+
+    {
+      "type": "stat", "title": "Currency master",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1}, "id": 101,
+      "targets": [{"expr": "wtg_master_currency_count", "refId": "A"}],
+      "options": {"colorMode": "value"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "short"}}
+    },
+    {
+      "type": "stat", "title": "Pair total",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1}, "id": 102,
+      "targets": [{"expr": "wtg_master_pair_count", "refId": "A"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "short"}}
+    },
+    {
+      "type": "stat", "title": "Pair active",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1}, "id": 103,
+      "targets": [{"expr": "wtg_master_pair_active_count", "refId": "A"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}, "unit": "short"}}
+    },
+    {
+      "type": "stat", "title": "Cross formulas",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1}, "id": 104,
+      "targets": [{"expr": "wtg_cross_formulas_count", "refId": "A"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "purple"}, "unit": "short"}}
+    },
+    {
+      "type": "stat", "title": "Customers registered (5L)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1}, "id": 105,
+      "targets": [{"expr": "wtg_pricing_customers_registered", "refId": "A"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "orange"}, "unit": "short"}}
+    },
+    {
+      "type": "stat", "title": "Tick latency p99 (estimated)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1}, "id": 106,
+      "targets": [{"expr": "wtg_pricing_ticks_in_total - wtg_pricing_ticks_dropped_total", "refId": "A", "legendFormat": "processed"}],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+
+    {"type": "row", "title": "Cross-rate fan-out", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}, "id": 200},
+
+    {
+      "type": "timeseries", "title": "Cross emit rate (ops/sec)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}, "id": 201,
+      "targets": [
+        {"expr": "rate(wtg_cross_emits_total[$rate_window])", "refId": "A", "legendFormat": "emit"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries", "title": "Cross skipped breakdown (ops/sec)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}, "id": 202,
+      "description": "debounce = 정상 (중복 차단). missing_leg = 한쪽 leg 미수신. stale = leg 30s 이상 무음. unknown_pair = PairMaster 갱신 지연.",
+      "targets": [
+        {"expr": "rate(wtg_cross_skipped_debounce_total[$rate_window])", "refId": "A", "legendFormat": "debounce"},
+        {"expr": "rate(wtg_cross_skipped_missing_leg_total[$rate_window])", "refId": "B", "legendFormat": "missing_leg"},
+        {"expr": "rate(wtg_cross_skipped_stale_total[$rate_window])", "refId": "C", "legendFormat": "stale"},
+        {"expr": "rate(wtg_cross_skipped_unknown_pair_total[$rate_window])", "refId": "D", "legendFormat": "unknown_pair"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "stat", "title": "Cross errors (alert > 0)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 14}, "id": 203,
+      "description": "ComputeCross 산술 실패 (invalid op / negative input). >0 면 cooker 데이터 이상 또는 PairMaster cross 산식 오류.",
+      "targets": [{"expr": "wtg_cross_errors_total", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "color": {"mode": "thresholds"}, "unit": "short"}}
+    },
+    {
+      "type": "stat", "title": "Unknown pair (alert > 0)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 14}, "id": 204,
+      "description": "Symbol → Pair lookup 실패. fx-sync 가 늦거나 cooker 의 symbol 이 PairMaster 에 없음.",
+      "targets": [{"expr": "wtg_cross_skipped_unknown_pair_total", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}, "color": {"mode": "thresholds"}, "unit": "short"}}
+    },
+    {
+      "type": "stat", "title": "Cross hit rate (% of attempts)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 14}, "id": 205,
+      "description": "emit / (emit + missing_leg + stale + debounce + unknown). 100% 면 모든 시도 emit. 낮으면 cooker 가 일부 leg 만 보내거나 debounce 적중.",
+      "targets": [
+        {
+          "expr": "100 * rate(wtg_cross_emits_total[$rate_window]) / (rate(wtg_cross_emits_total[$rate_window]) + rate(wtg_cross_skipped_debounce_total[$rate_window]) + rate(wtg_cross_skipped_stale_total[$rate_window]) + rate(wtg_cross_skipped_missing_leg_total[$rate_window]) + rate(wtg_cross_skipped_unknown_pair_total[$rate_window]) + 0.0001)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 30}, {"color": "green", "value": 70}]}}}
+    },
+    {
+      "type": "stat", "title": "Stale (cooker 끊김 의심)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 14}, "id": 206,
+      "description": "leg 가 30s 이상 무음 → emit skip. 누적 추세가 증가하면 cooker / forwarder 끊김.",
+      "targets": [{"expr": "wtg_cross_skipped_stale_total", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 100}, {"color": "red", "value": 1000}]}}}
+    },
+
+    {"type": "row", "title": "Pricing pipeline (5-Layer customer fan-out)", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18}, "id": 300},
+
+    {
+      "type": "timeseries", "title": "Tick in / drop rate",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19}, "id": 301,
+      "targets": [
+        {"expr": "rate(wtg_pricing_ticks_in_total[$rate_window])", "refId": "A", "legendFormat": "in"},
+        {"expr": "rate(wtg_pricing_ticks_dropped_total[$rate_window])", "refId": "B", "legendFormat": "dropped"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries", "title": "Quote publish rate — Profile-only vs 5-Layer",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19}, "id": 302,
+      "description": "Profile-only = HQ+Site. 5-Layer = HQ+Site+Customer+Window. 5L 이 0 이면 customer 미등록.",
+      "targets": [
+        {"expr": "rate(wtg_pricing_quotes_published_total[$rate_window])", "refId": "A", "legendFormat": "profile-only"},
+        {"expr": "rate(wtg_pricing_customer_quotes_published_total[$rate_window])", "refId": "B", "legendFormat": "5-Layer"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "stat", "title": "Publish errors (cumulative)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 27}, "id": 303,
+      "targets": [
+        {"expr": "wtg_pricing_publish_errors_total", "refId": "A", "legendFormat": "profile"},
+        {"expr": "wtg_pricing_customer_publish_errors_total", "refId": "B", "legendFormat": "5L"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "type": "stat", "title": "QuoteID Registry.Put failures",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 27}, "id": 304,
+      "description": "Redis 또는 Memory registry write 실패. >0 면 quote audit 손실 위험.",
+      "targets": [{"expr": "wtg_pricing_quote_register_errors_total", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "type": "stat", "title": "Profiles skipped (구독자 0)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 27}, "id": 305,
+      "description": "Phase 3 pruning — 구독자 없는 Profile 의 Apply 호출 skip. 운영 효율 지표.",
+      "targets": [{"expr": "rate(wtg_pricing_profiles_skipped_total[$rate_window])", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "stat", "title": "Tick drop ratio (% of in)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 27}, "id": 306,
+      "description": "dropped/in. 높으면 SymbolMap 미등록 / cooker 형식 불일치.",
+      "targets": [
+        {"expr": "100 * rate(wtg_pricing_ticks_dropped_total[$rate_window]) / (rate(wtg_pricing_ticks_in_total[$rate_window]) + 0.0001)", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 20}]}}}
+    },
+
+    {"type": "row", "title": "Master health (DB sync)", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31}, "id": 400},
+
+    {
+      "type": "timeseries", "title": "Master sizes over time",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32}, "id": 401,
+      "description": "fx-sync 가 미러링한 master 의 size 변화. 0 으로 떨어지면 watcher 끊김 또는 etcd 키 삭제.",
+      "targets": [
+        {"expr": "wtg_master_currency_count", "refId": "A", "legendFormat": "currency"},
+        {"expr": "wtg_master_pair_count", "refId": "B", "legendFormat": "pair (total)"},
+        {"expr": "wtg_master_pair_active_count", "refId": "C", "legendFormat": "pair (active)"},
+        {"expr": "wtg_master_pair_cross_count", "refId": "D", "legendFormat": "pair (cross)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    }
+  ]
+}

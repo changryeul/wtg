@@ -4,6 +4,7 @@ import (
 	"sort"
 	"sync/atomic"
 
+	"github.com/winwaysystems/wtg/pkg/quote"
 	"github.com/winwaysystems/wtg/pkg/session"
 )
 
@@ -184,6 +185,32 @@ func (m *PairMaster) ReverseSymbol(pair session.Pair) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// ToSymbolEntries — PairMaster 를 quote.SymbolMap 의 derived view 로 변환.
+// active=true 만 포함. Symbol 우선 (없으면 ID), Pair 는 Base/Quote join.
+//
+// bootstrap 에서 PairWatcher.OnChange 시 SymbolMap.Replace 에 같이 호출하면
+// SymbolMap 이 PairMaster 의 자동 mirror 가 되어 기존 PricingConsumer /
+// Aggregator / BestConsumer 가 변경 없이 direct + cross 모두 처리 가능.
+func (m *PairMaster) ToSymbolEntries() []quote.SymbolEntry {
+	s := m.snap.Load()
+	if s == nil {
+		return nil
+	}
+	out := make([]quote.SymbolEntry, 0, len(s.sorted))
+	for _, p := range s.sorted {
+		sym := p.Symbol
+		if sym == "" {
+			sym = p.ID
+		}
+		out = append(out, quote.SymbolEntry{
+			Symbol: sym,
+			Pair:   session.Pair(p.Base + "/" + p.Quote),
+			Active: p.Active,
+		})
+	}
+	return out
 }
 
 func splitPair(s string) []string {

@@ -187,7 +187,12 @@ func main() {
 			M:      pairMaster,
 			Logger: logger,
 			OnChange: func(m *pricing.PairMaster) {
+				// CrossRateConsumer 의 cross 산식 자동 wire.
 				crossCR.ReplaceFormulas(m.CrossFormulas())
+				// SymbolMap 을 PairMaster 의 derived view 로 — 기존 모든 consumer
+				// (Aggregator / PricingConsumer / BestConsumer) 가 direct + cross
+				// 모든 pair 의 Symbol→Pair lookup 가능.
+				symbols.Replace(m.ToSymbolEntries())
 			},
 		})
 		if err != nil {

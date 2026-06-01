@@ -103,6 +103,9 @@ func main() {
 		etcdSymWatch   *quote.EtcdSymbolWatcher
 		etcdTblWatch   *pricing.EtcdTableWatcher
 		etcdProfileSrc *price.EtcdProfileSource
+		currencyMaster *pricing.CurrencyMaster
+		pairMaster     *pricing.PairMaster
+		crossCR        *price.CrossRateConsumer
 	)
 	if len(cfg.EtcdEndpoints) > 0 {
 		clientCfg := clientv3.Config{
@@ -156,7 +159,7 @@ func main() {
 		defer etcdSymWatch.Close()
 
 		// Currency master watcher — fx-sync 가 wtg/currency/{code} 에 PUT 한 것 받음.
-		currencyMaster := pricing.NewCurrencyMaster()
+		currencyMaster = pricing.NewCurrencyMaster()
 		currencyWatcher, err := pricing.NewEtcdCurrencyWatcher(ctx, pricing.EtcdCurrencyWatcherOptions{
 			Client: etcdCli,
 			Prefix: cfg.EtcdPrefix + "currency/",
@@ -174,8 +177,8 @@ func main() {
 		// Pair master watcher — fx-sync 가 wtg/pair/{id} 에 PUT 한 것.
 		// + CrossRateConsumer 활성: PairMaster 의 cross 산식이 변경될 때마다
 		//   ReplaceFormulas 자동 호출 (OnChange callback).
-		pairMaster := pricing.NewPairMaster()
-		crossCR := price.NewCrossRateConsumer(price.CrossRateOptions{
+		pairMaster = pricing.NewPairMaster()
+		crossCR = price.NewCrossRateConsumer(price.CrossRateOptions{
 			Symbols: symbols,
 			Pairs:   pairMaster,
 			Logger:  logger,
@@ -365,6 +368,18 @@ func main() {
 	}
 	if etcdProfileSrc != nil {
 		defer etcdProfileSrc.Close()
+	}
+
+	// P6 운영 메트릭 — Prometheus /metrics 에 cross / pricing / master 노출.
+	if err := price.RegisterP6Metrics(srv.Metrics(), price.P6MetricsOpts{
+		Cross:    crossCR,
+		Pricing:  pc,
+		Currency: currencyMaster,
+		Pair:     pairMaster,
+	}); err != nil {
+		logger.Warn("P6 메트릭 등록 실패", slog.Any("error", err))
+	} else {
+		logger.Info("P6 metrics 등록 — wtg_cross_*, wtg_pricing_*, wtg_master_*")
 	}
 
 	// 6) Server 시작 (블로킹).

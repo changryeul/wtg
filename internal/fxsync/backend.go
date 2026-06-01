@@ -17,4 +17,13 @@ type Backend interface {
 	// LoadPairs — TB_FXB_CMG004M + TB_FXB_CMG006M 의 join 결과 또는 pair.json.
 	// direct + cross 산식 통합. Active=false 도 포함.
 	LoadPairs(ctx context.Context) (Pairs, error)
+
+	// LoadSwapPoints — TB_FXB_CMG021M 또는 swap_point.json. 현재 유효한 swap 만.
+	LoadSwapPoints(ctx context.Context) (SwapPoints, error)
+
+	// LoadHQMargins — TB_FXB_CMG019M (그룹별 HQ) 의 SPOT 매핑 또는 hq_margin.json.
+	LoadHQMargins(ctx context.Context) (HQMargins, error)
+
+	// LoadSiteMargins — TB_FXB_CMG015M (표준영업점) 또는 site_margin.json.
+	LoadSiteMargins(ctx context.Context) (SiteMargins, error)
 }

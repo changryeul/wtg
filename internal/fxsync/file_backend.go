@@ -45,6 +45,33 @@ func (b *FileBackend) LoadPairs(_ context.Context) (Pairs, error) {
 	return out, nil
 }
 
+// LoadSwapPoints — swap_point.json.
+func (b *FileBackend) LoadSwapPoints(_ context.Context) (SwapPoints, error) {
+	var out SwapPoints
+	if err := b.readJSON("swap_point.json", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// LoadHQMargins — hq_margin.json.
+func (b *FileBackend) LoadHQMargins(_ context.Context) (HQMargins, error) {
+	var out HQMargins
+	if err := b.readJSON("hq_margin.json", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// LoadSiteMargins — site_margin.json.
+func (b *FileBackend) LoadSiteMargins(_ context.Context) (SiteMargins, error) {
+	var out SiteMargins
+	if err := b.readJSON("site_margin.json", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // readJSON — 파일 read + JSON unmarshal. 누락 파일은 빈 결과 + nil err (호출자
 // 가 v 의 zero value 유지).
 func (b *FileBackend) readJSON(filename string, v any) error {

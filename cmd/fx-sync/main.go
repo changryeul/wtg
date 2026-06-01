@@ -83,7 +83,7 @@ func main() {
 	// 테이블 별 처리.
 	tables := strings.Split(*table, ",")
 	if *table == "all" {
-		tables = []string{"currency", "pair"}
+		tables = []string{"currency", "pair", "swap", "hq_margin", "site_margin"}
 	}
 	exitCode := 0
 	for _, t := range tables {
@@ -96,6 +96,21 @@ func main() {
 		case "pair":
 			if err := syncPair(ctx, backend, syncer); err != nil {
 				logger.Error("pair sync 실패", slog.Any("error", err))
+				exitCode = 1
+			}
+		case "swap":
+			if err := syncSwap(ctx, backend, syncer); err != nil {
+				logger.Error("swap sync 실패", slog.Any("error", err))
+				exitCode = 1
+			}
+		case "hq_margin":
+			if err := syncHQMargin(ctx, backend, syncer); err != nil {
+				logger.Error("hq_margin sync 실패", slog.Any("error", err))
+				exitCode = 1
+			}
+		case "site_margin":
+			if err := syncSiteMargin(ctx, backend, syncer); err != nil {
+				logger.Error("site_margin sync 실패", slog.Any("error", err))
 				exitCode = 1
 			}
 		default:
@@ -120,6 +135,33 @@ func syncPair(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Syncer
 		return fmt.Errorf("LoadPairs: %w", err)
 	}
 	_, err = syncer.SyncPairs(ctx, ps)
+	return err
+}
+
+func syncSwap(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Syncer) error {
+	sps, err := backend.LoadSwapPoints(ctx)
+	if err != nil {
+		return fmt.Errorf("LoadSwapPoints: %w", err)
+	}
+	_, err = syncer.SyncSwapPoints(ctx, sps)
+	return err
+}
+
+func syncHQMargin(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Syncer) error {
+	ms, err := backend.LoadHQMargins(ctx)
+	if err != nil {
+		return fmt.Errorf("LoadHQMargins: %w", err)
+	}
+	_, err = syncer.SyncHQMargins(ctx, ms)
+	return err
+}
+
+func syncSiteMargin(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Syncer) error {
+	ms, err := backend.LoadSiteMargins(ctx)
+	if err != nil {
+		return fmt.Errorf("LoadSiteMargins: %w", err)
+	}
+	_, err = syncer.SyncSiteMargins(ctx, ms)
 	return err
 }
 

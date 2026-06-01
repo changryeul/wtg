@@ -1,0 +1,8 @@
+[
+  {"pair": "USD/KRW", "tenor": "1W", "bid_amount": 0.05, "ask_amount": 0.07},
+  {"pair": "USD/KRW", "tenor": "1M", "bid_amount": 0.15, "ask_amount": 0.25},
+  {"pair": "USD/KRW", "tenor": "3M", "bid_amount": 0.40, "ask_amount": 0.55},
+  {"pair": "USD/KRW", "tenor": "6M", "bid_amount": 0.80, "ask_amount": 1.10},
+  {"pair": "EUR/KRW", "tenor": "1M", "bid_amount": 0.20, "ask_amount": 0.32},
+  {"pair": "EUR/KRW", "tenor": "3M", "bid_amount": 0.55, "ask_amount": 0.78}
+]

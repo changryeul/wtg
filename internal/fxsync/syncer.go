@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
+
+	"github.com/winwaysystems/wtg/pkg/pricing"
+	"github.com/winwaysystems/wtg/pkg/session"
 )
 
 // Syncer — Backend 의 마스터 데이터를 etcd 의 wtg/* 키 공간으로 PUT.
@@ -55,6 +58,103 @@ func (s *Syncer) SyncCurrencies(ctx context.Context, currencies Currencies) (Syn
 	}
 	return s.runSync(ctx, "currency", "currency/", items)
 }
+
+// SyncSwapPoints — wtg/pricing/table 의 swap_point 만 read-modify-write 로 교체.
+// 다른 layer (HQ / Site / Customer / TimeWindows / Holidays) 는 보존.
+// version 자동 증가 → mci-price EtcdTableWatcher hot reload.
+func (s *Syncer) SyncSwapPoints(ctx context.Context, sps SwapPoints) (SyncResult, error) {
+	return s.modifyPricingDoc(ctx, "swap_point", func(doc *pricing.PricingTableDoc) (int, int) {
+		entries := make([]pricing.SwapEntryDoc, 0, len(sps))
+		for _, sp := range sps {
+			entries = append(entries, pricing.SwapEntryDoc{
+				Pair:      pairFromString(sp.Pair),
+				Tenor:     pricing.Tenor(sp.Tenor),
+				BidAmount: sp.BidAmount, AskAmount: sp.AskAmount,
+			})
+		}
+		doc.SwapPoint = entries
+		return len(sps), len(entries)
+	})
+}
+
+// SyncHQMargins — wtg/pricing/table 의 hq_margin 만 read-modify-write.
+func (s *Syncer) SyncHQMargins(ctx context.Context, ms HQMargins) (SyncResult, error) {
+	return s.modifyPricingDoc(ctx, "hq_margin", func(doc *pricing.PricingTableDoc) (int, int) {
+		entries := make([]pricing.HQEntryDoc, 0, len(ms))
+		for _, m := range ms {
+			entries = append(entries, pricing.HQEntryDoc{
+				Pair: pairFromString(m.Pair), Tier: tierFromString(m.Tier),
+				BidAmount: m.BidAmount, AskAmount: m.AskAmount,
+			})
+		}
+		doc.HQMargin = entries
+		return len(ms), len(entries)
+	})
+}
+
+// SyncSiteMargins — wtg/pricing/table 의 site_margin 만 read-modify-write.
+func (s *Syncer) SyncSiteMargins(ctx context.Context, ms SiteMargins) (SyncResult, error) {
+	return s.modifyPricingDoc(ctx, "site_margin", func(doc *pricing.PricingTableDoc) (int, int) {
+		entries := make([]pricing.SiteEntryDoc, 0, len(ms))
+		for _, m := range ms {
+			entries = append(entries, pricing.SiteEntryDoc{
+				Pair: pairFromString(m.Pair),
+				Channel: channelFromString(m.Channel), Site: siteFromString(m.Site),
+				BidAmount: m.BidAmount, AskAmount: m.AskAmount,
+			})
+		}
+		doc.SiteMargin = entries
+		return len(ms), len(entries)
+	})
+}
+
+// modifyPricingDoc — wtg/pricing/table read → modify → PUT.
+// modify 콜백이 source/active 카운트 반환.
+func (s *Syncer) modifyPricingDoc(ctx context.Context, table string, modify func(*pricing.PricingTableDoc) (src, act int)) (SyncResult, error) {
+	r := SyncResult{Table: table}
+	key := s.Prefix + "pricing/table"
+
+	// 1. 현재 doc 읽기 (없으면 빈 doc).
+	doc := &pricing.PricingTableDoc{Version: 0}
+	resp, err := s.Etcd.Get(ctx, key)
+	if err != nil {
+		return r, fmt.Errorf("fxsync: get %s: %w", key, err)
+	}
+	if len(resp.Kvs) > 0 {
+		if err := json.Unmarshal(resp.Kvs[0].Value, doc); err != nil {
+			return r, fmt.Errorf("fxsync: parse current doc: %w", err)
+		}
+	}
+
+	// 2. 부분 교체.
+	src, act := modify(doc)
+	r.SourceCount = src
+	r.Active = act
+	doc.Version++
+
+	// 3. PUT.
+	body, err := json.Marshal(doc)
+	if err != nil {
+		return r, fmt.Errorf("fxsync: marshal doc: %w", err)
+	}
+	if _, err := s.Etcd.Put(ctx, key, string(body)); err != nil {
+		return r, fmt.Errorf("fxsync: put %s: %w", key, err)
+	}
+	r.Put = 1
+
+	s.Logger.Info("fxsync: "+table+" sync 완료 (pricing doc 부분 교체)",
+		slog.Int64("doc_version", doc.Version),
+		slog.Int("source", r.SourceCount),
+		slog.Int("active", r.Active),
+	)
+	return r, nil
+}
+
+// 도메인 type 변환 — 문자열 → session.* 타입.
+func pairFromString(s string) session.Pair       { return session.Pair(s) }
+func tierFromString(s string) session.Tier       { return session.Tier(s) }
+func channelFromString(s string) session.Channel { return session.Channel(s) }
+func siteFromString(s string) session.Site       { return session.Site(s) }
 
 // SyncPairs — Pair 테이블 sync. wtg/pair/{id} 에 PUT. id 는 "USDKRW" 식.
 func (s *Syncer) SyncPairs(ctx context.Context, pairs Pairs) (SyncResult, error) {

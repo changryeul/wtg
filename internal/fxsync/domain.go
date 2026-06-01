@@ -80,3 +80,69 @@ type Cross struct {
 
 // Pairs — 정렬된 목록.
 type Pairs []Pair
+
+// SwapPoint — TB_FXB_CMG021M 의 도메인 매핑.
+//
+// DB column 매핑:
+//   Pair      ← CRNC_PAIR_ID   (VARCHAR 7)   "USDKRW"
+//   Tenor     ← TNR_ID         (CHAR 3)      "1M" / "1W" / "3M"
+//   BidAmount ← FWEB_SWAP_PNT  (NUMBER 15,8) 매수 swap (Forward Exchange Buy)
+//   AskAmount ← FWES_SWAP_PNT  (NUMBER 15,8) 매도 swap (Forward Exchange Sell)
+//   ApplyFrom ← PNT_APSR_TS    (DATE)        적용 시작 시각 (옵션, 일자 단위 운영)
+//   ApplyTo   ← PNT_FNAP_TS    (DATE)        적용 종료 시각 (옵션)
+//
+// 시점은 후속 단계에서 다룸. 1차는 현재 유효한 swap 만 PricingTable 에 반영.
+type SwapPoint struct {
+	Pair      string  `json:"pair"`      // PricingTable 의 session.Pair 형식 ("USD/KRW")
+	Tenor     string  `json:"tenor"`     // "SPOT" | "1W" | "1M" ...
+	BidAmount float64 `json:"bid_amount"`
+	AskAmount float64 `json:"ask_amount"`
+	ApplyFrom string  `json:"apply_from,omitempty"` // RFC3339 또는 빈값
+	ApplyTo   string  `json:"apply_to,omitempty"`
+}
+
+// SwapPoints — 정렬된 목록.
+type SwapPoints []SwapPoint
+
+// HQMargin — TB_FXB_CMG019M (본점마진그룹별마진) 의 도메인 매핑.
+//
+// 본점 마진은 영업점/본점 사용자 모두에게 적용되는 base. 그룹 (Tier 와 매핑) 별
+// 차등.
+//
+// DB column 매핑:
+//   Pair      ← CRNC_PAIR_ID
+//   Tier      ← HDOM_APLY_GRP_ID (3 byte 그룹 ID; WTG session.Tier 로 매핑)
+//   BidAmount ← FX_BNG_SPR  (NUMBER 20,8) 매수 spread
+//   AskAmount ← FX_SELL_SPR (NUMBER 20,8) 매도 spread
+//   Tenor 는 1차 SPOT 만 사용 (CMG019M 의 TNR_ID 는 forward 별 마진 — 후속).
+type HQMargin struct {
+	Pair      string  `json:"pair"`
+	Tier      string  `json:"tier"` // "" = 와일드카드. "VIP" / "GOLD" / "STD".
+	BidAmount float64 `json:"bid_amount"`
+	AskAmount float64 `json:"ask_amount"`
+}
+
+// HQMargins — 목록.
+type HQMargins []HQMargin
+
+// SiteMargin — TB_FXB_CMG015M (표준영업점마진) 의 도메인 매핑.
+//
+// 영업점 사용자에게 추가 부여되는 마진 (본점 사용자에겐 적용 X — Profile.Site
+// 가 BRANCH 일 때만 매칭).
+//
+// DB column 매핑:
+//   Pair      ← CRNC_PAIR_ID
+//   Channel   ← (보통 "" = 모든 채널)
+//   Site      ← "BRANCH" 고정 (CMG015M 는 영업점 전용)
+//   BidAmount ← FX_BNG_SPR
+//   AskAmount ← FX_SELL_SPR
+type SiteMargin struct {
+	Pair      string  `json:"pair"`
+	Channel   string  `json:"channel,omitempty"`
+	Site      string  `json:"site"`
+	BidAmount float64 `json:"bid_amount"`
+	AskAmount float64 `json:"ask_amount"`
+}
+
+// SiteMargins — 목록.
+type SiteMargins []SiteMargin

@@ -1,0 +1,9 @@
+[
+  {"pair": "USD/KRW", "channel": "WEB", "site": "BRANCH", "bid_amount": 0.05, "ask_amount": 0.05},
+  {"pair": "USD/KRW", "channel": "WEB", "site": "HQ",     "bid_amount": 0.01, "ask_amount": 0.01},
+  {"pair": "USD/KRW", "channel": "MOB", "site": "BRANCH", "bid_amount": 0.07, "ask_amount": 0.07},
+  {"pair": "USD/KRW", "channel": "MOB", "site": "HQ",     "bid_amount": 0.02, "ask_amount": 0.02},
+  {"pair": "USD/KRW", "channel": "CS",  "site": "BRANCH", "bid_amount": 0.04, "ask_amount": 0.04},
+  {"pair": "EUR/KRW", "channel": "",    "site": "BRANCH", "bid_amount": 0.08, "ask_amount": 0.08},
+  {"pair": "EUR/KRW", "channel": "",    "site": "HQ",     "bid_amount": 0.02, "ask_amount": 0.02}
+]

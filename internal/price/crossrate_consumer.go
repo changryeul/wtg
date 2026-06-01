@@ -52,6 +52,10 @@ type CrossRateConsumer struct {
 	debounceWindow time.Duration
 	maxStaleness   time.Duration
 
+	// lastEmits — cross pair → 마지막 합성 결과 (forward-snapshot 등 외부 조회용).
+	// emit 마다 갱신. LatestCross 로 read.
+	lastEmits sync.Map // session.Pair → *crossSnap
+
 	downstream []TickConsumer
 
 	logger *slog.Logger
@@ -68,6 +72,13 @@ type legState struct {
 	bid float64
 	ask float64
 	ts  time.Time
+}
+
+// crossSnap — 마지막 emit 결과 (forward-snapshot 외부 조회용).
+type crossSnap struct {
+	Bid float64
+	Ask float64
+	TS  time.Time
 }
 
 // CrossRateOptions — 생성 옵션.
@@ -241,7 +252,19 @@ func (c *CrossRateConsumer) maybeEmitCross(crossPair session.Pair, srcTick *Tick
 		ds.OnTick(crossTick)
 	}
 	c.debounce.Store(crossPair, now)
+	c.lastEmits.Store(crossPair, &crossSnap{Bid: res.Bid, Ask: res.Ask, TS: now})
 	c.emitsTotal.Add(1)
+}
+
+// LatestCross — 본 cross pair 의 마지막 emit 결과. 외부 (forward-snapshot 등)
+// 가 BestConsumer cache 에 없는 cross 호가를 조회하는 경로.
+func (c *CrossRateConsumer) LatestCross(pair session.Pair) (bid, ask float64, ts time.Time, ok bool) {
+	v, found := c.lastEmits.Load(pair)
+	if !found {
+		return 0, 0, time.Time{}, false
+	}
+	s := v.(*crossSnap)
+	return s.Bid, s.Ask, s.TS, true
 }
 
 // reverseSymbol — cross pair 의 외부 symbol. PairMaster 우선, SymbolMap.Reverse

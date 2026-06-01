@@ -57,6 +57,9 @@ type ForwardSnapshotTenor struct {
 type ForwardSnapshotDeps struct {
 	Store *pricing.Store
 	Best  *BestConsumer
+	// Cross — 옵션. 있으면 BEST cache miss 시 cross 합성 cache 도 시도
+	// → forward-snapshot 이 cross pair (예: JPY/KRW) 도 응답 가능.
+	Cross *CrossRateConsumer
 }
 
 // ForwardSnapshotHandler — GET /v1/quote/forward-snapshot
@@ -92,8 +95,18 @@ func ForwardSnapshotHandler(deps ForwardSnapshotDeps, devMode bool) http.Handler
 		}
 		best := deps.Best.Stats()
 		sym := strings.ReplaceAll(pair, "/", "")
-		spotStat, ok := best.Symbols[sym]
-		if !ok {
+		var rawBid, rawAsk float64
+		if spotStat, ok := best.Symbols[sym]; ok {
+			rawBid, rawAsk = spotStat.BestBid, spotStat.BestAsk
+		} else if deps.Cross != nil {
+			// BEST miss → cross consumer 의 last emit cache 시도.
+			bid, ask, _, ok := deps.Cross.LatestCross(session.Pair(pair))
+			if !ok {
+				writeForwardErr(w, http.StatusNotFound, "no BEST/cross snapshot for "+sym)
+				return
+			}
+			rawBid, rawAsk = bid, ask
+		} else {
 			writeForwardErr(w, http.StatusNotFound, "no BEST snapshot for symbol "+sym)
 			return
 		}
@@ -101,8 +114,8 @@ func ForwardSnapshotHandler(deps ForwardSnapshotDeps, devMode bool) http.Handler
 		now := time.Now()
 		spotRaw := quote.Quote{
 			Pair: session.Pair(pair),
-			Bid:  spotStat.BestBid,
-			Ask:  spotStat.BestAsk,
+			Bid:  rawBid,
+			Ask:  rawAsk,
 			TS:   now,
 		}
 
@@ -139,8 +152,8 @@ func ForwardSnapshotHandler(deps ForwardSnapshotDeps, devMode bool) http.Handler
 			Spot: ForwardSnapshotSpot{
 				Bid:    spotCQ.Bid,
 				Ask:    spotCQ.Ask,
-				RawBid: spotStat.BestBid,
-				RawAsk: spotStat.BestAsk,
+				RawBid: rawBid,
+				RawAsk: rawAsk,
 			},
 			Tenors:       ts,
 			TableVersion: tbl.Version,

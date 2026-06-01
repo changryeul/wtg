@@ -611,7 +611,9 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	// Forward 시세 snapshot — pricingStore 가 주입돼 있고 best 가 활성일 때만 노출.
 	if s.pricingStore != nil && s.best != nil {
 		mux.HandleFunc("GET /v1/quote/forward-snapshot",
-			ForwardSnapshotHandler(ForwardSnapshotDeps{Store: s.pricingStore, Best: s.best}, s.cfg.DevMode))
+			ForwardSnapshotHandler(ForwardSnapshotDeps{
+				Store: s.pricingStore, Best: s.best, Cross: s.crossConsumer,
+			}, s.cfg.DevMode))
 		s.logger.Info("Forward snapshot endpoint 활성 — GET /v1/quote/forward-snapshot")
 	}
 	// Forward quote lock — pricingStore + best + quoteID gen/reg 모두 있을 때.

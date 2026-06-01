@@ -1,0 +1,18 @@
+# Grafana dashboards 자동 provisioning.
+# /var/lib/grafana/dashboards 디렉토리 안의 모든 .json 을 import.
+# 변경 detection: updateIntervalSeconds 마다 file 변경 감지 → 자동 reload.
+
+apiVersion: 1
+
+providers:
+  - name: WTG
+    orgId: 1
+    folder: WTG
+    folderUid: wtg-folder
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

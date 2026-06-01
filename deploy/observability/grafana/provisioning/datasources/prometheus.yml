@@ -1,0 +1,13 @@
+# Grafana auto-provisioning — Prometheus datasource 자동 등록.
+# uid 가 dashboard JSON 의 ${DS_PROMETHEUS} 와 일치해야 자동 매칭.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

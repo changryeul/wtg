@@ -154,6 +154,22 @@ func main() {
 			os.Exit(1)
 		}
 		defer etcdSymWatch.Close()
+
+		// Currency master watcher — fx-sync 가 wtg/currency/{code} 에 PUT 한 것 받음.
+		currencyMaster := pricing.NewCurrencyMaster()
+		currencyWatcher, err := pricing.NewEtcdCurrencyWatcher(ctx, pricing.EtcdCurrencyWatcherOptions{
+			Client: etcdCli,
+			Prefix: cfg.EtcdPrefix + "currency/",
+			M:      currencyMaster,
+			Logger: logger,
+		})
+		if err != nil {
+			logger.Warn("CurrencyMaster watcher 시작 실패 — /v1/currency 미노출",
+				slog.Any("error", err))
+		} else {
+			defer currencyWatcher.Close()
+			srv.AttachCurrency(currencyMaster)
+		}
 	} else if cfg.SymbolsFile != "" {
 		entries, err := loadSymbolEntries(cfg.SymbolsFile)
 		if err != nil {

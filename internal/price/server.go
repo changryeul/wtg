@@ -75,6 +75,10 @@ type Server struct {
 	// 주입. nil 이면 forward-snapshot 라우트 미등록.
 	pricingStore *pricing.Store
 
+	// currencyMaster — fx-sync 가 미러링한 통화 마스터. AttachCurrency 로 주입.
+	// nil 이면 /v1/currency 미노출.
+	currencyMaster *pricing.CurrencyMaster
+
 	// QuoteID 발급/등록 — forward/lock endpoint 용. AttachQuoteID 로 주입.
 	// 모두 nil 이면 lock endpoint 미등록.
 	quoteIDGen      *quoteid.Generator
@@ -160,6 +164,12 @@ func (s *Server) AttachGRPC(g *GRPCServer) {
 // cmd/mci-price 의 bootstrap 에서 호출. 미주입이면 forward-snapshot 미노출 (404).
 func (s *Server) AttachPricing(store *pricing.Store) {
 	s.pricingStore = store
+}
+
+// AttachCurrency — /v1/currency REST endpoint 가 사용할 master 주입.
+// cmd/mci-price 가 fx-sync 의 etcd watcher 와 같은 인스턴스 주입.
+func (s *Server) AttachCurrency(m *pricing.CurrencyMaster) {
+	s.currencyMaster = m
 }
 
 // AttachQuoteID — forward/lock endpoint 의 QuoteID 발급/등록자 주입. validity 가
@@ -490,6 +500,31 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			}
 			writeJSON(w, http.StatusOK, s.best.Stats())
 		})
+	}
+
+	// Currency master 노출 — fx-sync 가 미러링한 통화 카탈로그.
+	if s.currencyMaster != nil {
+		mux.HandleFunc("GET /v1/currency", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"count":      s.currencyMaster.Size(),
+				"currencies": s.currencyMaster.List(),
+			})
+		})
+		mux.HandleFunc("GET /v1/currency/{code}", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			c, ok := s.currencyMaster.Get(r.PathValue("code"))
+			if !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, http.StatusOK, c)
+		})
+		s.logger.Info("Currency master endpoint 활성 — GET /v1/currency[/{code}]")
 	}
 
 	// Forward 시세 snapshot — pricingStore 가 주입돼 있고 best 가 활성일 때만 노출.

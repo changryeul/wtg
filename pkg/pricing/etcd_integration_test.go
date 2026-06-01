@@ -76,7 +76,7 @@ func TestEtcdTableWatcher_InitialLoadExisting(t *testing.T) {
 	if tbl.Version != 7 {
 		t.Errorf("Version = %d, want 7", tbl.Version)
 	}
-	if m := tbl.lookupHQ("USD/KRW", session.TierVIP); m.BidAmount != 0.02 {
+	if m := tbl.lookupHQ("USD/KRW", session.TierVIP, nil); m.BidAmount != 0.02 {
 		t.Errorf("HQ VIP bid = %v, want 0.02", m.BidAmount)
 	}
 }

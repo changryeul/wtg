@@ -1,0 +1,10 @@
+[
+  {"code": "USD", "name": "미국 달러",      "ref_code": "840", "decimal_places": 4, "sort_order": 10, "active": true},
+  {"code": "KRW", "name": "한국 원",        "ref_code": "410", "decimal_places": 2, "sort_order": 20, "active": true},
+  {"code": "JPY", "name": "일본 엔",        "ref_code": "392", "decimal_places": 2, "sort_order": 30, "active": true},
+  {"code": "EUR", "name": "유로",           "ref_code": "978", "decimal_places": 4, "sort_order": 40, "active": true},
+  {"code": "CNY", "name": "중국 위안",       "ref_code": "156", "decimal_places": 4, "sort_order": 50, "active": true},
+  {"code": "GBP", "name": "영국 파운드",     "ref_code": "826", "decimal_places": 4, "sort_order": 60, "active": true},
+  {"code": "AUD", "name": "호주 달러",       "ref_code": "036", "decimal_places": 4, "sort_order": 70, "active": true},
+  {"code": "HKD", "name": "홍콩 달러",       "ref_code": "344", "decimal_places": 4, "sort_order": 80, "active": false}
+]

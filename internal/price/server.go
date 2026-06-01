@@ -83,6 +83,11 @@ type Server struct {
 	// nil 이면 /v1/pair 미노출.
 	pairMaster *pricing.PairMaster
 
+	// crossConsumer — direct leg → cross 자동 합성. AttachCross 로 주입.
+	// nil 이면 cross fan-out 비활성 (기존 동작). BestConsumer 의 downstream 으로
+	// 자동 등록 + AddConsumer 가 cross.AddDownstream 도 자동 호출.
+	crossConsumer *CrossRateConsumer
+
 	// QuoteID 발급/등록 — forward/lock endpoint 용. AttachQuoteID 로 주입.
 	// 모두 nil 이면 lock endpoint 미등록.
 	quoteIDGen      *quoteid.Generator
@@ -137,9 +142,17 @@ func NewServer(cfg Config, logger *slog.Logger, consumers ...TickConsumer) *Serv
 // BestConsumer 활성 시 등록 대상은 BestConsumer.downstream — Aggregator 등은
 // raw 가 아닌 합성 BEST Tick 만 받는다. 비활성 시 (테스트/회귀 호환) 기존
 // 동작과 동일하게 hot path consumer 리스트에 직접 추가.
+//
+// CrossRateConsumer 활성 시 (AttachCross 호출됨), 추가되는 consumer 는 cross
+// 합성 결과도 받아야 하므로 crossConsumer.AddDownstream 도 동시에 호출.
+// 결과: Aggregator/PricingConsumer/gRPC 모두 direct BEST + cross 합성 둘 다
+// 단일 hot path 로 수신.
 func (s *Server) AddConsumer(c TickConsumer) {
 	if s.best != nil {
 		s.best.AddDownstream(c)
+		if s.crossConsumer != nil {
+			s.crossConsumer.AddDownstream(c)
+		}
 		return
 	}
 	s.consumers = append(s.consumers, c)
@@ -180,6 +193,29 @@ func (s *Server) AttachCurrency(m *pricing.CurrencyMaster) {
 func (s *Server) AttachPair(m *pricing.PairMaster) {
 	s.pairMaster = m
 }
+
+// AttachCross — CrossRateConsumer 를 hot path 에 끼움.
+//
+// 동작:
+//   1. BestConsumer 의 downstream 에 cross consumer 등록 → direct BEST tick
+//      이 cross consumer 의 leg cache 로 흐름.
+//   2. AddConsumer 가 향후 추가되는 consumer 를 cross consumer 의 downstream
+//      에도 등록 → cross 합성 tick 도 Aggregator/PricingConsumer/gRPC 로 흐름.
+//
+// AttachCross 는 Start 전, AddConsumer 호출 전에 불러야 한다 — 이후 등록되는
+// consumer 들이 cross 도 받게 됨.
+func (s *Server) AttachCross(c *CrossRateConsumer) {
+	if c == nil || s.crossConsumer != nil {
+		return
+	}
+	s.crossConsumer = c
+	if s.best != nil {
+		s.best.AddDownstream(c)
+	}
+}
+
+// CrossConsumer — 외부에서 stats 조회 등에 사용. nil 가능.
+func (s *Server) CrossConsumer() *CrossRateConsumer { return s.crossConsumer }
 
 // AttachQuoteID — forward/lock endpoint 의 QuoteID 발급/등록자 주입. validity 가
 // 0 이면 500ms default. gen+reg 둘 다 있어야 endpoint 활성.
@@ -559,6 +595,17 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			writeJSON(w, http.StatusOK, p)
 		})
 		s.logger.Info("Pair master endpoint 활성 — GET /v1/pair[/{id}]")
+	}
+
+	// Cross-rate consumer stats — 운영 진단 (emits_total / skipped_* / errors).
+	if s.crossConsumer != nil {
+		mux.HandleFunc("GET /v1/cross-stats", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			writeJSON(w, http.StatusOK, s.crossConsumer.Stats())
+		})
+		s.logger.Info("Cross-rate stats endpoint 활성 — GET /v1/cross-stats")
 	}
 
 	// Forward 시세 snapshot — pricingStore 가 주입돼 있고 best 가 활성일 때만 노출.

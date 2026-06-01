@@ -35,7 +35,8 @@ const SourceCross = "CROSS"
 //   - reverse index O(1) lookup + ComputeCross 산술 수십 ns → CPU 부담 미미
 //   - 진짜 병목은 downstream (PricingConsumer 의 5L fan-out, gRPC stream)
 type CrossRateConsumer struct {
-	symbols *quote.SymbolMap // Tick.Symbol → session.Pair 변환
+	symbols *quote.SymbolMap    // Tick.Symbol → session.Pair (fallback)
+	pairs   *pricing.PairMaster // Tick.Symbol → session.Pair (우선 — single SoT)
 
 	// formulas / leg2cross — 운영자 정의 cross 산식. ReplaceFormulas 로 hot reload.
 	mu        sync.RWMutex
@@ -71,7 +72,8 @@ type legState struct {
 
 // CrossRateOptions — 생성 옵션.
 type CrossRateOptions struct {
-	Symbols        *quote.SymbolMap
+	Symbols        *quote.SymbolMap    // fallback. Pairs 가 있으면 그게 우선.
+	Pairs          *pricing.PairMaster // PairMaster 가 우선 — single SoT.
 	Logger         *slog.Logger
 	DebounceWindow time.Duration // default 10ms
 	MaxStaleness   time.Duration // default 30s
@@ -93,6 +95,7 @@ func NewCrossRateConsumer(opt CrossRateOptions) *CrossRateConsumer {
 	}
 	return &CrossRateConsumer{
 		symbols:        opt.Symbols,
+		pairs:          opt.Pairs,
 		formulas:       map[session.Pair]pricing.CrossFormula{},
 		leg2cross:      map[session.Pair][]session.Pair{},
 		debounceWindow: dw,
@@ -155,17 +158,27 @@ func (c *CrossRateConsumer) OnTick(t *Tick) {
 	}
 }
 
-// lookupPair — Tick.Symbol → session.Pair 변환. SymbolMap 없으면 Symbol 자체를
-// pair 로 (테스트 편의). active=false 면 found=false.
+// lookupPair — Tick.Symbol → session.Pair 변환.
+//   1순위: PairMaster (single SoT, fx-sync 가 미러링)
+//   2순위: SymbolMap (legacy)
+//   둘 다 없으면 Symbol 자체를 pair 로 (테스트 편의).
 func (c *CrossRateConsumer) lookupPair(sym string) (session.Pair, bool, bool) {
-	if c.symbols == nil {
+	if c.pairs != nil {
+		if pair, ok := c.pairs.LookupBySymbol(sym); ok {
+			return pair, true, true
+		}
+	}
+	if c.symbols != nil {
+		pair, active, found := c.symbols.Lookup(sym)
+		if !found || !active {
+			return "", false, false
+		}
+		return pair, active, true
+	}
+	if c.pairs == nil && c.symbols == nil {
 		return session.Pair(sym), true, true
 	}
-	pair, active, found := c.symbols.Lookup(sym)
-	if !found || !active {
-		return "", false, false
-	}
-	return pair, active, true
+	return "", false, false
 }
 
 func (c *CrossRateConsumer) maybeEmitCross(crossPair session.Pair, srcTick *Tick) {
@@ -231,15 +244,19 @@ func (c *CrossRateConsumer) maybeEmitCross(crossPair session.Pair, srcTick *Tick
 	c.emitsTotal.Add(1)
 }
 
-// reverseSymbol — cross pair 의 외부 symbol. SymbolMap.Reverse 우선, 없으면
-// pair 의 "/" 제거 (USD/KRW → USDKRW).
+// reverseSymbol — cross pair 의 외부 symbol. PairMaster 우선, SymbolMap.Reverse
+// 다음, 없으면 pair 의 "/" 제거 (USD/KRW → USDKRW).
 func (c *CrossRateConsumer) reverseSymbol(pair session.Pair) string {
+	if c.pairs != nil {
+		if s, ok := c.pairs.ReverseSymbol(pair); ok {
+			return s
+		}
+	}
 	if c.symbols != nil {
 		if s, ok := c.symbols.Reverse(pair); ok {
 			return s
 		}
 	}
-	// fallback — "/" 제거.
 	s := string(pair)
 	out := make([]byte, 0, len(s))
 	for i := 0; i < len(s); i++ {

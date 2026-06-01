@@ -138,3 +138,59 @@ func (m *PairMaster) Size() int {
 	}
 	return len(s.byID)
 }
+
+// LookupBySymbol — tick.Symbol 또는 Pair.ID ("USDKRW") 로 session.Pair
+// ("USD/KRW") 반환. direct/cross 무관, active=true 만.
+//
+// 매칭 우선순위:
+//   1. Pair.ID 정확 일치
+//   2. Pair.Symbol 정확 일치 (cooker symbol 이 ID 와 다른 경우)
+//
+// quote.SymbolMap 의 대안 — PairMaster 가 이미 같은 정보 가지므로 단일 SoT.
+func (m *PairMaster) LookupBySymbol(sym string) (session.Pair, bool) {
+	s := m.snap.Load()
+	if s == nil || sym == "" {
+		return "", false
+	}
+	if p, ok := s.byID[sym]; ok && p.Active {
+		return session.Pair(p.Base + "/" + p.Quote), true
+	}
+	// Pair.Symbol 가 sym 과 같은 entry 검색 (드문 경로).
+	for _, p := range s.sorted {
+		if p.Active && p.Symbol == sym {
+			return session.Pair(p.Base + "/" + p.Quote), true
+		}
+	}
+	return "", false
+}
+
+// ReverseSymbol — session.Pair ("USD/KRW") 로부터 외부 symbol ("USDKRW")
+// 반환. Pair.Symbol 우선, 없으면 ID.
+func (m *PairMaster) ReverseSymbol(pair session.Pair) (string, bool) {
+	s := m.snap.Load()
+	if s == nil {
+		return "", false
+	}
+	parts := splitPair(string(pair))
+	if len(parts) != 2 {
+		return "", false
+	}
+	for _, p := range s.sorted {
+		if p.Active && p.Base == parts[0] && p.Quote == parts[1] {
+			if p.Symbol != "" {
+				return p.Symbol, true
+			}
+			return p.ID, true
+		}
+	}
+	return "", false
+}
+
+func splitPair(s string) []string {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '/' {
+			return []string{s[:i], s[i+1:]}
+		}
+	}
+	return []string{s}
+}

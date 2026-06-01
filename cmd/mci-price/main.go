@@ -172,15 +172,26 @@ func main() {
 		}
 
 		// Pair master watcher — fx-sync 가 wtg/pair/{id} 에 PUT 한 것.
+		// + CrossRateConsumer 활성: PairMaster 의 cross 산식이 변경될 때마다
+		//   ReplaceFormulas 자동 호출 (OnChange callback).
 		pairMaster := pricing.NewPairMaster()
+		crossCR := price.NewCrossRateConsumer(price.CrossRateOptions{
+			Symbols: symbols,
+			Pairs:   pairMaster,
+			Logger:  logger,
+		})
+		srv.AttachCross(crossCR)
 		pairWatcher, err := pricing.NewEtcdPairWatcher(ctx, pricing.EtcdPairWatcherOptions{
 			Client: etcdCli,
 			Prefix: cfg.EtcdPrefix + "pair/",
 			M:      pairMaster,
 			Logger: logger,
+			OnChange: func(m *pricing.PairMaster) {
+				crossCR.ReplaceFormulas(m.CrossFormulas())
+			},
 		})
 		if err != nil {
-			logger.Warn("PairMaster watcher 시작 실패 — /v1/pair 미노출",
+			logger.Warn("PairMaster watcher 시작 실패 — /v1/pair 미노출 + cross 합성 비활성",
 				slog.Any("error", err))
 		} else {
 			defer pairWatcher.Close()

@@ -33,20 +33,45 @@ curl -X POST http://grafana.local/api/dashboards/db \
   -d @<(jq '{dashboard: ., overwrite: true}' etc/grafana/p6-cross-master-dashboard.json)
 ```
 
-### 운영 권장 alert (별도 alert 파일 신설 가능)
+### Alert rules — p6-cross-master-alerts.json
 
-```promql
-# Cross 합성 오류 (산식 / 데이터 이상)
-wtg_cross_errors_total > 0    [for 1m] → page
+Grafana Unified Alerting 그룹 1 (`wtg-p6`) + 6 rule:
 
-# cooker 데이터 끊김
-rate(wtg_cross_skipped_stale_total[5m]) > 1   [for 5m] → warn
+| UID | severity | 조건 | for |
+|-----|----------|------|-----|
+| wtg-p6-cross-errors | **page** | `max(wtg_cross_errors_total) > 0` | 1m |
+| wtg-p6-cross-stale | warn | `rate(wtg_cross_skipped_stale_total[5m]) > 1` | 5m |
+| wtg-p6-master-empty | **page** | `wtg_master_pair_active_count < 1` | 5m |
+| wtg-p6-publish-errors | warn | `rate(profile + 5L publish errors[5m]) > 0.1` | 5m |
+| wtg-p6-quote-register-errors | warn | `rate(wtg_pricing_quote_register_errors_total[5m]) > 0.01` | 5m |
+| wtg-p6-tick-drop-ratio | warn | `dropped / in > 20%` | 5m |
 
-# fx-sync 지연 (PairMaster 비어있음)
-wtg_master_pair_active_count == 0  [for 5m] → page
+각 rule 의 `runbook_url` 에 진단 절차 명시. labels.severity 로 notification
+policy 분기 (page→PagerDuty / warn→Slack).
 
-# Publish 실패 (broker / gRPC 끊김)
-rate(wtg_pricing_publish_errors_total[5m]) > 0.1  → warn
+#### Import — UI
+
+Grafana → Alerting → Alert rules → Import → `p6-cross-master-alerts.json` 선택.
+
+#### Provisioning
+
+deploy/observability 의 docker-compose 가 이미 alerting 디렉토리 마운트 —
+변경 사항 file 저장 후 Grafana 재시작:
+
+```bash
+docker compose restart grafana
+```
+
+#### 활성 alert 확인
+
+```bash
+# 모든 rule 목록
+curl -s -u admin:admin http://localhost:3030/api/v1/provisioning/alert-rules \
+  | jq -r '.[] | "\(.uid)\t\(.labels.severity)\t\(.title)"'
+
+# firing 중인 alert
+curl -s -u admin:admin http://localhost:3030/api/alertmanager/grafana/api/v2/alerts \
+  | jq -r '.[] | "\(.labels.alertname)\t\(.status.state)"'
 ```
 
 ---

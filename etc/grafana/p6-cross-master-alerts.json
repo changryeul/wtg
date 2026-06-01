@@ -1,0 +1,271 @@
+{
+  "apiVersion": 1,
+  "_comment": "WTG P6 — Cross-rate / Pricing fan-out / Master 동기화 alert. Grafana Unified Alerting 그룹 1 (wtg-p6) + 6 rule. p6-cross-master-dashboard.json 의 운영 권장 alert 를 enforce. import: Grafana → Alerting → Alert rules → Import → 이 JSON 선택. 또는 provisioning: /etc/grafana/provisioning/alerting/p6-cross-master-alerts.json 으로 mount.",
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "wtg-p6",
+      "folder": "WTG",
+      "interval": "30s",
+      "rules": [
+        {
+          "uid": "wtg-p6-cross-errors",
+          "title": "Cross-rate compute errors (산식/데이터 이상)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "max(wtg_cross_errors_total)",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "1m",
+          "annotations": {
+            "summary": "ComputeCross 산술 실패 발생",
+            "description": "CrossRateConsumer 가 invalid op / negative input 등으로 합성 실패. cooker 데이터 (negative price 등) 또는 PairMaster 의 cross 산식 오류 — 즉시 진단 필요. 잘못된 cross 호가가 고객 화면 / 거래 quote 에 사용될 위험.",
+            "runbook_url": "docs/cross-rate.md#computecross-errors"
+          },
+          "labels": {"severity": "page", "service": "mci-price", "domain": "cross-rate"}
+        },
+
+        {
+          "uid": "wtg-p6-cross-stale",
+          "title": "Cooker 끊김 의심 (leg 30s+ 무음)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "sum(rate(wtg_cross_skipped_stale_total[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [1]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "Cross 합성 skip 률 비정상 (stale leg)",
+            "description": "5분 평균 1/s 이상 emit 이 stale leg 으로 skip. 한 쪽 leg pair 의 cooker 가 30s+ 무음 — UDP / forwarder / mci-price PublishTick 끊김 가능. /v1/cross-stats 의 skipped_stale 누적 확인 + quote-forwarder /stats 점검.",
+            "runbook_url": "docs/operations.md#cooker-disconnect"
+          },
+          "labels": {"severity": "warn", "service": "mci-price", "domain": "cross-rate"}
+        },
+
+        {
+          "uid": "wtg-p6-master-empty",
+          "title": "PairMaster 비어있음 (fx-sync 끊김)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "max(wtg_master_pair_active_count)",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "lt", "params": [1]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "Alerting",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "PairMaster 에 active pair 0",
+            "description": "fx-sync 가 wtg/pair/* 에 PUT 한 entry 가 없거나 모두 inactive. mci-price 의 cross 산식이 비어 모든 cross fan-out 정지. fx-sync 실행 + admin etcd 의 wtg/pair/ 확인 + EtcdPairWatcher 로그 점검.",
+            "runbook_url": "docs/fxsync.md#pair-master-empty"
+          },
+          "labels": {"severity": "page", "service": "mci-price", "domain": "master-sync"}
+        },
+
+        {
+          "uid": "wtg-p6-publish-errors",
+          "title": "Pricing publish 실패율 높음",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "sum(rate(wtg_pricing_publish_errors_total[5m])) + sum(rate(wtg_pricing_customer_publish_errors_total[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.1]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "PricingConsumer publish 실패 ≥ 0.1/s",
+            "description": "Profile-only + 5L customer publish 실패율 합계가 5분 평균 0.1/s 초과. broker 끊김 또는 gRPC stream slow consumer 격리 다발. mci-price 로그의 'publish 실패' 항목 + mci-edge-price subscriber 수 점검.",
+            "runbook_url": "docs/operations.md#publish-failures"
+          },
+          "labels": {"severity": "warn", "service": "mci-price", "domain": "pricing"}
+        },
+
+        {
+          "uid": "wtg-p6-quote-register-errors",
+          "title": "QuoteID Registry.Put 실패 (audit 손실)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "sum(rate(wtg_pricing_quote_register_errors_total[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.01]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "QuoteID 발행 등록 실패율 비정상",
+            "description": "Memory/Redis Registry.Put 이 5분 평균 0.01/s 초과 실패. 발행된 quote_id 의 audit (MiFID II / 분쟁 재현) 누락 가능. Redis 인프라 확인 + AsyncRegistry 사용 시 queue saturation 점검.",
+            "runbook_url": "docs/quoteid-operations.md#register-errors"
+          },
+          "labels": {"severity": "warn", "service": "mci-price", "domain": "quoteid"}
+        },
+
+        {
+          "uid": "wtg-p6-tick-drop-ratio",
+          "title": "Tick drop ratio 비정상 (SymbolMap 불일치 의심)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "${DS_PROMETHEUS}",
+              "model": {
+                "expr": "100 * sum(rate(wtg_pricing_ticks_dropped_total[5m])) / clamp_min(sum(rate(wtg_pricing_ticks_in_total[5m])), 0.0001)",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [20]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "PricingConsumer tick drop > 20%",
+            "description": "수신 tick 중 20%+ 가 drop. SymbolMap 에 cooker 의 symbol 이 미등록 (fx-sync 갱신 지연) 또는 cooker 형식 변경. /v1/cross-stats 의 skipped_unknown_pair 도 같이 증가하면 PairMaster sync 가 핵심 원인.",
+            "runbook_url": "docs/operations.md#tick-drop-high"
+          },
+          "labels": {"severity": "warn", "service": "mci-price", "domain": "pricing"}
+        }
+      ]
+    }
+  ]
+}

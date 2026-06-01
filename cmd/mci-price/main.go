@@ -170,6 +170,22 @@ func main() {
 			defer currencyWatcher.Close()
 			srv.AttachCurrency(currencyMaster)
 		}
+
+		// Pair master watcher — fx-sync 가 wtg/pair/{id} 에 PUT 한 것.
+		pairMaster := pricing.NewPairMaster()
+		pairWatcher, err := pricing.NewEtcdPairWatcher(ctx, pricing.EtcdPairWatcherOptions{
+			Client: etcdCli,
+			Prefix: cfg.EtcdPrefix + "pair/",
+			M:      pairMaster,
+			Logger: logger,
+		})
+		if err != nil {
+			logger.Warn("PairMaster watcher 시작 실패 — /v1/pair 미노출",
+				slog.Any("error", err))
+		} else {
+			defer pairWatcher.Close()
+			srv.AttachPair(pairMaster)
+		}
 	} else if cfg.SymbolsFile != "" {
 		entries, err := loadSymbolEntries(cfg.SymbolsFile)
 		if err != nil {

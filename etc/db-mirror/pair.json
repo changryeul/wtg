@@ -1,0 +1,56 @@
+[
+  {
+    "id": "USDKRW", "base": "USD", "quote": "KRW", "kind": "direct",
+    "symbol": "USDKRW",
+    "spot_days": 2, "quote_decimals": 2, "emp_decimals": 4,
+    "sort_order": 10, "active": true
+  },
+  {
+    "id": "USDJPY", "base": "USD", "quote": "JPY", "kind": "direct",
+    "symbol": "USDJPY",
+    "spot_days": 2, "quote_decimals": 4, "emp_decimals": 6,
+    "sort_order": 20, "active": true
+  },
+  {
+    "id": "EURUSD", "base": "EUR", "quote": "USD", "kind": "direct",
+    "symbol": "EURUSD",
+    "spot_days": 2, "quote_decimals": 5, "emp_decimals": 6,
+    "sort_order": 30, "active": true
+  },
+  {
+    "id": "EURKRW", "base": "EUR", "quote": "KRW", "kind": "cross",
+    "cross": {"leg_a": "EUR/USD", "op_a": "mul", "leg_b": "USD/KRW", "op_b": "mul", "scale": 1.0},
+    "spot_days": 2, "quote_decimals": 2, "emp_decimals": 4,
+    "sort_order": 40, "active": true
+  },
+  {
+    "id": "JPYKRW", "base": "JPY", "quote": "KRW", "kind": "cross",
+    "cross": {"leg_a": "USD/KRW", "op_a": "mul", "leg_b": "USD/JPY", "op_b": "div", "scale": 100.0},
+    "spot_days": 2, "scale_unit": 100, "quote_decimals": 4, "emp_decimals": 6,
+    "sort_order": 50, "active": true
+  },
+  {
+    "id": "GBPKRW", "base": "GBP", "quote": "KRW", "kind": "cross",
+    "cross": {"leg_a": "GBP/USD", "op_a": "mul", "leg_b": "USD/KRW", "op_b": "mul", "scale": 1.0},
+    "spot_days": 2, "quote_decimals": 2, "emp_decimals": 4,
+    "sort_order": 60, "active": true
+  },
+  {
+    "id": "AUDKRW", "base": "AUD", "quote": "KRW", "kind": "cross",
+    "cross": {"leg_a": "AUD/USD", "op_a": "mul", "leg_b": "USD/KRW", "op_b": "mul", "scale": 1.0},
+    "spot_days": 2, "quote_decimals": 2, "emp_decimals": 4,
+    "sort_order": 70, "active": true
+  },
+  {
+    "id": "CNYKRW", "base": "CNY", "quote": "KRW", "kind": "cross",
+    "cross": {"leg_a": "USD/KRW", "op_a": "mul", "leg_b": "USD/CNY", "op_b": "div", "scale": 1.0},
+    "spot_days": 2, "quote_decimals": 4, "emp_decimals": 6,
+    "sort_order": 80, "active": true
+  },
+  {
+    "id": "HKDKRW", "base": "HKD", "quote": "KRW", "kind": "cross",
+    "cross": {"leg_a": "USD/KRW", "op_a": "mul", "leg_b": "USD/HKD", "op_b": "div", "scale": 1.0},
+    "spot_days": 2, "quote_decimals": 4,
+    "sort_order": 90, "active": false
+  }
+]

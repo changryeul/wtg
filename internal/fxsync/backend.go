@@ -13,4 +13,8 @@ type Backend interface {
 	// LoadCurrencies — TB_FXB_CMG005M 또는 currency.json.
 	// Active=false entry 도 반환 — sync agent 가 etcd 에 삭제 mark 로 사용.
 	LoadCurrencies(ctx context.Context) (Currencies, error)
+
+	// LoadPairs — TB_FXB_CMG004M + TB_FXB_CMG006M 의 join 결과 또는 pair.json.
+	// direct + cross 산식 통합. Active=false 도 포함.
+	LoadPairs(ctx context.Context) (Pairs, error)
 }

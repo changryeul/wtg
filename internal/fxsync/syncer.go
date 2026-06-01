@@ -49,19 +49,41 @@ type SyncResult struct {
 
 // SyncCurrencies — Currency 테이블 sync. wtg/currency/{code} 에 PUT.
 func (s *Syncer) SyncCurrencies(ctx context.Context, currencies Currencies) (SyncResult, error) {
-	r := SyncResult{Table: "currency", SourceCount: len(currencies)}
-	keyPrefix := s.Prefix + "currency/"
+	items := make([]syncItem, 0, len(currencies))
+	for _, c := range currencies {
+		items = append(items, syncItem{id: c.Code, active: c.Active, payload: c})
+	}
+	return s.runSync(ctx, "currency", "currency/", items)
+}
+
+// SyncPairs — Pair 테이블 sync. wtg/pair/{id} 에 PUT. id 는 "USDKRW" 식.
+func (s *Syncer) SyncPairs(ctx context.Context, pairs Pairs) (SyncResult, error) {
+	items := make([]syncItem, 0, len(pairs))
+	for _, p := range pairs {
+		items = append(items, syncItem{id: p.ID, active: p.Active, payload: p})
+	}
+	return s.runSync(ctx, "pair", "pair/", items)
+}
+
+// syncItem — 내부 추상화. id (etcd key suffix) / active 여부 / 직렬화 payload.
+type syncItem struct {
+	id      string
+	active  bool
+	payload any
+}
+
+// runSync — 공통 sync 로직 (currency / pair / 향후 swap/margin 동일 패턴).
+func (s *Syncer) runSync(ctx context.Context, table, subPath string, items []syncItem) (SyncResult, error) {
+	r := SyncResult{Table: table, SourceCount: len(items)}
+	keyPrefix := s.Prefix + subPath
 
 	// 1. 활성 entry 만 추려 PUT 대상 set 구성.
-	want := make(map[string]Currency, len(currencies))
-	for _, c := range currencies {
-		if !c.Active {
+	want := make(map[string]any, len(items))
+	for _, it := range items {
+		if !it.active || it.id == "" {
 			continue
 		}
-		if c.Code == "" {
-			continue
-		}
-		want[c.Code] = c
+		want[it.id] = it.payload
 		r.Active++
 	}
 
@@ -73,37 +95,37 @@ func (s *Syncer) SyncCurrencies(ctx context.Context, currencies Currencies) (Syn
 			return r, fmt.Errorf("fxsync: list %s: %w", keyPrefix, err)
 		}
 		for _, kv := range resp.Kvs {
-			code := strings.TrimPrefix(string(kv.Key), keyPrefix)
-			existing[code] = struct{}{}
+			id := strings.TrimPrefix(string(kv.Key), keyPrefix)
+			existing[id] = struct{}{}
 		}
 	}
 
 	// 3. PUT.
-	for code, cur := range want {
-		body, err := json.Marshal(cur)
+	for id, payload := range want {
+		body, err := json.Marshal(payload)
 		if err != nil {
-			return r, fmt.Errorf("fxsync: marshal %s: %w", code, err)
+			return r, fmt.Errorf("fxsync: marshal %s: %w", id, err)
 		}
-		if _, err := s.Etcd.Put(ctx, keyPrefix+code, string(body)); err != nil {
-			return r, fmt.Errorf("fxsync: put %s: %w", code, err)
+		if _, err := s.Etcd.Put(ctx, keyPrefix+id, string(body)); err != nil {
+			return r, fmt.Errorf("fxsync: put %s: %w", id, err)
 		}
 		r.Put++
-		delete(existing, code)
+		delete(existing, id)
 	}
 
 	// 4. stale 삭제.
 	if s.DeleteStale {
-		for code := range existing {
-			if _, err := s.Etcd.Delete(ctx, keyPrefix+code); err != nil {
+		for id := range existing {
+			if _, err := s.Etcd.Delete(ctx, keyPrefix+id); err != nil {
 				s.Logger.Warn("fxsync: delete stale 실패",
-					slog.String("code", code), slog.Any("error", err))
+					slog.String("table", table), slog.String("id", id), slog.Any("error", err))
 				continue
 			}
 			r.DeletedStale++
 		}
 	}
 
-	s.Logger.Info("fxsync: currency sync 완료",
+	s.Logger.Info("fxsync: "+table+" sync 완료",
 		slog.Int("source", r.SourceCount),
 		slog.Int("active", r.Active),
 		slog.Int("put", r.Put),

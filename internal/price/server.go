@@ -79,6 +79,10 @@ type Server struct {
 	// nil 이면 /v1/currency 미노출.
 	currencyMaster *pricing.CurrencyMaster
 
+	// pairMaster — fx-sync 가 미러링한 통화쌍 마스터. AttachPair 로 주입.
+	// nil 이면 /v1/pair 미노출.
+	pairMaster *pricing.PairMaster
+
 	// QuoteID 발급/등록 — forward/lock endpoint 용. AttachQuoteID 로 주입.
 	// 모두 nil 이면 lock endpoint 미등록.
 	quoteIDGen      *quoteid.Generator
@@ -170,6 +174,11 @@ func (s *Server) AttachPricing(store *pricing.Store) {
 // cmd/mci-price 가 fx-sync 의 etcd watcher 와 같은 인스턴스 주입.
 func (s *Server) AttachCurrency(m *pricing.CurrencyMaster) {
 	s.currencyMaster = m
+}
+
+// AttachPair — /v1/pair REST endpoint 가 사용할 master 주입.
+func (s *Server) AttachPair(m *pricing.PairMaster) {
+	s.pairMaster = m
 }
 
 // AttachQuoteID — forward/lock endpoint 의 QuoteID 발급/등록자 주입. validity 가
@@ -525,6 +534,31 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			writeJSON(w, http.StatusOK, c)
 		})
 		s.logger.Info("Currency master endpoint 활성 — GET /v1/currency[/{code}]")
+	}
+
+	// Pair master 노출.
+	if s.pairMaster != nil {
+		mux.HandleFunc("GET /v1/pair", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"count": s.pairMaster.Size(),
+				"pairs": s.pairMaster.List(),
+			})
+		})
+		mux.HandleFunc("GET /v1/pair/{id}", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			p, ok := s.pairMaster.Get(r.PathValue("id"))
+			if !ok {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, http.StatusOK, p)
+		})
+		s.logger.Info("Pair master endpoint 활성 — GET /v1/pair[/{id}]")
 	}
 
 	// Forward 시세 snapshot — pricingStore 가 주입돼 있고 best 가 활성일 때만 노출.

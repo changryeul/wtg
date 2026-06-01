@@ -83,7 +83,7 @@ func main() {
 	// 테이블 별 처리.
 	tables := strings.Split(*table, ",")
 	if *table == "all" {
-		tables = []string{"currency"}
+		tables = []string{"currency", "pair"}
 	}
 	exitCode := 0
 	for _, t := range tables {
@@ -91,6 +91,11 @@ func main() {
 		case "currency":
 			if err := syncCurrency(ctx, backend, syncer); err != nil {
 				logger.Error("currency sync 실패", slog.Any("error", err))
+				exitCode = 1
+			}
+		case "pair":
+			if err := syncPair(ctx, backend, syncer); err != nil {
+				logger.Error("pair sync 실패", slog.Any("error", err))
 				exitCode = 1
 			}
 		default:
@@ -106,6 +111,15 @@ func syncCurrency(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Sy
 		return fmt.Errorf("LoadCurrencies: %w", err)
 	}
 	_, err = syncer.SyncCurrencies(ctx, cs)
+	return err
+}
+
+func syncPair(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Syncer) error {
+	ps, err := backend.LoadPairs(ctx)
+	if err != nil {
+		return fmt.Errorf("LoadPairs: %w", err)
+	}
+	_, err = syncer.SyncPairs(ctx, ps)
 	return err
 }
 

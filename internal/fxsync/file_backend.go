@@ -29,17 +29,35 @@ func NewFileBackend(dir string) *FileBackend {
 
 // LoadCurrencies — currency.json 읽어 Currencies 반환.
 func (b *FileBackend) LoadCurrencies(_ context.Context) (Currencies, error) {
-	path := filepath.Join(b.Dir, "currency.json")
+	var out Currencies
+	if err := b.readJSON("currency.json", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// LoadPairs — pair.json 읽어 Pairs 반환.
+func (b *FileBackend) LoadPairs(_ context.Context) (Pairs, error) {
+	var out Pairs
+	if err := b.readJSON("pair.json", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// readJSON — 파일 read + JSON unmarshal. 누락 파일은 빈 결과 + nil err (호출자
+// 가 v 의 zero value 유지).
+func (b *FileBackend) readJSON(filename string, v any) error {
+	path := filepath.Join(b.Dir, filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Currencies{}, nil
+			return nil
 		}
-		return nil, fmt.Errorf("fxsync: read %s: %w", path, err)
+		return fmt.Errorf("fxsync: read %s: %w", path, err)
 	}
-	var out Currencies
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("fxsync: parse %s: %w", path, err)
+	if err := json.Unmarshal(data, v); err != nil {
+		return fmt.Errorf("fxsync: parse %s: %w", path, err)
 	}
-	return out, nil
+	return nil
 }

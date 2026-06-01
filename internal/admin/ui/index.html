@@ -298,7 +298,9 @@
         <!-- 시세 카탈로그 — etcd watch 로 mci-price/mci-api 가 hot reload -->
         <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">시세 카탈로그</div>
         <div class="space-y-0.5 mb-3">
-          <button data-page="symbols"         class="nav-btn nav-item"><span class="nav-ico">🔤</span>통화쌍</button>
+          <button data-page="symbols"         class="nav-btn nav-item"><span class="nav-ico">🔤</span>심볼 매핑 (legacy)</button>
+          <button data-page="currency"        class="nav-btn nav-item"><span class="nav-ico">🪙</span>통화 마스터</button>
+          <button data-page="pair-master"     class="nav-btn nav-item"><span class="nav-ico">🔗</span>통화쌍 마스터</button>
           <button data-page="pricing"         class="nav-btn nav-item"><span class="nav-ico">💰</span>마진 테이블</button>
           <button data-page="swap"            class="nav-btn nav-item"><span class="nav-ico">📅</span>선물환 스왑</button>
           <button data-page="holidays"        class="nav-btn nav-item"><span class="nav-ico">📆</span>휴일 캘린더</button>
@@ -991,6 +993,124 @@
             <div id="symbols-empty" class="hidden p-8 text-center text-slate-500">
               아직 등록된 통화쌍이 없습니다. <button class="text-accent-400 hover:text-accent-500" id="symbols-add2">신규 등록</button>
             </div>
+          </div>
+        </div>
+
+        <!-- 통화 마스터 (currency) — view-only. DB CMG005M → fx-sync → etcd → mci-price. -->
+        <div id="page-currency" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">통화 마스터</h3>
+              <p class="text-sm text-slate-400">
+                통화 자체의 메타 카탈로그. <strong>운영 SoT 는 외환 DB (TB_FXB_CMG005M)</strong>,
+                fx-sync CLI 가 etcd 에 미러링 후 mci-price 가 watch 로 메모리에 캐시.
+                여기서는 view-only — 변경은 기존 DB 시스템에서.
+              </p>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <input id="cu-mci-url" value="http://127.0.0.1:8082" placeholder="mci-price URL"
+                class="px-2 py-1 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px] w-56" />
+              <button id="cu-reload" class="px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 text-xs">↻ 재로드</button>
+            </div>
+          </div>
+
+          <div class="border-gradient rounded-2xl">
+            <div class="px-4 py-2 border-b border-ink-700/40 flex items-center justify-between text-xs">
+              <div><span class="text-slate-400">count</span> <span id="cu-count" class="font-mono text-accent-400">—</span></div>
+              <div class="text-slate-500">source: <span id="cu-source" class="font-mono">—</span></div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-xs">
+                <thead class="text-[10px] uppercase tracking-widest text-slate-500">
+                  <tr>
+                    <th class="px-3 py-2 text-left">code</th>
+                    <th class="px-3 py-2 text-left">name</th>
+                    <th class="px-3 py-2 text-right">decimals</th>
+                    <th class="px-3 py-2 text-right">sort</th>
+                    <th class="px-3 py-2 text-left">ref_code</th>
+                    <th class="px-3 py-2 text-center">active</th>
+                  </tr>
+                </thead>
+                <tbody id="cu-tbody" class="font-mono"></tbody>
+              </table>
+            </div>
+            <div id="cu-empty" class="hidden p-6 text-center text-slate-500 text-sm">
+              데이터 없음 — fx-sync CLI 로 wtg/currency/ 시드 필요.<br/>
+              <code class="text-[11px]">fx-sync --source=file --source-dir=./etc/db-mirror --etcd=... --table=currency</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- 통화쌍 마스터 (pair-master) — view-only. DB CMG004M + CMG006M → fx-sync. -->
+        <div id="page-pair-master" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">통화쌍 마스터</h3>
+              <p class="text-sm text-slate-400">
+                통화쌍 정의 + cross 산식. <strong>운영 SoT 는 외환 DB (TB_FXB_CMG004M + CMG006M)</strong>.
+                direct = cooker 가 직접 받는 pair, cross = 두 leg 합성 (mci-price 의 CrossRateConsumer 가 실시간 합성).
+                변경은 DB 에서 → <code>fx-sync --table=pair</code> → mci-price etcd watch hot reload.
+              </p>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <input id="pm-mci-url" value="http://127.0.0.1:8082" placeholder="mci-price URL"
+                class="px-2 py-1 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px] w-56" />
+              <button id="pm-reload" class="px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 text-xs">↻ 재로드</button>
+            </div>
+          </div>
+
+          <!-- 요약 카드 -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div class="border-gradient rounded-xl p-3 text-center">
+              <div class="text-[10px] uppercase tracking-widest text-slate-500">total</div>
+              <div id="pm-total" class="text-2xl font-mono text-accent-400 mt-1">—</div>
+            </div>
+            <div class="border-gradient rounded-xl p-3 text-center">
+              <div class="text-[10px] uppercase tracking-widest text-slate-500">direct</div>
+              <div id="pm-direct" class="text-2xl font-mono text-good mt-1">—</div>
+            </div>
+            <div class="border-gradient rounded-xl p-3 text-center">
+              <div class="text-[10px] uppercase tracking-widest text-slate-500">cross</div>
+              <div id="pm-cross" class="text-2xl font-mono text-indigo-400 mt-1">—</div>
+            </div>
+            <div class="border-gradient rounded-xl p-3 text-center">
+              <div class="text-[10px] uppercase tracking-widest text-slate-500">inactive</div>
+              <div id="pm-inactive" class="text-2xl font-mono text-slate-500 mt-1">—</div>
+            </div>
+          </div>
+
+          <!-- 표 -->
+          <div class="border-gradient rounded-2xl">
+            <div class="px-4 py-2 border-b border-ink-700/40 flex items-center justify-between text-xs">
+              <div class="text-slate-500">cross 산식: <span class="text-accent-400">leg_a</span> &lt;op_a&gt; <span class="text-accent-400">leg_b</span> &lt;op_b&gt; × scale</div>
+              <div class="text-slate-500">debounce 10ms · stale 30s · worse-side</div>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-xs">
+                <thead class="text-[10px] uppercase tracking-widest text-slate-500">
+                  <tr>
+                    <th class="px-3 py-2 text-left">id</th>
+                    <th class="px-3 py-2 text-left">base/quote</th>
+                    <th class="px-3 py-2 text-left">kind</th>
+                    <th class="px-3 py-2 text-left">symbol / cross formula</th>
+                    <th class="px-3 py-2 text-right">spot</th>
+                    <th class="px-3 py-2 text-right">scale</th>
+                    <th class="px-3 py-2 text-right">decimals</th>
+                    <th class="px-3 py-2 text-center">active</th>
+                  </tr>
+                </thead>
+                <tbody id="pm-tbody" class="font-mono"></tbody>
+              </table>
+            </div>
+            <div id="pm-empty" class="hidden p-6 text-center text-slate-500 text-sm">
+              데이터 없음 — <code class="text-[11px]">fx-sync --table=pair</code> 로 시드.
+            </div>
+          </div>
+
+          <!-- 라이브 cross 통계 -->
+          <div class="border-gradient rounded-2xl p-4">
+            <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">CrossRateConsumer 통계 — /v1/cross-stats</div>
+            <div id="pm-stats" class="text-xs font-mono text-slate-400">로드 중...</div>
           </div>
         </div>
 
@@ -2424,7 +2544,8 @@ function goPage(name) {
   const titles = { dashboard: "대시보드", routes: "라우팅 룰", policy: "정책 엔진",
                    broker: "브로커 명령",
                    tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
-                   symbols: "통화쌍", pricing: "마진 테이블", swap: "선물환 스왑",
+                   symbols: "심볼 매핑 (legacy)", currency: "통화 마스터", "pair-master": "통화쌍 마스터",
+                   pricing: "마진 테이블", swap: "선물환 스왑",
                    holidays: "휴일 캘린더",
                    profiles: "프로파일",
                    users: "사용자 프로파일",
@@ -2439,6 +2560,8 @@ function goPage(name) {
   if (name === "wsmon")     initWSMon();
   if (name === "quote")     initQuote();
   if (name === "symbols")   loadSymbols();
+  if (name === "currency")  initCurrencyMaster();
+  if (name === "pair-master") initPairMaster();
   if (name === "pricing")   loadPricing();
   if (name === "swap")      initSwap();
   if (name === "holidays")  initHolidays();
@@ -4613,6 +4736,148 @@ async function swSave() {
   } catch (e) {
     toast("저장 실패: " + e.message, "err");
   }
+}
+
+// ───────── 통화 마스터 (view-only, mci-price /v1/currency) ─────────
+
+const cuState = { wired: false };
+
+async function initCurrencyMaster() {
+  if (!cuState.wired) {
+    cuState.wired = true;
+    $("#cu-reload").addEventListener("click", cuLoad);
+  }
+  await cuLoad();
+}
+
+async function cuLoad() {
+  const base = $("#cu-mci-url").value.trim().replace(/\/$/, "");
+  if (!base) { toast("mci-price URL 필요", "warn"); return; }
+  try {
+    const r = await fetch(base + "/v1/currency");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    $("#cu-count").textContent = j.count;
+    $("#cu-source").textContent = base + "/v1/currency";
+    cuRender(j.currencies || []);
+  } catch (e) {
+    toast("로드 실패: " + e.message, "err");
+    $("#cu-tbody").replaceChildren();
+    $("#cu-empty").classList.remove("hidden");
+  }
+}
+
+function cuRender(list) {
+  const tb = $("#cu-tbody");
+  tb.replaceChildren();
+  if (!list.length) { $("#cu-empty").classList.remove("hidden"); return; }
+  $("#cu-empty").classList.add("hidden");
+  for (const c of list) {
+    tb.appendChild(h("tr", { class: "border-t border-ink-700/30 hover:bg-ink-800/40" },
+      h("td", { class: "px-3 py-2 text-accent-400", text: c.code }),
+      h("td", { class: "px-3 py-2 text-slate-300", text: c.name || "" }),
+      h("td", { class: "px-3 py-2 text-right", text: String(c.decimal_places ?? 0) }),
+      h("td", { class: "px-3 py-2 text-right text-slate-500", text: String(c.sort_order ?? 0) }),
+      h("td", { class: "px-3 py-2 text-slate-500", text: c.ref_code || "" }),
+      h("td", { class: "px-3 py-2 text-center",
+        text: c.active ? "●" : "○",
+        style: "color: " + (c.active ? "rgb(74,222,128)" : "rgb(100,116,139)") }),
+    ));
+  }
+}
+
+// ───────── 통화쌍 마스터 (view-only) ─────────
+
+const pmState = { wired: false, statsTimer: null };
+
+async function initPairMaster() {
+  if (!pmState.wired) {
+    pmState.wired = true;
+    $("#pm-reload").addEventListener("click", () => { pmLoad(); pmLoadStats(); });
+  }
+  await pmLoad();
+  await pmLoadStats();
+  // stats 자동 갱신 (5초).
+  if (pmState.statsTimer) clearInterval(pmState.statsTimer);
+  pmState.statsTimer = setInterval(pmLoadStats, 5000);
+}
+
+async function pmLoad() {
+  const base = $("#pm-mci-url").value.trim().replace(/\/$/, "");
+  if (!base) { toast("mci-price URL 필요", "warn"); return; }
+  try {
+    const r = await fetch(base + "/v1/pair");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    pmRender(j.pairs || []);
+  } catch (e) {
+    toast("로드 실패: " + e.message, "err");
+    $("#pm-tbody").replaceChildren();
+    $("#pm-empty").classList.remove("hidden");
+  }
+}
+
+function pmRender(list) {
+  const tb = $("#pm-tbody");
+  tb.replaceChildren();
+  $("#pm-total").textContent = String(list.length);
+  let direct = 0, cross = 0, inactive = 0;
+  for (const p of list) {
+    if (!p.active) inactive++;
+    if (p.kind === "direct") direct++;
+    if (p.kind === "cross") cross++;
+  }
+  $("#pm-direct").textContent = String(direct);
+  $("#pm-cross").textContent = String(cross);
+  $("#pm-inactive").textContent = String(inactive);
+  if (!list.length) { $("#pm-empty").classList.remove("hidden"); return; }
+  $("#pm-empty").classList.add("hidden");
+  for (const p of list) {
+    let formula = "—";
+    if (p.kind === "direct") {
+      formula = p.symbol || "(no symbol)";
+    } else if (p.kind === "cross" && p.cross) {
+      const c = p.cross;
+      formula = `${c.leg_a} <${c.op_a}> ${c.leg_b} <${c.op_b}>`;
+    }
+    tb.appendChild(h("tr", { class: "border-t border-ink-700/30 hover:bg-ink-800/40" },
+      h("td", { class: "px-3 py-2 text-accent-400", text: p.id }),
+      h("td", { class: "px-3 py-2 text-slate-300", text: `${p.base}/${p.quote}` }),
+      h("td", { class: "px-3 py-2",
+        text: p.kind,
+        style: "color: " + (p.kind === "cross" ? "rgb(165,180,252)" : "rgb(74,222,128)") }),
+      h("td", { class: "px-3 py-2 text-slate-400 text-[11px]", text: formula }),
+      h("td", { class: "px-3 py-2 text-right text-slate-500", text: "T+" + (p.spot_days ?? 0) }),
+      h("td", { class: "px-3 py-2 text-right text-slate-500",
+        text: (p.cross?.scale != null ? String(p.cross.scale) : (p.scale_unit ? String(p.scale_unit) : "1")) }),
+      h("td", { class: "px-3 py-2 text-right text-slate-500", text: String(p.quote_decimals ?? 0) }),
+      h("td", { class: "px-3 py-2 text-center",
+        text: p.active ? "●" : "○",
+        style: "color: " + (p.active ? "rgb(74,222,128)" : "rgb(100,116,139)") }),
+    ));
+  }
+}
+
+async function pmLoadStats() {
+  const base = $("#pm-mci-url").value.trim().replace(/\/$/, "");
+  try {
+    const r = await fetch(base + "/v1/cross-stats");
+    if (!r.ok) return;
+    const j = await r.json();
+    const el = $("#pm-stats");
+    el.replaceChildren(
+      h("div", null,
+        "emits ", h("span", { class: "text-accent-400", text: String(j.emits_total) }),
+        " · debounce ", h("span", { class: "text-slate-500", text: String(j.skipped_debounce) }),
+        " · stale ", h("span", { class: "text-slate-500", text: String(j.skipped_stale) }),
+        " · missing_leg ", h("span", { class: "text-warn", text: String(j.skipped_missing_leg) }),
+        " · unknown_pair ", h("span", { class: "text-bad", text: String(j.skipped_unknown_pair) }),
+        " · errors ", h("span", { class: "text-bad", text: String(j.errors) }),
+      ),
+      h("div", { class: "mt-1 text-slate-500",
+        text: `formulas=${j.formula_count} · leg_keys=${j.leg_keys_count}` }),
+    );
+  } catch (_) { /* stats 실패는 silent */ }
 }
 
 // ───────── 휴일 캘린더 ─────────

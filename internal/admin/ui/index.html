@@ -345,6 +345,7 @@
         <div class="space-y-0.5 mb-2">
           <button data-page="audit" class="nav-btn nav-item"><span class="nav-ico">📜</span>감사 로그</button>
           <button data-page="guide" class="nav-btn nav-item"><span class="nav-ico">📖</span>운영 가이드</button>
+          <button data-page="tools" class="nav-btn nav-item"><span class="nav-ico">🧰</span>운영 도구 (외부 링크)</button>
         </div>
       </nav>
 
@@ -2295,6 +2296,29 @@
 
           <p class="text-[11px] text-slate-500">자세한 필드별 의미와 검사 순서는 docs/operations.md §A.1 ~ §A.6 참조. 본 화면은 §A.7 ~ §A.11 의 정보성 표만 노출합니다.</p>
         </div>
+
+        <!-- 운영 도구 (tools) — 외부 시스템 바로가기 모음. -->
+        <div id="page-tools" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">운영 도구 (외부 링크)</h3>
+              <p class="text-sm text-slate-400">
+                메트릭 시각화 / REST 직접 / 다른 mci-* 서비스 등 외부 URL 바로가기 모음.
+                각 카드 클릭 시 새 탭에서 열기. host 가 localhost 가 아니면 우측의 호스트 입력 후 ↻ 갱신.
+              </p>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-slate-400">host</span>
+              <input id="tools-host" value="localhost" placeholder="localhost"
+                class="px-2 py-1 rounded bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-[11px] w-40" />
+              <button id="tools-refresh" class="px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 text-xs">↻ 갱신</button>
+            </div>
+          </div>
+
+          <!-- 카드 그리드 — 그룹별 -->
+          <div id="tools-grid" class="space-y-4"></div>
+        </div>
+
       </section>
     </main>
   </div>
@@ -2551,7 +2575,7 @@ function goPage(name) {
                    users: "사용자 프로파일",
                    svcio: "서비스 명세", pricestats: "시세 통계",
                    margin: "마진 재계산", "margin-calc": "마진 계산기 (5-Layer)",
-                   audit: "감사 로그", guide: "운영 가이드" };
+                   audit: "감사 로그", guide: "운영 가이드", tools: "운영 도구 (외부 링크)" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
   if (name === "dashboard") loadDashboard();
@@ -2570,6 +2594,7 @@ function goPage(name) {
   if (name === "quoteid-engines") loadQEngines();
   if (name === "margin")    initMarginRecompute();
   if (name === "margin-calc") initMarginCalc();
+  if (name === "tools")     initTools();
   if (name === "svcio")     initSvcIO();
   if (name !== "pricestats") stopPriceStatsPoller();
   if (name === "pricestats") initPriceStats();
@@ -4735,6 +4760,99 @@ async function swSave() {
     await swLoad();
   } catch (e) {
     toast("저장 실패: " + e.message, "err");
+  }
+}
+
+// ───────── 운영 도구 (외부 링크 모음) ─────────
+
+const TOOLS_GROUPS = [
+  {
+    title: "📊 메트릭 시각화",
+    icon: "📊",
+    links: [
+      { name: "Grafana — 메인",          path: ":3030/dashboards",                                desc: "admin/admin · WTG 폴더에 P6 + QuoteID dashboard 자동 import",        scheme: "http" },
+      { name: "Grafana — P6 dashboard",  path: ":3030/d/wtg-p6-cross",                            desc: "Cross-rate / Pricing fan-out / Master 23 패널",                       scheme: "http" },
+      { name: "Grafana — QuoteID",       path: ":3030/d/wtg-quoteid",                             desc: "QuoteValidationService RPC / batch / async 17 패널",                  scheme: "http" },
+      { name: "Prometheus — targets",    path: ":9095/targets",                                   desc: "scrape job 4개 (mci-price/forwarder/edge-price/self) UP 확인",        scheme: "http" },
+      { name: "Prometheus — graph",      path: ":9095/graph?g0.expr=wtg_cross_emits_total",        desc: "PromQL 직접 (예: rate(wtg_cross_emits_total[5m]))",                   scheme: "http" },
+    ],
+  },
+  {
+    title: "🎯 mci-price REST (마스터 + 시세)",
+    icon: "🎯",
+    links: [
+      { name: "ping",                          path: ":8082/v1/ping" },
+      { name: "통화 마스터",                    path: ":8082/v1/currency",                              desc: "fx-sync 미러 — count + list" },
+      { name: "통화 상세 (USD)",                path: ":8082/v1/currency/USD" },
+      { name: "통화쌍 마스터",                  path: ":8082/v1/pair",                                   desc: "direct + cross 통합" },
+      { name: "통화쌍 상세 (USDKRW)",           path: ":8082/v1/pair/USDKRW" },
+      { name: "BEST 호가 snapshot",            path: ":8082/v1/best-stats",                             desc: "direct pair 의 multi-source BEST" },
+      { name: "Cross-rate 통계",               path: ":8082/v1/cross-stats",                            desc: "CrossRateConsumer emits/skipped/errors" },
+      { name: "PricingConsumer 통계",          path: ":8082/v1/price-stats",                            desc: "tick/match/drop/latency" },
+      { name: "Forward snapshot (USD/KRW)",   path: ":8082/v1/quote/forward-snapshot?pair=USD/KRW&profile=WEB.BRANCH.VIP", desc: "direct + 모든 tenor 의 forward 호가" },
+      { name: "Forward snapshot (JPY/KRW)",   path: ":8082/v1/quote/forward-snapshot?pair=JPY/KRW&profile=WEB.BRANCH.VIP", desc: "cross 합성 결과 (CrossRateConsumer.LatestCross)" },
+      { name: "Prometheus /metrics",          path: ":8082/metrics",                                   desc: "raw 텍스트 (wtg_cross_*, wtg_pricing_*, wtg_master_* 등)" },
+    ],
+  },
+  {
+    title: "📡 시세 source / edge",
+    icon: "📡",
+    links: [
+      { name: "quote-forwarder /stats",       path: ":9091/stats",                                     desc: "feed별 received / published / errors" },
+      { name: "quote-forwarder /metrics",     path: ":9091/metrics" },
+      { name: "mci-edge-price /v1/ping",      path: ":8083/v1/ping" },
+      { name: "mci-edge-price ws (subscribe)", path: ":8083/v1/subscribe?x_wtg_user=alice&profile=WEB.BRANCH.VIP", desc: "ws — 브라우저 직접 진입 시 upgrade 실패 (devtools network 로 확인)", noNewTab: true },
+    ],
+  },
+  {
+    title: "🔬 내부 검증 페이지",
+    icon: "🔬",
+    links: [
+      { name: "QuoteID /v1/quoteid/stats",    path: ":8082/v1/quoteid/stats",                          desc: "validate / mark-consumed 누적" },
+      { name: "mci-price pprof (DevMode)",    path: ":8082/debug/pprof/",                              desc: "heap / goroutine / mutex / block profile" },
+      { name: "mci-price pprof — heap",       path: ":8082/debug/pprof/heap?debug=1" },
+      { name: "mci-price pprof — goroutine",  path: ":8082/debug/pprof/goroutine?debug=1" },
+    ],
+  },
+];
+
+function initTools() {
+  if (!initTools.wired) {
+    initTools.wired = true;
+    $("#tools-refresh").addEventListener("click", renderTools);
+  }
+  renderTools();
+}
+
+function renderTools() {
+  const host = $("#tools-host").value.trim() || "localhost";
+  const grid = $("#tools-grid");
+  grid.replaceChildren();
+  for (const group of TOOLS_GROUPS) {
+    const card = h("div", { class: "border-gradient rounded-2xl p-4" });
+    card.appendChild(h("div", { class: "text-[11px] uppercase tracking-widest text-accent-400 mb-3", text: group.title }));
+    const inner = h("div", { class: "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2" });
+    for (const link of group.links) {
+      const scheme = link.scheme || "http";
+      const url = scheme + "://" + host + link.path;
+      const item = h("a", {
+        href: url,
+        target: link.noNewTab ? "_self" : "_blank",
+        rel: "noopener noreferrer",
+        class: "block px-3 py-2 rounded-md bg-ink-800/50 border border-ink-700/40 hover:border-accent-500 hover:bg-ink-700/60 transition",
+      });
+      item.appendChild(h("div", { class: "flex items-center justify-between" },
+        h("span", { class: "text-xs font-mono text-slate-200", text: link.name }),
+        h("span", { class: "text-[10px] text-slate-500", text: "↗" }),
+      ));
+      item.appendChild(h("div", { class: "text-[10px] text-slate-500 mt-0.5 break-all", text: link.path }));
+      if (link.desc) {
+        item.appendChild(h("div", { class: "text-[10px] text-slate-400 mt-1", text: link.desc }));
+      }
+      inner.appendChild(item);
+    }
+    card.appendChild(inner);
+    grid.appendChild(card);
   }
 }
 

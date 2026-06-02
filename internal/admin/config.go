@@ -80,8 +80,7 @@ type Config struct {
 	EtcdPolicyKey  string
 
 	// 시세 도메인 자원 etcd key — mci-price 의 watcher 와 동일한 컨벤션.
-	// 비어있으면 각 default 사용 (admin_symbols/admin_pricing/admin_profiles 참조).
-	EtcdSymbolsPrefix  string // default "wtg/quote/symbols/"
+	// 비어있으면 각 default 사용 (admin_pricing/admin_profiles 참조).
 	EtcdPricingKey     string // default "wtg/pricing/table"
 	EtcdProfilesPrefix string // default "wtg/price/profiles/"
 
@@ -99,7 +98,7 @@ type Config struct {
 	ChartDSN          string
 	ChartPoolMaxConns int // default 5
 
-	// etcd 클라이언트 TLS (공유 client 용 — symbols/pricing/profiles 핸들러 dial).
+	// etcd 클라이언트 TLS (공유 client 용 — pricing/profiles 핸들러 dial).
 	// routing/policy 의 자체 client 는 별도 트랙에서 적용 예정.
 	EtcdTLSCertFile   string
 	EtcdTLSKeyFile    string
@@ -220,9 +219,6 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_ADMIN_ETCD_POLICY_KEY"); v != "" {
 		cfg.EtcdPolicyKey = v
 	}
-	if v := os.Getenv("WTG_ADMIN_ETCD_SYMBOLS_PREFIX"); v != "" {
-		cfg.EtcdSymbolsPrefix = v
-	}
 	if v := os.Getenv("WTG_ADMIN_ETCD_PRICING_KEY"); v != "" {
 		cfg.EtcdPricingKey = v
 	}
@@ -304,7 +300,6 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "라우팅 룰 etcd endpoints (콤마 구분, 비면 in-memory)")
 	fs.StringVar(&cfg.EtcdRoutesPath, "etcd-prefix", cfg.EtcdRoutesPath, "etcd 키 prefix (default wtg/routes/)")
 	fs.StringVar(&cfg.EtcdPolicyKey, "etcd-policy-key", cfg.EtcdPolicyKey, "etcd 정책 단일 key (default wtg/policy)")
-	fs.StringVar(&cfg.EtcdSymbolsPrefix, "etcd-symbols-prefix", cfg.EtcdSymbolsPrefix, "etcd 통화쌍 prefix (default wtg/quote/symbols/)")
 	fs.StringVar(&cfg.EtcdPricingKey, "etcd-pricing-key", cfg.EtcdPricingKey, "etcd PricingTable 단일 key (default wtg/pricing/table)")
 	fs.StringVar(&cfg.EtcdProfilesPrefix, "etcd-profiles-prefix", cfg.EtcdProfilesPrefix, "etcd 활성 Profile prefix (default wtg/price/profiles/)")
 	fs.StringVar(&cfg.EtcdUserProfilesPrefix, "etcd-user-profiles-prefix", cfg.EtcdUserProfilesPrefix, "etcd 사용자 프로파일 prefix (default wtg/auth/user-profiles/)")

@@ -299,7 +299,6 @@
         <!-- 시세 카탈로그 — etcd watch 로 mci-price/mci-api 가 hot reload -->
         <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">시세 카탈로그</div>
         <div class="space-y-0.5 mb-3">
-          <button data-page="symbols"         class="nav-btn nav-item"><span class="nav-ico">🔤</span>심볼 매핑 (legacy)</button>
           <button data-page="currency"        class="nav-btn nav-item"><span class="nav-ico">🪙</span>통화 마스터</button>
           <button data-page="pair-master"     class="nav-btn nav-item"><span class="nav-ico">🔗</span>통화쌍 마스터</button>
           <button data-page="pricing"         class="nav-btn nav-item"><span class="nav-ico">💰</span>마진 테이블</button>
@@ -969,36 +968,6 @@
           </div>
         </div>
 
-        <!-- 통화쌍 (symbols) — quote.SymbolEntry CRUD via etcd → mci-price watch -->
-        <div id="page-symbols" class="page hidden space-y-4">
-          <div class="flex items-center justify-between">
-            <div>
-              <h3 class="text-lg font-semibold">통화쌍</h3>
-              <p class="text-sm text-slate-400">외부 심볼(USDKRW) ↔ 내부 pair(USD/KRW) 매핑. 비활성으로 토글하면 mci-price 가 즉시 해당 tick 을 drop. etcd watch 로 인스턴스 전체에 전파.</p>
-            </div>
-            <div class="flex items-center gap-2">
-              <button id="symbols-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 새로고침</button>
-              <button id="symbols-add" class="px-3 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">+ 신규</button>
-            </div>
-          </div>
-          <div class="border-gradient rounded-2xl overflow-hidden">
-            <table class="w-full text-sm">
-              <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
-                <tr class="border-b border-ink-700/60">
-                  <th class="text-left px-4 py-3 font-medium">Symbol</th>
-                  <th class="text-left px-4 py-3 font-medium">Pair</th>
-                  <th class="text-left px-4 py-3 font-medium">Active</th>
-                  <th class="text-right px-4 py-3 font-medium"></th>
-                </tr>
-              </thead>
-              <tbody id="symbols-tbody"></tbody>
-            </table>
-            <div id="symbols-empty" class="hidden p-8 text-center text-slate-500">
-              아직 등록된 통화쌍이 없습니다. <button class="text-accent-400 hover:text-accent-500" id="symbols-add2">신규 등록</button>
-            </div>
-          </div>
-        </div>
-
         <!-- 통화 마스터 (currency) — view-only. DB CMG005M → fx-sync → etcd → mci-price. -->
         <div id="page-currency" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -1572,36 +1541,6 @@
             <div class="flex justify-end gap-2 pt-2">
               <button onclick="closeUserModal()" class="px-4 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">취소</button>
               <button id="up-save" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm">저장</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 통화쌍 모달 -->
-        <div id="symbol-modal" class="fixed inset-0 bg-ink-950/80 z-50 hidden items-center justify-center p-4" style="backdrop-filter: blur(4px);">
-          <div class="bg-ink-850 border border-ink-700 rounded-2xl shadow-2xl max-w-md w-full p-5 space-y-3">
-            <div class="flex items-center justify-between">
-              <h4 id="symbol-modal-title" class="text-base font-semibold">신규 통화쌍</h4>
-              <button class="text-slate-400 hover:text-slate-200" onclick="closeSymbolModal()">✕</button>
-            </div>
-            <div class="space-y-2 text-sm">
-              <div>
-                <label class="text-xs text-slate-400">Symbol (외부 표기)</label>
-                <input id="sm-symbol" placeholder="USDKRW"
-                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
-              </div>
-              <div>
-                <label class="text-xs text-slate-400">Pair (내부 표기)</label>
-                <input id="sm-pair" placeholder="USD/KRW"
-                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
-              </div>
-              <label class="inline-flex items-center gap-2 text-xs text-slate-300">
-                <input type="checkbox" id="sm-active" />
-                활성 (체크 해제 시 mci-price 가 tick drop)
-              </label>
-            </div>
-            <div class="flex justify-end gap-2 pt-2">
-              <button onclick="closeSymbolModal()" class="px-4 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">취소</button>
-              <button id="sm-save" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm">저장</button>
             </div>
           </div>
         </div>
@@ -2605,7 +2544,7 @@ function goPage(name) {
   const titles = { dashboard: "대시보드", routes: "라우팅 룰", policy: "정책 엔진",
                    broker: "브로커 명령",
                    tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
-                   symbols: "심볼 매핑 (legacy)", currency: "통화 마스터", "pair-master": "통화쌍 마스터",
+                   currency: "통화 마스터", "pair-master": "통화쌍 마스터",
                    pricing: "마진 테이블", swap: "선물환 스왑",
                    holidays: "휴일 캘린더",
                    profiles: "프로파일",
@@ -2621,7 +2560,6 @@ function goPage(name) {
   if (name === "tester")    initTester();
   if (name === "wsmon")     initWSMon();
   if (name === "quote")     initQuote();
-  if (name === "symbols")   loadSymbols();
   if (name === "currency")  initCurrencyMaster();
   if (name === "pair-master") initPairMaster();
   if (name === "pricing")   loadPricing();
@@ -3066,100 +3004,6 @@ async function brkRun(path, label) {
       JSON.stringify(e.body || {}, null, 2);
     $("#brk-status").textContent = "failed · " + (Date.now() - t0) + " ms";
   }
-}
-
-// ───────── Symbols (통화쌍) ─────────
-let symbolsCache = [];
-async function loadSymbols() {
-  try {
-    const r = await api("/v1/admin/symbols");
-    symbolsCache = r.symbols || [];
-    renderSymbols();
-  } catch (e) {
-    toast("통화쌍 로드 실패: " + e.message, "err");
-  }
-}
-function renderSymbols() {
-  const tb = $("#symbols-tbody");
-  tb.replaceChildren();
-  if (!symbolsCache.length) {
-    $("#symbols-empty").classList.remove("hidden");
-    return;
-  }
-  $("#symbols-empty").classList.add("hidden");
-  for (const s of symbolsCache) {
-    const toggle = h("button", {
-      class: "text-xs px-2 py-1 rounded-full " +
-             (s.active ? "bg-good/15 text-good" : "bg-ink-700 text-slate-400"),
-      text: (s.active ? "● active" : "○ inactive"),
-    });
-    toggle.onclick = async () => {
-      try {
-        await api("/v1/admin/symbols/" + encodeURIComponent(s.symbol), {
-          method: "PUT",
-          body: JSON.stringify({ symbol: s.symbol, pair: s.pair, active: !s.active }),
-        });
-        toast(s.symbol + (s.active ? " 비활성화" : " 활성화"));
-        loadSymbols();
-      } catch (e) { toast(e.message, "err"); }
-    };
-    const editBtn = h("button", {
-      class: "text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700",
-      text: "수정",
-    });
-    editBtn.onclick = () => openSymbolModal(s);
-    const delBtn = h("button", {
-      class: "text-xs px-2 py-1 rounded-md bg-ink-800 hover:bg-bad/20 hover:text-bad",
-      text: "삭제",
-    });
-    delBtn.onclick = async () => {
-      if (!confirm(s.symbol + " 통화쌍을 삭제할까요?")) return;
-      try {
-        await api("/v1/admin/symbols/" + encodeURIComponent(s.symbol), { method: "DELETE" });
-        toast(s.symbol + " 삭제됨");
-        loadSymbols();
-      } catch (e) { toast(e.message, "err"); }
-    };
-    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
-      h("td", { class: "px-4 py-3 font-mono " + (s.active ? "" : "text-slate-500"), text: s.symbol }),
-      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: s.pair }),
-      h("td", { class: "px-4 py-3" }, toggle),
-      h("td", { class: "px-4 py-3 text-right space-x-1" }, editBtn, delBtn),
-    );
-    tb.appendChild(tr);
-  }
-}
-function openSymbolModal(entry) {
-  const isEdit = !!entry;
-  $("#symbol-modal-title").textContent = isEdit ? ("수정 — " + entry.symbol) : "신규 통화쌍";
-  $("#sm-symbol").value = entry?.symbol || "";
-  $("#sm-symbol").disabled = !!isEdit; // 수정 시 key 변경 금지
-  $("#sm-pair").value = entry?.pair || "";
-  $("#sm-active").checked = entry ? !!entry.active : true;
-  $("#symbol-modal").classList.remove("hidden");
-  $("#symbol-modal").classList.add("flex");
-}
-function closeSymbolModal() {
-  $("#symbol-modal").classList.add("hidden");
-  $("#symbol-modal").classList.remove("flex");
-}
-async function saveSymbol() {
-  const sym = $("#sm-symbol").value.trim();
-  const pair = $("#sm-pair").value.trim();
-  const active = $("#sm-active").checked;
-  if (!sym || !pair) {
-    toast("symbol, pair 모두 필요", "err");
-    return;
-  }
-  try {
-    await api("/v1/admin/symbols/" + encodeURIComponent(sym), {
-      method: "PUT",
-      body: JSON.stringify({ symbol: sym, pair: pair, active: active }),
-    });
-    toast(sym + " 저장됨");
-    closeSymbolModal();
-    loadSymbols();
-  } catch (e) { toast(e.message, "err"); }
 }
 
 // ───────── Pricing (마진 테이블) ─────────
@@ -4284,10 +4128,6 @@ function handleStreamEvent(ev) {
     case "profile":
       handleRemoteChange("profile", ev.data, "#page-profiles", loadProfiles,
         (d) => `프로파일 ${d.action === "delete" ? "삭제" : "변경"}`);
-      return;
-    case "symbol":
-      handleRemoteChange("symbol", ev.data, "#page-symbols", loadSymbols,
-        (d) => `${d.symbol || (d.entry && d.entry.symbol) || ""} ${d.action === "delete" ? "삭제" : "수정"}됨`);
       return;
     case "pricing":
       handleRemoteChange("pricing", ev.data, "#page-pricing", loadPricing,
@@ -8326,12 +8166,6 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#routes-refresh").onclick = loadRoutes;
   $("#routes-add").onclick = () => openRouteModal(null);
   $("#routes-add2").onclick = () => openRouteModal(null);
-
-  // symbols
-  $("#symbols-refresh").onclick = loadSymbols;
-  $("#symbols-add").onclick = () => openSymbolModal(null);
-  $("#symbols-add2").onclick = () => openSymbolModal(null);
-  $("#sm-save").onclick = saveSymbol;
 
   // pricing
   $("#pricing-reload").onclick = loadPricing;

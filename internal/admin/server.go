@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	apihandlers "github.com/winwaysystems/wtg/internal/api/handlers"
 	"github.com/winwaysystems/wtg/internal/api/middleware"
-	"github.com/jackc/pgx/v5/pgxpool"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 
@@ -45,7 +45,7 @@ type Server struct {
 	tlsReloader *tlsutil.Reloader
 	http        *http.Server
 
-	// 신규 자원 (symbols/pricing/profiles) 용 공유 etcd 클라이언트.
+	// 신규 자원 (pricing/profiles) 용 공유 etcd 클라이언트.
 	// EtcdEndpoints 가 비어있으면 nil — 핸들러는 503 반환.
 	etcdShared *clientv3.Client
 
@@ -113,7 +113,7 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 // Start — broker 연결 + HTTP listen (블로킹).
 func (s *Server) Start(ctx context.Context) error {
 	// DevMode + EtcdEndpoints 미설정 → embedded etcd 자동 기동.
-	// 결과: routes/policy/symbols/pricing/profiles/user-profiles/quoteid-engines
+	// 결과: routes/policy/pricing/profiles/user-profiles/quoteid-engines
 	// 가 코드 변경 없이 동일 etcd 를 통해 동작. 재시작 후에도 영속 (stable data dir).
 	if s.cfg.DevMode && strings.TrimSpace(s.cfg.EtcdEndpoints) == "" && s.devEtcd == nil {
 		srv, clientURL, err := startDevEmbeddedEtcd(ctx, "", s.logger)
@@ -256,9 +256,8 @@ func (s *Server) Start(ctx context.Context) error {
 		Hub:    s.hub,
 	}
 
-	// 시세 도메인 자원 (symbols/pricing/profiles) — etcd 직접 KV.
+	// 시세 도메인 자원 (pricing/profiles) — etcd 직접 KV.
 	// EtcdEndpoints 가 비어있으면 dial 안 함 (핸들러는 503).
-	var symbolsDeps *SymbolsDeps
 	var pricingDeps *PricingDeps
 	var profilesDeps *ProfilesDeps
 	if eps := policy.SplitEndpoints(s.cfg.EtcdEndpoints); len(eps) > 0 && s.etcdShared == nil {
@@ -297,13 +296,6 @@ func (s *Server) Start(ctx context.Context) error {
 		s.chartPool = pool
 		s.logger.Info("admin TimescaleDB pool 활성 (마진 재계산)",
 			slog.Int("max_conns", max))
-	}
-	symbolsDeps = &SymbolsDeps{
-		Cli:    s.etcdShared,
-		Prefix: s.cfg.EtcdSymbolsPrefix,
-		Logger: s.logger,
-		Audit:  s.audit,
-		Hub:    s.hub,
 	}
 	pricingDeps = &PricingDeps{
 		Cli:    s.etcdShared,
@@ -386,11 +378,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/admin/audit", AuditList(routeDeps))
 
 	// 시세 도메인 — etcd 직접 KV CRUD (mci-price 가 watch 로 즉시 반영).
-	mux.HandleFunc("GET /v1/admin/symbols", ListSymbols(symbolsDeps))
-	mux.HandleFunc("GET /v1/admin/symbols/{symbol}", GetSymbol(symbolsDeps))
-	mux.HandleFunc("PUT /v1/admin/symbols/{symbol}", PutSymbol(symbolsDeps))
-	mux.HandleFunc("DELETE /v1/admin/symbols/{symbol}", DeleteSymbol(symbolsDeps))
-
+	// SymbolMap 은 PairMaster derived view 이므로 별도 CRUD 없음 (fx-sync 가 SoT).
 	mux.HandleFunc("GET /v1/admin/pricing/table", GetPricingTable(pricingDeps))
 	mux.HandleFunc("PUT /v1/admin/pricing/table", PutPricingTable(pricingDeps))
 

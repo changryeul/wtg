@@ -37,14 +37,8 @@ func newTestMux(cli *clientv3.Client) http.Handler {
 	prefix := "test/"
 
 	mux := http.NewServeMux()
-	symDeps := &SymbolsDeps{Cli: cli, Prefix: prefix + "quote/symbols/", Logger: logger, Audit: audit}
 	prDeps := &PricingDeps{Cli: cli, Key: prefix + "pricing/table", Logger: logger, Audit: audit}
 	pfDeps := &ProfilesDeps{Cli: cli, Prefix: prefix + "price/profiles/", Logger: logger, Audit: audit}
-
-	mux.HandleFunc("GET /v1/admin/symbols", ListSymbols(symDeps))
-	mux.HandleFunc("GET /v1/admin/symbols/{symbol}", GetSymbol(symDeps))
-	mux.HandleFunc("PUT /v1/admin/symbols/{symbol}", PutSymbol(symDeps))
-	mux.HandleFunc("DELETE /v1/admin/symbols/{symbol}", DeleteSymbol(symDeps))
 
 	mux.HandleFunc("GET /v1/admin/pricing/table", GetPricingTable(prDeps))
 	mux.HandleFunc("PUT /v1/admin/pricing/table", PutPricingTable(prDeps))
@@ -134,102 +128,6 @@ func TestAdmin_UserProfiles_CRUD(t *testing.T) {
 		t.Errorf("DELETE 후 GET: status=%d, want 404", r.StatusCode)
 	}
 	r.Body.Close()
-}
-
-func TestAdmin_Symbols_CRUD(t *testing.T) {
-	cli := newEtcdClient(t)
-	ts := httptest.NewServer(newTestMux(cli))
-	defer ts.Close()
-
-	// 1) 빈 LIST.
-	resp, err := http.Get(ts.URL + "/v1/admin/symbols")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var listOut struct {
-		Symbols []map[string]any `json:"symbols"`
-		Count   int              `json:"count"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&listOut)
-	resp.Body.Close()
-	if listOut.Count != 0 {
-		t.Errorf("초기 count = %d, want 0", listOut.Count)
-	}
-
-	// 2) PUT 2건.
-	put := func(sym, pair string, active bool) {
-		body := strings.NewReader(`{"symbol":"` + sym + `","pair":"` + pair + `","active":` + boolStr(active) + `}`)
-		req, _ := http.NewRequest("PUT", ts.URL+"/v1/admin/symbols/"+sym, body)
-		r, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if r.StatusCode != 200 {
-			b, _ := io.ReadAll(r.Body)
-			t.Fatalf("PUT %s status=%d body=%s", sym, r.StatusCode, b)
-		}
-		r.Body.Close()
-	}
-	put("USDKRW", "USD/KRW", true)
-	put("EURKRW", "EUR/KRW", true)
-
-	// 3) GET 단건.
-	r, _ := http.Get(ts.URL + "/v1/admin/symbols/USDKRW")
-	if r.StatusCode != 200 {
-		t.Fatalf("GET USDKRW status=%d", r.StatusCode)
-	}
-	r.Body.Close()
-
-	// 4) LIST 후 2건.
-	resp, _ = http.Get(ts.URL + "/v1/admin/symbols")
-	_ = json.NewDecoder(resp.Body).Decode(&listOut)
-	resp.Body.Close()
-	if listOut.Count != 2 {
-		t.Errorf("count = %d, want 2", listOut.Count)
-	}
-
-	// 5) DELETE.
-	req, _ := http.NewRequest("DELETE", ts.URL+"/v1/admin/symbols/USDKRW", nil)
-	r, _ = http.DefaultClient.Do(req)
-	if r.StatusCode != 200 {
-		t.Fatalf("DELETE status=%d", r.StatusCode)
-	}
-	r.Body.Close()
-
-	// 6) GET 삭제된 항목 → 404.
-	r, _ = http.Get(ts.URL + "/v1/admin/symbols/USDKRW")
-	if r.StatusCode != 404 {
-		t.Errorf("삭제된 항목 GET status=%d, want 404", r.StatusCode)
-	}
-	r.Body.Close()
-}
-
-func TestAdmin_Symbols_ValidationErrors(t *testing.T) {
-	cli := newEtcdClient(t)
-	ts := httptest.NewServer(newTestMux(cli))
-	defer ts.Close()
-
-	cases := []struct {
-		name string
-		body string
-		want int
-	}{
-		{"pair 누락", `{"symbol":"X","active":true}`, 400},
-		{"bad JSON", `not json`, 400},
-		{"pair 슬래시 없음", `{"symbol":"X","pair":"USDKRW","active":true}`, 400},
-		{"pair 슬래시 2개", `{"symbol":"X","pair":"USD/KR/W","active":true}`, 400},
-		{"pair base 빈값", `{"symbol":"X","pair":"/KRW","active":true}`, 400},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			req, _ := http.NewRequest("PUT", ts.URL+"/v1/admin/symbols/X", strings.NewReader(tc.body))
-			r, _ := http.DefaultClient.Do(req)
-			defer r.Body.Close()
-			if r.StatusCode != tc.want {
-				t.Errorf("status=%d, want %d", r.StatusCode, tc.want)
-			}
-		})
-	}
 }
 
 func TestAdmin_PricingTable_PutGet(t *testing.T) {
@@ -393,23 +291,16 @@ func TestAdmin_503_WhenEtcdMissing(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mux := http.NewServeMux()
 	// Cli nil 로 deps 구성 — 모든 핸들러는 503 반환해야.
-	symDeps := &SymbolsDeps{Cli: nil, Logger: logger}
-	mux.HandleFunc("GET /v1/admin/symbols", ListSymbols(symDeps))
+	prDeps := &PricingDeps{Cli: nil, Logger: logger}
+	mux.HandleFunc("GET /v1/admin/pricing/table", GetPricingTable(prDeps))
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	r, _ := http.Get(ts.URL + "/v1/admin/symbols")
+	r, _ := http.Get(ts.URL + "/v1/admin/pricing/table")
 	if r.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("status=%d, want 503", r.StatusCode)
 	}
 	r.Body.Close()
-}
-
-func boolStr(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }
 
 func TestAdmin_QuoteIDEngines_CRUD(t *testing.T) {

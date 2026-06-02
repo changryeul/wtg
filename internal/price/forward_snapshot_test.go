@@ -138,7 +138,10 @@ func TestForwardSnapshot_NoCustomerMatch(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	resp, _ := http.Get(srv.URL + "?pair=USD/KRW&profile=WEB.BRANCH.VIP")
+	resp, err := http.Get(srv.URL + "?pair=USD/KRW&profile=WEB.BRANCH.VIP")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var got ForwardSnapshot
 	_ = json.NewDecoder(resp.Body).Decode(&got)
@@ -160,9 +163,9 @@ func TestForwardSnapshot_BadRequest(t *testing.T) {
 	defer srv.Close()
 
 	cases := []string{
-		"?profile=WEB.BRANCH.VIP",                  // pair 누락
-		"?pair=USD/KRW",                            // profile 누락
-		"?pair=USD/KRW&profile=INVALID",            // profile token 수 != 3
+		"?profile=WEB.BRANCH.VIP",       // pair 누락
+		"?pair=USD/KRW",                 // profile 누락
+		"?pair=USD/KRW&profile=INVALID", // profile token 수 != 3
 	}
 	for _, q := range cases {
 		resp, _ := http.Get(srv.URL + q)

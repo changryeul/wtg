@@ -33,9 +33,9 @@ const MaxBatchConsumeSize = 1000
 
 // FIX 4.4 OrdRejReason (tag 103) 매핑 — RFC §4.3.
 const (
-	ordRejReasonNotFound int32 = 5  // Unknown order
-	ordRejReasonExpired  int32 = 13 // Stale order
-	ordRejReasonDuplicate int32 = 6 // Duplicate order — ALREADY_CONSUMED 매핑
+	ordRejReasonNotFound  int32 = 5  // Unknown order
+	ordRejReasonExpired   int32 = 13 // Stale order
+	ordRejReasonDuplicate int32 = 6  // Duplicate order — ALREADY_CONSUMED 매핑
 )
 
 // QuoteValidationServer 는 wtgpb.QuoteValidationServiceServer 구현.
@@ -175,43 +175,13 @@ func (s *QuoteValidationServer) checkEngine(engineID, op string) (bool, string) 
 	if !ok {
 		return false, "engine_id not in allowlist"
 	}
-	if meta.ExpiresAt != "" {
-		// EngineMeta.expiredAt 은 내부 메서드라 직접 비교 불가 — 동일 로직 inline.
-		if expired := isMetaExpired(meta, s.now()); expired {
-			return false, "engine_id expired"
-		}
+	if meta.ExpiredAt(s.now()) {
+		return false, "engine_id expired"
 	}
-	if !metaHasPermission(meta, op) {
+	if !meta.HasPermission(op) {
 		return false, "engine_id lacks " + op + " permission"
 	}
 	return true, ""
-}
-
-// metaHasPermission — quoteid.EngineMeta 의 hasPermission 은 unexported.
-// 동일 로직: Permissions 비어있으면 풀 권한.
-func metaHasPermission(m quoteid.EngineMeta, op string) bool {
-	if len(m.Permissions) == 0 {
-		return true
-	}
-	for _, p := range m.Permissions {
-		if p == op {
-			return true
-		}
-	}
-	return false
-}
-
-// isMetaExpired — ExpiresAt 파싱 + 비교. parse 실패는 fail-open
-// (잘못된 JSON 으로 운영 중단 회피, 운영자가 etcd 값 수정).
-func isMetaExpired(m quoteid.EngineMeta, now time.Time) bool {
-	if m.ExpiresAt == "" {
-		return false
-	}
-	exp, err := time.Parse(time.RFC3339, m.ExpiresAt)
-	if err != nil {
-		return false
-	}
-	return !now.Before(exp)
 }
 
 // permissionDenied — 모든 핸들러가 RBAC 거절 시 공통으로 호출.
@@ -575,18 +545,18 @@ type QuoteValidationStats struct {
 
 func (s *QuoteValidationServer) Stats() QuoteValidationStats {
 	return QuoteValidationStats{
-		Total:           s.callsTotal.Load(),
-		OK:              s.callsOK.Load(),
-		NotFound:        s.callsNotFound.Load(),
-		Expired:         s.callsExpired.Load(),
-		Consumed:        s.callsConsumed.Load(),
-		Internal:        s.callsInternal.Load(),
-		ConsumeTotal:    s.consumeTotal.Load(),
-		ConsumeOK:       s.consumeOK.Load(),
-		ConsumeAlready:  s.consumeAlready.Load(),
-		ConsumeNotFound: s.consumeNotFound.Load(),
-		ConsumeExpired:  s.consumeExpired.Load(),
-		ConsumeInternal: s.consumeInternal.Load(),
+		Total:             s.callsTotal.Load(),
+		OK:                s.callsOK.Load(),
+		NotFound:          s.callsNotFound.Load(),
+		Expired:           s.callsExpired.Load(),
+		Consumed:          s.callsConsumed.Load(),
+		Internal:          s.callsInternal.Load(),
+		ConsumeTotal:      s.consumeTotal.Load(),
+		ConsumeOK:         s.consumeOK.Load(),
+		ConsumeAlready:    s.consumeAlready.Load(),
+		ConsumeNotFound:   s.consumeNotFound.Load(),
+		ConsumeExpired:    s.consumeExpired.Load(),
+		ConsumeInternal:   s.consumeInternal.Load(),
 		BatchTotal:        s.batchTotal.Load(),
 		BatchItems:        s.batchItems.Load(),
 		BatchConsumeTotal: s.batchConsumeTotal.Load(),

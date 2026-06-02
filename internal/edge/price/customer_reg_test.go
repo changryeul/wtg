@@ -53,7 +53,7 @@ type mockPriceServer struct {
 	wtgpb.UnimplementedPriceServiceServer
 
 	mu       sync.Mutex
-	regs     []wtgpb.CustomerRegistration
+	regs     []*wtgpb.CustomerRegistration
 	cqSubs   []wtgpb.PriceService_SubscribeCustomerQuoteServer
 	regClose chan struct{} // 테스트가 stream 강제 종료에 쓰는 신호
 }
@@ -77,7 +77,7 @@ func (m *mockPriceServer) RegisterCustomer(stream wtgpb.PriceService_RegisterCus
 			return err
 		}
 		m.mu.Lock()
-		m.regs = append(m.regs, *req)
+		m.regs = append(m.regs, req)
 		m.mu.Unlock()
 		_ = stream.Send(&wtgpb.CustomerAck{CustomerId: req.GetCustomerId(), Ok: true})
 	}
@@ -91,20 +91,10 @@ func (m *mockPriceServer) SubscribeCustomerQuote(req *wtgpb.CustomerQuoteSubscri
 	return nil
 }
 
-// pushCustomerQuote — 활성 SubscribeCustomerQuote stream 들에 quote 송신.
-func (m *mockPriceServer) pushCustomerQuote(cq *wtgpb.CustomerQuote) {
-	m.mu.Lock()
-	subs := append([]wtgpb.PriceService_SubscribeCustomerQuoteServer(nil), m.cqSubs...)
-	m.mu.Unlock()
-	for _, s := range subs {
-		_ = s.Send(cq)
-	}
-}
-
-func (m *mockPriceServer) registrations() []wtgpb.CustomerRegistration {
+func (m *mockPriceServer) registrations() []*wtgpb.CustomerRegistration {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]wtgpb.CustomerRegistration, len(m.regs))
+	out := make([]*wtgpb.CustomerRegistration, len(m.regs))
 	copy(out, m.regs)
 	return out
 }

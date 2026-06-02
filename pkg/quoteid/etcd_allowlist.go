@@ -40,8 +40,8 @@ type EngineMeta struct {
 	Contact string `json:"contact,omitempty"`
 }
 
-// hasPermission — Permissions 가 비어있으면 풀 권한 (default).
-func (m EngineMeta) hasPermission(op string) bool {
+// HasPermission — Permissions 가 비어있으면 풀 권한 (default).
+func (m EngineMeta) HasPermission(op string) bool {
 	if len(m.Permissions) == 0 {
 		return true
 	}
@@ -53,10 +53,10 @@ func (m EngineMeta) hasPermission(op string) bool {
 	return false
 }
 
-// expiredAt — ExpiresAt 빈값이면 false (무기한). 비교 시각 t 와 RFC3339 파싱
+// ExpiredAt — ExpiresAt 빈값이면 false (무기한). 비교 시각 t 와 RFC3339 파싱
 // 실패 시 정책상 "만료 안 됨" 으로 fail-open (잘못된 JSON 으로 운영 중단 회피).
 // 운영자가 발견하면 etcd 의 잘못된 값 수정.
-func (m EngineMeta) expiredAt(t time.Time) bool {
+func (m EngineMeta) ExpiredAt(t time.Time) bool {
 	if m.ExpiresAt == "" {
 		return false
 	}

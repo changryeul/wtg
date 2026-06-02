@@ -87,7 +87,10 @@ func TestForwardLock_NoCustomer_ProfileOnly(t *testing.T) {
 	body, _ := json.Marshal(ForwardLockRequest{
 		Pair: "USD/KRW", Tenor: "1M", Profile: "WEB.BRANCH.VIP",
 	})
-	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var got ForwardLockResponse
 	_ = json.NewDecoder(resp.Body).Decode(&got)
@@ -154,7 +157,10 @@ func TestForwardLock_ValueDate_BrokenDate(t *testing.T) {
 		Profile:    "WEB.BRANCH.VIP",
 		CustomerID: "alice",
 	})
-	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d", resp.StatusCode)
@@ -214,7 +220,10 @@ func TestForwardLock_ValueDate_OutOfRange_TooSmall(t *testing.T) {
 		Pair: "USD/KRW", ValueDate: spot.Format("2006-01-02"),
 		Profile: "WEB.BRANCH.VIP", CustomerID: "alice",
 	})
-	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 400 {
 		t.Errorf("status = %d, want 400 (out of range)", resp.StatusCode)
@@ -233,7 +242,10 @@ func TestForwardLock_ValueDate_Exact(t *testing.T) {
 		Pair: "USD/KRW", ValueDate: vd.Format("2006-01-02"),
 		Profile: "WEB.BRANCH.VIP", CustomerID: "alice",
 	})
-	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	var got ForwardLockResponse
 	_ = json.NewDecoder(resp.Body).Decode(&got)
@@ -254,7 +266,10 @@ func TestForwardLock_ValueDate_BadFormat(t *testing.T) {
 		Pair: "USD/KRW", ValueDate: "not-a-date",
 		Profile: "WEB.BRANCH.VIP",
 	})
-	resp, _ := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	resp, err := http.Post(srv.URL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 400 {
 		t.Errorf("status = %d, want 400", resp.StatusCode)

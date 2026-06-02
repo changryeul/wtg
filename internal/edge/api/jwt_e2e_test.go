@@ -186,7 +186,10 @@ func TestEdgeJWTBodyPassthrough(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, edgeSrv.URL+"/v1/x", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, _ := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	body, _ := io_ReadAll(resp.Body)
 	if !strings.Contains(string(body), `"hello":"world"`) {

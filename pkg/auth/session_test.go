@@ -56,7 +56,7 @@ func TestSession_SubscriptionsSnapshot(t *testing.T) {
 	}
 
 	// snapshot 이 내부 상태와 분리되어 있는지 확인 (호출자 수정 → 내부 영향 없음)
-	got = append(got, "BOGUS")
+	_ = append(got, "BOGUS")
 	if s.IsSubscribed("BOGUS") {
 		t.Error("snapshot 수정이 세션 상태에 영향을 줘서는 안 됨")
 	}

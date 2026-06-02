@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
 
 func mkHTTPGateway(t *testing.T) (*httptest.Server, *QuoteValidationServer) {
@@ -51,7 +49,6 @@ func TestQuoteValidationHTTP_Validate_OK(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("status=%d body=%s", code, body)
 	}
-	var resp wtgpb.ValidateResponse
 	// protojson 사용 — record 안의 quoteId 포함된 JSON.
 	if err := json.Unmarshal([]byte(body), &struct {
 		Status string `json:"status"`
@@ -63,8 +60,6 @@ func TestQuoteValidationHTTP_Validate_OK(t *testing.T) {
 	}{}); err != nil {
 		t.Fatalf("JSON parse: %v body=%s", err, body)
 	}
-	// 더 엄격한 검증 — proto-aware parse.
-	_ = resp
 	if !strings.Contains(body, `"status":"OK"`) {
 		t.Errorf("status 누락: %s", body)
 	}

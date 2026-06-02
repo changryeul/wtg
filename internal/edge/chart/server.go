@@ -234,6 +234,7 @@ func (s *Server) buildProxy(upstream *url.URL) *httputil.ReverseProxy {
 
 	origDirector := proxy.Director
 	proxy.Director = func(r *http.Request) {
+		s.totalRequests.Add(1)
 		origDirector(r)
 		// 외부에서 들어온 X-WTG-* 헤더 위변조 차단 — 무조건 strip.
 		stripIngressHeaders(r.Header)

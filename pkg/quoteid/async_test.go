@@ -17,7 +17,6 @@ type fakeRegistry struct {
 	putCalls  int
 	manyCalls int
 	delay     time.Duration
-	failPut   atomic.Bool
 	failMany  atomic.Bool
 }
 

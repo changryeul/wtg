@@ -140,26 +140,6 @@ func trimNul(s string) string {
 	return s
 }
 
-// peekSource 는 v1 JSON envelope body 에서 "src" 필드만 가볍게 추출한다.
-// 전체 envelope 디코드는 downstream consumer 가 별도로 (bid/ask 추출 시)
-// 수행하므로 여기선 src 만. 파싱 실패 / src 없음 → 빈 문자열.
-func peekSource(body []byte) string {
-	// trailing NUL padding 제거 (broker fixed buffer 잔여).
-	for len(body) > 0 && body[len(body)-1] == 0 {
-		body = body[:len(body)-1]
-	}
-	if len(body) == 0 {
-		return ""
-	}
-	var s struct {
-		Src string `json:"src"`
-	}
-	if err := json.Unmarshal(body, &s); err != nil {
-		return ""
-	}
-	return s.Src
-}
-
 // ParseEnvelopes 는 pushdata.msgb 의 v1 envelope (단일 객체 또는 배열) 을
 // auto-detect 해서 []quote.JSONEnvelope 로 디코드한다. 첫 non-whitespace
 // 바이트가 `[` 이면 배열, 그 외에는 단일 객체로 처리. 단일 객체는 길이 1

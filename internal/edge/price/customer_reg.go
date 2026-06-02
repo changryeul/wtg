@@ -40,7 +40,7 @@ type customerRegManager struct {
 
 	// 직렬 송신 큐. 단일 RegisterCustomer stream 의 send 는 직렬화 필요 (gRPC
 	// stream 동시 Send 금지).
-	queue chan wtgpb.CustomerRegistration
+	queue chan *wtgpb.CustomerRegistration
 
 	totalRegistered   atomic.Uint64
 	totalUnregistered atomic.Uint64
@@ -59,7 +59,7 @@ func newCustomerRegManager(upstream *grpc.ClientConn, subscriberID string, logge
 		upstream:     upstream,
 		subscriberID: subscriberID,
 		active:       make(map[string]string),
-		queue:        make(chan wtgpb.CustomerRegistration, 1024),
+		queue:        make(chan *wtgpb.CustomerRegistration, 1024),
 	}
 }
 
@@ -81,7 +81,7 @@ func (m *customerRegManager) Register(customerID, profileKey string) {
 	m.amu.Lock()
 	m.active[customerID] = profileKey
 	m.amu.Unlock()
-	m.enqueue(wtgpb.CustomerRegistration{
+	m.enqueue(&wtgpb.CustomerRegistration{
 		Op:         wtgpb.CustomerRegistration_OP_REGISTER,
 		CustomerId: customerID,
 		ProfileKey: profileKey,
@@ -96,7 +96,7 @@ func (m *customerRegManager) Unregister(customerID string) {
 	m.amu.Lock()
 	delete(m.active, customerID)
 	m.amu.Unlock()
-	m.enqueue(wtgpb.CustomerRegistration{
+	m.enqueue(&wtgpb.CustomerRegistration{
 		Op:         wtgpb.CustomerRegistration_OP_UNREGISTER,
 		CustomerId: customerID,
 	})
@@ -104,7 +104,7 @@ func (m *customerRegManager) Unregister(customerID string) {
 
 // enqueue — non-blocking. queue full 이면 drop + warn (재연결 시 active set
 // 으로 self-heal 되므로 일부 등록 누락 허용).
-func (m *customerRegManager) enqueue(reg wtgpb.CustomerRegistration) {
+func (m *customerRegManager) enqueue(reg *wtgpb.CustomerRegistration) {
 	select {
 	case m.queue <- reg:
 	default:
@@ -148,10 +148,10 @@ func (m *customerRegManager) streamLoop(ctx context.Context) {
 // streamOnce — 단일 RegisterCustomer stream lifecycle.
 //
 // 흐름:
-//   1. NewStream → 활성 active set 으로 self-heal 재등록.
-//   2. recv goroutine 가동 (ack 수신 + 로깅).
-//   3. send loop — queue 에서 꺼내 stream.Send.
-//   4. ctx 종료 또는 stream 오류 시 종료.
+//  1. NewStream → 활성 active set 으로 self-heal 재등록.
+//  2. recv goroutine 가동 (ack 수신 + 로깅).
+//  3. send loop — queue 에서 꺼내 stream.Send.
+//  4. ctx 종료 또는 stream 오류 시 종료.
 func (m *customerRegManager) streamOnce(ctx context.Context, client wtgpb.PriceServiceClient) error {
 	stream, err := client.RegisterCustomer(ctx)
 	if err != nil {
@@ -165,7 +165,7 @@ func (m *customerRegManager) streamOnce(ctx context.Context, client wtgpb.PriceS
 	healCount := 0
 	for cid, pkey := range m.active {
 		select {
-		case m.queue <- wtgpb.CustomerRegistration{
+		case m.queue <- &wtgpb.CustomerRegistration{
 			Op:         wtgpb.CustomerRegistration_OP_REGISTER,
 			CustomerId: cid,
 			ProfileKey: pkey,
@@ -214,7 +214,7 @@ func (m *customerRegManager) streamOnce(ctx context.Context, client wtgpb.PriceS
 		case err := <-recvDone:
 			return err
 		case reg := <-m.queue:
-			if err := stream.Send(&reg); err != nil {
+			if err := stream.Send(reg); err != nil {
 				_ = stream.CloseSend()
 				return err
 			}

@@ -79,7 +79,10 @@ func TestEdgeChart_API_NoAuthConfigured(t *testing.T) {
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	resp, _ := http.Get(ts.URL + "/v1/chart")
+	resp, err := http.Get(ts.URL + "/v1/chart")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Errorf("미설정 인증: status=%d, want 200 (사내망 default)", resp.StatusCode)
@@ -254,7 +257,7 @@ func TestEdgeChart_RateLimit_BurstExhausted(t *testing.T) {
 	cfg.UpstreamURL = up.URL
 	cfg.DevMode = true
 	cfg.IPRatePerSec = 1 // 1 TPS, burst 작게
-	cfg.IPBurst = 2     // 첫 2 요청은 burst 로 통과, 그 이상은 429
+	cfg.IPBurst = 2      // 첫 2 요청은 burst 로 통과, 그 이상은 429
 	s := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	h, _ := s.BuildHandler()
 	ts := httptest.NewServer(h)
@@ -290,7 +293,10 @@ func TestEdgeChart_HealthzNoAuth(t *testing.T) {
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
-	resp, _ := http.Get(ts.URL + "/healthz")
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Errorf("/healthz status=%d, want 200", resp.StatusCode)

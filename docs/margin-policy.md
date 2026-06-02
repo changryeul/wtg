@@ -242,16 +242,76 @@ SpotDate(now, spot_days=2) = AddBusinessDaysCal(startOfDay(now), 2, calendar)
 
 ## 7. 회사별 변형 항목 정리
 
+### 7.1 §1~§6 산식 자체의 분기점
+
+이미 구현된 layer 의 **산식 옵션** — DB 데이터 X, 코드 수정 필요.
+
 | 항목 | WTG default | 변형 옵션 | 변경 위치 |
 |------|-------------|----------|-----------|
-| HQ + Site 합산 | 추가 (additive) | max / replace | engine.go ApplyForCustomer |
-| Customer override 가 swap 무시 | swap 유지 | swap 도 무시 | engine.go override 분기 |
-| Customer 매칭 정책 | priority desc 첫 매칭 | 모든 매칭 합산 | engine.go matchCustomerRule |
-| Cross 합성 | worse-side | mid / BBO | crossrate.go contrib* |
-| Forward broken-date 보간 | 선형 | cubic spline / yield curve | valuedate.go InterpolateSwap |
-| Tenor 일수 | DefaultTenorDays (ACT/365) | modified following | valuedate.go DefaultTenorDays |
-| Holiday 적용 범위 | 단일 캘린더 | 통화 union | calendar.go (확장 필요) |
+| HQ + Site 합산 | 추가 (additive) | max / replace | `engine.go` `ApplyForCustomer` |
+| Customer override 가 swap 무시 | swap 유지 | swap 도 무시 | `engine.go` override 분기 |
+| Customer 매칭 정책 | priority desc 첫 매칭 | 모든 매칭 합산 | `engine.go` `matchCustomerRule` |
+| Cross 합성 | worse-side | mid / BBO | `crossrate.go` `contrib*` |
+| Forward broken-date 보간 | 선형 | cubic spline / yield curve | `valuedate.go` `InterpolateSwap` |
+| Tenor 일수 | DefaultTenorDays (ACT/365) | modified following | `valuedate.go` `DefaultTenorDays` |
+| Holiday 적용 범위 | 단일 캘린더 | 통화 union | `calendar.go` (확장 필요) |
 | Bid/Ask 부호 | bid 차감 / ask 가산 | (동일) | 변경 권장 X |
+
+### 7.2 §1~§6 에 없는 회사별 비즈니스 룰 카테고리
+
+WTG 가 **현재 지원하지 않는** 정책 패턴들. 운영 도입 결정 시 §7.3 의 hook 으로 확장.
+
+| 카테고리 | 의도 | 입력 데이터 | 적용 시점 | WTG 확장 위치 |
+|---------|------|-----------|----------|--------------|
+| **A. 누적 거래량 기반 할인** | 월별 N$ 이상 거래 고객에게 마진 X% 할인 | customer_id 별 월 누적 / etcd 또는 Redis | `ApplyForCustomer` 의 customer layer | 새 layer `Volume`, customer.go 옆 `volume.go` |
+| **B. 시간대별 마진 (TimeWindow 확장)** | 장외/주말/야간에 마진 가산 (변동성 보상) | 시간대 룰 (`time_windows` 이미 도입) | 모든 layer entry 의 `window` 필드 매칭 | 이미 구현 — DB CMG015/019 에 `time_window` 컬럼 추가만 필요 |
+| **C. 변동성 추적 마진 (ATR)** | 최근 N분 ATR 이 임계 초과 시 마진 동적 확장 | mci-price 의 BestConsumer recent tick window | `Apply` 직전 추가 dynamic layer | 새 `volatility.go` + ring buffer 기반 ATR |
+| **D. 환위험 한도 기반 자동 마진** | 회사 net position 이 한 방향 누적 시 그쪽 가격 unfavorable | 외환 시스템의 hedge 잔량 | `Apply` 결과에 ±α 가산 | 새 layer `RiskAdjust` — 외부 REST/etcd 입력 |
+| **E. 통화 group 별 차등** | KRW pair / Major / 신흥국 group 별 다른 base 마진 | currency master 의 `group` 컬럼 | HQ lookup 전 group 매칭 우선 | `engine.go` `lookupHQ` 분기 추가 |
+| **F. 최소 마진 floor / 최대 마진 cap** | 시장 변동성 이하로 낮아지지 않도록 / 너무 높지 않도록 | floor/cap 정책 entry | `Apply` 결과 후처리 | `engine.go` 끝부분 `clamp(minSpread, maxSpread)` |
+| **G. 시장 휴장 시 마진 가산** | 주요 시장 (런던/뉴욕) 휴장 중에는 spread 확장 | session_clock + 거래소 캘린더 | TimeWindow 와 유사 | 새 `market_hours.go` |
+| **H. 신규 고객 promotion 마진** | 등록 N일 이내 고객에게 마진 −α | customer 의 created_at | customer layer 의 priority 보정 | `matchCustomerRule` 의 추가 필터 |
+| **I. 채널별 보너스 (모바일 vs 영업점)** | 모바일 채널 마진 −α (디지털 가입 유도) | Profile.Channel | Site margin 의 channel 별 entry 로 이미 가능 | DB 만 추가 |
+| **J. 종가 (closing rate) 우선 매칭** | 일정 시각 이후 거래는 직전 종가 ±α 만 허용 | daily snapshot | `Apply` 진입 전 시각 분기 | `engine.go` 앞단 분기 — closing snapshot lookup |
+| **K. 거래 통화 한도** | 통화별 일/월 한도 초과 시 가격 unfavorable + 알림 | 누적 거래량 / 한도 정책 | engine 외부 (mci-api `/v1/tx` 진입 시 거부) | **WTG 책임 X** — 매매 엔진에 위임 (`docs/auth.md`) |
+
+> 카테고리 K 는 **WTG 가 처리하지 말 것** — 비즈니스 권한이라 매매 엔진 (`mymqd` AP) 책임.
+> WTG 는 가격 산출만, 거래 거부는 엔진의 응답을 그대로 전달.
+
+### 7.3 코드 확장 hook 위치 (plugin 화 후보)
+
+현재 `engine.go.ApplyForCustomer` 가 모든 layer 를 inline 으로 계산. 회사별 변형이
+많아지면 다음 hook 으로 분리 권장:
+
+```go
+// pkg/pricing/engine.go — 미구현, 도입 시 시그니처 제안
+type CustomLayer interface {
+    // 누적 마진에 contribution. ctx 는 (customer, table version, now).
+    Contribute(ctx ApplyContext, current MarginAccum) MarginContribution
+    Name() string  // audit / metric 라벨
+}
+
+type PricingTable struct {
+    // ... 기존 필드 ...
+    customLayers []CustomLayer  // 등록 순서대로 누적
+}
+```
+
+도입 시 §7.2 의 A/C/D/G 가 각 `CustomLayer` 구현체로 빠짐.
+각 contribution 은 `quoteid.Record` 에 별도 필드로 보존 (분쟁 추적용).
+
+### 7.4 회사별 정책 예시 (가상)
+
+| 회사 | 정책 조합 | 특징 |
+|------|-----------|------|
+| 시중은행 A | §1 + §2 + §3 + §4 + §F (cap) + §A (VIP) | 표준 + 보호 장치 + VIP 할인 |
+| 증권사 B | §1 + §2 + §6 (TimeWindow) + §C (ATR) | 변동성 민감 — 장중/장외 차등 + ATR 추적 |
+| 환전 fintech C | §1 + §2 + §H (promotion) + §I (모바일 보너스) | 가입 유도형 — 신규/모바일 할인 |
+| 기업금융 D | §1 + §2 + §3 + §D (위험 한도) + §F (floor) | 대형 거래 + 회사 hedge 위주 |
+
+> WTG core 는 §1~§6 의 5-layer 산식만 제공. §7.2 의 추가 layer 는 운영자가
+> 회사 요구사항 확정 후 `CustomLayer` plugin 으로 추가하는 구조 권장 — core
+> 코드 fork 없이 회사별 deploy 분기.
 
 ---
 

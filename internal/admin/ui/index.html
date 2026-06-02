@@ -1662,6 +1662,7 @@
               <span class="text-slate-400">PricingTable</span>
               <span id="mc-pt-version" class="font-mono text-accent-400">—</span>
               <button id="mc-reload" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">↻ 재로드</button>
+              <button id="mc-calc-top" class="ml-2 px-4 py-1.5 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">▶ 계산</button>
             </div>
           </div>
 
@@ -5307,6 +5308,8 @@ async function initMarginCalc() {
     mcState.wired = true;
     $("#mc-reload").addEventListener("click", mcLoadTable);
     $("#mc-calc").addEventListener("click", mcCompute);
+    const top = $("#mc-calc-top");
+    if (top) top.addEventListener("click", mcCompute);
     $("#mc-now").addEventListener("click", mcSetNow);
     $("#mc-fill-best").addEventListener("click", mcFillBest);
     $("#mc-verify").addEventListener("click", mcVerifyAgainstServer);

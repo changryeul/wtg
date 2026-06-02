@@ -50,14 +50,14 @@ type Dispatcher struct {
 	// sendFailed        : fan-out 안에서 일부 conn 에 send 실패 (slow / closed).
 	//                     deliver 와는 별개 — 한 fan-out 이 sent=2 failed=1 이면
 	//                     deliver+=1, sendFailed+=1.
-	totalRecv        atomic.Uint64
-	totalDeliver     atomic.Uint64
-	totalDrop        atomic.Uint64
-	dropUnsupp       atomic.Uint64
-	dropEnvelope     atomic.Uint64
-	dropUnknownUser  atomic.Uint64
-	dropNoBroadcast  atomic.Uint64
-	sendFailed       atomic.Uint64
+	totalRecv       atomic.Uint64
+	totalDeliver    atomic.Uint64
+	totalDrop       atomic.Uint64
+	dropUnsupp      atomic.Uint64
+	dropEnvelope    atomic.Uint64
+	dropUnknownUser atomic.Uint64
+	dropNoBroadcast atomic.Uint64
+	sendFailed      atomic.Uint64
 }
 
 // DispatcherOptions 는 Dispatcher 구성 의존성.

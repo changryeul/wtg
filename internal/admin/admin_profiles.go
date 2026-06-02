@@ -210,4 +210,3 @@ func DeleteProfile(deps *ProfilesDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
-

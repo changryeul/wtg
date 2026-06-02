@@ -108,14 +108,14 @@ type PricingConsumer struct {
 	customerRegistry *CustomerRegistry
 	customerPub      CustomerQuotePublisher
 
-	ticksIn                   atomic.Uint64
-	ticksDropped              atomic.Uint64 // sym 미등록 / inactive / decode 실패
-	quotesPublished           atomic.Uint64
-	publishErrors             atomic.Uint64
-	quoteRegErrors            atomic.Uint64 // Registry.Put 실패 카운트
-	profilesSkipped           atomic.Uint64 // Phase 3 — 구독자 0 으로 pruned 한 Profile 발행 횟수
-	customerQuotesPublished   atomic.Uint64 // Phase 4a — customer fan-out 성공
-	customerPublishErrors     atomic.Uint64 // Phase 4a — customer publisher 실패
+	ticksIn                 atomic.Uint64
+	ticksDropped            atomic.Uint64 // sym 미등록 / inactive / decode 실패
+	quotesPublished         atomic.Uint64
+	publishErrors           atomic.Uint64
+	quoteRegErrors          atomic.Uint64 // Registry.Put 실패 카운트
+	profilesSkipped         atomic.Uint64 // Phase 3 — 구독자 0 으로 pruned 한 Profile 발행 횟수
+	customerQuotesPublished atomic.Uint64 // Phase 4a — customer fan-out 성공
+	customerPublishErrors   atomic.Uint64 // Phase 4a — customer publisher 실패
 }
 
 // PricingConsumerOptions 는 PricingConsumer 생성 옵션.

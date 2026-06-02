@@ -550,14 +550,14 @@ func TestQuoteValidation_Stats(t *testing.T) {
 	_ = reg.Put(context.Background(), mkRegRecord("A-1", ts, time.Hour))
 	_ = reg.Put(context.Background(), mkRegRecord("A-2", ts, time.Hour))
 
-	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-1"})    // OK
-	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-xxx"})  // NOT_FOUND
-	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: ""})       // NOT_FOUND (empty)
+	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-1"})   // OK
+	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-xxx"}) // NOT_FOUND
+	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: ""})      // NOT_FOUND (empty)
 
 	// A-2 표시 후 다시 Validate → ALREADY_CONSUMED.
 	_, _ = srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{QuoteId: "A-2", ConsumerId: "order-1"}) // ConsumeOK
 	_, _ = srv.MarkConsumed(context.Background(), &wtgpb.MarkConsumedRequest{QuoteId: "A-2", ConsumerId: "order-2"}) // AlreadyDone
-	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-2"})    // ALREADY_CONSUMED
+	_, _ = srv.Validate(context.Background(), &wtgpb.ValidateRequest{QuoteId: "A-2"})                                // ALREADY_CONSUMED
 
 	s := srv.Stats()
 	if s.Total != 4 {

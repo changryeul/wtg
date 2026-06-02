@@ -16,19 +16,20 @@ import (
 // mci-price 의 watcher 가 ParsePricingTable 으로 PricingTable 을 재구성.
 //
 // 5-layer margin design:
-//   1. HQMargin       — 본점 마진 (pair × tier)
-//   2. SiteMargin     — 영업점/채널 마진 (pair × channel × site)
-//   3. CustomerMargin — 고객 별도 마진 (customer_id × pair) — P1 신규
-//   4. SwapPoint      — forward 스왑 (pair × tenor)
-//   5. TimeWindows    — 시간대 매핑 (window 이름 → 시각 범위) — P1 신규
+//  1. HQMargin       — 본점 마진 (pair × tier)
+//  2. SiteMargin     — 영업점/채널 마진 (pair × channel × site)
+//  3. CustomerMargin — 고객 별도 마진 (customer_id × pair) — P1 신규
+//  4. SwapPoint      — forward 스왑 (pair × tenor)
+//  5. TimeWindows    — 시간대 매핑 (window 이름 → 시각 범위) — P1 신규
+//
 // 모든 마진 entry 의 `window` 필드는 optional — 비면 모든 시간대 적용.
 type PricingTableDoc struct {
-	Version        int64                `json:"version"`
-	TimeWindows    []TimeWindowDoc      `json:"time_windows,omitempty"`     // P1 신규
-	SwapPoint      []SwapEntryDoc       `json:"swap_point,omitempty"`
-	HQMargin       []HQEntryDoc         `json:"hq_margin,omitempty"`
-	SiteMargin     []SiteEntryDoc       `json:"site_margin,omitempty"`
-	CustomerMargin []CustomerEntryDoc   `json:"customer_margin,omitempty"`  // P1 신규
+	Version        int64              `json:"version"`
+	TimeWindows    []TimeWindowDoc    `json:"time_windows,omitempty"` // P1 신규
+	SwapPoint      []SwapEntryDoc     `json:"swap_point,omitempty"`
+	HQMargin       []HQEntryDoc       `json:"hq_margin,omitempty"`
+	SiteMargin     []SiteEntryDoc     `json:"site_margin,omitempty"`
+	CustomerMargin []CustomerEntryDoc `json:"customer_margin,omitempty"` // P1 신규
 
 	// P5 6단계 — 영업일 캘린더의 휴일 set ("YYYY-MM-DD" 문자열).
 	// 비어있으면 weekend-only. value_date 보간 / SPOT 결제일 산정에 영향.
@@ -42,7 +43,7 @@ type PricingTableDoc struct {
 //   - TZ          : IANA timezone (예: "Asia/Seoul"). 비면 "UTC".
 //   - Days        : 적용 요일 ("MON-FRI" 또는 "MON,TUE,WED,THU,FRI" 또는 "*" 전체). 비면 매일.
 //   - ComplementOf: 다른 window 이름의 보집합 — 예: off_hours = regular 의 반대 시간.
-//                   이 경우 Start/End/Days/TZ 무시. Name + ComplementOf 만 사용.
+//     이 경우 Start/End/Days/TZ 무시. Name + ComplementOf 만 사용.
 type TimeWindowDoc struct {
 	Name         string `json:"name"`
 	Start        string `json:"start,omitempty"`
@@ -86,7 +87,7 @@ type SiteEntryDoc struct {
 // CustomerEntryDoc — 특정 customer 의 추가/대체 마진 (P1 신규).
 //
 //   - CustomerID : 고객 식별자 (usid 또는 별도 customer id). edge-price 가 ws
-//                  연결 시점에 결정해서 mci-price 에 전달.
+//     연결 시점에 결정해서 mci-price 에 전달.
 //   - Pair       : 통화쌍. ""=모든 pair (와일드카드, 운영 권장 X).
 //   - BidDelta / AskDelta : Mode=add 면 delta (HQ+Site 에 누적), Mode=override 면 절대 마진.
 //   - Mode       : "add" (default) — 누적. "override" — HQ+Site 무시하고 customer 단독.
@@ -102,7 +103,7 @@ type CustomerEntryDoc struct {
 	Pair       session.Pair `json:"pair,omitempty"`
 	BidDelta   float64      `json:"bid_delta"`
 	AskDelta   float64      `json:"ask_delta"`
-	Mode       string       `json:"mode,omitempty"`     // "add" (default) | "override"
+	Mode       string       `json:"mode,omitempty"` // "add" (default) | "override"
 	Priority   int          `json:"priority,omitempty"`
 	Window     string       `json:"window,omitempty"`
 }

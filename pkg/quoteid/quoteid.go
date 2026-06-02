@@ -53,13 +53,13 @@ type Record struct {
 	Issuer     string          `json:"issuer"` // 인스턴스 prefix
 
 	// P5 5단계 — broken-date 추적용. 표준 tenor 호출은 모두 0/빈값.
-	ValueDateUnixNano    int64   `json:"value_date_unix_nano,omitempty"`
-	OffsetDays           int     `json:"offset_days,omitempty"`
-	InterpolatedFrom     string  `json:"interpolated_from,omitempty"` // 보간 하한 tenor (예: "1W")
-	InterpolatedTo       string  `json:"interpolated_to,omitempty"`   // 보간 상한 tenor (예: "1M")
-	InterpolationWeight  float64 `json:"interpolation_weight,omitempty"`
-	InterpolatedSwapBid  float64 `json:"interpolated_swap_bid,omitempty"`
-	InterpolatedSwapAsk  float64 `json:"interpolated_swap_ask,omitempty"`
+	ValueDateUnixNano   int64   `json:"value_date_unix_nano,omitempty"`
+	OffsetDays          int     `json:"offset_days,omitempty"`
+	InterpolatedFrom    string  `json:"interpolated_from,omitempty"` // 보간 하한 tenor (예: "1W")
+	InterpolatedTo      string  `json:"interpolated_to,omitempty"`   // 보간 상한 tenor (예: "1M")
+	InterpolationWeight float64 `json:"interpolation_weight,omitempty"`
+	InterpolatedSwapBid float64 `json:"interpolated_swap_bid,omitempty"`
+	InterpolatedSwapAsk float64 `json:"interpolated_swap_ask,omitempty"`
 }
 
 // ValidAt 은 시각 t 가 [IssuedAt, ValidUntil) 범위에 있는지 본다.

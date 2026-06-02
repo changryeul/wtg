@@ -17,15 +17,15 @@ import (
 //
 // P1 신규 — CustomerMargin / TimeWindows (Apply 통합은 Phase 2/3 에서):
 //   - CustomerMargin: 특정 고객의 추가/대체 마진. mode=add (default) 면 HQ+Site 에 누적.
-//                     mode=override 면 HQ+Site 무시.
+//     mode=override 면 HQ+Site 무시.
 //   - TimeWindows: 시간대 이름 → 시각 범위 매핑. 각 마진 entry 의 Window 필드가 참조.
-//                  현재 시각 이 매칭되는 window 의 entry 만 Apply 시 사용.
+//     현재 시각 이 매칭되는 window 의 entry 만 Apply 시 사용.
 type PricingTable struct {
 	Version        int64
 	SwapPoint      map[SwapKey]Margin
 	HQMargin       map[HQKey]Margin
 	SiteMargin     map[SiteKey]Margin
-	CustomerMargin []CustomerRule   // P1 — 다중 매칭 + priority 정렬 필요해 슬라이스
+	CustomerMargin []CustomerRule // P1 — 다중 매칭 + priority 정렬 필요해 슬라이스
 	TimeWindows    map[string]TimeWindowRule
 
 	// Calendar — 영업일 캘린더. nil 이면 WeekendCalendar 사용 (Cal() 메소드 통해).
@@ -51,8 +51,8 @@ type CustomerRule struct {
 // IsActive(now) 가 hot path 에서 매칭 판정.
 type TimeWindowRule struct {
 	Name         string
-	StartMin     int  // 시작 시각 분 단위 (0=00:00, 1439=23:59). -1 = 미설정 (ComplementOf 인 경우)
-	EndMin       int  // 끝 (배타). 24:00 = 1440
+	StartMin     int // 시작 시각 분 단위 (0=00:00, 1439=23:59). -1 = 미설정 (ComplementOf 인 경우)
+	EndMin       int // 끝 (배타). 24:00 = 1440
 	TZ           string
 	DaysMask     uint8  // bit 0=Sun, 1=Mon, ..., 6=Sat. 0xFF = 매일.
 	ComplementOf string // 비면 None. 채워지면 IsActive 는 다른 window 의 IsActive 반대.
@@ -91,11 +91,11 @@ func (t *PricingTable) lookupSwap(pair session.Pair, tenor Tenor) Margin {
 // lookupHQ — 본점 마진. activeWindows 의 active window 매칭 우선, window="" fallback.
 //
 // Lookup 순서:
-//   1. activeWindows 의 각 window 에 대해 (pair, tier, window) 시도
-//   2. (pair, tier, "") — 모든 시간대 적용 entry
-//   3. activeWindows 의 각 window 에 대해 (pair, "", window) — tier 와일드카드
-//   4. (pair, "", "")
-//   5. zero
+//  1. activeWindows 의 각 window 에 대해 (pair, tier, window) 시도
+//  2. (pair, tier, "") — 모든 시간대 적용 entry
+//  3. activeWindows 의 각 window 에 대해 (pair, "", window) — tier 와일드카드
+//  4. (pair, "", "")
+//  5. zero
 //
 // activeWindows 는 nil 가능 (window 매칭 X, 기존 동작).
 func (t *PricingTable) lookupHQ(pair session.Pair, tier session.Tier, activeWindows []string) Margin {
@@ -125,10 +125,10 @@ func (t *PricingTable) lookupHQ(pair session.Pair, tier session.Tier, activeWind
 // lookupSite — 영업점/채널 마진. window 매칭 + 기존 channel/site fallback chain.
 //
 // Lookup 순서 (각 단계는 activeWindows 별 window 매칭 → "" fallback):
-//   1. (pair, channel, site)
-//   2. (pair, "",      site)
-//   3. (pair, channel, "")
-//   4. zero
+//  1. (pair, channel, site)
+//  2. (pair, "",      site)
+//  3. (pair, channel, "")
+//  4. zero
 //
 // 각 단계 내에서 window 매칭 우선 → 빈 window fallback (위 lookupHQ 와 동일 패턴).
 func (t *PricingTable) lookupSite(pair session.Pair, channel session.Channel, site session.Site, activeWindows []string) Margin {

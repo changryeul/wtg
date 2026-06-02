@@ -249,7 +249,7 @@ func main() {
 				// 작은 가격은 USDKRW (1380.5) 와 같은 절댓값 walk 를 쓰면 음수로
 				// drift 해서 forwarder 가 invalid quote (bid<=0) 로 reject.
 				// 시장 변동성 비율 (0.01% per tick) + mean reversion 으로 보정.
-				walkScale := base * 0.0001  // ±0.005% per tick
+				walkScale := base * 0.0001 // ±0.005% per tick
 				spread := base * 0.0001    // 1 bps half-spread
 				revertCoef := 0.0005       // base 로 약하게 끌어당김
 				r := rand.New(rand.NewSource(time.Now().UnixNano() ^ int64(len(feed)*len(pair))))

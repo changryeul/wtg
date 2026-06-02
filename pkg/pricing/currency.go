@@ -14,10 +14,10 @@ import (
 //   - Currency:    "USD 가 존재한다" — 통화 자체의 카탈로그 (분기/년 단위 변경).
 //   - PricingTable: "USD/KRW VIP 마진 0.02" — 마진 정책 (분~시간 단위 변경).
 type Currency struct {
-	Code          string `json:"code"`            // "USD", "KRW", "JPY"
-	Name          string `json:"name"`            // "미국 달러"
+	Code          string `json:"code"`               // "USD", "KRW", "JPY"
+	Name          string `json:"name"`               // "미국 달러"
 	RefCode       string `json:"ref_code,omitempty"` // ISO 4217 numeric 등
-	DecimalPlaces int    `json:"decimal_places"`  // 호가 표시 소수자리
+	DecimalPlaces int    `json:"decimal_places"`     // 호가 표시 소수자리
 	PrecisionKind string `json:"precision_kind,omitempty"`
 	SortOrder     int    `json:"sort_order,omitempty"`
 	Active        bool   `json:"active"`

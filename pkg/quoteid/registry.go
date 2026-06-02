@@ -17,8 +17,8 @@ import (
 //
 //   - dev / 단위 테스트 : MemoryRegistry (in-process, sync.Map)
 //   - 운영              : RedisRegistry (Redis Sentinel/Cluster, mci-price
-//                         두 인스턴스 공유 — active-active 흐름의 single
-//                         source of truth)
+//     두 인스턴스 공유 — active-active 흐름의 single
+//     source of truth)
 type Registry interface {
 	// Put 은 발행된 quote 를 등록. ValidUntil 까지 (+ grace) 보존.
 	// 동일 QuoteID 가 이미 있으면 overwrite — Generator 가 unique 발급이라

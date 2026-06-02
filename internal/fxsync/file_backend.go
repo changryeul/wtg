@@ -11,11 +11,12 @@ import (
 // FileBackend — JSON 파일에서 마스터 데이터 read. dev / 테스트용.
 //
 // 디렉토리 구조:
-//   <Dir>/currency.json          ← Currencies (JSON 배열)
-//   <Dir>/pair.json              ← (Step 4 에서 추가)
-//   <Dir>/pair_product.json      ← (Step 5 에서 추가, cross 산식)
-//   <Dir>/swap_point.json        ← (Step 6)
-//   <Dir>/margin.json            ← (Step 7)
+//
+//	<Dir>/currency.json          ← Currencies (JSON 배열)
+//	<Dir>/pair.json              ← (Step 4 에서 추가)
+//	<Dir>/pair_product.json      ← (Step 5 에서 추가, cross 산식)
+//	<Dir>/swap_point.json        ← (Step 6)
+//	<Dir>/margin.json            ← (Step 7)
 //
 // 누락된 파일은 빈 슬라이스 반환 (sync 가 그 항목 무시).
 type FileBackend struct {

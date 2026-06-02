@@ -115,4 +115,3 @@ func PutPricingTable(deps *PricingDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, json.RawMessage(body))
 	}
 }
-

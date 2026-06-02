@@ -74,13 +74,13 @@ func (m *AliasMetrics) RecordCall(alias string, latency time.Duration, isError b
 
 // AliasStatSnapshot — 외부 노출용 직렬화 친화 모양.
 type AliasStatSnapshot struct {
-	Alias         string  `json:"alias"`
-	Calls         uint64  `json:"calls"`
-	Errors        uint64  `json:"errors"`
-	AvgLatencyMs  float64 `json:"avg_latency_ms"`
-	MaxLatencyMs  float64 `json:"max_latency_ms"`
-	ErrorRatePct  float64 `json:"error_rate_pct"`
-	LastCallUnix  int64   `json:"last_call_unix"`
+	Alias        string  `json:"alias"`
+	Calls        uint64  `json:"calls"`
+	Errors       uint64  `json:"errors"`
+	AvgLatencyMs float64 `json:"avg_latency_ms"`
+	MaxLatencyMs float64 `json:"max_latency_ms"`
+	ErrorRatePct float64 `json:"error_rate_pct"`
+	LastCallUnix int64   `json:"last_call_unix"`
 }
 
 // Snapshot — 모든 alias 통계의 현재 스냅샷 (sorted by Calls desc).

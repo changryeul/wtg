@@ -16,8 +16,8 @@ import (
 //   - raw tick broadcast — profileKey 무관, 전체 송신 (Registry.Broadcast).
 //   - quote per-profile  — profileKey 매칭만 수신 (Registry.SendByProfile).
 //   - quote per-customer — Phase 4c. customerID 매칭만 수신
-//                          (Registry.SendByCustomerID). customer-specific 마진
-//                          적용된 quote 전용 경로.
+//     (Registry.SendByCustomerID). customer-specific 마진
+//     적용된 quote 전용 경로.
 //
 // profileKey / customerID 는 ws upgrade 시 결정되며 이후 immutable.
 type Subscriber struct {

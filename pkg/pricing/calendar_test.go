@@ -186,11 +186,15 @@ func TestSpotDateCal_WithHoliday(t *testing.T) {
 
 // 휴일이 ApplyForValueDate 의 SPOT 계산 + 영업일 offset 에 정확히 반영됨.
 // 거래일 6/1 (MON), 휴일 6/3 (WED). SPOT(T+2):
-//   weekend-only → 6/3 (WED)
-//   holiday-aware → 6/4 (THU, 6/3 skip)
+//
+//	weekend-only → 6/3 (WED)
+//	holiday-aware → 6/4 (THU, 6/3 skip)
+//
 // value_date 6/22 (MON) 까지:
-//   from SPOT=6/3 → 6/22 영업일: 4,5,8,9,10,11,12,15,16,17,18,19,22 = 13.
-//   from SPOT=6/4 → 6/22 영업일: 5,8,9,10,11,12,15,16,17,18,19,22 = 12.
+//
+//	from SPOT=6/3 → 6/22 영업일: 4,5,8,9,10,11,12,15,16,17,18,19,22 = 13.
+//	from SPOT=6/4 → 6/22 영업일: 5,8,9,10,11,12,15,16,17,18,19,22 = 12.
+//
 // 따라서 offsetDays 가 cal 따라 달라짐.
 func TestApplyForValueDate_UsesCalendar(t *testing.T) {
 	body := []byte(`{

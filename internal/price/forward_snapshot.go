@@ -65,9 +65,10 @@ type ForwardSnapshotDeps struct {
 // ForwardSnapshotHandler — GET /v1/quote/forward-snapshot
 //
 // Query:
-//   pair        : "USD/KRW" (필수)
-//   profile     : "WEB.BRANCH.VIP" (필수)
-//   customer_id : 선택. 채워지면 5-Layer (HQ+Site+Customer+Window) 적용.
+//
+//	pair        : "USD/KRW" (필수)
+//	profile     : "WEB.BRANCH.VIP" (필수)
+//	customer_id : 선택. 채워지면 5-Layer (HQ+Site+Customer+Window) 적용.
 //
 // 응답: ForwardSnapshot JSON. DevMode 한정 CORS:* 노출.
 func ForwardSnapshotHandler(deps ForwardSnapshotDeps, devMode bool) http.HandlerFunc {

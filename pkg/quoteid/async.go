@@ -243,12 +243,12 @@ func (a *AsyncRegistry) Close(ctx context.Context) error {
 
 // AsyncStats — 누적 카운터 snapshot.
 type AsyncStats struct {
-	Enqueued  uint64 `json:"enqueued"`
-	Dropped   uint64 `json:"dropped"`
-	Written   uint64 `json:"written"`
-	Failed    uint64 `json:"failed"`
-	QueueLen  int    `json:"queue_len"`
-	QueueCap  int    `json:"queue_cap"`
+	Enqueued uint64 `json:"enqueued"`
+	Dropped  uint64 `json:"dropped"`
+	Written  uint64 `json:"written"`
+	Failed   uint64 `json:"failed"`
+	QueueLen int    `json:"queue_len"`
+	QueueCap int    `json:"queue_cap"`
 }
 
 func (a *AsyncRegistry) Stats() AsyncStats {

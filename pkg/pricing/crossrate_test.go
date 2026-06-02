@@ -69,8 +69,8 @@ func TestComputeCross_DivWidensSpread(t *testing.T) {
 	// 두 leg 모두 spread = 0.10.
 	f := CrossFormula{LegA: "USD/KRW", OpA: CrossOpMul, LegB: "USD/JPY", OpB: CrossOpDiv, Scale: 100}
 	usdKrw := CrossInput{Bid: 1378.60, Ask: 1378.70}
-	usdJpyTight := CrossInput{Bid: 151.40, Ask: 151.50}  // spread 0.10
-	usdJpyWide := CrossInput{Bid: 151.30, Ask: 151.60}   // spread 0.30
+	usdJpyTight := CrossInput{Bid: 151.40, Ask: 151.50} // spread 0.10
+	usdJpyWide := CrossInput{Bid: 151.30, Ask: 151.60}  // spread 0.30
 
 	r1, _ := ComputeCross(f, usdKrw, usdJpyTight)
 	r2, _ := ComputeCross(f, usdKrw, usdJpyWide)

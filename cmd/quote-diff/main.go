@@ -5,12 +5,12 @@
 //   - legacy/best envelope 변환 정확도 검증 (WTG 측 단독)
 //
 // 흐름:
-//   1. --source-a / --source-b 두 ws endpoint connect + subscribe
-//   2. envelope 받으면 평면 {symbol, seq, bid, ask, ts} 로 normalize
-//      (legacy: entries 에서 bid/ask 추출 / best: data.bid/data.ask 직접)
-//   3. (symbol, seq) 키로 match — 둘 다 도착하면 비교
-//   4. match/mismatch/orphan 카운터 + bid/ask 차이 (Δ) 통계
-//   5. 종료 (--duration 만료 또는 SIGINT) 시 summary 출력
+//  1. --source-a / --source-b 두 ws endpoint connect + subscribe
+//  2. envelope 받으면 평면 {symbol, seq, bid, ask, ts} 로 normalize
+//     (legacy: entries 에서 bid/ask 추출 / best: data.bid/data.ask 직접)
+//  3. (symbol, seq) 키로 match — 둘 다 도착하면 비교
+//  4. match/mismatch/orphan 카운터 + bid/ask 차이 (Δ) 통계
+//  5. 종료 (--duration 만료 또는 SIGINT) 시 summary 출력
 //
 // 예시:
 //

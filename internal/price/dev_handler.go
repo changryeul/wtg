@@ -21,9 +21,9 @@ import (
 
 // devTickRequest — POST /v1/dev/tick body.
 type devTickRequest struct {
-	Symbol string  `json:"symbol"`      // 외부 심볼 (예: "USDKRW") — etcd SymbolMap lookup 대상
-	Bid    float64 `json:"bid"`         // 매도 호가
-	Ask    float64 `json:"ask"`         // 매수 호가
+	Symbol string  `json:"symbol"`       // 외부 심볼 (예: "USDKRW") — etcd SymbolMap lookup 대상
+	Bid    float64 `json:"bid"`          // 매도 호가
+	Ask    float64 `json:"ask"`          // 매수 호가
 	TS     string  `json:"ts,omitempty"` // RFC3339 (선택 — 비면 now)
 }
 

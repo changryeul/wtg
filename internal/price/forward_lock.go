@@ -53,7 +53,7 @@ type ForwardLockResponse struct {
 	CustomerID string `json:"customer_id,omitempty"`
 	Side       string `json:"side,omitempty"`
 
-	Bid    float64 `json:"bid"`     // customer-applied (lock 시점)
+	Bid    float64 `json:"bid"` // customer-applied (lock 시점)
 	Ask    float64 `json:"ask"`
 	RawBid float64 `json:"raw_bid"` // 그 시점 BEST raw
 	RawAsk float64 `json:"raw_ask"`
@@ -94,11 +94,11 @@ type ForwardLockDeps struct {
 // ForwardLockHandler — POST /v1/quote/forward/lock
 //
 // 책임:
-//   1. 입력 검증 (pair / profile / tenor 필수).
-//   2. BEST SPOT raw 조회.
-//   3. PricingTable.ApplyForCustomer (해당 tenor) — customer 매칭 + 마진 + swap 합산.
-//   4. quoteid.Generator.Next() + Registry.Put.
-//   5. 응답 반환. Registry.Put 실패는 audit 흐릿하지만 거래 자체는 진행 (best-effort).
+//  1. 입력 검증 (pair / profile / tenor 필수).
+//  2. BEST SPOT raw 조회.
+//  3. PricingTable.ApplyForCustomer (해당 tenor) — customer 매칭 + 마진 + swap 합산.
+//  4. quoteid.Generator.Next() + Registry.Put.
+//  5. 응답 반환. Registry.Put 실패는 audit 흐릿하지만 거래 자체는 진행 (best-effort).
 //
 // 보안: 본 endpoint 호출자는 인증된 클라이언트만. mci-edge-api 가 인증 미들웨어
 // 통과 후 backend 로 forward 하는 패턴 권장 (현재 dev 직접 노출은 검증용).

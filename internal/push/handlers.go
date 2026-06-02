@@ -96,17 +96,17 @@ func SubscribeHandler(deps *HandlerDeps) http.HandlerFunc {
 //
 // uptime 은 mci-push 부팅 후 경과 시간 (초).
 type StatsResponse struct {
-	Connections           int    `json:"connections"`
-	Users                 int    `json:"users"`
-	UptimeSec             int64  `json:"uptime_sec,omitempty"`
-	DispatcherReceived    uint64 `json:"dispatcher_received,omitempty"`
-	DispatcherDeliver     uint64 `json:"dispatcher_delivered,omitempty"`
-	DispatcherDropped     uint64 `json:"dispatcher_dropped,omitempty"`
-	DropUnsupp            uint64 `json:"dispatcher_drop_unsupp,omitempty"`
-	DropEnvelope          uint64 `json:"dispatcher_drop_envelope,omitempty"`
-	DropUnknownUser       uint64 `json:"dispatcher_drop_unknown_user,omitempty"`
-	DropNoBroadcast       uint64 `json:"dispatcher_drop_no_broadcast,omitempty"`
-	DispatcherSendFailed  uint64 `json:"dispatcher_send_failed,omitempty"`
+	Connections          int    `json:"connections"`
+	Users                int    `json:"users"`
+	UptimeSec            int64  `json:"uptime_sec,omitempty"`
+	DispatcherReceived   uint64 `json:"dispatcher_received,omitempty"`
+	DispatcherDeliver    uint64 `json:"dispatcher_delivered,omitempty"`
+	DispatcherDropped    uint64 `json:"dispatcher_dropped,omitempty"`
+	DropUnsupp           uint64 `json:"dispatcher_drop_unsupp,omitempty"`
+	DropEnvelope         uint64 `json:"dispatcher_drop_envelope,omitempty"`
+	DropUnknownUser      uint64 `json:"dispatcher_drop_unknown_user,omitempty"`
+	DropNoBroadcast      uint64 `json:"dispatcher_drop_no_broadcast,omitempty"`
+	DispatcherSendFailed uint64 `json:"dispatcher_send_failed,omitempty"`
 }
 
 // StatsHandler 는 GET /v1/push-stats — registry + dispatcher 모니터링 endpoint.

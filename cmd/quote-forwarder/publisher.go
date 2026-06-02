@@ -101,11 +101,11 @@ type grpcPublisher struct {
 }
 
 const (
-	statusOK         int32 = 0
-	statusFailed     int32 = 1
-	statusReconnect  int32 = 2
-	reconnectBackoff0 = 1 * time.Second
-	reconnectBackoffM = 30 * time.Second
+	statusOK          int32 = 0
+	statusFailed      int32 = 1
+	statusReconnect   int32 = 2
+	reconnectBackoff0       = 1 * time.Second
+	reconnectBackoffM       = 30 * time.Second
 )
 
 // newGRPCPublisher 는 mci-price 와 PublishTick stream 을 시작한다.

@@ -114,16 +114,16 @@ func (f *fakeServer) broadcast(b *wtgpb.Bar) {
 
 // bar 진행 상태 — (pair, tf) 단위로 현재 bucket 의 OHLC 누적.
 type barState struct {
-	openedNano  int64
-	openBid     float64
-	openAsk     float64
-	highBid     float64
-	highAsk     float64
-	lowBid      float64
-	lowAsk      float64
-	closeBid    float64
-	closeAsk    float64
-	tickCount   int32
+	openedNano int64
+	openBid    float64
+	openAsk    float64
+	highBid    float64
+	highAsk    float64
+	lowBid     float64
+	lowAsk     float64
+	closeBid   float64
+	closeAsk   float64
+	tickCount  int32
 }
 
 func emitLoop(ctx context.Context, srv *fakeServer, interval time.Duration) {
@@ -170,19 +170,19 @@ func emitLoop(ctx context.Context, srv *fakeServer, interval time.Duration) {
 					cur.tickCount++
 
 					srv.broadcast(&wtgpb.Bar{
-						Pair:            sym,
-						Tf:              tf.name,
-						OpenedUnixNano:  cur.openedNano,
-						ClosedUnixNano:  cur.openedNano + tf.dur.Nanoseconds(),
-						OpenBid:         cur.openBid,
-						OpenAsk:         cur.openAsk,
-						HighBid:         cur.highBid,
-						HighAsk:         cur.highAsk,
-						LowBid:          cur.lowBid,
-						LowAsk:          cur.lowAsk,
-						CloseBid:        cur.closeBid,
-						CloseAsk:        cur.closeAsk,
-						TickCount:       cur.tickCount,
+						Pair:           sym,
+						Tf:             tf.name,
+						OpenedUnixNano: cur.openedNano,
+						ClosedUnixNano: cur.openedNano + tf.dur.Nanoseconds(),
+						OpenBid:        cur.openBid,
+						OpenAsk:        cur.openAsk,
+						HighBid:        cur.highBid,
+						HighAsk:        cur.highAsk,
+						LowBid:         cur.lowBid,
+						LowAsk:         cur.lowAsk,
+						CloseBid:       cur.closeBid,
+						CloseAsk:       cur.closeAsk,
+						TickCount:      cur.tickCount,
 					})
 				}
 			}

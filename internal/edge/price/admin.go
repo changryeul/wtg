@@ -39,9 +39,9 @@ type adminPairRequest struct {
 // adminDisallowPair — POST /v1/admin/disallow-pair {"pair":"..."}
 //
 // 운영자가 특정 pair 의 시세 발행을 즉시 정지시킬 때 사용. 효과:
-//  1) validator 에서 pair 제거 → 신규 subscribe 차단
-//  2) Registry 의 모든 기존 sub 의 그 pair 필터 제거 + force unsubscribe
-//  3) 영향 받은 sub 들에 알림 발송 ({"type":"revoked","pair":"..."})
+//  1. validator 에서 pair 제거 → 신규 subscribe 차단
+//  2. Registry 의 모든 기존 sub 의 그 pair 필터 제거 + force unsubscribe
+//  3. 영향 받은 sub 들에 알림 발송 ({"type":"revoked","pair":"..."})
 //
 // 이후 quote 가 도착해도 (PricingTable 에서 발행 멈춤 전까지) edge 측에서는
 // 모든 sub 가 그 pair 매칭 안 함 → 자연스럽게 정지.

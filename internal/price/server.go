@@ -197,10 +197,10 @@ func (s *Server) AttachPair(m *pricing.PairMaster) {
 // AttachCross — CrossRateConsumer 를 hot path 에 끼움.
 //
 // 동작:
-//   1. BestConsumer 의 downstream 에 cross consumer 등록 → direct BEST tick
-//      이 cross consumer 의 leg cache 로 흐름.
-//   2. AddConsumer 가 향후 추가되는 consumer 를 cross consumer 의 downstream
-//      에도 등록 → cross 합성 tick 도 Aggregator/PricingConsumer/gRPC 로 흐름.
+//  1. BestConsumer 의 downstream 에 cross consumer 등록 → direct BEST tick
+//     이 cross consumer 의 leg cache 로 흐름.
+//  2. AddConsumer 가 향후 추가되는 consumer 를 cross consumer 의 downstream
+//     에도 등록 → cross 합성 tick 도 Aggregator/PricingConsumer/gRPC 로 흐름.
 //
 // AttachCross 는 Start 전, AddConsumer 호출 전에 불러야 한다 — 이후 등록되는
 // consumer 들이 cross 도 받게 됨.
@@ -398,8 +398,8 @@ func (s *Server) handleUnsolicited(msg *mymq.Unsolicited) {
 // 받아 v1 envelope 들로 파싱한 뒤 hot path consumer (BestConsumer) 에 dispatch.
 //
 // 두 진입점이 공유:
-//   1. broker subscribe (handleUnsolicited) — pushdata 디코딩 후 호출
-//   2. PublishTick gRPC (GRPCServer.PublishTick) — forwarder 가 broker 우회로 직접 push
+//  1. broker subscribe (handleUnsolicited) — pushdata 디코딩 후 호출
+//  2. PublishTick gRPC (GRPCServer.PublishTick) — forwarder 가 broker 우회로 직접 push
 //
 // baseTick 은 메타데이터 (MarketID/SeqNum/Mask/Type/Flag) 만 사용 — Body 는
 // 본 함수가 envelope 별로 새로 인코딩하므로 무시.

@@ -21,12 +21,12 @@ const SourceCross = "CROSS"
 // 호가를 worse-side 합성 후 downstream 으로 emit.
 //
 // 동작:
-//   1. OnTick: 도착한 tick 의 pair 추출 → leg cache 갱신.
-//   2. reverse index 로 이 pair 를 leg 로 쓰는 cross 들 조회.
-//   3. 각 cross 마다 maybeEmitCross:
-//      - debounce: 마지막 emit 후 windowMs 이내면 skip
-//      - 두 leg 모두 fresh (maxStaleness 이내) 여야 emit
-//      - ComputeCross 합성 → cross Tick 빌드 → downstream
+//  1. OnTick: 도착한 tick 의 pair 추출 → leg cache 갱신.
+//  2. reverse index 로 이 pair 를 leg 로 쓰는 cross 들 조회.
+//  3. 각 cross 마다 maybeEmitCross:
+//     - debounce: 마지막 emit 후 windowMs 이내면 skip
+//     - 두 leg 모두 fresh (maxStaleness 이내) 여야 emit
+//     - ComputeCross 합성 → cross Tick 빌드 → downstream
 //
 // 부하 정책 (P6 권장):
 //   - debounce 10ms — 같은 cross 의 짧은 시간 중복 emit 차단
@@ -170,9 +170,10 @@ func (c *CrossRateConsumer) OnTick(t *Tick) {
 }
 
 // lookupPair — Tick.Symbol → session.Pair 변환.
-//   1순위: PairMaster (single SoT, fx-sync 가 미러링)
-//   2순위: SymbolMap (legacy)
-//   둘 다 없으면 Symbol 자체를 pair 로 (테스트 편의).
+//
+//	1순위: PairMaster (single SoT, fx-sync 가 미러링)
+//	2순위: SymbolMap (legacy)
+//	둘 다 없으면 Symbol 자체를 pair 로 (테스트 편의).
 func (c *CrossRateConsumer) lookupPair(sym string) (session.Pair, bool, bool) {
 	if c.pairs != nil {
 		if pair, ok := c.pairs.LookupBySymbol(sym); ok {

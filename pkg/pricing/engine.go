@@ -30,9 +30,9 @@ func (t *PricingTable) Apply(raw Quote, profile session.Profile, tenor Tenor) Cu
 // time window 매칭이 필요할 때 사용. now 가 zero 면 time.Now() 로 fallback.
 //
 // 흐름:
-//   1. ActiveWindows(now) — 현재 시각 활성 window 목록
-//   2. lookupHQ / lookupSite 가 window 매칭 우선 + window="" fallback
-//   3. 누계 + raw 적용
+//  1. ActiveWindows(now) — 현재 시각 활성 window 목록
+//  2. lookupHQ / lookupSite 가 window 매칭 우선 + window="" fallback
+//  3. 누계 + raw 적용
 //
 // customer margin 미적용 — customer ID 가 있는 경로는 ApplyForCustomer 사용.
 func (t *PricingTable) ApplyAt(raw Quote, profile session.Profile, tenor Tenor, now time.Time) CustomerQuote {
@@ -99,14 +99,14 @@ func (t *PricingTable) ApplyForCustomer(raw Quote, profile session.Profile, teno
 // ApplyForValueDate — P5 5단계. 결제일 (value_date) 기반 broken-date 마진 적용.
 //
 // 흐름:
-//   1. SpotDate(now, spotDays) → 거래일 기준 SPOT 결제일.
-//   2. BusinessDaysBetween(spot, valueDate) → offsetDays (weekend-only).
-//   3. InterpolateSwap(pair, offsetDays) → SwapInterpolation (선형 보간).
-//      - offsetDays 가 standard tenor 와 정확 일치 → Exact (보간 X, lookupSwap 동등).
-//      - 그 사이 → 선형 보간된 swap.
-//      - 양 끝 → ErrOutOfRange.
-//      - 본 pair 의 swap_point 미등록 → ErrNoSwap.
-//   4. HQ/Site/Customer 는 ApplyForCustomer 와 동일 (보간 swap 만 lookupSwap 대체).
+//  1. SpotDate(now, spotDays) → 거래일 기준 SPOT 결제일.
+//  2. BusinessDaysBetween(spot, valueDate) → offsetDays (weekend-only).
+//  3. InterpolateSwap(pair, offsetDays) → SwapInterpolation (선형 보간).
+//     - offsetDays 가 standard tenor 와 정확 일치 → Exact (보간 X, lookupSwap 동등).
+//     - 그 사이 → 선형 보간된 swap.
+//     - 양 끝 → ErrOutOfRange.
+//     - 본 pair 의 swap_point 미등록 → ErrNoSwap.
+//  4. HQ/Site/Customer 는 ApplyForCustomer 와 동일 (보간 swap 만 lookupSwap 대체).
 //
 // CustomerQuote.Tenor 는 broken-date 시 빈값 — interpolation 정보는 별도 반환.
 // 호출자가 quoteid.Record 에 SwapInterpolation 의 필드를 보존 (감사 추적).

@@ -98,7 +98,7 @@ type barSubscriber struct {
 //
 // 필터:
 //   - subscriberID    : edge instance 식별. RegisterCustomer 의 subscriber_id 와 매칭.
-//                        본 subscriber 가 등록한 customer set 에 속하는 quote 만 수신.
+//     본 subscriber 가 등록한 customer set 에 속하는 quote 만 수신.
 //   - customerIDs     : 명시적 customer 필터. 비어있으면 subscriberID 매핑 사용.
 //
 // RegisterCustomer / SubscribeCustomerQuote 는 별개 RPC — 둘 다 같은 subscriber_id
@@ -735,9 +735,9 @@ func barToProto(b *quote.Bar) *wtgpb.Bar {
 // transaction RPC 에만 집중하도록 한다.
 //
 // 흐름:
-//   1. forwarder 가 Tick (body=raw envelope JSON) 을 stream 으로 push
-//   2. Server.IngestEnvelopes 로 broker subscribe path 와 동일 hot path 진입
-//   3. ack 는 매 100건 또는 1초마다 한 번 (저빈도 — 통계/끊김 진단용)
+//  1. forwarder 가 Tick (body=raw envelope JSON) 을 stream 으로 push
+//  2. Server.IngestEnvelopes 로 broker subscribe path 와 동일 hot path 진입
+//  3. ack 는 매 100건 또는 1초마다 한 번 (저빈도 — 통계/끊김 진단용)
 //
 // AttachServer 가 호출 안 됐으면 Unimplemented 반환.
 func (g *GRPCServer) PublishTick(stream wtgpb.PriceService_PublishTickServer) error {

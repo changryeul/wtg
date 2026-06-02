@@ -40,10 +40,10 @@ type Registry struct {
 	quoteIDBatchLat  *prometheus.HistogramVec
 
 	// AsyncRegistry 카운터 — v1.19.
-	asyncEnqueued *prometheus.CounterVec
-	asyncDropped  *prometheus.CounterVec
-	asyncWritten  *prometheus.CounterVec
-	asyncFailed   *prometheus.CounterVec
+	asyncEnqueued    *prometheus.CounterVec
+	asyncDropped     *prometheus.CounterVec
+	asyncWritten     *prometheus.CounterVec
+	asyncFailed      *prometheus.CounterVec
 	customCollectors []prometheus.Collector
 }
 
@@ -229,7 +229,8 @@ func (r *Registry) RegisterAsyncQueueGauge(service string, fn func() float64) er
 
 // ObserveQuoteIDOp — 단일 RPC 또는 batch 안의 per-item 결과 카운터.
 // status: "ok" / "not_found" / "expired" / "already_consumed" / "denied" /
-//        "internal" / "consume_ok" / "consume_already" ...
+//
+//	"internal" / "consume_ok" / "consume_already" ...
 func (r *Registry) ObserveQuoteIDOp(service, op, status string, latency time.Duration) {
 	r.quoteIDOpTotal.WithLabelValues(service, op, status).Inc()
 	if latency > 0 {

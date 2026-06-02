@@ -22,10 +22,10 @@ import (
 //   - JSON encode 는 도메인 struct 그대로 (DB-mirror 도 같은 형식).
 //   - Active=false entry 는 etcd 에 PUT 안 함 (사실상 삭제).
 type Syncer struct {
-	Etcd         *clientv3.Client
-	Prefix       string // 기본 "wtg/"
-	DeleteStale  bool   // 기본 true — DB 에 없는 etcd 키 정리
-	Logger       *slog.Logger
+	Etcd        *clientv3.Client
+	Prefix      string // 기본 "wtg/"
+	DeleteStale bool   // 기본 true — DB 에 없는 etcd 키 정리
+	Logger      *slog.Logger
 }
 
 // NewSyncer — 기본 옵션으로 생성. Prefix 빈값이면 "wtg/".
@@ -43,11 +43,11 @@ func NewSyncer(cli *clientv3.Client, logger *slog.Logger) *Syncer {
 
 // SyncResult — 한 테이블 sync 결과. 운영 로그 / admin UI 응답에 사용.
 type SyncResult struct {
-	Table       string `json:"table"`
-	SourceCount int    `json:"source_count"`  // backend 가 read 한 row 수
-	Active      int    `json:"active"`        // Active=true 만
-	Put         int    `json:"put"`           // etcd 에 PUT 한 수
-	DeletedStale int   `json:"deleted_stale"` // 정리한 stale 키 수
+	Table        string `json:"table"`
+	SourceCount  int    `json:"source_count"`  // backend 가 read 한 row 수
+	Active       int    `json:"active"`        // Active=true 만
+	Put          int    `json:"put"`           // etcd 에 PUT 한 수
+	DeletedStale int    `json:"deleted_stale"` // 정리한 stale 키 수
 }
 
 // SyncCurrencies — Currency 테이블 sync. wtg/currency/{code} 에 PUT.
@@ -98,7 +98,7 @@ func (s *Syncer) SyncSiteMargins(ctx context.Context, ms SiteMargins) (SyncResul
 		entries := make([]pricing.SiteEntryDoc, 0, len(ms))
 		for _, m := range ms {
 			entries = append(entries, pricing.SiteEntryDoc{
-				Pair: pairFromString(m.Pair),
+				Pair:    pairFromString(m.Pair),
 				Channel: channelFromString(m.Channel), Site: siteFromString(m.Site),
 				BidAmount: m.BidAmount, AskAmount: m.AskAmount,
 			})

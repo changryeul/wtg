@@ -119,7 +119,7 @@ func TestDispatcherStatsSumConsistency(t *testing.T) {
 	go d.Run(ctx)
 
 	// 사유별 1건씩 발사
-	sub.ch <- mkUnsol(mymq.FCTran, mkPrefix("", "", "u", uint8(mymq.FCTran), 0), nil)                      // unsupp
+	sub.ch <- mkUnsol(mymq.FCTran, mkPrefix("", "", "u", uint8(mymq.FCTran), 0), nil)                       // unsupp
 	sub.ch <- mkUnsol(mymq.FCPush, mkPrefix("", "", "ghost", uint8(mymq.FCPush), uint8(mymq.SubPush)), nil) // unknown user
 	sub.ch <- mkUnsol(mymq.FCCast, mkPrefix("", "", "", uint8(mymq.FCCast), uint8(mymq.SubBroadcast)), nil) // no broadcast
 

@@ -51,10 +51,10 @@ const (
 //
 // Scale 이 <= 0 이면 1.0 fallback (zero-value 안전성).
 type CrossFormula struct {
-	LegA  session.Pair `json:"leg_a"`  // 예: "EUR/USD"
-	OpA   CrossOp      `json:"op_a"`   // "mul" | "div"
-	LegB  session.Pair `json:"leg_b"`  // 예: "USD/KRW"
-	OpB   CrossOp      `json:"op_b"`   // "mul" | "div"
+	LegA  session.Pair `json:"leg_a"` // 예: "EUR/USD"
+	OpA   CrossOp      `json:"op_a"`  // "mul" | "div"
+	LegB  session.Pair `json:"leg_b"` // 예: "USD/KRW"
+	OpB   CrossOp      `json:"op_b"`  // "mul" | "div"
 	Scale float64      `json:"scale,omitempty"`
 }
 

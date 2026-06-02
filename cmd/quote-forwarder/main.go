@@ -115,14 +115,14 @@ var (
 
 func main() {
 	var (
-		listen      = flag.String("listen", "127.0.0.1:30044", "단일 mode 의 UDP listen 주소 (--multi 가 비어있을 때 사용)")
-		feed        = flag.String("feed", "SMB", "단일 mode 의 거래소 라벨")
-		multi       = flag.String("multi", "", "다중 feed — 형식: SMB:30044,KMB:30045,EBS:30046,REUT:30051. 비어있으면 --listen/--feed 사용")
-		bindAddr    = flag.String("bind", "127.0.0.1", "--multi 사용 시 모든 listener 가 bind 할 주소")
-		brokerHost  = flag.String("broker-host", "127.0.0.1", "mymqd 호스트")
-		brokerPort  = flag.Int("broker-port", 11217, "mymqd 포트")
-		appl        = flag.String("appl", "quote-fwd", "broker appl 이름")
-		instance    = flag.Int("instance", 1, "appl 인스턴스 번호")
+		listen       = flag.String("listen", "127.0.0.1:30044", "단일 mode 의 UDP listen 주소 (--multi 가 비어있을 때 사용)")
+		feed         = flag.String("feed", "SMB", "단일 mode 의 거래소 라벨")
+		multi        = flag.String("multi", "", "다중 feed — 형식: SMB:30044,KMB:30045,EBS:30046,REUT:30051. 비어있으면 --listen/--feed 사용")
+		bindAddr     = flag.String("bind", "127.0.0.1", "--multi 사용 시 모든 listener 가 bind 할 주소")
+		brokerHost   = flag.String("broker-host", "127.0.0.1", "mymqd 호스트")
+		brokerPort   = flag.Int("broker-port", 11217, "mymqd 포트")
+		appl         = flag.String("appl", "quote-fwd", "broker appl 이름")
+		instance     = flag.Int("instance", 1, "appl 인스턴스 번호")
 		includeFix   = flag.Bool("include-fix", false, "true 면 envelope 에 raw FIX(가독화) 도 같이 박는다")
 		metricsAddr  = flag.String("metrics", "", "Prometheus metrics + /stats HTTP listen 주소 (예: 127.0.0.1:9091). 비면 비활성")
 		udpRcvBuf    = flag.Int("udp-rcvbuf", 4*1024*1024, "UDP socket SO_RCVBUF (bytes). kernel 한계(macOS kern.ipc.maxsockbuf 기본 8MB)를 넘으면 silently clamp. 0 이면 OS default.")

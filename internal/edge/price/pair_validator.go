@@ -19,8 +19,8 @@ type PairValidator interface {
 
 // MemoryPairValidator — in-memory set. 두 source 결합:
 //
-//	1) operator seed       (Add 로 초기 주입 — config 의 --quote-seed-pairs)
-//	2) passive learning    (consumeQuoteOnce 가 도착 quote.Pair 마다 Add)
+//  1. operator seed       (Add 로 초기 주입 — config 의 --quote-seed-pairs)
+//  2. passive learning    (consumeQuoteOnce 가 도착 quote.Pair 마다 Add)
 //
 // 운영자가 시드를 주면 즉시 가드 동작, 안 줘도 첫 quote 도착 후 점진 확장.
 // 한 번 허용된 pair 는 제거되지 않음 (PricingTable 에서 sym 비활성 → tick

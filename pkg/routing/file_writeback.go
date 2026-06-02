@@ -111,7 +111,7 @@ func (r *FileBackedRegistry) flush(reason string) {
 // dumpDoc — file 의 wire format. dev_seed.go 의 LoadRoutesFromFile 이 받는
 // {"routes":[...]} 형식과 일치. _comment 는 사람이 읽는 hint (파싱 무시됨).
 type dumpDoc struct {
-	Comment string `json:"_comment,omitempty"`
+	Comment string  `json:"_comment,omitempty"`
 	Routes  []*Rule `json:"routes"`
 }
 

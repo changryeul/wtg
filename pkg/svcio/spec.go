@@ -162,7 +162,7 @@ func Parse(text string) (*SvcSpec, error) {
 //   - prev 가 children 없는 char-style 필드 (Children 비어있고 Size>0) +
 //     이름이 isCountFieldName 패턴
 //   - cur 가 nested struct (Children > 0) + 현재 Repeat == 1
-//   → cur.Repeat = -1
+//     → cur.Repeat = -1
 func reclassifyTrailingArrays(fields []Field) {
 	for i := range fields {
 		if i > 0 {

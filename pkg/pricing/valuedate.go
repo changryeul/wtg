@@ -108,13 +108,15 @@ func BusinessDaysBetween(from, to time.Time) int {
 // BusinessDaysBetweenCal — 명시적 calendar 로 영업일 차이.
 //
 // 정의 (half-open):
-//   from 다음 영업일부터 to 까지 (to 포함) 영업일 수.
-//   from == to 면 0. cal == nil 이면 weekend-only.
+//
+//	from 다음 영업일부터 to 까지 (to 포함) 영업일 수.
+//	from == to 면 0. cal == nil 이면 weekend-only.
 //
 // 예 (weekend-only):
-//   월 → 금 = 4 영업일
-//   금 → 다음 월 = 1 영업일 (토/일 skip)
-//   토 → 다음 월 = 1 영업일
+//
+//	월 → 금 = 4 영업일
+//	금 → 다음 월 = 1 영업일 (토/일 skip)
+//	토 → 다음 월 = 1 영업일
 func BusinessDaysBetweenCal(from, to time.Time, cal Calendar) int {
 	if from.Equal(to) {
 		return 0

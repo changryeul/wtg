@@ -24,9 +24,9 @@ func TestMemoryPairValidator_EmptyDefault(t *testing.T) {
 
 func TestMemoryPairValidator_AddIdempotent(t *testing.T) {
 	v := NewMemoryPairValidator()
-	v.Add("USD/KRW", "EUR/USD", "USD/KRW")  // 중복
-	v.Add("USD/KRW")                         // 다시 중복
-	v.Add("")                                // 빈 문자열 무시
+	v.Add("USD/KRW", "EUR/USD", "USD/KRW") // 중복
+	v.Add("USD/KRW")                       // 다시 중복
+	v.Add("")                              // 빈 문자열 무시
 	if !v.IsAllowed("USD/KRW") || !v.IsAllowed("EUR/USD") {
 		t.Errorf("Add 한 pair 허용 실패")
 	}

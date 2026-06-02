@@ -64,8 +64,8 @@ func TestParsePricingTable_LoadsCustomerAndWindows(t *testing.T) {
 func TestTimeWindowRule_IsActive_BasicRange(t *testing.T) {
 	w := TimeWindowRule{
 		Name:     "regular",
-		StartMin: 9 * 60,         // 09:00
-		EndMin:   15*60 + 30,     // 15:30
+		StartMin: 9 * 60,     // 09:00
+		EndMin:   15*60 + 30, // 15:30
 		TZ:       "Asia/Seoul",
 		DaysMask: 0x3E, // MON-FRI
 	}

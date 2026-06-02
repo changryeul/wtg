@@ -304,7 +304,6 @@ func TestEdgeMaxBodyEnforced(t *testing.T) {
 	}
 }
 
-
 // IP rate-limit — burst 이상 요청 시 429. /v1/ping 은 인증 면제이지만
 // rate-limit / IPAllow 미들웨어는 동일하게 적용된다.
 func TestEdgeRateLimitBurstExhausted(t *testing.T) {

@@ -170,7 +170,7 @@ func TestRegistry_RevokePairFromAll_CountsAffected(t *testing.T) {
 	a := NewSubscriber(&websocket.Conn{}, SubscriberOptions{SendQueueSize: 4, ProfileKey: "P"})
 	a.SubscribePairs([]string{"USD/KRW", "EUR/USD"})
 	b := NewSubscriber(&websocket.Conn{}, SubscriberOptions{SendQueueSize: 4, ProfileKey: "P"})
-	b.SubscribePairs([]string{"EUR/USD"}) // USD/KRW 없음
+	b.SubscribePairs([]string{"EUR/USD"})                                                       // USD/KRW 없음
 	c := NewSubscriber(&websocket.Conn{}, SubscriberOptions{SendQueueSize: 4, ProfileKey: "P"}) // all 모드
 	r.Add(a)
 	r.Add(b)

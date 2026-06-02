@@ -230,11 +230,11 @@ func DefaultConfig() Config {
 		GRPCAddr:           "",
 		GRPCBufSize:        1024,
 		QuotePublishBroker: true,
-		BrokerHost:       "127.0.0.1",
-		BrokerPort:       11217,
-		ApplName:         "mci-price",
-		Instance:         0,
-		QueueName:        "", // 빈값 — broker 가 _CLIENT_ type 으로 등록해야 QfUnsolRep
+		BrokerHost:         "127.0.0.1",
+		BrokerPort:         11217,
+		ApplName:           "mci-price",
+		Instance:           0,
+		QueueName:          "", // 빈값 — broker 가 _CLIENT_ type 으로 등록해야 QfUnsolRep
 		// 가 동작 (publish.c:185-189 의 _REPRESENTATIVE_UNSOL_RECVER_ 매칭).
 		// mci-push 와 동일 컨벤션. 비빈값을 주면 broker 가 broadcast 안 보냄.
 		ExchangeName:     "PRICE",

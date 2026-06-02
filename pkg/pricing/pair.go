@@ -13,19 +13,19 @@ import (
 // fxsync.Pair 의 mci-price 측 mirror — 같은 JSON 형식 (etcd 키 wtg/pair/{id}).
 // CrossFormula 와 매핑되는 Cross 필드는 cross 산식을 그대로 보존.
 type Pair struct {
-	ID            string  `json:"id"`              // "USDKRW"
-	Base          string  `json:"base"`            // "USD"
-	Quote         string  `json:"quote"`           // "KRW"
-	Kind          string  `json:"kind"`            // "direct" | "cross"
-	Symbol        string  `json:"symbol,omitempty"`
-	Cross         *Cross  `json:"cross,omitempty"`
-	SpotDays      int     `json:"spot_days"`
-	ScaleUnit     int     `json:"scale_unit,omitempty"`
-	QuoteDecimals int     `json:"quote_decimals"`
-	EmpDecimals   int     `json:"emp_decimals,omitempty"`
-	PLPair        string  `json:"pl_pair,omitempty"`
-	SortOrder     int     `json:"sort_order,omitempty"`
-	Active        bool    `json:"active"`
+	ID            string `json:"id"`    // "USDKRW"
+	Base          string `json:"base"`  // "USD"
+	Quote         string `json:"quote"` // "KRW"
+	Kind          string `json:"kind"`  // "direct" | "cross"
+	Symbol        string `json:"symbol,omitempty"`
+	Cross         *Cross `json:"cross,omitempty"`
+	SpotDays      int    `json:"spot_days"`
+	ScaleUnit     int    `json:"scale_unit,omitempty"`
+	QuoteDecimals int    `json:"quote_decimals"`
+	EmpDecimals   int    `json:"emp_decimals,omitempty"`
+	PLPair        string `json:"pl_pair,omitempty"`
+	SortOrder     int    `json:"sort_order,omitempty"`
+	Active        bool   `json:"active"`
 }
 
 // Cross — Pair 의 cross 산식. CrossFormula 와 1:1 매핑 (운영 wire vs 내부 산식).
@@ -144,8 +144,8 @@ func (m *PairMaster) Size() int {
 // ("USD/KRW") 반환. direct/cross 무관, active=true 만.
 //
 // 매칭 우선순위:
-//   1. Pair.ID 정확 일치
-//   2. Pair.Symbol 정확 일치 (cooker symbol 이 ID 와 다른 경우)
+//  1. Pair.ID 정확 일치
+//  2. Pair.Symbol 정확 일치 (cooker symbol 이 ID 와 다른 경우)
 //
 // quote.SymbolMap 의 대안 — PairMaster 가 이미 같은 정보 가지므로 단일 SoT.
 func (m *PairMaster) LookupBySymbol(sym string) (session.Pair, bool) {

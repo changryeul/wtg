@@ -1784,6 +1784,16 @@
               <div id="mc-final" class="text-sm font-mono"></div>
             </div>
 
+            <!-- 산식 흐름도 — raw → swap → HQ → Site → Customer → final 의 layer 별 적용 시각화. -->
+            <div class="border-gradient rounded-2xl p-4">
+              <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">산식 흐름도 (raw → layer 별 적용 → final)</div>
+              <div id="mc-flow" class="text-xs font-mono"></div>
+              <div class="text-[10px] text-slate-500 mt-2">
+                각 화살표 = 적용된 layer + 기여 마진. <span class="text-good">bid</span> 는 차감 / <span class="text-bad">ask</span> 는 가산.
+                <a href="docs/margin-policy.md" target="_blank" class="text-accent-400 hover:underline">전체 산식 명세 →</a>
+              </div>
+            </div>
+
             <!-- 누적 마진 시각화 (옵션) -->
             <div class="border-gradient rounded-2xl p-4">
               <div class="text-[11px] uppercase tracking-widest text-slate-400 mb-2">layer 별 기여도 (단위 = 원)</div>
@@ -5980,8 +5990,102 @@ function mcRender(r) {
   tbl.appendChild(tbody);
   chDiv.appendChild(tbl);
 
+  // 산식 흐름도.
+  mcRenderFlow(r);
+
   // 전체 tenor 비교 표 — SPOT + 모든 swap_point tenor 의 forward 호가.
   mcRenderTenorCompare(r.inputs, r.active);
+}
+
+// mcRenderFlow — raw → swap → HQ → Site → Customer → final 의 단계별 적용을
+// 박스 + 화살표로 시각화. layer 별 적용 값 + 누계 표시. override 모드면
+// HQ/Site 박스는 회색 (skip 의미).
+function mcRenderFlow(r) {
+  const out = $("#mc-flow");
+  out.replaceChildren();
+  const isOverride = r.customer.rule && r.customer.cMode === "override";
+
+  // bid 와 ask 두 열로 나란히.
+  const wrap = h("div", { class: "grid grid-cols-1 md:grid-cols-2 gap-4" });
+
+  const sideBox = (side) => {
+    const isBid = side === "bid";
+    const col = h("div", { class: "space-y-2" });
+    col.appendChild(h("div", {
+      class: "text-[10px] uppercase tracking-widest mb-1 " + (isBid ? "text-good" : "text-bad"),
+      text: side + (isBid ? " — 차감 (낮아짐)" : " — 가산 (높아짐)")
+    }));
+
+    const startVal = isBid ? r.inputs.rawBid : r.inputs.rawAsk;
+    let running = startVal;
+
+    // raw 박스.
+    col.appendChild(flowBox("raw_" + side, mcFmt(startVal), "slate-400", "시장 호가 (BEST)"));
+
+    // 각 layer.
+    const layers = r.layers;
+    for (let i = 0; i < layers.length; i++) {
+      const l = layers[i];
+      const v = isBid ? l.bid : l.ask;
+      const sign = isBid ? -1 : 1;
+      const skipped = isOverride && (l.name === "HQ" || l.name === "Site");
+      // 화살표 + 적용 값
+      col.appendChild(flowArrow(l.name, v, sign, skipped));
+      if (!skipped) running += sign * v;
+    }
+
+    // final 박스.
+    col.appendChild(flowBox("final_" + side, mcFmt(running), isBid ? "good" : "bad",
+                            "최종 고객 노출 호가"));
+    return col;
+  };
+
+  wrap.appendChild(sideBox("bid"));
+  wrap.appendChild(sideBox("ask"));
+
+  if (isOverride) {
+    out.appendChild(h("div", {
+      class: "mb-2 text-[11px] text-warn",
+      text: "⚠ override 모드 — HQ + Site 박스는 skip (회색). swap + customer 만 적용."
+    }));
+  }
+  out.appendChild(wrap);
+}
+
+function flowBox(label, val, color, sub) {
+  const colorMap = {
+    "good": "text-good border-good/30 bg-good/10",
+    "bad": "text-bad border-bad/30 bg-bad/10",
+    "slate-400": "text-slate-300 border-slate-700 bg-ink-800/40",
+  };
+  const cls = colorMap[color] || colorMap["slate-400"];
+  const box = h("div", { class: "rounded-md border px-3 py-2 " + cls });
+  box.appendChild(h("div", { class: "text-[10px] uppercase tracking-widest opacity-70", text: label }));
+  box.appendChild(h("div", { class: "text-base font-mono", text: val }));
+  if (sub) box.appendChild(h("div", { class: "text-[10px] opacity-60 mt-0.5", text: sub }));
+  return box;
+}
+
+function flowArrow(layerName, val, sign, skipped) {
+  const wrap = h("div", { class: "flex items-center gap-2 pl-2" });
+  // arrow icon.
+  wrap.appendChild(h("div", {
+    class: "text-base " + (skipped ? "text-slate-700" : "text-slate-500"),
+    text: "↓"
+  }));
+  // 적용 layer + 부호 + 값.
+  const signStr = sign < 0 ? "−" : "+";
+  const valStr = mcFmt(Math.abs(val));
+  const colorCls = skipped ? "text-slate-600 line-through"
+                          : (val === 0 ? "text-slate-500"
+                              : (sign < 0 ? "text-good" : "text-bad"));
+  const txt = h("div", { class: "text-[11px] font-mono " + colorCls },
+    h("span", { class: "text-slate-400", text: layerName }),
+    " " + signStr + " ", h("span", { text: valStr }),
+    skipped ? h("span", { class: "text-warn ml-2 text-[10px]", text: "skip (override)" }) : null,
+  );
+  wrap.appendChild(txt);
+  return wrap;
 }
 
 // 전체 tenor 비교 — 본 pair 의 swap_point 에 등록된 모든 tenor 에 대해

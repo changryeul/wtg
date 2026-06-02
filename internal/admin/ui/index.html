@@ -8,6 +8,7 @@
 <!-- 마진 재계산 결과 시각화용. lightweight-charts v4.2 — candlestick / line. -->
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
 <script>
   // 핵심 색상 토큰은 CSS 변수로 추상화 — body[data-theme] 에 따라 light/dark 자동 전환.
   // 직접 클래스 (bg-ink-950 등) 는 변수를 참조하도록 redefine.
@@ -318,6 +319,7 @@
           <button data-page="quote"  class="nav-btn nav-item"><span class="nav-ico">💱</span>시세</button>
           <button data-page="margin"     class="nav-btn nav-item"><span class="nav-ico">🧮</span>마진 재계산</button>
           <button data-page="margin-calc" class="nav-btn nav-item"><span class="nav-ico">🔬</span>마진 계산기 (5-Layer)</button>
+          <button data-page="margin-policy" class="nav-btn nav-item"><span class="nav-ico">📜</span>마진 정책 명세</button>
           <button data-page="svcio"      class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
           <button data-page="pricestats" class="nav-btn nav-item"><span class="nav-ico">📊</span>시세 통계 (mci-price)</button>
         </div>
@@ -1808,6 +1810,30 @@
           </div>
         </div>
 
+        <!-- 마진 정책 명세 (margin-policy) — docs/margin-policy.md 의 클라이언트 렌더. -->
+        <div id="page-margin-policy" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">마진 정책 명세</h3>
+              <p class="text-sm text-slate-400">
+                WTG 의 5-Layer 마진 / Cross-rate 합성 / Value-date 보간 / Holiday 캘린더 / TimeWindow 의
+                <strong>산식 정의 + 부호 + lookup 우선순위 + 회사별 변형 가능 항목</strong>.
+                source: <code>docs/margin-policy.md</code>.
+              </p>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <button id="mp-reload" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">↻ 새로고침</button>
+              <a id="mp-raw" href="docs/margin-policy.md" target="_blank" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">raw .md ↗</a>
+            </div>
+          </div>
+
+          <div class="border-gradient rounded-2xl p-6">
+            <article id="mp-content" class="prose prose-invert max-w-none text-sm">
+              <p class="text-slate-500">로딩 중...</p>
+            </article>
+          </div>
+        </div>
+
         <!-- 서비스 명세 (svcio) -->
         <div id="page-svcio" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -2575,6 +2601,7 @@ function goPage(name) {
                    users: "사용자 프로파일",
                    svcio: "서비스 명세", pricestats: "시세 통계",
                    margin: "마진 재계산", "margin-calc": "마진 계산기 (5-Layer)",
+                   "margin-policy": "마진 정책 명세",
                    audit: "감사 로그", guide: "운영 가이드", tools: "운영 도구 (외부 링크)" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
@@ -2594,6 +2621,7 @@ function goPage(name) {
   if (name === "quoteid-engines") loadQEngines();
   if (name === "margin")    initMarginRecompute();
   if (name === "margin-calc") initMarginCalc();
+  if (name === "margin-policy") initMarginPolicy();
   if (name === "tools")     initTools();
   if (name === "svcio")     initSvcIO();
   if (name !== "pricestats") stopPriceStatsPoller();
@@ -4996,6 +5024,55 @@ async function pmLoadStats() {
         text: `formulas=${j.formula_count} · leg_keys=${j.leg_keys_count}` }),
     );
   } catch (_) { /* stats 실패는 silent */ }
+}
+
+// ───────── 마진 정책 명세 (docs/margin-policy.md 렌더) ─────────
+
+const mpState = { wired: false, loaded: false };
+
+async function initMarginPolicy() {
+  if (!mpState.wired) {
+    mpState.wired = true;
+    $("#mp-reload").addEventListener("click", () => { mpState.loaded = false; mpLoad(); });
+  }
+  if (!mpState.loaded) await mpLoad();
+}
+
+async function mpLoad() {
+  const el = $("#mp-content");
+  try {
+    const r = await fetch("docs/margin-policy.md", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const md = await r.text();
+    // marked 옵션 — table / gfm.
+    // marked 가 GFM 으로 변환. md 는 우리 작성한 trusted docs (repo 안). XSS
+    // 위험은 docs 작성자가 책임. raw HTML 안에서 script tag 명시 금지.
+    const html = window.marked ? window.marked.parse(md, { gfm: true, breaks: false })
+                              : ("<pre>" + md.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])) + "</pre>");
+    // DOM parse 후 script/iframe 제거 (defense-in-depth).
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html;
+    tmp.querySelectorAll("script, iframe, object, embed").forEach(n => n.remove());
+    el.replaceChildren(...tmp.childNodes);
+    // 코드 블럭에 폰트/색 보정 (Tailwind prose 가 적용되지만 일부 미세).
+    el.querySelectorAll("table").forEach(t => {
+      t.classList.add("w-full","text-xs","font-mono","border","border-ink-700");
+      t.querySelectorAll("th").forEach(th => th.classList.add("px-2","py-1","text-left","border-b","border-ink-700","bg-ink-800/40"));
+      t.querySelectorAll("td").forEach(td => td.classList.add("px-2","py-1","border-b","border-ink-700/40"));
+    });
+    el.querySelectorAll("code").forEach(c => {
+      if (!c.parentElement || c.parentElement.tagName !== "PRE") {
+        c.classList.add("px-1","py-0.5","rounded","bg-ink-800","text-accent-400","text-[11px]");
+      }
+    });
+    el.querySelectorAll("pre").forEach(p => p.classList.add("p-3","rounded","bg-ink-900","border","border-ink-700/60","text-[11px]","overflow-x-auto"));
+    el.querySelectorAll("h1,h2,h3,h4").forEach(h => h.classList.add("text-slate-100","mt-4","mb-2"));
+    el.querySelectorAll("h2").forEach(h => h.classList.add("border-b","border-ink-700/60","pb-1"));
+    el.querySelectorAll("blockquote").forEach(b => b.classList.add("border-l-2","border-warn","pl-3","text-warn","text-xs","italic"));
+    mpState.loaded = true;
+  } catch (e) {
+    el.replaceChildren(h("div", { class: "text-bad", text: "로드 실패: " + e.message }));
+  }
 }
 
 // ───────── 휴일 캘린더 ─────────

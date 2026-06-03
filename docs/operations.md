@@ -198,6 +198,19 @@ mci-admin 의 신규 flag:
 | `-prom-url` | `WTG_ADMIN_PROM_URL` | Prometheus base URL (예: `http://prometheus:9090`). 채우면 admin UI "운영 모니터링" 페이지 카드 활성. 자세히는 `docs/monitoring.md` |
 | `-grafana-url` | `WTG_ADMIN_GRAFANA_URL` | Grafana base URL (예: `http://grafana:3000`). 채우면 admin UI 에 firing alert 표시 |
 | `-grafana-user`, `-grafana-pass` | `WTG_ADMIN_GRAFANA_USER`, `WTG_ADMIN_GRAFANA_PASS` | Grafana Basic auth (옵션) |
+| `-audit-redis` | `WTG_ADMIN_AUDIT_REDIS` | Redis addr — admin audit ring 영속 backend (host:port). 비면 in-memory only (재시작 시 손실) |
+| `-audit-redis-pass` | `WTG_ADMIN_AUDIT_REDIS_PASS` | Audit Redis password (옵션) |
+| `-audit-redis-db`, `-audit-redis-key`, `-audit-redis-maxlen` | — | DB index / LIST 키 (def `wtg:audit`) / 보존 길이 (def 1000) |
+
+### audit Redis backend
+
+자세한 동작:
+
+- `Push` — Redis 활성 시 `LPUSH key + LTRIM key 0 (maxLen-1)` (pipeline atomic). 실패 → in-memory ring 만 보존 + `failCount` 증가
+- `List` — Redis 활성 시 `LRANGE key 0 (limit-1)` 우선. 실패 → in-memory fallback
+- 재시작 시 → 새 admin 이 같은 Redis key 에 붙으면 보존된 audit 그대로 조회
+- Metric: `wtg_audit_redis_fails_total{service=mci-admin}` Counter — 0 이 아니면 Redis 장애 의심
+- Grafana alert (wtg-p7-ratelimit 그룹의 `wtg-audit-redis-fails`): `rate(...[5m]) > 0` for 3m, severity=warning
 | `-upstream-timeout` | — | upstream round-trip timeout (def 10s) |
 
 ### 1.6. mci-edge-push — DMZ WS (`:8084`) / mci-edge-price — DMZ WS (`:8083`)

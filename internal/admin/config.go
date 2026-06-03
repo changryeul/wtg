@@ -106,6 +106,15 @@ type Config struct {
 	GrafanaUser string
 	GrafanaPass string
 
+	// Audit Redis backend — admin audit ring 의 영속 저장소. 비면 in-memory
+	// only (재시작 시 손실). 채우면 Redis LPUSH+LTRIM 으로 보존. 자세히는
+	// docs/operations.md 와 internal/admin/audit_ring.go.
+	AuditRedisAddr     string
+	AuditRedisPassword string
+	AuditRedisDB       int
+	AuditRedisKey      string // default "wtg:audit"
+	AuditRedisMaxLen   int64  // LTRIM 보존 길이 (default 1000)
+
 	// ChartDSN — TimescaleDB quote_bars 접근용 DSN. 채워지면 마진 재계산
 	// (분쟁/감사 backfill) endpoint 활성. mci-chart / mci-price 와 같은 DB.
 	// 빈 값이면 /v1/admin/margin/* 는 503 반환.
@@ -260,6 +269,12 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_ADMIN_GRAFANA_PASS"); v != "" {
 		cfg.GrafanaPass = v
 	}
+	if v := os.Getenv("WTG_ADMIN_AUDIT_REDIS"); v != "" {
+		cfg.AuditRedisAddr = v
+	}
+	if v := os.Getenv("WTG_ADMIN_AUDIT_REDIS_PASS"); v != "" {
+		cfg.AuditRedisPassword = v
+	}
 	if v := os.Getenv("WTG_ADMIN_CHART_POOL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.ChartPoolMaxConns = n
@@ -335,6 +350,11 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.GrafanaURL, "grafana-url", cfg.GrafanaURL, "Grafana base URL — 채우면 admin UI 에 firing alert 표시 (예: http://grafana:3000)")
 	fs.StringVar(&cfg.GrafanaUser, "grafana-user", cfg.GrafanaUser, "Grafana Basic auth 사용자명 (옵션)")
 	fs.StringVar(&cfg.GrafanaPass, "grafana-pass", cfg.GrafanaPass, "Grafana Basic auth 비밀번호 (옵션)")
+	fs.StringVar(&cfg.AuditRedisAddr, "audit-redis", cfg.AuditRedisAddr, "Redis addr — audit ring 영속 backend (host:port, 비면 in-memory only)")
+	fs.StringVar(&cfg.AuditRedisPassword, "audit-redis-pass", cfg.AuditRedisPassword, "Audit Redis password")
+	fs.IntVar(&cfg.AuditRedisDB, "audit-redis-db", cfg.AuditRedisDB, "Audit Redis DB index")
+	fs.StringVar(&cfg.AuditRedisKey, "audit-redis-key", cfg.AuditRedisKey, "Audit Redis LIST 키 (default wtg:audit)")
+	fs.Int64Var(&cfg.AuditRedisMaxLen, "audit-redis-maxlen", cfg.AuditRedisMaxLen, "Audit Redis 보존 길이 (LTRIM, default 1000)")
 	fs.StringVar(&cfg.ChartDSN, "chart-dsn", cfg.ChartDSN, "TimescaleDB DSN — 채우면 마진 재계산 endpoint 활성")
 	fs.IntVar(&cfg.ChartPoolMaxConns, "chart-pool", cfg.ChartPoolMaxConns, "pgxpool 최대 connection (default 5)")
 	fs.StringVar(&cfg.EtcdTLSCertFile, "etcd-tls-cert", cfg.EtcdTLSCertFile, "etcd 클라이언트 cert PEM (공유 client mTLS)")

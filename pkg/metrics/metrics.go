@@ -59,6 +59,9 @@ type Registry struct {
 	// Rate limit Redis backend — fail-open 발생 누적. v1.21.
 	rateLimitRedisFails *prometheus.CounterVec
 
+	// Audit Redis backend — LPUSH/LTRIM 실패 누적. v1.22.
+	auditRedisFails *prometheus.CounterVec
+
 	customCollectors []prometheus.Collector
 }
 
@@ -250,6 +253,14 @@ func NewRegistry() *Registry {
 		[]string{"service"},
 	)
 
+	r.auditRedisFails = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_audit_redis_fails_total",
+			Help: "Admin audit ring Redis backend 호출 실패 누적. 증가하면 영속 손실 가능성 — Redis 인프라 점검.",
+		},
+		[]string{"service"},
+	)
+
 	r.reg.MustRegister(
 		r.httpReqTotal,
 		r.httpReqDuration,
@@ -273,6 +284,7 @@ func NewRegistry() *Registry {
 		r.brokerHeartbeatTO,
 		r.brokerDisconnects,
 		r.rateLimitRedisFails,
+		r.auditRedisFails,
 	)
 	return r
 }
@@ -350,6 +362,12 @@ func (r *Registry) RegisterAsyncQueueGauge(service string, fn func() float64) er
 // 증가 = Redis 장애 / network 문제. Grafana alert 권장.
 func (r *Registry) IncRateLimitRedisFail(service string) {
 	r.rateLimitRedisFails.WithLabelValues(service).Inc()
+}
+
+// IncAuditRedisFail — Admin audit ring Redis backend 호출 실패 카운트.
+// AuditRing.Push 의 LPUSH/LTRIM 또는 List 의 LRANGE 가 실패할 때마다 호출.
+func (r *Registry) IncAuditRedisFail(service string) {
+	r.auditRedisFails.WithLabelValues(service).Inc()
 }
 
 // ObserveQuoteIDOp — 단일 RPC 또는 batch 안의 per-item 결과 카운터.

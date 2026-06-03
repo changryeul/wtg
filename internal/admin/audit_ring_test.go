@@ -1,9 +1,15 @@
 package admin
 
 import (
+	"fmt"
+	"io"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestAuditRingPushList(t *testing.T) {
@@ -106,5 +112,87 @@ func TestAuditRingConcurrent(t *testing.T) {
 	wg.Wait()
 	if r.Len() != 50 {
 		t.Errorf("Len=%d, want 50", r.Len())
+	}
+}
+
+func TestAuditRing_RedisBackendPersistsAndLists(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ring := NewAuditRing(10)
+	ring.SetRedisBackend(rdb, "test:audit", 100, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	for i := 0; i < 5; i++ {
+		ring.Push(AuditEntry{
+			Action:   "PUT_ROUTE",
+			Resource: "route",
+			Usid:     "alice",
+			Attrs:    map[string]any{"alias": fmt.Sprintf("ALIAS_%d", i)},
+		})
+	}
+
+	// 재시작 시뮬레이션 — 같은 Redis 에 새 ring 붙임.
+	newRing := NewAuditRing(10)
+	newRing.SetRedisBackend(rdb, "test:audit", 100, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	out := newRing.List(0)
+	if len(out) != 5 {
+		t.Fatalf("재시작 후 list len=%d, want 5", len(out))
+	}
+	// 최신 (ALIAS_4) 부터 역순.
+	if got, _ := out[0].Attrs["alias"].(string); got != "ALIAS_4" {
+		t.Errorf("최신 entry alias=%q, want ALIAS_4", got)
+	}
+	if got, _ := out[4].Attrs["alias"].(string); got != "ALIAS_0" {
+		t.Errorf("가장 오래된 alias=%q, want ALIAS_0", got)
+	}
+}
+
+// Redis 다운 → fail-open + failCount 증가. in-memory 는 그대로.
+func TestAuditRing_RedisFailOpenFallsBackToMemory(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ring := NewAuditRing(10)
+	ring.SetRedisBackend(rdb, "test:audit", 100, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	mr.Close() // Redis 다운
+
+	ring.Push(AuditEntry{Action: "PUT_ROUTE", Resource: "route"})
+	if ring.RedisFailCount() < 1 {
+		t.Errorf("Redis 다운인데 failCount=%d", ring.RedisFailCount())
+	}
+	// in-memory 로 fallback — List 가 in-memory 에서 가져옴.
+	out := ring.List(0)
+	if len(out) != 1 {
+		t.Errorf("in-memory fallback len=%d, want 1", len(out))
+	}
+}
+
+// LTRIM 으로 maxLen 초과 자동 정리.
+func TestAuditRing_RedisLTrimRespectsMaxLen(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	ring := NewAuditRing(100)
+	ring.SetRedisBackend(rdb, "test:audit", 3, slog.New(slog.NewTextHandler(io.Discard, nil))) // maxLen=3
+
+	for i := 0; i < 10; i++ {
+		ring.Push(AuditEntry{Action: fmt.Sprintf("A%d", i)})
+	}
+
+	out := ring.List(0)
+	if len(out) != 3 {
+		t.Errorf("LTRIM 후 len=%d, want 3", len(out))
+	}
+	// 최신 3개 (A7, A8, A9) 만 남아야.
+	wantActions := []string{"A9", "A8", "A7"}
+	for i, w := range wantActions {
+		if out[i].Action != w {
+			t.Errorf("out[%d].Action=%q, want %q", i, out[i].Action, w)
+		}
 	}
 }

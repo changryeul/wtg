@@ -1,8 +1,14 @@
 package admin
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // AuditEntry 는 단일 admin 액션 기록 (auth.md §10 ADMIN_ACTION).
@@ -18,10 +24,13 @@ type AuditEntry struct {
 	Attrs    map[string]any `json:"attrs,omitempty"`    // 액션별 상세 (alias / active / key / 등)
 }
 
-// AuditRing 은 in-memory 고정크기 ring buffer.
+// AuditRing 은 audit 항목 저장소. 기본은 in-memory 고정크기 ring buffer.
 //
-// 동기화: sync.RWMutex. 작은 사이즈 (200) 라 락 경합은 무시 가능.
-// FIFO — 가장 오래된 항목부터 덮어씀.
+// Redis backend (SetRedisBackend) 활성 시 — Push 는 LPUSH + LTRIM 으로
+// Redis 에 영속, List 는 LRANGE 로 Redis fetch. 재시작 시 항목 손실 X.
+// Redis 호출 실패 시 fail-open (in-memory ring 만 사용) + failCount 누적.
+//
+// 동기화: sync.RWMutex. 작은 사이즈 (200) 라 락 경합 무시 가능.
 type AuditRing struct {
 	mu  sync.RWMutex
 	cap int
@@ -32,6 +41,14 @@ type AuditRing struct {
 	full bool
 	// onPush — 신규 항목 추가 시 호출 (ws 브로드캐스트 등). nil 가능.
 	onPush func(AuditEntry)
+
+	// Redis backend — nil 이면 in-memory only.
+	redis       *redis.Client
+	redisKey    string
+	redisMaxLn  int64 // LTRIM 후 보존할 길이
+	logger      *slog.Logger
+	redisFails  atomic.Uint64
+	onRedisFail func() // Prometheus 카운터 등에 연결. nil 가능.
 }
 
 // SetOnPush 는 push 콜백을 설정한다 (등록은 1회).
@@ -53,6 +70,56 @@ func NewAuditRing(capacity int) *AuditRing {
 	}
 }
 
+// SetRedisBackend — Redis 영속 backend 활성. 활성 후 Push 는 Redis 에 LPUSH +
+// LTRIM, List 는 LRANGE 로 Redis fetch. nil client 면 비활성 (in-memory only).
+//
+// maxLen 은 Redis LIST 보존 길이 (예: 10000). <= 0 면 1000.
+// logger nil 가능.
+func (r *AuditRing) SetRedisBackend(rdb *redis.Client, key string, maxLen int64, logger *slog.Logger) {
+	if rdb == nil {
+		return
+	}
+	if key == "" {
+		key = "wtg:audit"
+	}
+	if maxLen <= 0 {
+		maxLen = 1000
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	r.mu.Lock()
+	r.redis = rdb
+	r.redisKey = key
+	r.redisMaxLn = maxLen
+	r.logger = logger
+	r.mu.Unlock()
+}
+
+// SetRedisFailCallback — Redis 호출 실패 시 호출. Prometheus 카운터 등에 연결.
+// SetRedisBackend 이후 호출.
+func (r *AuditRing) SetRedisFailCallback(fn func()) {
+	r.mu.Lock()
+	r.onRedisFail = fn
+	r.mu.Unlock()
+}
+
+// noteRedisFail — 내부 helper, failCount + onRedisFail 동시 처리.
+func (r *AuditRing) noteRedisFail() {
+	r.redisFails.Add(1)
+	r.mu.RLock()
+	cb := r.onRedisFail
+	r.mu.RUnlock()
+	if cb != nil {
+		cb()
+	}
+}
+
+// RedisFailCount — Redis 호출 실패 누적 (operations 모니터링).
+func (r *AuditRing) RedisFailCount() uint64 {
+	return r.redisFails.Load()
+}
+
 // Push 는 항목을 추가한다 (At 가 0 이면 자동 채움).
 func (r *AuditRing) Push(e AuditEntry) {
 	if e.At.IsZero() {
@@ -66,15 +133,58 @@ func (r *AuditRing) Push(e AuditEntry) {
 		r.full = true
 	}
 	cb := r.onPush
+	rdb := r.redis
+	key := r.redisKey
+	maxLen := r.redisMaxLn
+	logger := r.logger
 	r.mu.Unlock()
+	if rdb != nil {
+		r.pushRedis(rdb, key, maxLen, logger, e)
+	}
 	if cb != nil {
 		cb(e)
 	}
 }
 
-// List 는 시간 역순 (최신 → 오래된) 으로 모든 항목을 복사 반환한다.
-// limit > 0 이면 처음 limit 개만.
+// pushRedis — LPUSH + LTRIM (atomic in MULTI). 실패 시 fail-open
+// (in-memory ring 만 사용) + failCount 증가.
+func (r *AuditRing) pushRedis(rdb *redis.Client, key string, maxLen int64, logger *slog.Logger, e AuditEntry) {
+	data, err := json.Marshal(e)
+	if err != nil {
+		r.noteRedisFail()
+		logger.Warn("audit Redis marshal 실패", slog.Any("error", err))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	pipe := rdb.Pipeline()
+	pipe.LPush(ctx, key, data)
+	pipe.LTrim(ctx, key, 0, maxLen-1)
+	if _, err := pipe.Exec(ctx); err != nil {
+		r.noteRedisFail()
+		logger.Warn("audit Redis LPUSH/LTRIM 실패 — in-memory 만 보존",
+			slog.String("key", key), slog.Any("error", err))
+	}
+}
+
+// List 는 시간 역순 (최신 → 오래된) 으로 항목을 복사 반환.
+// limit > 0 이면 처음 limit 개만. Redis backend 활성 시 LRANGE 우선
+// (재시작 후 보존), 실패 시 in-memory fallback.
 func (r *AuditRing) List(limit int) []AuditEntry {
+	r.mu.RLock()
+	rdb := r.redis
+	key := r.redisKey
+	logger := r.logger
+	r.mu.RUnlock()
+	if rdb != nil {
+		if out, err := r.listRedis(rdb, key, limit); err == nil {
+			return out
+		} else {
+			r.noteRedisFail()
+			logger.Warn("audit Redis LRANGE 실패 — in-memory fallback", slog.Any("error", err))
+		}
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -103,6 +213,30 @@ func (r *AuditRing) List(limit int) []AuditEntry {
 		}
 	}
 	return out
+}
+
+// listRedis — LRANGE 0 (limit-1) 또는 전체 — 시간 역순 그대로 (LPUSH 라 head = 최신).
+func (r *AuditRing) listRedis(rdb *redis.Client, key string, limit int) ([]AuditEntry, error) {
+	stop := int64(-1)
+	if limit > 0 {
+		stop = int64(limit) - 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	vals, err := rdb.LRange(ctx, key, 0, stop).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AuditEntry, 0, len(vals))
+	for _, v := range vals {
+		var e AuditEntry
+		if err := json.Unmarshal([]byte(v), &e); err != nil {
+			r.logger.Warn("audit Redis entry 파싱 실패 (skip)", slog.Any("error", err))
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 // Len 은 현재 저장된 항목 수.

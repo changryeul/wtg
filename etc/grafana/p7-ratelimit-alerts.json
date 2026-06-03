@@ -147,6 +147,52 @@
           }
         },
         {
+          "uid": "wtg-audit-redis-fails",
+          "title": "Admin audit ring Redis backend 실패 — 영속 손실 가능",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "sum(rate(wtg_audit_redis_fails_total[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "3m",
+          "annotations": {
+            "summary": "audit ring Redis 호출 실패 발생 — 5분 윈도우 동안 1건 이상",
+            "description": "AuditRing.Push 의 LPUSH/LTRIM 또는 List 의 LRANGE 가 실패. in-memory 만 보존되어 admin 재시작 시 audit 항목 손실 위험. 원인: Redis 다운 / network / timeout. Grafana alert wtg-p7-ratelimit-redis-fails 와 동일 Redis 인프라일 가능성 — 함께 발화 시 우선순위 같음.",
+            "runbook_url": "docs/operations.md#audit-redis"
+          },
+          "labels": {
+            "severity": "warning",
+            "service": "mci-admin",
+            "domain": "audit"
+          }
+        },
+        {
           "uid": "wtg-p7-ratelimit-redis-fails",
           "title": "Rate limit Redis backend 실패 — fail-open 발화 (분산 한도 무력화)",
           "condition": "C",

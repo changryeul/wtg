@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	apihandlers "github.com/winwaysystems/wtg/internal/api/handlers"
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -41,6 +42,7 @@ type Server struct {
 	policySync  *policy.EtcdSync
 	svcio       *svcio.Registry
 	audit       *AuditRing
+	auditRedis  *redis.Client // audit ring 영속 backend (옵션)
 	hub         *Hub
 	tlsReloader *tlsutil.Reloader
 	http        *http.Server
@@ -204,6 +206,19 @@ func (s *Server) Start(ctx context.Context) error {
 	// Audit ring buffer — 최근 admin 액션 200개 (UI 표시용).
 	if s.audit == nil {
 		s.audit = NewAuditRing(200)
+	}
+	// Audit Redis backend — 영속 저장. 재시작 시에도 보존.
+	if s.cfg.AuditRedisAddr != "" {
+		s.auditRedis = redis.NewClient(&redis.Options{
+			Addr:     s.cfg.AuditRedisAddr,
+			Password: s.cfg.AuditRedisPassword,
+			DB:       s.cfg.AuditRedisDB,
+		})
+		s.audit.SetRedisBackend(s.auditRedis, s.cfg.AuditRedisKey, s.cfg.AuditRedisMaxLen, s.logger)
+		s.audit.SetRedisFailCallback(func() { s.metrics.IncAuditRedisFail("mci-admin") })
+		s.logger.Info("audit Redis backend 활성",
+			slog.String("addr", s.cfg.AuditRedisAddr),
+			slog.String("key", s.cfg.AuditRedisKey))
 	}
 	// ws stream hub — 브라우저 UI 실시간 푸시.
 	if s.hub == nil {
@@ -613,6 +628,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.chartPool != nil {
 		s.chartPool.Close()
+	}
+	if s.auditRedis != nil {
+		_ = s.auditRedis.Close()
 	}
 	if s.hub != nil {
 		s.hub.Close()

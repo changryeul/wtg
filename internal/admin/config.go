@@ -100,6 +100,12 @@ type Config struct {
 	// 표시는 되지만 카드가 503 처리.
 	PromURL string
 
+	// GrafanaURL — Grafana base URL (예: "http://grafana:3000"). 채우면 admin
+	// UI "운영 모니터링" 페이지에 firing alert 표시. Basic auth 옵션.
+	GrafanaURL  string
+	GrafanaUser string
+	GrafanaPass string
+
 	// ChartDSN — TimescaleDB quote_bars 접근용 DSN. 채워지면 마진 재계산
 	// (분쟁/감사 backfill) endpoint 활성. mci-chart / mci-price 와 같은 DB.
 	// 빈 값이면 /v1/admin/margin/* 는 503 반환.
@@ -245,6 +251,15 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_ADMIN_PROM_URL"); v != "" {
 		cfg.PromURL = v
 	}
+	if v := os.Getenv("WTG_ADMIN_GRAFANA_URL"); v != "" {
+		cfg.GrafanaURL = v
+	}
+	if v := os.Getenv("WTG_ADMIN_GRAFANA_USER"); v != "" {
+		cfg.GrafanaUser = v
+	}
+	if v := os.Getenv("WTG_ADMIN_GRAFANA_PASS"); v != "" {
+		cfg.GrafanaPass = v
+	}
 	if v := os.Getenv("WTG_ADMIN_CHART_POOL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.ChartPoolMaxConns = n
@@ -317,6 +332,9 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdQuoteIDEnginesPrefix, "etcd-quoteid-engines-prefix", cfg.EtcdQuoteIDEnginesPrefix, "etcd QuoteID engine allowlist prefix (default wtg/quoteid/engines/)")
 	fs.StringVar(&cfg.EtcdRateLimitPrefix, "etcd-ratelimit-prefix", cfg.EtcdRateLimitPrefix, "etcd rate limit 정책 prefix (default wtg/ratelimit/)")
 	fs.StringVar(&cfg.PromURL, "prom-url", cfg.PromURL, "Prometheus base URL — 채우면 admin UI 운영 모니터링 페이지 활성 (예: http://prometheus:9090)")
+	fs.StringVar(&cfg.GrafanaURL, "grafana-url", cfg.GrafanaURL, "Grafana base URL — 채우면 admin UI 에 firing alert 표시 (예: http://grafana:3000)")
+	fs.StringVar(&cfg.GrafanaUser, "grafana-user", cfg.GrafanaUser, "Grafana Basic auth 사용자명 (옵션)")
+	fs.StringVar(&cfg.GrafanaPass, "grafana-pass", cfg.GrafanaPass, "Grafana Basic auth 비밀번호 (옵션)")
 	fs.StringVar(&cfg.ChartDSN, "chart-dsn", cfg.ChartDSN, "TimescaleDB DSN — 채우면 마진 재계산 endpoint 활성")
 	fs.IntVar(&cfg.ChartPoolMaxConns, "chart-pool", cfg.ChartPoolMaxConns, "pgxpool 최대 connection (default 5)")
 	fs.StringVar(&cfg.EtcdTLSCertFile, "etcd-tls-cert", cfg.EtcdTLSCertFile, "etcd 클라이언트 cert PEM (공유 client mTLS)")

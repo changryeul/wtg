@@ -103,8 +103,55 @@ mci-admin --prom-url http://127.0.0.1:9095
 - query 화이트리스트 X — 잘못된 PromQL 도 proxy 통과 (Prometheus 가 에러)
 - 운영 페이지 자체에 alert 미연동 — Grafana alert UI 와 분리
 
-## 8. 향후
+## 8. Alert state 섹션
 
-- sparkline (mini chart, 1~5분 트렌드)
-- Grafana alert state 통합 (`/api/prometheus/grafana/api/v1/rules` 라이브 표시)
-- 클릭 시 Grafana panel 으로 deep link
+`page-monitoring` 하단의 alert 테이블 — Grafana 의 wtg-* 그룹 룰을 라이브
+표시. firing 알람을 운영자가 admin UI 안에서 즉시 확인.
+
+```
+admin UI alert 섹션
+   ↓ GET /v1/admin/grafana-alerts
+admin (Go)
+   ↓ http GET <GrafanaURL>/api/prometheus/grafana/api/v1/rules
+   ↓ (옵션) Basic auth: admin/secret
+Grafana
+```
+
+### 운영 설정
+
+```bash
+mci-admin \
+  --grafana-url http://grafana:3000 \
+  --grafana-user admin \
+  --grafana-pass <secret>
+# 또는
+WTG_ADMIN_GRAFANA_URL=http://grafana:3000 \
+WTG_ADMIN_GRAFANA_USER=admin \
+WTG_ADMIN_GRAFANA_PASS=<secret> \
+mci-admin
+```
+
+### 표시
+
+| 필드 | 의미 |
+|------|------|
+| state | firing (빨강) / pending (노랑) / inactive (회색) |
+| title | alert rule 이름 |
+| severity | `page` (빨강) / `warning` (노랑) — label severity |
+| domain | label domain (ratelimit, broker, master-sync 등) |
+| value | 평가값 (지수 표기) |
+
+상단 카운터: firing / pending / inactive 누적. 기본 필터 "firing/pending 만"
+체크박스로 조정.
+
+### 한계
+
+- 그룹 prefix `wtg-` 만 노출 — Grafana 내 다른 알람은 무시
+- alert 진압 / annotation snooze 는 UI 안 — Grafana 콘솔에서 직접
+- alert history (시작 시각, 평가 횟수) 미표시
+
+## 9. 향후
+
+- sparkline (mini chart, 1~5분 트렌드, query_range 사용)
+- alert 클릭 시 Grafana 의 해당 룰 페이지로 deep link
+- alert annotation / silence 통합

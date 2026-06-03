@@ -195,6 +195,8 @@ mci-admin 의 신규 flag:
 | flag | env | 의미 |
 |---|---|---|
 | `-prom-url` | `WTG_ADMIN_PROM_URL` | Prometheus base URL (예: `http://prometheus:9090`). 채우면 admin UI "운영 모니터링" 페이지 카드 활성. 자세히는 `docs/monitoring.md` |
+| `-grafana-url` | `WTG_ADMIN_GRAFANA_URL` | Grafana base URL (예: `http://grafana:3000`). 채우면 admin UI 에 firing alert 표시 |
+| `-grafana-user`, `-grafana-pass` | `WTG_ADMIN_GRAFANA_USER`, `WTG_ADMIN_GRAFANA_PASS` | Grafana Basic auth (옵션) |
 | `-upstream-timeout` | — | upstream round-trip timeout (def 10s) |
 
 ### 1.6. mci-edge-push — DMZ WS (`:8084`) / mci-edge-price — DMZ WS (`:8083`)

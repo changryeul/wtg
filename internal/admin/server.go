@@ -424,6 +424,15 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	mux.HandleFunc("GET /v1/admin/prom-query", PromQuery(promDeps))
 
+	// Grafana alert state proxy — 운영 모니터링 페이지의 alert 섹션.
+	grafanaDeps := &GrafanaProxyDeps{
+		BaseURL:  s.cfg.GrafanaURL,
+		Username: s.cfg.GrafanaUser,
+		Password: s.cfg.GrafanaPass,
+		Logger:   s.logger,
+	}
+	mux.HandleFunc("GET /v1/admin/grafana-alerts", GrafanaAlerts(grafanaDeps))
+
 	mux.HandleFunc("POST /v1/admin/margin/recompute", PostMarginRecompute(marginDeps))
 	// 정책 엔진 — kill switch / 정비 창 / 차단 심볼·라우팅키.
 	mux.HandleFunc("GET /v1/admin/policy", GetPolicy(policyDeps))

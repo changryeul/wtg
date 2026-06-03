@@ -2258,6 +2258,42 @@
 
           <div id="mon-cards" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3"></div>
 
+          <!-- Grafana alert 상태 -->
+          <div class="flex items-center justify-between pt-2">
+            <div>
+              <h4 class="text-base font-semibold">Alert state</h4>
+              <p class="text-xs text-slate-500">Grafana provisioning 의 wtg-* 그룹 — firing/pending 상태 즉시 확인</p>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span>firing <span id="mon-alert-firing" class="font-mono text-bad">0</span></span>
+              <span>pending <span id="mon-alert-pending" class="font-mono text-warn">0</span></span>
+              <span>inactive <span id="mon-alert-inactive" class="font-mono text-good">0</span></span>
+              <label class="ml-2 inline-flex items-center gap-1">
+                <input type="checkbox" id="mon-alert-onlyactive" checked /> firing/pending 만
+              </label>
+            </div>
+          </div>
+          <div id="mon-alert-banner" class="hidden p-3 rounded-lg bg-warn/15 border border-warn/30 text-sm text-slate-200">
+            <span class="font-mono">GrafanaURL 미구성</span> — admin 의 <code>--grafana-url</code> (옵션: <code>--grafana-user</code>, <code>--grafana-pass</code>) 또는 <code>WTG_ADMIN_GRAFANA_URL</code> 환경변수로 Grafana base URL 을 채워주세요.
+          </div>
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                <tr class="border-b border-ink-700/60">
+                  <th class="text-left px-3 py-2 font-medium w-16">state</th>
+                  <th class="text-left px-3 py-2 font-medium">title</th>
+                  <th class="text-left px-3 py-2 font-medium w-28">severity</th>
+                  <th class="text-left px-3 py-2 font-medium w-28">domain</th>
+                  <th class="text-right px-3 py-2 font-medium w-24">value</th>
+                </tr>
+              </thead>
+              <tbody id="mon-alert-tbody"></tbody>
+            </table>
+            <div id="mon-alert-empty" class="hidden p-6 text-center text-slate-500 text-sm">
+              발화 중인 alert 없음 — 모두 정상
+            </div>
+          </div>
+
           <p class="text-[10px] text-slate-500">
             카드 정의는 <a href="/docs/monitoring.md" class="text-accent-400 hover:text-accent-300">docs/monitoring.md</a>.
             쿼리 부족 시 Grafana 와 함께 사용 권장.
@@ -5024,6 +5060,7 @@ function initMonitoring() {
         stopMonPoller();
       }
     };
+    $("#mon-alert-onlyactive").onchange = renderAlerts;
     renderMonCards(); // skeleton
   }
   loadMonitoring();
@@ -5074,6 +5111,91 @@ async function loadMonitoring() {
     }
   }
   if (!bannerShown) $("#mon-banner").classList.add("hidden");
+  loadAlerts();
+}
+
+let monAlertCache = []; // 마지막 alert 리스트 (rerender 시 재사용)
+
+async function loadAlerts() {
+  try {
+    const r = await api("/v1/admin/grafana-alerts");
+    $("#mon-alert-banner").classList.add("hidden");
+    // r 구조: { status, data: { groups: [{ name, rules: [{ name, state, labels, alerts }] }] } }
+    const groups = ((r || {}).data || {}).groups || [];
+    const out = [];
+    for (const g of groups) {
+      if (!String(g.name || "").startsWith("wtg-")) continue;
+      for (const rule of (g.rules || [])) {
+        const a = (rule.alerts || [])[0] || {};
+        out.push({
+          state: rule.state || "inactive",
+          title: rule.name || "?",
+          severity: (rule.labels || {}).severity || "",
+          domain: (rule.labels || {}).domain || "",
+          value: a.value || "",
+        });
+      }
+    }
+    monAlertCache = out;
+    renderAlerts();
+  } catch (e) {
+    if (e.status === 503) {
+      $("#mon-alert-banner").classList.remove("hidden");
+      $("#mon-alert-tbody").replaceChildren();
+      $("#mon-alert-empty").classList.add("hidden");
+      $("#mon-alert-firing").textContent = "—";
+      $("#mon-alert-pending").textContent = "—";
+      $("#mon-alert-inactive").textContent = "—";
+    }
+  }
+}
+
+function renderAlerts() {
+  const onlyActive = $("#mon-alert-onlyactive").checked;
+  const all = monAlertCache;
+  const counts = { firing: 0, pending: 0, inactive: 0 };
+  for (const a of all) {
+    if (a.state === "firing") counts.firing++;
+    else if (a.state === "pending") counts.pending++;
+    else counts.inactive++;
+  }
+  $("#mon-alert-firing").textContent = String(counts.firing);
+  $("#mon-alert-pending").textContent = String(counts.pending);
+  $("#mon-alert-inactive").textContent = String(counts.inactive);
+
+  const shown = onlyActive ? all.filter(a => a.state === "firing" || a.state === "pending") : all;
+  const tb = $("#mon-alert-tbody");
+  tb.replaceChildren();
+  if (shown.length === 0) {
+    $("#mon-alert-empty").classList.remove("hidden");
+    return;
+  }
+  $("#mon-alert-empty").classList.add("hidden");
+  // state 우선순위 (firing → pending → inactive) 정렬.
+  const order = { firing: 0, pending: 1, inactive: 2 };
+  shown.sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9));
+  for (const a of shown) {
+    const stateColor = a.state === "firing" ? "bg-bad/20 text-bad"
+                      : a.state === "pending" ? "bg-warn/20 text-warn"
+                      : "bg-ink-700 text-slate-400";
+    const stateBadge = h("span", {
+      class: "inline-block px-2 py-0.5 rounded text-[10px] font-mono uppercase " + stateColor,
+      text: a.state,
+    });
+    const sevColor = a.severity === "page" ? "text-bad"
+                    : a.severity === "warning" ? "text-warn"
+                    : "text-slate-400";
+    const sevEl = h("span", { class: "text-xs font-mono " + sevColor, text: a.severity || "—" });
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+      h("td", { class: "px-3 py-2" }, stateBadge),
+      h("td", { class: "px-3 py-2 text-slate-200", text: a.title }),
+      h("td", { class: "px-3 py-2" }, sevEl),
+      h("td", { class: "px-3 py-2 text-xs font-mono text-slate-400", text: a.domain || "—" }),
+      h("td", { class: "px-3 py-2 text-right text-xs font-mono text-slate-300",
+                text: a.value ? Number(a.value).toExponential(2) : "" }),
+    );
+    tb.appendChild(tr);
+  }
 }
 
 function updateMonCard(card, val) {

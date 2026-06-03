@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/winwaysystems/wtg/pkg/netutil"
+	"github.com/winwaysystems/wtg/pkg/ratelimit"
 )
 
 // Config 는 mci-edge-push 런타임 설정.
@@ -44,9 +45,16 @@ type Config struct {
 	// gRPC.
 	DialTimeout time.Duration
 
-	// IP 단위 rate limit (0=비활성).
+	// Rate limit fallback — 룰 매칭 안 된 path 의 한도. 0=비활성.
 	IPRatePerSec float64
 	IPBurst      int
+
+	// Path-aware rate limit 룰셋. nil → DefaultRateLimitRules().
+	RateLimitRules []ratelimit.Rule
+
+	// etcd 기반 hot reload.
+	EtcdEndpoints    string
+	EtcdRateLimitKey string // default "wtg/ratelimit/edge-push"
 
 	LogLevel string
 
@@ -72,20 +80,21 @@ type Config struct {
 func DefaultConfig() Config {
 	host, _ := os.Hostname()
 	return Config{
-		ListenAddr:     ":8084",
-		UpstreamGRPC:   "127.0.0.1:50052",
-		SubscriberID:   "mci-edge-push@" + host,
-		DevMode:        false,
-		WsPingInterval: 30 * time.Second,
-		WsPongTimeout:  60 * time.Second,
-		SendQueueSize:  256,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		IdleTimeout:    120 * time.Second,
-		DialTimeout:    5 * time.Second,
-		IPRatePerSec:   100,
-		IPBurst:        200,
-		LogLevel:       "info",
+		ListenAddr:       ":8084",
+		UpstreamGRPC:     "127.0.0.1:50052",
+		SubscriberID:     "mci-edge-push@" + host,
+		DevMode:          false,
+		WsPingInterval:   30 * time.Second,
+		WsPongTimeout:    60 * time.Second,
+		SendQueueSize:    256,
+		ReadTimeout:      10 * time.Second,
+		WriteTimeout:     10 * time.Second,
+		IdleTimeout:      120 * time.Second,
+		DialTimeout:      5 * time.Second,
+		IPRatePerSec:     100,
+		IPBurst:          200,
+		EtcdRateLimitKey: "wtg/ratelimit/edge-push",
+		LogLevel:         "info",
 	}
 }
 
@@ -145,8 +154,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.SendQueueSize, "send-queue", cfg.SendQueueSize, "ws 클라이언트별 큐 크기")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨")
 	fs.DurationVar(&cfg.DialTimeout, "dial-timeout", cfg.DialTimeout, "gRPC dial timeout")
-	fs.Float64Var(&cfg.IPRatePerSec, "ip-rate", cfg.IPRatePerSec, "IP 단위 sustained TPS (0=비활성)")
-	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "IP burst 한도")
+	fs.Float64Var(&cfg.IPRatePerSec, "ip-rate", cfg.IPRatePerSec, "fallback rate limit TPS (룰 매칭 안 된 path, 0=비활성)")
+	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "fallback burst 한도")
+	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "etcd endpoints (콤마 구분, 비면 정적 룰만)")
+	fs.StringVar(&cfg.EtcdRateLimitKey, "etcd-ratelimit-key", cfg.EtcdRateLimitKey, "etcd PolicyDoc key (default wtg/ratelimit/edge-push)")
 	fs.StringVar(&cfg.GRPCTLSCertFile, "grpc-tls-cert", cfg.GRPCTLSCertFile, "Upstream gRPC mTLS 클라이언트 cert PEM")
 	fs.StringVar(&cfg.GRPCTLSKeyFile, "grpc-tls-key", cfg.GRPCTLSKeyFile, "Upstream gRPC mTLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.GRPCTLSCAFile, "grpc-tls-ca", cfg.GRPCTLSCAFile, "Upstream 서버 검증용 CA bundle")

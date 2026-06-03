@@ -13,6 +13,7 @@ import (
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/netutil"
+	"github.com/winwaysystems/wtg/pkg/ratelimit"
 )
 
 // newFakeUpstream — Internal mci-chart 모사. 받은 헤더를 callback 으로 캡처.
@@ -256,8 +257,11 @@ func TestEdgeChart_RateLimit_BurstExhausted(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.UpstreamURL = up.URL
 	cfg.DevMode = true
-	cfg.IPRatePerSec = 1 // 1 TPS, burst 작게
-	cfg.IPBurst = 2      // 첫 2 요청은 burst 로 통과, 그 이상은 429
+	// path-aware default 룰셋의 /healthz 는 1000/s — 테스트 위해 명시 룰셋으로 override.
+	cfg.IPRatePerSec = 0
+	cfg.RateLimitRules = []ratelimit.Rule{
+		{Pattern: "GET /healthz", Rate: 1, Burst: 2},
+	}
 	s := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	h, _ := s.BuildHandler()
 	ts := httptest.NewServer(h)

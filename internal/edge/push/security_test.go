@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/winwaysystems/wtg/pkg/netutil"
+	"github.com/winwaysystems/wtg/pkg/ratelimit"
 )
 
 // IPAllowList — denied CIDR 의 클라이언트는 모든 경로 (인증 면제 ping 포함) 가
@@ -61,8 +62,11 @@ func TestEdgePush_AllowCIDRs_AllowsLoopback(t *testing.T) {
 func TestEdgePush_RateLimit_BurstExhausted(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DevMode = true
-	cfg.IPRatePerSec = 1
-	cfg.IPBurst = 2
+	// path-aware default 의 /v1/ping 은 1000/s — 테스트 위해 명시 룰셋으로 override.
+	cfg.IPRatePerSec = 0
+	cfg.RateLimitRules = []ratelimit.Rule{
+		{Pattern: "GET /v1/ping", Rate: 1, Burst: 2},
+	}
 
 	s := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ts := httptest.NewServer(s.BuildHandler())

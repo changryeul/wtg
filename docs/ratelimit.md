@@ -48,22 +48,56 @@ metric label `kind ∈ {user, ip}` 로 분리 카운트.
 
 ---
 
-## 3. mci-edge-api default 룰 카탈로그
+## 3. default 룰 카탈로그 (서비스별)
 
-`internal/edge/api/ratelimit_defaults.go` 의 `DefaultRateLimitRules()`.
+각 mci-edge-* 의 `ratelimit_defaults.go` 의 `DefaultRateLimitRules()`.
+
+### 3.1 mci-edge-api
 
 | 룰 | Rate | Burst | 이유 |
 |-----|------|-------|------|
-| `POST /v1/login` | 5/s | 10 | brute force 방지 — 한 user/IP 분당 300 시도 한계 |
+| `POST /v1/login` | 5/s | 10 | brute force 방지 |
 | `POST /v1/refresh` | 20/s | 40 | 토큰 갱신은 빈번하지 X |
-| `POST /v1/tx` | 50/s | 100 | 매매 — 매매 엔진 보호. 정상 거래 보다 충분 |
+| `POST /v1/tx` | 50/s | 100 | 매매 — 매매 엔진 보호 |
 | `POST /v1/admin/*` | 10/s | 20 | 관리자 한 명 기준 |
 | `PUT /v1/admin/*` | 10/s | 20 | 관리자 한 명 기준 |
 | `DELETE /v1/admin/*` | 10/s | 20 | 관리자 한 명 기준 |
 | `GET /v1/admin/*` | 50/s | 100 | 목록/조회는 빈번 가능 |
 | `GET /v1/quote/*` | 200/s | 400 | 시세 조회 |
 | `GET /v1/ping` | 1000/s | 2000 | health check — 거의 무제한 |
-| (fallback) | `IPRatePerSec` | `IPBurst` | 매칭 안 된 path. `--ip-rate 0` 이면 통과 |
+| (fallback) | `IPRatePerSec` | `IPBurst` | 매칭 안 된 path |
+
+### 3.2 mci-edge-chart
+
+REST proxy + ws (라이브 봉) — historical 조회는 가볍지만 ws handshake 는 비용.
+
+| 룰 | Rate | Burst | 이유 |
+|-----|------|-------|------|
+| `GET /v1/chart/stream` | 5/s | 10 | ws handshake — 재연결 abuse 차단 |
+| `GET /v1/chart` | 200/s | 400 | historical 조회 |
+| `GET /v1/chart/*` | 200/s | 400 | 같음 |
+| `GET /healthz` | 1000/s | 2000 | health check |
+
+### 3.3 mci-edge-push
+
+거의 ws 만 — handshake frequency 가 핵심.
+
+| 룰 | Rate | Burst | 이유 |
+|-----|------|-------|------|
+| `GET /v1/subscribe` | 5/s | 10 | ws handshake brute force 차단 |
+| `GET /v1/edge-stats` | 10/s | 20 | 운영 진단 |
+| `GET /v1/ping` | 1000/s | 2000 | health check |
+
+### 3.4 mci-edge-price
+
+push 와 동일 + admin path.
+
+| 룰 | Rate | Burst | 이유 |
+|-----|------|-------|------|
+| `POST /v1/admin/*` | 10/s | 20 | 관리자 한 명 기준 |
+| `GET /v1/subscribe` | 5/s | 10 | ws handshake brute force 차단 |
+| `GET /v1/edge-stats` | 10/s | 20 | 운영 진단 |
+| `GET /v1/ping` | 1000/s | 2000 | health check |
 
 ### 룰별 독립 버킷
 

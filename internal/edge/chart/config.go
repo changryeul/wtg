@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/winwaysystems/wtg/pkg/netutil"
+	"github.com/winwaysystems/wtg/pkg/ratelimit"
 )
 
 // Config 는 mci-edge-chart 런타임 설정.
@@ -48,8 +49,16 @@ type Config struct {
 	// upstream 호출 timeout — WS 는 별도 (long-lived), REST 만 영향.
 	UpstreamTimeout time.Duration
 
+	// Rate limit fallback — 어느 룰도 매칭 안 된 path 의 한도. 0=비활성.
 	IPRatePerSec float64
 	IPBurst      int
+
+	// Path-aware rate limit 룰셋. nil → DefaultRateLimitRules().
+	RateLimitRules []ratelimit.Rule
+
+	// etcd 기반 hot reload. 비면 정적 룰만.
+	EtcdEndpoints    string
+	EtcdRateLimitKey string // default "wtg/ratelimit/edge-chart"
 
 	LogLevel string
 
@@ -71,16 +80,17 @@ type Config struct {
 // DefaultConfig 는 합리적인 디폴트.
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr:      ":8087",
-		UpstreamURL:     "http://127.0.0.1:8086",
-		DevMode:         false,
-		ReadTimeout:     10 * time.Second,
-		WriteTimeout:    30 * time.Second,
-		IdleTimeout:     120 * time.Second,
-		UpstreamTimeout: 30 * time.Second,
-		IPRatePerSec:    100,
-		IPBurst:         200,
-		LogLevel:        "info",
+		ListenAddr:       ":8087",
+		UpstreamURL:      "http://127.0.0.1:8086",
+		DevMode:          false,
+		ReadTimeout:      10 * time.Second,
+		WriteTimeout:     30 * time.Second,
+		IdleTimeout:      120 * time.Second,
+		UpstreamTimeout:  30 * time.Second,
+		IPRatePerSec:     100,
+		IPBurst:          200,
+		EtcdRateLimitKey: "wtg/ratelimit/edge-chart",
+		LogLevel:         "info",
 	}
 }
 
@@ -135,8 +145,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.WriteTimeout, "write-timeout", cfg.WriteTimeout, "HTTP write timeout")
 	fs.DurationVar(&cfg.IdleTimeout, "idle-timeout", cfg.IdleTimeout, "HTTP idle timeout (ws 영향)")
 	fs.DurationVar(&cfg.UpstreamTimeout, "upstream-timeout", cfg.UpstreamTimeout, "upstream REST round-trip timeout (ws 영향 없음)")
-	fs.Float64Var(&cfg.IPRatePerSec, "ip-rate", cfg.IPRatePerSec, "IP 단위 sustained TPS (0=비활성)")
-	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "IP burst 한도")
+	fs.Float64Var(&cfg.IPRatePerSec, "ip-rate", cfg.IPRatePerSec, "fallback rate limit TPS (룰 매칭 안 된 path, 0=비활성)")
+	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "fallback burst 한도")
+	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "etcd endpoints (콤마 구분, 비면 정적 룰만)")
+	fs.StringVar(&cfg.EtcdRateLimitKey, "etcd-ratelimit-key", cfg.EtcdRateLimitKey, "etcd PolicyDoc key (default wtg/ratelimit/edge-chart)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "외부 TLS cert PEM (있으면 HTTPS)")
 	fs.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "외부 TLS key PEM")

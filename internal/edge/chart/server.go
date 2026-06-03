@@ -19,10 +19,13 @@ import (
 
 	"crypto/rsa"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
+
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/netutil"
+	"github.com/winwaysystems/wtg/pkg/policy"
 	"github.com/winwaysystems/wtg/pkg/ratelimit"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
@@ -40,10 +43,12 @@ type Server struct {
 	cfg    Config
 	logger *slog.Logger
 
-	metrics     *metrics.Registry
-	ipLimiter   *ratelimit.Limiter
-	jwtVer      *auth.Verifier
-	tlsReloader *tlsutil.Reloader
+	metrics          *metrics.Registry
+	rateLimit        *ratelimit.RuleSet
+	rateLimitWatcher *ratelimit.EtcdWatcher
+	rateLimitEtcdCli *clientv3.Client
+	jwtVer           *auth.Verifier
+	tlsReloader      *tlsutil.Reloader
 
 	totalRequests atomic.Uint64
 	totalProxied  atomic.Uint64
@@ -62,13 +67,27 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 		logger:  logger,
 		metrics: metrics.NewRegistry(),
 	}
-	if cfg.IPRatePerSec > 0 {
-		s.ipLimiter = ratelimit.NewLimiter(ratelimit.Config{
-			RatePerSec:     cfg.IPRatePerSec,
-			Burst:          cfg.IPBurst,
-			IdleEviction:   5 * time.Minute,
-			EvictionPeriod: 1 * time.Minute,
-		})
+	// Rate limit — path-aware RuleSet. nil 룰 → default.
+	rules := cfg.RateLimitRules
+	if rules == nil {
+		rules = DefaultRateLimitRules()
+	}
+	if cfg.IPRatePerSec > 0 || len(rules) > 0 {
+		var fallback *ratelimit.Config
+		if cfg.IPRatePerSec > 0 {
+			fallback = &ratelimit.Config{
+				RatePerSec:     cfg.IPRatePerSec,
+				Burst:          cfg.IPBurst,
+				IdleEviction:   5 * time.Minute,
+				EvictionPeriod: 1 * time.Minute,
+			}
+		}
+		rs, err := ratelimit.NewRuleSet(rules, fallback)
+		if err != nil {
+			logger.Error("rate limit 룰셋 빌드 실패", slog.Any("error", err))
+		} else {
+			s.rateLimit = rs
+		}
 	}
 	return s
 }
@@ -100,8 +119,19 @@ func (s *Server) BuildHandler() (http.Handler, error) {
 		middleware.RequestID(),
 		middleware.Recover(s.logger),
 	}
-	if s.ipLimiter != nil {
-		mws = append(mws, ratelimit.Middleware(s.ipLimiter, ratelimit.IPKey))
+	if s.rateLimit != nil {
+		mws = append(mws, ratelimit.MiddlewareRules(
+			s.rateLimit,
+			ratelimit.UserOrIPKey(middleware.HeaderEdgeUser),
+			ratelimit.MetricsHook{
+				OnAllowed: func(rule, kind string) {
+					s.metrics.IncRateLimit("mci-edge-chart", kind, rule, true)
+				},
+				OnDenied: func(rule, kind string) {
+					s.metrics.IncRateLimit("mci-edge-chart", kind, rule, false)
+				},
+			},
+		))
 	}
 	if len(s.cfg.AllowCIDRs) > 0 {
 		mws = append(mws, netutil.IPAllowList(s.cfg.AllowCIDRs, s.logger))
@@ -118,6 +148,10 @@ func (s *Server) Start(ctx context.Context) error {
 			return fmt.Errorf("JWT 검증기 로드: %w", err)
 		}
 		s.jwtVer = v
+	}
+	// Rate limit etcd watcher — 비면 정적 룰.
+	if err := s.startRateLimitWatcher(ctx); err != nil {
+		s.logger.Warn("ratelimit etcd watcher 시작 실패 — 정적 룰", slog.Any("error", err))
 	}
 
 	chain, err := s.BuildHandler()
@@ -186,8 +220,14 @@ func (s *Server) Start(ctx context.Context) error {
 // Shutdown 은 그레이스풀 종료.
 func (s *Server) Shutdown(ctx context.Context) error {
 	var first error
-	if s.ipLimiter != nil {
-		s.ipLimiter.Stop()
+	if s.rateLimitWatcher != nil {
+		_ = s.rateLimitWatcher.Close()
+	}
+	if s.rateLimitEtcdCli != nil {
+		_ = s.rateLimitEtcdCli.Close()
+	}
+	if s.rateLimit != nil {
+		s.rateLimit.Stop()
 	}
 	if s.tlsReloader != nil {
 		s.tlsReloader.Stop()
@@ -352,3 +392,47 @@ func loadVerifierFromFile(path string) (*auth.Verifier, error) {
 
 // 사용하지 않는 import warning 방지 (strings 가 import 되어 있지만 직접 사용은 안 함).
 var _ = strings.HasPrefix
+
+// startRateLimitWatcher — EtcdEndpoints 비면 no-op. dial + EtcdWatcher 시작.
+func (s *Server) startRateLimitWatcher(ctx context.Context) error {
+	if s.cfg.EtcdEndpoints == "" || s.rateLimit == nil {
+		return nil
+	}
+	eps := policy.SplitEndpoints(s.cfg.EtcdEndpoints)
+	if len(eps) == 0 {
+		return nil
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   eps,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("etcd dial: %w", err)
+	}
+	defaults := s.cfg.RateLimitRules
+	if defaults == nil {
+		defaults = DefaultRateLimitRules()
+	}
+	var fb *ratelimit.FallbackCfg
+	if s.cfg.IPRatePerSec > 0 {
+		fb = &ratelimit.FallbackCfg{Rate: s.cfg.IPRatePerSec, Burst: s.cfg.IPBurst}
+	}
+	w, err := ratelimit.NewEtcdWatcher(ctx, ratelimit.EtcdWatcherOptions{
+		Client:   cli,
+		Key:      s.cfg.EtcdRateLimitKey,
+		RuleSet:  s.rateLimit,
+		Defaults: defaults,
+		Fallback: fb,
+		Logger:   s.logger,
+	})
+	if err != nil {
+		_ = cli.Close()
+		return fmt.Errorf("ratelimit watcher: %w", err)
+	}
+	s.rateLimitEtcdCli = cli
+	s.rateLimitWatcher = w
+	s.logger.Info("ratelimit etcd watcher 활성",
+		slog.String("key", s.cfg.EtcdRateLimitKey),
+		slog.Int("endpoints", len(eps)))
+	return nil
+}

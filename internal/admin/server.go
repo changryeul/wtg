@@ -325,6 +325,13 @@ func (s *Server) Start(ctx context.Context) error {
 		Audit:  s.audit,
 		Hub:    s.hub,
 	}
+	rateLimitDeps := &RateLimitDeps{
+		Cli:    s.etcdShared,
+		Prefix: s.cfg.EtcdRateLimitPrefix,
+		Logger: s.logger,
+		Audit:  s.audit,
+		Hub:    s.hub,
+	}
 	marginDeps := &MarginRecomputeDeps{
 		Cli:     s.etcdShared,
 		Pool:    s.chartPool,
@@ -397,6 +404,12 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/admin/quoteid-engines/{engine_id}", GetQuoteIDEngine(quoteIDEnginesDeps))
 	mux.HandleFunc("PUT /v1/admin/quoteid-engines/{engine_id}", PutQuoteIDEngine(quoteIDEnginesDeps))
 	mux.HandleFunc("DELETE /v1/admin/quoteid-engines/{engine_id}", DeleteQuoteIDEngine(quoteIDEnginesDeps))
+
+	// Rate limit 정책 — service 별 PolicyDoc (mci-edge-* 가 watch 로 hot-swap).
+	mux.HandleFunc("GET /v1/admin/ratelimit", ListRateLimitPolicies(rateLimitDeps))
+	mux.HandleFunc("GET /v1/admin/ratelimit/{service}", GetRateLimitPolicy(rateLimitDeps))
+	mux.HandleFunc("PUT /v1/admin/ratelimit/{service}", PutRateLimitPolicy(rateLimitDeps))
+	mux.HandleFunc("DELETE /v1/admin/ratelimit/{service}", DeleteRateLimitPolicy(rateLimitDeps))
 
 	mux.HandleFunc("POST /v1/admin/margin/recompute", PostMarginRecompute(marginDeps))
 	// 정책 엔진 — kill switch / 정비 창 / 차단 심볼·라우팅키.

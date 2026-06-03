@@ -56,6 +56,11 @@ type Config struct {
 	// 빈 슬라이스 [] 면 룰셋 자체를 비활성 (fallback 만 작동, 또는 비활성).
 	RateLimitRules []ratelimit.Rule
 
+	// etcd 기반 hot reload — 비면 정적 룰 (RateLimitRules 또는 default) 만.
+	// 채워지면 EtcdRateLimitKey 의 PolicyDoc 을 watch 해서 운영 중 한도 변경.
+	EtcdEndpoints    string // 콤마 구분
+	EtcdRateLimitKey string // default "wtg/ratelimit/edge-api"
+
 	// 로그 레벨.
 	LogLevel string
 
@@ -82,17 +87,18 @@ type Config struct {
 // DefaultConfig 는 합리적인 디폴트.
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr:      ":8090",
-		UpstreamURL:     "http://127.0.0.1:8080",
-		DevMode:         false,
-		ReadTimeout:     10 * time.Second,
-		WriteTimeout:    10 * time.Second,
-		IdleTimeout:     60 * time.Second,
-		UpstreamTimeout: 10 * time.Second,
-		MaxRequestBody:  1 << 20, // 1 MiB
-		IPRatePerSec:    100,
-		IPBurst:         200,
-		LogLevel:        "info",
+		ListenAddr:       ":8090",
+		UpstreamURL:      "http://127.0.0.1:8080",
+		DevMode:          false,
+		ReadTimeout:      10 * time.Second,
+		WriteTimeout:     10 * time.Second,
+		IdleTimeout:      60 * time.Second,
+		UpstreamTimeout:  10 * time.Second,
+		MaxRequestBody:   1 << 20, // 1 MiB
+		IPRatePerSec:     100,
+		IPBurst:          200,
+		LogLevel:         "info",
+		EtcdRateLimitKey: "wtg/ratelimit/edge-api",
 	}
 }
 
@@ -150,8 +156,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.UpstreamTimeout, "upstream-timeout", cfg.UpstreamTimeout, "upstream 호출 timeout")
 	fs.Int64Var(&cfg.MaxRequestBody, "max-body", cfg.MaxRequestBody, "최대 요청 본문 크기 (0=무제한)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨")
-	fs.Float64Var(&cfg.IPRatePerSec, "ip-rate", cfg.IPRatePerSec, "IP 단위 sustained TPS (0=비활성)")
-	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "IP 단위 burst 한도")
+	fs.Float64Var(&cfg.IPRatePerSec, "ip-rate", cfg.IPRatePerSec, "fallback rate limit TPS (룰 매칭 안 된 path 의 한도, 0=비활성)")
+	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "fallback burst 한도")
+	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "etcd endpoints (콤마 구분, 비면 정적 룰만)")
+	fs.StringVar(&cfg.EtcdRateLimitKey, "etcd-ratelimit-key", cfg.EtcdRateLimitKey, "etcd PolicyDoc key (default wtg/ratelimit/edge-api)")
 	fs.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "외부 TLS 서버 cert PEM (있으면 HTTPS)")
 	fs.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "외부 TLS 서버 key PEM")
 	fs.StringVar(&cfg.TLSClientCAFile, "tls-client-ca", cfg.TLSClientCAFile, "외부 mTLS 클라이언트 CA bundle")

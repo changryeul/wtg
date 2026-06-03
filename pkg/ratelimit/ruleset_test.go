@@ -262,3 +262,119 @@ func TestMiddlewareRules_DeniesAfterBurstAndCallsMetric(t *testing.T) {
 		t.Errorf("응답에 룰 정보 없음: %s", got)
 	}
 }
+
+func TestRuleSet_Replace_SwapsRules(t *testing.T) {
+	rs, err := NewRuleSet([]Rule{
+		{Pattern: "POST /v1/tx", Rate: 1, Burst: 1},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Stop()
+
+	// 초기 — POST /v1/tx 첫 토큰 소진.
+	if _, ok := rs.Allow("POST", "/v1/tx", "ip"); !ok {
+		t.Fatal("초기 tx 첫 토큰 거부")
+	}
+	if _, ok := rs.Allow("POST", "/v1/tx", "ip"); ok {
+		t.Fatal("초기 tx 두번째: burst 초과인데 통과")
+	}
+
+	// Replace — 더 넓은 burst 룰로 교체.
+	if err := rs.Replace([]Rule{
+		{Pattern: "POST /v1/tx", Rate: 10, Burst: 5},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// 교체 후 — 새 룰의 fresh 버킷 → 5개 토큰 가용.
+	for i := 0; i < 5; i++ {
+		if _, ok := rs.Allow("POST", "/v1/tx", "ip"); !ok {
+			t.Errorf("교체 후 %d 번째: burst=5 인데 거부", i+1)
+		}
+	}
+	if _, ok := rs.Allow("POST", "/v1/tx", "ip"); ok {
+		t.Errorf("교체 후 6번째: burst 초과인데 통과")
+	}
+}
+
+func TestRuleSet_Replace_AddsAndRemovesRules(t *testing.T) {
+	rs, err := NewRuleSet([]Rule{
+		{Pattern: "POST /v1/tx", Rate: 1, Burst: 1},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Stop()
+
+	// 새 룰셋 — tx 제거 + login 추가.
+	if err := rs.Replace([]Rule{
+		{Pattern: "POST /v1/login", Rate: 1, Burst: 1},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// tx 는 더이상 매칭 X → 무제한 통과.
+	for i := 0; i < 100; i++ {
+		if _, ok := rs.Allow("POST", "/v1/tx", "ip"); !ok {
+			t.Fatal("교체 후 tx: 매칭 없음이라 통과해야")
+		}
+	}
+	// login 은 burst=1.
+	if _, ok := rs.Allow("POST", "/v1/login", "ip"); !ok {
+		t.Fatal("login 첫: 거부")
+	}
+	if _, ok := rs.Allow("POST", "/v1/login", "ip"); ok {
+		t.Error("login 두번째: burst 초과인데 통과")
+	}
+
+	// Rules() snapshot 도 갱신.
+	r := rs.Rules()
+	if len(r) != 1 || r[0].Pattern != "POST /v1/login" {
+		t.Errorf("Rules snapshot: %+v", r)
+	}
+}
+
+func TestRuleSet_Replace_RejectsBadRules(t *testing.T) {
+	rs, err := NewRuleSet([]Rule{
+		{Pattern: "POST /v1/tx", Rate: 1, Burst: 1},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Stop()
+
+	// 잘못된 룰 — 빈 pattern. 에러 → 기존 룰 유지.
+	if err := rs.Replace([]Rule{{Pattern: "", Rate: 1, Burst: 1}}, nil); err == nil {
+		t.Error("빈 pattern: 에러 기대")
+	}
+	// 기존 룰 여전히 작동.
+	if _, ok := rs.Allow("POST", "/v1/tx", "ip"); !ok {
+		t.Error("교체 실패 후 기존 룰도 무력화됨")
+	}
+}
+
+func TestRuleSet_Replace_ConcurrentSafe(t *testing.T) {
+	rs, err := NewRuleSet([]Rule{
+		{Pattern: "POST /v1/tx", Rate: 1000, Burst: 1000},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rs.Stop()
+
+	// 동시에 Allow 호출 + Replace — race detector 없이도 panic 없으면 OK.
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			_ = rs.Replace([]Rule{
+				{Pattern: "POST /v1/tx", Rate: float64(100 + i), Burst: 100},
+			}, nil)
+		}
+		close(done)
+	}()
+	for i := 0; i < 1000; i++ {
+		rs.Allow("POST", "/v1/tx", "ip")
+	}
+	<-done
+}

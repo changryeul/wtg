@@ -13,10 +13,13 @@ import (
 	"strings"
 	"time"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
+
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/netutil"
+	"github.com/winwaysystems/wtg/pkg/policy"
 	"github.com/winwaysystems/wtg/pkg/ratelimit"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
@@ -27,13 +30,15 @@ import (
 // 인증/sanitization/audit/rate-limit/metrics 만 책임지고, 응답 본문은 그대로
 // 통과 (passthrough).
 type Server struct {
-	cfg         Config
-	logger      *slog.Logger
-	metrics     *metrics.Registry
-	rateLimit   *ratelimit.RuleSet
-	jwtVer      *auth.Verifier
-	tlsReloader *tlsutil.Reloader
-	http        *http.Server
+	cfg              Config
+	logger           *slog.Logger
+	metrics          *metrics.Registry
+	rateLimit        *ratelimit.RuleSet
+	rateLimitWatcher *ratelimit.EtcdWatcher // etcd hot reload (옵션)
+	rateLimitEtcdCli *clientv3.Client       // watcher 의 etcd client (Close 시 정리)
+	jwtVer           *auth.Verifier
+	tlsReloader      *tlsutil.Reloader
+	http             *http.Server
 }
 
 // SetJWTVerifier 는 access JWT 검증기를 주입한다.
@@ -144,6 +149,13 @@ func (s *Server) BuildHandler() (http.Handler, error) {
 
 // Start 는 listen + 블로킹.
 func (s *Server) Start(ctx context.Context) error {
+	// Rate limit etcd watcher — 비면 정적 룰 (BuildHandler 시점 RuleSet 그대로).
+	if err := s.startRateLimitWatcher(ctx); err != nil {
+		// dial 실패 시 부팅 막지 않음 — 정적 룰로 fallback. 운영자가 로그로 확인.
+		s.logger.Warn("ratelimit etcd watcher 시작 실패 — 정적 룰로 동작",
+			slog.Any("error", err))
+	}
+
 	handler, err := s.BuildHandler()
 	if err != nil {
 		return err
@@ -318,6 +330,12 @@ func (s *Server) maxBytesWrapper(h http.Handler) http.Handler {
 
 // Shutdown 은 그레이스풀 종료.
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.rateLimitWatcher != nil {
+		_ = s.rateLimitWatcher.Close()
+	}
+	if s.rateLimitEtcdCli != nil {
+		_ = s.rateLimitEtcdCli.Close()
+	}
 	if s.rateLimit != nil {
 		s.rateLimit.Stop()
 	}
@@ -328,6 +346,53 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return s.http.Shutdown(ctx)
+}
+
+// startRateLimitWatcher — EtcdEndpoints 비면 no-op. dial + EtcdWatcher 시작.
+// watcher 의 initialLoad 가 s.rateLimit 을 즉시 PolicyDoc 또는 defaults 로
+// Replace 한다.
+func (s *Server) startRateLimitWatcher(ctx context.Context) error {
+	if s.cfg.EtcdEndpoints == "" || s.rateLimit == nil {
+		return nil
+	}
+	eps := policy.SplitEndpoints(s.cfg.EtcdEndpoints)
+	if len(eps) == 0 {
+		return nil
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   eps,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("etcd dial: %w", err)
+	}
+	defaults := s.cfg.RateLimitRules
+	if defaults == nil {
+		defaults = DefaultRateLimitRules()
+	}
+	var fb *ratelimit.FallbackCfg
+	if s.cfg.IPRatePerSec > 0 {
+		fb = &ratelimit.FallbackCfg{Rate: s.cfg.IPRatePerSec, Burst: s.cfg.IPBurst}
+	}
+	w, err := ratelimit.NewEtcdWatcher(ctx, ratelimit.EtcdWatcherOptions{
+		Client:   cli,
+		Key:      s.cfg.EtcdRateLimitKey,
+		RuleSet:  s.rateLimit,
+		Defaults: defaults,
+		Fallback: fb,
+		Logger:   s.logger,
+	})
+	if err != nil {
+		_ = cli.Close()
+		return fmt.Errorf("ratelimit watcher: %w", err)
+	}
+	s.rateLimitEtcdCli = cli
+	s.rateLimitWatcher = w
+	s.logger.Info("ratelimit etcd watcher 활성",
+		slog.String("key", s.cfg.EtcdRateLimitKey),
+		slog.Int("endpoints", len(eps)),
+	)
+	return nil
 }
 
 // timeoutTransport 는 round-trip 타임아웃을 적용한다.

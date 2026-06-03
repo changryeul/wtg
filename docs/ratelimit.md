@@ -136,16 +136,80 @@ sum by (rule) (rate(wtg_ratelimit_denied_total[1m]))
 
 ---
 
-## 6. 코드 hook (운영 정책 plugin)
+## 6. etcd 기반 hot reload
 
-현재: 룰 리스트가 `ratelimit_defaults.go` 에 컴파일 타임 상수.
+### 동작 흐름
 
-향후 (P7-A 후속):
-- etcd watch 로 hot reload — `mci-admin` 이 룰 PUT → 모든 edge 가 watch
-- admin UI 에 룰 편집 페이지
-- 룰 변경 audit + diff 로그
+```
+운영자 → admin UI "Rate Limit 정책" 페이지 또는 REST
+       → PUT /v1/admin/ratelimit/<service>
+       → etcd wtg/ratelimit/<service>
+       → mci-edge-* 의 ratelimit.EtcdWatcher 가 즉시 hot-swap
+       → 새 룰셋으로 다음 요청부터 적용 (재배포 X)
+```
 
-본 문서는 그때 갱신.
+### 운영자 액션
+
+| UI | REST |
+|----|------|
+| 사이드바 → "Rate Limit 정책" | `PUT /v1/admin/ratelimit/edge-api` |
+| service 선택 (edge-api / push / price / chart) | 본문은 `PolicyDoc` JSON |
+| 룰 추가 / 수정 / 순서 변경 / 삭제 | version 자동 증가 |
+| fallback 한도 토글 + 입력 | audit ring 에 PUT_RATELIMIT 기록 |
+| "💾 저장 (etcd PUT)" | |
+
+### PolicyDoc JSON 스키마
+
+```json
+{
+  "version": 7,
+  "rules": [
+    {"pattern": "POST /v1/login", "rate": 5,  "burst": 10},
+    {"pattern": "POST /v1/tx",    "rate": 50, "burst": 100}
+  ],
+  "fallback": {"rate": 100, "burst": 200}
+}
+```
+
+- `version` 은 admin REST 가 자동 증가 (기존 doc.version + 1)
+- `rules` 빈 배열 가능 — fallback 만 작동
+- `fallback` 생략 가능 — 매칭 안 된 path 는 통과
+
+### edge-api flag
+
+```
+mci-edge-api --etcd=10.0.0.50:2379 --etcd-ratelimit-key=wtg/ratelimit/edge-api
+```
+
+`--etcd` 비면 컴파일 default 룰 + 단일 `--ip-rate`/`--ip-burst` fallback 으로
+정적 동작 (재시작해야 한도 변경).
+
+### 운영 중 안전망
+
+| 시나리오 | 동작 |
+|----------|------|
+| 운영자가 잘못된 JSON PUT | EtcdWatcher 가 거절 → 기존 룰 유지 + warn 로그 |
+| 잘못된 룰 (음수 burst, 빈 pattern) | admin REST 가 400 거부 |
+| etcd 끊김 | 기존 룰 유지 (마지막 hot-swap 후 상태). watch 재연결 시 동기화 |
+| `DELETE /v1/admin/ratelimit/<svc>` | edge 가 컴파일 default 로 복원 |
+
+### audit 추적
+
+```
+emitAudit(resource="ratelimit", action="PUT_RATELIMIT",
+  service=edge-api, version=7, rules=9, fallback=true)
+```
+
+admin UI 의 "감사 로그" 페이지에서 모든 변경 시점 + 운영자 식별 가능.
+
+### 정책 plugin 향후 후보
+
+| 항목 | 현재 | 후속 |
+|------|------|------|
+| 룰 검증 | pattern + 양수만 | semantic (예: tx 의 한도가 너무 빡빡하면 warn) |
+| diff 로그 | audit 의 count 만 | before/after 룰 diff 시각화 |
+| rollback | 수동 (이전 PolicyDoc 재PUT) | 자동 N개 history 보관 |
+| canary | 모든 인스턴스 동시 적용 | 일부 instance label 만 우선 적용 |
 
 ---
 

@@ -292,8 +292,9 @@
         <!-- 운영 정책 -->
         <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">운영 정책</div>
         <div class="space-y-0.5 mb-3">
-          <button data-page="routes" class="nav-btn nav-item"><span class="nav-ico">🔀</span>라우팅 룰</button>
-          <button data-page="policy" class="nav-btn nav-item"><span class="nav-ico">🛡</span>정책 엔진</button>
+          <button data-page="routes"    class="nav-btn nav-item"><span class="nav-ico">🔀</span>라우팅 룰</button>
+          <button data-page="policy"    class="nav-btn nav-item"><span class="nav-ico">🛡</span>정책 엔진</button>
+          <button data-page="ratelimit" class="nav-btn nav-item"><span class="nav-ico">🚦</span>Rate Limit 정책</button>
         </div>
 
         <!-- 시세 카탈로그 — etcd watch 로 mci-price/mci-api 가 hot reload -->
@@ -516,6 +517,126 @@
             </table>
             <div id="routes-empty" class="hidden p-8 text-center text-slate-500">
               아직 등록된 라우팅 룰이 없습니다. <button class="text-accent-400 hover:text-accent-500" id="routes-add2">신규 등록</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Rate Limit 정책 — service 별 PolicyDoc (mci-edge-* etcd watch 로 hot-swap) -->
+        <div id="page-ratelimit" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">Rate Limit 정책</h3>
+              <p class="text-sm text-slate-400">
+                edge 서비스별 path-aware 한도. 룰 순서대로 첫 매칭 — 좁은 룰을 위에.
+                저장 시 mci-edge-* 의 EtcdWatcher 가 즉시 hot-swap.
+                자세한 가이드는 <a href="/docs/ratelimit.md" class="text-accent-400 hover:text-accent-300">docs/ratelimit.md</a>.
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <select id="rl-service" class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 text-sm font-mono">
+                <option value="edge-api">edge-api</option>
+                <option value="edge-push">edge-push</option>
+                <option value="edge-price">edge-price</option>
+                <option value="edge-chart">edge-chart</option>
+              </select>
+              <button id="rl-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 새로고침</button>
+              <button id="rl-add" class="px-3 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm hover:from-accent-400">+ 룰 추가</button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div class="border-gradient rounded-2xl p-3 bg-ink-850/40">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">service</div>
+              <div id="rl-svc-label" class="font-mono text-accent-400">—</div>
+            </div>
+            <div class="border-gradient rounded-2xl p-3 bg-ink-850/40">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">version</div>
+              <div id="rl-version" class="font-mono text-slate-200">—</div>
+            </div>
+            <div class="border-gradient rounded-2xl p-3 bg-ink-850/40">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">rule count</div>
+              <div id="rl-rule-count" class="font-mono text-slate-200">0</div>
+            </div>
+            <div class="border-gradient rounded-2xl p-3 bg-ink-850/40">
+              <div class="text-[10px] uppercase tracking-widest text-slate-400">fallback</div>
+              <div id="rl-fallback" class="font-mono text-slate-200">—</div>
+            </div>
+          </div>
+
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                <tr class="border-b border-ink-700/60">
+                  <th class="text-left px-4 py-3 font-medium">#</th>
+                  <th class="text-left px-4 py-3 font-medium">Pattern</th>
+                  <th class="text-right px-4 py-3 font-medium">Rate (TPS)</th>
+                  <th class="text-right px-4 py-3 font-medium">Burst</th>
+                  <th class="text-right px-4 py-3 font-medium"></th>
+                </tr>
+              </thead>
+              <tbody id="rl-tbody"></tbody>
+            </table>
+            <div id="rl-empty" class="hidden p-8 text-center text-slate-500">
+              등록된 룰이 없습니다. <button class="text-accent-400 hover:text-accent-300" id="rl-add2">+ 룰 추가</button> 또는
+              <button class="text-accent-400 hover:text-accent-300" id="rl-load-defaults">컴파일 default 불러오기</button>.
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3 pt-2">
+            <label class="inline-flex items-center gap-2 text-xs text-slate-300">
+              <input type="checkbox" id="rl-fb-enabled" />
+              fallback 활성 (룰 매칭 안 된 path)
+            </label>
+            <label class="text-xs text-slate-400 flex items-center gap-1">
+              rate <input id="rl-fb-rate" type="number" min="0" step="1"
+                class="w-20 px-2 py-1 rounded bg-ink-800 border border-ink-700 font-mono text-slate-200" value="0">
+            </label>
+            <label class="text-xs text-slate-400 flex items-center gap-1">
+              burst <input id="rl-fb-burst" type="number" min="0" step="1"
+                class="w-20 px-2 py-1 rounded bg-ink-800 border border-ink-700 font-mono text-slate-200" value="0">
+            </label>
+            <div class="flex-1"></div>
+            <button id="rl-save" class="px-4 py-2 rounded-lg bg-gradient-to-r from-good to-emerald-400 text-ink-950 font-semibold text-sm">
+              💾 저장 (etcd PUT)
+            </button>
+            <button id="rl-delete" class="px-4 py-2 rounded-lg bg-ink-800 hover:bg-bad/20 hover:text-bad text-sm">
+              ⊘ 정책 삭제
+            </button>
+          </div>
+        </div>
+
+        <!-- Rate Limit 룰 편집 모달 -->
+        <div id="rl-modal" class="fixed inset-0 bg-ink-950/80 z-50 hidden items-center justify-center p-4" style="backdrop-filter: blur(4px);">
+          <div class="bg-ink-850 border border-ink-700 rounded-2xl shadow-2xl max-w-md w-full p-5 space-y-3">
+            <div class="flex items-center justify-between">
+              <h4 id="rl-modal-title" class="text-base font-semibold">룰 추가</h4>
+              <button class="text-slate-400 hover:text-slate-200" onclick="closeRLModal()">✕</button>
+            </div>
+            <div class="space-y-2 text-sm">
+              <div>
+                <label class="text-xs text-slate-400">Pattern (예: "POST /v1/tx", "GET /v1/chart/*", "*")</label>
+                <input id="rl-pattern" placeholder="POST /v1/tx"
+                  class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" />
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="text-xs text-slate-400">Rate (TPS)</label>
+                  <input id="rl-rate" type="number" min="0" step="0.1"
+                    class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" value="50" />
+                </div>
+                <div>
+                  <label class="text-xs text-slate-400">Burst</label>
+                  <input id="rl-burst" type="number" min="0" step="1"
+                    class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono" value="100" />
+                </div>
+              </div>
+              <p class="text-[10px] text-slate-500">
+                glob: <code>*</code> 은 <code>/</code> cross 안 함 (path.Match). 좁은 룰을 위에.
+              </p>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+              <button onclick="closeRLModal()" class="px-4 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">취소</button>
+              <button id="rl-modal-save" class="px-4 py-2 rounded-lg bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold text-sm">저장</button>
             </div>
           </div>
         </div>
@@ -2541,7 +2662,7 @@ function goPage(name) {
   const pg = document.getElementById("page-" + name);
   if (pg) pg.classList.remove("hidden");
   $$("#nav .nav-btn").forEach(b => b.dataset.active = (b.dataset.page === name) ? "true" : "false");
-  const titles = { dashboard: "대시보드", routes: "라우팅 룰", policy: "정책 엔진",
+  const titles = { dashboard: "대시보드", routes: "라우팅 룰", policy: "정책 엔진", ratelimit: "Rate Limit 정책",
                    broker: "브로커 명령",
                    tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
                    currency: "통화 마스터", "pair-master": "통화쌍 마스터",
@@ -2560,6 +2681,7 @@ function goPage(name) {
   if (name === "tester")    initTester();
   if (name === "wsmon")     initWSMon();
   if (name === "quote")     initQuote();
+  if (name === "ratelimit") initRateLimit();
   if (name === "currency")  initCurrencyMaster();
   if (name === "pair-master") initPairMaster();
   if (name === "pricing")   loadPricing();
@@ -3004,6 +3126,185 @@ async function brkRun(path, label) {
       JSON.stringify(e.body || {}, null, 2);
     $("#brk-status").textContent = "failed · " + (Date.now() - t0) + " ms";
   }
+}
+
+// ───────── Rate Limit 정책 ─────────
+const RL_DEFAULTS = [
+  { pattern: "POST /v1/login",   rate: 5,    burst: 10 },
+  { pattern: "POST /v1/refresh", rate: 20,   burst: 40 },
+  { pattern: "POST /v1/tx",      rate: 50,   burst: 100 },
+  { pattern: "POST /v1/admin/*", rate: 10,   burst: 20 },
+  { pattern: "PUT /v1/admin/*",  rate: 10,   burst: 20 },
+  { pattern: "DELETE /v1/admin/*", rate: 10, burst: 20 },
+  { pattern: "GET /v1/admin/*",  rate: 50,   burst: 100 },
+  { pattern: "GET /v1/quote/*",  rate: 200,  burst: 400 },
+  { pattern: "GET /v1/ping",     rate: 1000, burst: 2000 },
+];
+let rlState = { service: "edge-api", doc: { rules: [], fallback: null }, wired: false };
+
+function initRateLimit() {
+  if (!rlState.wired) {
+    rlState.wired = true;
+    $("#rl-refresh").onclick = loadRateLimit;
+    $("#rl-service").onchange = (e) => { rlState.service = e.target.value; loadRateLimit(); };
+    $("#rl-add").onclick = () => openRLModal(null);
+    $("#rl-add2").onclick = () => openRLModal(null);
+    $("#rl-load-defaults").onclick = () => {
+      rlState.doc.rules = JSON.parse(JSON.stringify(RL_DEFAULTS));
+      renderRateLimit();
+      toast("default 룰 9개 로드 — 저장으로 적용");
+    };
+    $("#rl-save").onclick = saveRateLimit;
+    $("#rl-delete").onclick = deleteRateLimit;
+    $("#rl-modal-save").onclick = saveRLModal;
+    $("#rl-fb-enabled").onchange = (e) => {
+      const en = e.target.checked;
+      $("#rl-fb-rate").disabled = !en;
+      $("#rl-fb-burst").disabled = !en;
+    };
+  }
+  loadRateLimit();
+}
+
+async function loadRateLimit() {
+  rlState.service = $("#rl-service").value;
+  $("#rl-svc-label").textContent = rlState.service;
+  try {
+    const r = await fetch("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service), { credentials: "same-origin" });
+    if (r.status === 404) {
+      rlState.doc = { rules: [], fallback: null, version: 0 };
+    } else if (r.ok) {
+      rlState.doc = await r.json();
+      rlState.doc.rules = rlState.doc.rules || [];
+    } else {
+      const t = await r.text();
+      toast("로드 실패: " + t, "err");
+      return;
+    }
+  } catch (e) { toast("로드 실패: " + e.message, "err"); return; }
+  renderRateLimit();
+}
+
+function renderRateLimit() {
+  $("#rl-version").textContent = rlState.doc.version || "—";
+  $("#rl-rule-count").textContent = (rlState.doc.rules || []).length;
+  const fb = rlState.doc.fallback;
+  $("#rl-fallback").textContent = fb ? `${fb.rate}/s ÷ ${fb.burst}` : "—";
+  $("#rl-fb-enabled").checked = !!fb;
+  $("#rl-fb-rate").value = fb ? fb.rate : 0;
+  $("#rl-fb-burst").value = fb ? fb.burst : 0;
+  $("#rl-fb-rate").disabled = !fb;
+  $("#rl-fb-burst").disabled = !fb;
+
+  const tb = $("#rl-tbody");
+  tb.replaceChildren();
+  const rules = rlState.doc.rules || [];
+  if (rules.length === 0) {
+    $("#rl-empty").classList.remove("hidden");
+    return;
+  }
+  $("#rl-empty").classList.add("hidden");
+  rules.forEach((r, i) => {
+    const moveUp = h("button", { class: "text-xs px-2 py-1 rounded bg-ink-800 hover:bg-ink-700", text: "↑" });
+    moveUp.onclick = () => { if (i === 0) return; [rules[i-1], rules[i]] = [rules[i], rules[i-1]]; renderRateLimit(); };
+    const moveDn = h("button", { class: "text-xs px-2 py-1 rounded bg-ink-800 hover:bg-ink-700", text: "↓" });
+    moveDn.onclick = () => { if (i === rules.length-1) return; [rules[i+1], rules[i]] = [rules[i], rules[i+1]]; renderRateLimit(); };
+    const editBtn = h("button", { class: "text-xs px-2 py-1 rounded bg-ink-800 hover:bg-ink-700", text: "수정" });
+    editBtn.onclick = () => openRLModal(i);
+    const delBtn = h("button", { class: "text-xs px-2 py-1 rounded bg-ink-800 hover:bg-bad/20 hover:text-bad", text: "삭제" });
+    delBtn.onclick = () => { rules.splice(i, 1); renderRateLimit(); };
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
+      h("td", { class: "px-4 py-3 text-slate-500 font-mono", text: String(i+1) }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-200", text: r.pattern }),
+      h("td", { class: "px-4 py-3 text-right font-mono text-slate-200", text: String(r.rate) }),
+      h("td", { class: "px-4 py-3 text-right font-mono text-slate-200", text: String(r.burst) }),
+      h("td", { class: "px-4 py-3 text-right space-x-1" }, moveUp, moveDn, editBtn, delBtn),
+    );
+    tb.appendChild(tr);
+  });
+}
+
+function openRLModal(idx) {
+  const rules = rlState.doc.rules || [];
+  const r = (idx == null) ? { pattern: "", rate: 50, burst: 100 } : rules[idx];
+  $("#rl-modal-title").textContent = (idx == null) ? "룰 추가" : `룰 수정 — #${idx+1}`;
+  $("#rl-pattern").value = r.pattern;
+  $("#rl-rate").value = r.rate;
+  $("#rl-burst").value = r.burst;
+  $("#rl-modal").dataset.editIdx = (idx == null) ? "" : String(idx);
+  $("#rl-modal").classList.remove("hidden");
+  $("#rl-modal").classList.add("flex");
+}
+
+function closeRLModal() {
+  $("#rl-modal").classList.add("hidden");
+  $("#rl-modal").classList.remove("flex");
+}
+
+function saveRLModal() {
+  const pattern = $("#rl-pattern").value.trim();
+  const rate = parseFloat($("#rl-rate").value);
+  const burst = parseInt($("#rl-burst").value, 10);
+  if (!pattern || !Number.isFinite(rate) || !Number.isFinite(burst) || rate < 0 || burst < 0) {
+    toast("pattern / rate / burst 모두 필요 (음수 X)", "err");
+    return;
+  }
+  const r = { pattern, rate, burst };
+  const idxStr = $("#rl-modal").dataset.editIdx;
+  if (idxStr === "") {
+    (rlState.doc.rules = rlState.doc.rules || []).push(r);
+  } else {
+    rlState.doc.rules[parseInt(idxStr, 10)] = r;
+  }
+  closeRLModal();
+  renderRateLimit();
+}
+
+async function saveRateLimit() {
+  const doc = {
+    version: 0, // 서버가 auto-increment
+    rules: rlState.doc.rules || [],
+  };
+  if ($("#rl-fb-enabled").checked) {
+    doc.fallback = {
+      rate: parseFloat($("#rl-fb-rate").value),
+      burst: parseInt($("#rl-fb-burst").value, 10),
+    };
+  }
+  try {
+    const r = await fetch("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service), {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(doc),
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      toast("저장 실패: " + t, "err");
+      return;
+    }
+    rlState.doc = await r.json();
+    rlState.doc.rules = rlState.doc.rules || [];
+    toast(`저장 — version ${rlState.doc.version}, mci-edge-* 즉시 반영`);
+    renderRateLimit();
+  } catch (e) { toast("저장 실패: " + e.message, "err"); }
+}
+
+async function deleteRateLimit() {
+  if (!confirm(`정책 "${rlState.service}" 를 삭제할까요? mci-edge-* 가 컴파일 default 로 복원됩니다.`)) return;
+  try {
+    const r = await fetch("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service), {
+      method: "DELETE", credentials: "same-origin",
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      toast("삭제 실패: " + t, "err");
+      return;
+    }
+    toast("정책 삭제됨 — defaults 복원");
+    rlState.doc = { rules: [], fallback: null, version: 0 };
+    renderRateLimit();
+  } catch (e) { toast("삭제 실패: " + e.message, "err"); }
 }
 
 // ───────── Pricing (마진 테이블) ─────────

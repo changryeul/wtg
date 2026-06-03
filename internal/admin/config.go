@@ -92,6 +92,9 @@ type Config struct {
 	// mci-price 의 EtcdAllowlistWatcher 가 동일 prefix watch.
 	EtcdQuoteIDEnginesPrefix string // default "wtg/quoteid/engines/"
 
+	// Rate limit 정책 etcd prefix (mci-edge-* 의 EtcdWatcher 가 동일 prefix watch).
+	EtcdRateLimitPrefix string // default "wtg/ratelimit/"
+
 	// ChartDSN — TimescaleDB quote_bars 접근용 DSN. 채워지면 마진 재계산
 	// (분쟁/감사 backfill) endpoint 활성. mci-chart / mci-price 와 같은 DB.
 	// 빈 값이면 /v1/admin/margin/* 는 503 반환.
@@ -304,6 +307,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdProfilesPrefix, "etcd-profiles-prefix", cfg.EtcdProfilesPrefix, "etcd 활성 Profile prefix (default wtg/price/profiles/)")
 	fs.StringVar(&cfg.EtcdUserProfilesPrefix, "etcd-user-profiles-prefix", cfg.EtcdUserProfilesPrefix, "etcd 사용자 프로파일 prefix (default wtg/auth/user-profiles/)")
 	fs.StringVar(&cfg.EtcdQuoteIDEnginesPrefix, "etcd-quoteid-engines-prefix", cfg.EtcdQuoteIDEnginesPrefix, "etcd QuoteID engine allowlist prefix (default wtg/quoteid/engines/)")
+	fs.StringVar(&cfg.EtcdRateLimitPrefix, "etcd-ratelimit-prefix", cfg.EtcdRateLimitPrefix, "etcd rate limit 정책 prefix (default wtg/ratelimit/)")
 	fs.StringVar(&cfg.ChartDSN, "chart-dsn", cfg.ChartDSN, "TimescaleDB DSN — 채우면 마진 재계산 endpoint 활성")
 	fs.IntVar(&cfg.ChartPoolMaxConns, "chart-pool", cfg.ChartPoolMaxConns, "pgxpool 최대 connection (default 5)")
 	fs.StringVar(&cfg.EtcdTLSCertFile, "etcd-tls-cert", cfg.EtcdTLSCertFile, "etcd 클라이언트 cert PEM (공유 client mTLS)")

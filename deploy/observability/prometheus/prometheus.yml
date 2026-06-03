@@ -35,6 +35,15 @@ scrape_configs:
         labels:
           service: mci-edge-price
 
+  # mci-edge-api /metrics — P7-A rate limit + auth + http.
+  - job_name: mci-edge-api
+    metrics_path: /metrics
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["host.docker.internal:8090"]
+        labels:
+          service: mci-edge-api
+
   # Prometheus 자기 자신.
   - job_name: prometheus
     static_configs:

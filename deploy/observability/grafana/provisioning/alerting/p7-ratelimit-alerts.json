@@ -1,0 +1,152 @@
+{
+  "apiVersion": 1,
+  "_comment": "WTG P7-A — Rate limit alert. Grafana Unified Alerting 그룹 1 (wtg-p7-ratelimit) + 3 rule. wtg_ratelimit_denied_total / allowed_total 기반. import: Grafana → Alerting → Alert rules → Import → 이 JSON 선택. 또는 provisioning: /etc/grafana/provisioning/alerting/p7-ratelimit-alerts.json 으로 mount.",
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "wtg-p7-ratelimit",
+      "folder": "WTG",
+      "interval": "30s",
+      "rules": [
+        {
+          "uid": "wtg-p7-login-brute-force",
+          "title": "Login brute force 의심 (POST /v1/login 거부 폭증)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "sum(rate(wtg_ratelimit_denied_total{rule=\"POST /v1/login\"}[1m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [1]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "1m",
+          "annotations": {
+            "summary": "POST /v1/login 거부 rate > 1/s (분당 60+ 시도 차단)",
+            "description": "한 user/IP 가 분당 60회 이상 login 시도 → rate limit 발화. brute force 가능성. label `kind` 와 `rule` 별 분석으로 user/ip 식별 후 IP allowlist (--allow-cidrs) 차단 또는 계정 잠금 검토.",
+            "runbook_url": "docs/ratelimit.md#42-한도가-너무-느슨-공격-통과"
+          },
+          "labels": {
+            "severity": "page",
+            "service": "mci-edge-api",
+            "domain": "ratelimit"
+          }
+        },
+        {
+          "uid": "wtg-p7-tx-bot",
+          "title": "매매 봇 공격 의심 (POST /v1/tx 거부 폭증)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "sum(rate(wtg_ratelimit_denied_total{rule=\"POST /v1/tx\"}[1m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [5]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "1m",
+          "annotations": {
+            "summary": "POST /v1/tx 거부 rate > 5/s (매매 봇 또는 한도 너무 빡빡)",
+            "description": "매매 path 의 한도 (default 50/s burst 100) 초과 거부가 지속 발생. 두 가지 가능성: (1) 봇/DDoS — kind=ip 또는 user 라벨로 출처 식별 + 차단. (2) 정상 트래픽이지만 한도 부족 — admin UI 의 Rate Limit 정책 페이지에서 한도 상향 검토. 매매 엔진 보호와 사용자 경험 trade-off.",
+            "runbook_url": "docs/ratelimit.md#41-한도가-너무-빡빡-정상-사용자가-429"
+          },
+          "labels": {
+            "severity": "page",
+            "service": "mci-edge-api",
+            "domain": "ratelimit"
+          }
+        },
+        {
+          "uid": "wtg-p7-overall-deny-ratio",
+          "title": "Rate limit 전체 거부율 비정상 (한도 일반 부적정)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "sum(rate(wtg_ratelimit_denied_total[5m])) / (sum(rate(wtg_ratelimit_denied_total[5m])) + sum(rate(wtg_ratelimit_allowed_total[5m])) + 0.0001)",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.05]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "2m",
+          "annotations": {
+            "summary": "전체 거부율 5% 초과 (2분 지속)",
+            "description": "rate limit 전체 트래픽의 5% 이상이 거부. 일부 룰의 한도가 운영 트래픽 대비 너무 빡빡할 가능성. label `rule` 별 분해로 어느 룰이 주범인지 확인 → admin UI 에서 해당 룰 rate/burst 상향. 공격으로 인한 경우 IP / user 별 거부 라벨 분석으로 출처 식별.",
+            "runbook_url": "docs/ratelimit.md#41-한도가-너무-빡빡-정상-사용자가-429"
+          },
+          "labels": {
+            "severity": "warning",
+            "service": "mci-edge-api",
+            "domain": "ratelimit"
+          }
+        }
+      ]
+    }
+  ]
+}

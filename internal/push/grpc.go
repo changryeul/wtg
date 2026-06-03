@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
 	"github.com/winwaysystems/wtg/pkg/mymq"
@@ -156,6 +157,11 @@ func (g *GRPCServer) Serve(ctx context.Context, addr string, opts ...grpc.Server
 	if err != nil {
 		return err
 	}
+	// OTel — server-side gRPC trace + metrics. otelgrpc stats handler 가
+	// unary/streaming 모두 자동 처리. TracerProvider 등록 안 된 환경은 no-op.
+	opts = append([]grpc.ServerOption{
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+	}, opts...)
 	srv := grpc.NewServer(opts...)
 	wtgpb.RegisterPushServiceServer(srv, g)
 

@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -114,7 +115,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	conn, err := grpc.NewClient(s.cfg.UpstreamGRPC, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(s.cfg.UpstreamGRPC,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		return fmt.Errorf("gRPC NewClient %s: %w", s.cfg.UpstreamGRPC, err)
 	}

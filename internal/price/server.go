@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -322,7 +323,12 @@ func (s *Server) Start(ctx context.Context) error {
 			s.grpcSrv.AttachServer(s) // PublishTick handler dispatch path.
 		}
 
-		var grpcOpts []grpc.ServerOption
+		// OTel — 모든 gRPC 호출에 server-side trace + metrics. otelinit 으로
+		// TracerProvider 등록 안 됐으면 no-op. grpc/otelgrpc v0.59 의 stats handler
+		// 가 unary / streaming 모두 자동 처리 — interceptor 보다 권장 패턴.
+		grpcOpts := []grpc.ServerOption{
+			grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		}
 		if s.cfg.GRPCTLSCertFile != "" && s.cfg.GRPCTLSKeyFile != "" {
 			tlsCfg, err := tlsutil.LoadServer(tlsutil.ServerOptions{
 				CertFile:     s.cfg.GRPCTLSCertFile,

@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -114,7 +115,9 @@ const (
 // 초기 connect 실패면 error 반환 — main 이 즉시 알 수 있게. 이후 runtime 에서의
 // 연결 끊김은 supervisor 가 자동 복구 (errpath 가 다름).
 func newGRPCPublisher(ctx context.Context, logger *slog.Logger, addr string) (*grpcPublisher, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		return nil, fmt.Errorf("grpc dial %s: %w", addr, err)
 	}

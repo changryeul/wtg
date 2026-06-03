@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -28,7 +29,9 @@ func (s *Server) subscribeBarLoop(ctx context.Context) {
 		s.logger.Error("Upstream gRPC TLS 구성 실패", slog.Any("error", err))
 		return
 	}
-	conn, err := grpc.NewClient(s.cfg.UpstreamGRPC, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(s.cfg.UpstreamGRPC,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		s.logger.Error("Upstream gRPC dial 실패", slog.Any("error", err))
 		return

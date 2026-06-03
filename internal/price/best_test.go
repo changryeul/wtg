@@ -204,3 +204,181 @@ func TestBestConsumer_FanOutToMultipleDownstream(t *testing.T) {
 		t.Errorf("downstream fan-out 실패: c1=%d c2=%d", len(c1.snapshot()), len(c2.snapshot()))
 	}
 }
+
+// 3 feeds 의 정상 best 산정 — max(bid) / min(ask) 가 서로 다른 feed.
+func TestBestConsumer_ThreeFeedsNormal(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	// A: bid 1380.00 / ask 1380.20
+	bc.OnTick(buildRaw("USDKRW", "A", 1380.00, 1380.20))
+	// B: bid 1380.10 (max) / ask 1380.15
+	bc.OnTick(buildRaw("USDKRW", "B", 1380.10, 1380.15))
+	// C: bid 1380.05 / ask 1380.12 (min)
+	bc.OnTick(buildRaw("USDKRW", "C", 1380.05, 1380.12))
+
+	got := c.snapshot()
+	last := decodeBest(t, got[len(got)-1])
+	if last.Bid != 1380.10 {
+		t.Errorf("3 feeds best bid=%v, want 1380.10 (B)", last.Bid)
+	}
+	if last.Ask != 1380.12 {
+		t.Errorf("3 feeds best ask=%v, want 1380.12 (C)", last.Ask)
+	}
+	st := bc.Stats()
+	if st.Symbols["USDKRW"].ActiveSources != 3 {
+		t.Errorf("active_sources=%d, want 3", st.Symbols["USDKRW"].ActiveSources)
+	}
+	if st.Symbols["USDKRW"].CrossedFallbck {
+		t.Errorf("crossed_fallback=true unexpectedly")
+	}
+}
+
+// 3 feeds cross — 가장 최신 ts 의 feed 로 fallback 검증.
+func TestBestConsumer_ThreeFeedsCrossedNewestWins(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	// A: 옛 가격대 (bid 높음)
+	bc.OnTick(buildRaw("USDKRW", "A", 1380.60, 1380.65))
+	time.Sleep(2 * time.Millisecond)
+	// B: 다른 옛 가격대
+	bc.OnTick(buildRaw("USDKRW", "B", 1380.55, 1380.58))
+	time.Sleep(2 * time.Millisecond)
+	// C: 더 낮은 가격대 (max(bid 60) > min(ask 12) → cross)
+	bc.OnTick(buildRaw("USDKRW", "C", 1380.10, 1380.12))
+
+	got := c.snapshot()
+	last := decodeBest(t, got[len(got)-1])
+	// fallback: 최신 feed C 의 (bid, ask)
+	if last.Bid != 1380.10 || last.Ask != 1380.12 {
+		t.Errorf("cross fallback 실패: bid=%v ask=%v, want 1380.10/1380.12 (C 최신)", last.Bid, last.Ask)
+	}
+	if !bc.Stats().Symbols["USDKRW"].CrossedFallbck {
+		t.Errorf("Stats.CrossedFallbck=false, want true")
+	}
+}
+
+// cross 발생 후 정정 tick 도착 → 정상 best 복귀.
+// 운영 흐름의 가장 빈번한 패턴.
+func TestBestConsumer_CrossResolvedByCorrectiveTick(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	// 1) cross 생성
+	bc.OnTick(buildRaw("USDKRW", "A", 1380.60, 1380.62))
+	bc.OnTick(buildRaw("USDKRW", "B", 1380.40, 1380.42))
+	if !bc.Stats().Symbols["USDKRW"].CrossedFallbck {
+		t.Fatalf("setup: cross 미발생")
+	}
+	// 2) A 가 정정된 quote 보내서 spread 정상화 (A 의 bid 가 B 의 ask 보다 낮음)
+	bc.OnTick(buildRaw("USDKRW", "A", 1380.41, 1380.43))
+
+	// 정상 best: max(bid)=1380.41 (A) / min(ask)=1380.42 (B)
+	got := c.snapshot()
+	last := decodeBest(t, got[len(got)-1])
+	if last.Bid != 1380.41 {
+		t.Errorf("cross 해소 후 bid=%v, want 1380.41 (A 정정)", last.Bid)
+	}
+	if last.Ask != 1380.42 {
+		t.Errorf("cross 해소 후 ask=%v, want 1380.42 (B)", last.Ask)
+	}
+	if bc.Stats().Symbols["USDKRW"].CrossedFallbck {
+		t.Errorf("cross 미해소 — Stats.CrossedFallbck=true")
+	}
+}
+
+// stale 으로 한 feed 가 제외되면 cross 검출 조건 (srcCount>1) 미충족 →
+// 단일 fresh feed 의 spread 그대로 emit (cross fallback 미발동).
+func TestBestConsumer_StaleEliminatesCross(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{MaxStaleness: 30 * time.Millisecond}, c)
+	// A 가 옛 quote — cross 유발할 가격대
+	bc.OnTick(buildRaw("USDKRW", "A", 1380.60, 1380.62))
+	time.Sleep(50 * time.Millisecond)
+	// A stale. B 가 단독 fresh feed.
+	bc.OnTick(buildRaw("USDKRW", "B", 1380.40, 1380.42))
+
+	got := c.snapshot()
+	last := decodeBest(t, got[len(got)-1])
+	// B 단독: spread 일관 — cross 미발생, B 의 값 그대로.
+	if last.Bid != 1380.40 || last.Ask != 1380.42 {
+		t.Errorf("stale 후 single fresh feed: bid=%v ask=%v, want 1380.40/1380.42", last.Bid, last.Ask)
+	}
+	st := bc.Stats().Symbols["USDKRW"]
+	if st.CrossedFallbck {
+		t.Errorf("single fresh feed 인데 CrossedFallbck=true")
+	}
+	if st.ActiveSources != 1 {
+		t.Errorf("active_sources=%d, want 1 (A stale)", st.ActiveSources)
+	}
+}
+
+// MaxStaleness 음수 — 모든 quote 영구 active (stale 검사 비활성).
+func TestBestConsumer_NegativeStalenessKeepsAll(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{MaxStaleness: -1}, c)
+	bc.OnTick(buildRaw("USDKRW", "A", 1380.00, 1380.10))
+	// 100ms — 일반적이면 stale 이지만 음수라 영구 유효
+	time.Sleep(100 * time.Millisecond)
+	bc.OnTick(buildRaw("USDKRW", "B", 1380.05, 1380.08))
+
+	got := c.snapshot()
+	last := decodeBest(t, got[len(got)-1])
+	// 두 feed 모두 active → max(bid)=1380.05 / min(ask)=1380.08
+	if last.Bid != 1380.05 || last.Ask != 1380.08 {
+		t.Errorf("negative staleness: bid=%v ask=%v, want 1380.05/1380.08 (둘 다 active)", last.Bid, last.Ask)
+	}
+	if bc.Stats().Symbols["USDKRW"].ActiveSources != 2 {
+		t.Errorf("active_sources=%d, want 2 (영구 유효)", bc.Stats().Symbols["USDKRW"].ActiveSources)
+	}
+}
+
+// 자기 자신이 emit 한 SourceBest tick 을 다시 받으면 ignore — ring 방어.
+func TestBestConsumer_IgnoresOwnBestSource(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	bc.OnTick(buildRaw("USDKRW", SourceBest, 1380.00, 1380.10))
+	if len(c.snapshot()) != 0 {
+		t.Errorf("SourceBest 입력이 emit 됨 — ring 방어 실패")
+	}
+}
+
+// nil / 빈 Symbol drop — defensive path.
+func TestBestConsumer_NilAndEmptySymbolDropped(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	bc.OnTick(nil)
+	bc.OnTick(&Tick{Symbol: "", Source: "SMB", Body: []byte(`{}`)})
+	if len(c.snapshot()) != 0 {
+		t.Errorf("nil / 빈 symbol 이 emit 됨 — drop 해야 함")
+	}
+}
+
+// Concurrent OnTick — race detector 로 데이터 race 검증.
+//
+//	go test -race -run TestBestConsumer_ConcurrentSafe ./internal/price/
+func TestBestConsumer_ConcurrentSafe(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	var wg sync.WaitGroup
+	const goroutines = 8
+	const perG = 200
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			src := "F" + string(rune('A'+id))
+			for i := 0; i < perG; i++ {
+				bc.OnTick(buildRaw("USDKRW", src, 1380.0+float64(i%5)*0.01, 1380.1+float64(i%5)*0.01))
+			}
+		}(g)
+	}
+	wg.Wait()
+	got := len(c.snapshot())
+	if got != goroutines*perG {
+		t.Errorf("emit 수=%d, want %d (모든 raw 입력 1:1 emit)", got, goroutines*perG)
+	}
+	// Stats 도 일관성 — symbol 1 개, sources 8 개.
+	st := bc.Stats().Symbols["USDKRW"]
+	if st.ActiveSources != goroutines {
+		t.Errorf("active_sources=%d, want %d", st.ActiveSources, goroutines)
+	}
+}

@@ -138,3 +138,131 @@ func PreviewPricing(deps *PricingDeps) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, out)
 	}
 }
+
+// PricingPreviewMatrixRequest — N profile × M pair 매트릭스 시뮬.
+//
+// SampleQuotes: pair 별 raw bid/ask. 미지정 pair 는 매트릭스에서 skip.
+type PricingPreviewMatrixRequest struct {
+	Profiles     []session.Profile      `json:"profiles"`
+	Pairs        []string               `json:"pairs"`
+	Tenor        string                 `json:"tenor,omitempty"`
+	SampleQuotes map[string]sampleQuote `json:"sample_quotes"` // pair → bid/ask
+	Changes      json.RawMessage        `json:"changes"`
+}
+
+type sampleQuote struct {
+	Bid float64 `json:"bid"`
+	Ask float64 `json:"ask"`
+}
+
+// PricingPreviewMatrixResponse — 매트릭스 row 들 + 두 version.
+type PricingPreviewMatrixResponse struct {
+	CurrentVersion int64                    `json:"current_version"`
+	PreviewVersion int64                    `json:"preview_version"`
+	Tenor          string                   `json:"tenor"`
+	Rows           []PricingPreviewResponse `json:"rows"`
+	Skipped        []string                 `json:"skipped,omitempty"` // sample_quote 없는 pair
+}
+
+// PreviewPricingMatrix — POST /v1/admin/pricing/preview-matrix.
+//
+// 동일 ApplyAt 로직 — 단일 단위 PreviewPricing 의 N×M 확장. profiles × pairs
+// 의 모든 조합을 같은 currentTbl / previewTbl 로 계산해 운영자가 변경 영향을
+// 한눈에 비교 가능.
+//
+// 한도: profiles × pairs ≤ 500 (DoS 방어). 더 큰 매트릭스는 chunk 분할.
+func PreviewPricingMatrix(deps *PricingDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Cli == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "no_etcd", "etcd 미구성")
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20)) // 4MB cap
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "read", err.Error())
+			return
+		}
+		var req PricingPreviewMatrixRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad_json", err.Error())
+			return
+		}
+		if len(req.Profiles) == 0 || len(req.Pairs) == 0 {
+			writeJSONError(w, http.StatusBadRequest, "validation",
+				"profiles + pairs 둘 다 비어 있으면 안 됨")
+			return
+		}
+		if len(req.Profiles)*len(req.Pairs) > 500 {
+			writeJSONError(w, http.StatusBadRequest, "too_large",
+				"profiles × pairs 한도 500 초과 — chunk 분할 필요")
+			return
+		}
+		if len(req.Changes) == 0 {
+			writeJSONError(w, http.StatusBadRequest, "validation", "changes 필요")
+			return
+		}
+
+		// 현재 etcd table.
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		resp, err := deps.Cli.Get(ctx, deps.key())
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "etcd", err.Error())
+			return
+		}
+		var currentTbl *pricing.PricingTable
+		if len(resp.Kvs) > 0 {
+			currentTbl, err = pricing.ParsePricingTable(resp.Kvs[0].Value)
+			if err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "current_parse", err.Error())
+				return
+			}
+		} else {
+			currentTbl = &pricing.PricingTable{}
+		}
+		previewTbl, err := pricing.ParsePricingTable(req.Changes)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "preview_parse", err.Error())
+			return
+		}
+
+		tenor := pricing.Tenor(req.Tenor)
+		if tenor == "" {
+			tenor = pricing.TenorSpot
+		}
+		now := time.Now()
+
+		out := PricingPreviewMatrixResponse{
+			CurrentVersion: currentTbl.Version,
+			PreviewVersion: previewTbl.Version,
+			Tenor:          string(tenor),
+			Rows:           make([]PricingPreviewResponse, 0, len(req.Profiles)*len(req.Pairs)),
+		}
+		for _, pair := range req.Pairs {
+			sq, ok := req.SampleQuotes[pair]
+			if !ok || sq.Bid <= 0 || sq.Ask <= 0 {
+				out.Skipped = append(out.Skipped, pair)
+				continue
+			}
+			raw := quote.Quote{Pair: session.Pair(pair), Bid: sq.Bid, Ask: sq.Ask, TS: now}
+			for _, prof := range req.Profiles {
+				before := currentTbl.ApplyAt(raw, prof, tenor, now)
+				after := previewTbl.ApplyAt(raw, prof, tenor, now)
+				row := PricingPreviewResponse{
+					Profile:        prof.Key(),
+					Pair:           pair,
+					Tenor:          string(tenor),
+					CurrentVersion: currentTbl.Version,
+					PreviewVersion: previewTbl.Version,
+					Before:         legBidAsk{Bid: before.Bid, Ask: before.Ask, Spread: before.Ask - before.Bid},
+					After:          legBidAsk{Bid: after.Bid, Ask: after.Ask, Spread: after.Ask - after.Bid},
+				}
+				row.DeltaBid = row.After.Bid - row.Before.Bid
+				row.DeltaAsk = row.After.Ask - row.Before.Ask
+				row.DeltaSpread = row.After.Spread - row.Before.Spread
+				out.Rows = append(out.Rows, row)
+			}
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}

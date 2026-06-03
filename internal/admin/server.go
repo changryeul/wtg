@@ -410,6 +410,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/admin/pricing/table", GetPricingTable(pricingDeps))
 	mux.HandleFunc("PUT /v1/admin/pricing/table", PutPricingTable(pricingDeps))
 	mux.HandleFunc("POST /v1/admin/pricing/preview", PreviewPricing(pricingDeps))
+	mux.HandleFunc("POST /v1/admin/pricing/preview-matrix", PreviewPricingMatrix(pricingDeps))
 
 	mux.HandleFunc("GET /v1/admin/profiles", ListProfiles(profilesDeps))
 	mux.HandleFunc("GET /v1/admin/profiles/{key}", GetProfile(profilesDeps))

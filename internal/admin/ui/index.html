@@ -2082,6 +2082,30 @@
               <div id="mw-result" class="text-sm text-slate-500">아직 실행 안 함.</div>
             </div>
           </div>
+
+          <!-- 매트릭스 시뮬 — N profile × M pair 한번에 비교. -->
+          <details class="border-gradient rounded-xl p-4 space-y-3" open>
+            <summary class="text-sm font-semibold text-slate-300 cursor-pointer">매트릭스 시뮬레이션 (N profile × M pair)</summary>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div class="space-y-3">
+                <label class="block text-xs space-y-1">
+                  <span class="text-slate-400">Profiles (한 줄에 하나, 형식: Channel.Site.Tier)</span>
+                  <textarea id="mwm-profiles" rows="4" class="w-full px-2 py-1 rounded bg-ink-900 border border-ink-700 font-mono text-[11px]" placeholder="WEB.BRANCH.VIP&#10;WEB.BRANCH.STD&#10;WEB.HQ.VIP"></textarea>
+                </label>
+                <label class="block text-xs space-y-1">
+                  <span class="text-slate-400">Sample Quotes (JSON dict: pair → {bid, ask})</span>
+                  <textarea id="mwm-samples" rows="6" class="w-full px-2 py-1 rounded bg-ink-900 border border-ink-700 font-mono text-[11px]" placeholder='{&#10;  "USD/KRW": {"bid":1380.00, "ask":1380.10},&#10;  "EUR/USD": {"bid":1.0850, "ask":1.0852}&#10;}'></textarea>
+                </label>
+                <label class="block text-xs space-y-1">
+                  <span class="text-slate-400">Tenor (빈값=SPOT)</span>
+                  <input id="mwm-tenor" class="w-full px-2 py-1 rounded bg-ink-900 border border-ink-700 font-mono" placeholder="SPOT" value="SPOT"/>
+                </label>
+                <button id="mwm-run" class="w-full py-2 rounded-lg bg-accent-600 hover:bg-accent-500 text-sm font-semibold">▶ 매트릭스 실행</button>
+                <p class="text-[10px] text-slate-500">변경 JSON 은 위 단일 시뮬 입력의 textarea 를 그대로 사용. profiles × pairs ≤ 500.</p>
+              </div>
+              <div id="mwm-result" class="text-sm text-slate-500">아직 실행 안 함.</div>
+            </div>
+          </details>
         </div>
 
         <!-- 서비스 명세 (svcio) -->
@@ -8366,6 +8390,7 @@ function initMarginWizard() {
   if (mwState.wired) return;
   mwState.wired = true;
   $("#mw-run").onclick = runMarginWizard;
+  $("#mwm-run").onclick = runMarginWizardMatrix;
   $("#mw-fetch-current").onclick = async (e) => {
     e.preventDefault();
     try {
@@ -8377,6 +8402,116 @@ function initMarginWizard() {
       $("#mw-result").innerHTML = `<span class="text-bad">현재 PricingTable 로드 실패: ${e2.message}</span>`;
     }
   };
+}
+
+// 매트릭스 모드 — N profile × M pair 한번에.
+async function runMarginWizardMatrix() {
+  const result = $("#mwm-result");
+  result.textContent = "실행 중...";
+
+  let changes, samples;
+  try {
+    changes = JSON.parse($("#mw-changes").value || "{}");
+  } catch (e) {
+    result.innerHTML = `<span class="text-bad">changes JSON 파싱 실패: ${e.message}</span>`;
+    return;
+  }
+  try {
+    samples = JSON.parse($("#mwm-samples").value || "{}");
+  } catch (e) {
+    result.innerHTML = `<span class="text-bad">sample_quotes JSON 파싱 실패: ${e.message}</span>`;
+    return;
+  }
+  const profileLines = ($("#mwm-profiles").value || "").split("\n").map(s => s.trim()).filter(Boolean);
+  const profiles = [];
+  for (const line of profileLines) {
+    const [ch, st, ti] = line.split(".").map(s => s.trim().toUpperCase());
+    if (!ch || !st || !ti) {
+      result.innerHTML = `<span class="text-bad">profile 형식 오류: <code>${line}</code> — Channel.Site.Tier 필요</span>`;
+      return;
+    }
+    profiles.push({ channel: ch, site: st, tier: ti });
+  }
+  const pairs = Object.keys(samples);
+  if (profiles.length === 0 || pairs.length === 0) {
+    result.innerHTML = `<span class="text-bad">profiles + pairs (sample_quotes 의 key) 둘 다 필요</span>`;
+    return;
+  }
+  const body = {
+    profiles, pairs,
+    tenor: $("#mwm-tenor").value.trim() || "SPOT",
+    sample_quotes: samples,
+    changes,
+  };
+  try {
+    const resp = await fetch("/v1/admin/pricing/preview-matrix", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(body),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      result.innerHTML = `<span class="text-bad">HTTP ${resp.status}: ${text}</span>`;
+      return;
+    }
+    renderMarginWizardMatrix(JSON.parse(text));
+  } catch (e) {
+    result.innerHTML = `<span class="text-bad">요청 실패: ${e.message}</span>`;
+  }
+}
+
+function renderMarginWizardMatrix(d) {
+  const out = $("#mwm-result");
+  const deltaCls = (n) => n === 0 ? "text-slate-400" : (n > 0 ? "text-bad" : "text-good");
+  const sign = (n) => (n >= 0 ? "+" : "") + n.toFixed(6);
+  const fmt = (n) => (n || 0).toFixed(4);
+
+  // 행 정렬: spread delta 절대값 큰 순 (변화 큰 row 가 위)
+  const rows = (d.rows || []).slice().sort((a, b) => Math.abs(b.delta_spread) - Math.abs(a.delta_spread));
+
+  const skipped = (d.skipped || []).length > 0
+    ? `<div class="text-[10px] text-warn">⚠ sample_quote 없는 pair skip: ${d.skipped.join(", ")}</div>`
+    : "";
+
+  out.innerHTML = `
+    <div class="space-y-2 text-xs">
+      <div class="flex justify-between text-[10px] text-slate-500">
+        <span>current_version = <span class="font-mono">${d.current_version}</span></span>
+        <span>preview_version = <span class="font-mono">${d.preview_version}</span></span>
+        <span>tenor = <span class="font-mono">${d.tenor}</span></span>
+        <span>rows = <span class="font-mono">${rows.length}</span></span>
+      </div>
+      ${skipped}
+      <table class="w-full text-[11px] border-collapse">
+        <thead class="bg-ink-900/60 text-slate-400 uppercase tracking-wider">
+          <tr>
+            <th class="text-left px-2 py-1.5">profile</th>
+            <th class="text-left px-2 py-1.5">pair</th>
+            <th class="text-right px-2 py-1.5">before spread</th>
+            <th class="text-right px-2 py-1.5">after spread</th>
+            <th class="text-right px-2 py-1.5">Δ bid</th>
+            <th class="text-right px-2 py-1.5">Δ ask</th>
+            <th class="text-right px-2 py-1.5">Δ spread</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr class="border-b border-ink-800/60 hover:bg-ink-800/30">
+              <td class="px-2 py-1 font-mono text-slate-200">${r.profile || "(invalid)"}</td>
+              <td class="px-2 py-1 font-mono text-slate-300">${r.pair}</td>
+              <td class="px-2 py-1 text-right font-mono text-slate-400">${fmt(r.before.spread)}</td>
+              <td class="px-2 py-1 text-right font-mono text-slate-300">${fmt(r.after.spread)}</td>
+              <td class="px-2 py-1 text-right font-mono ${deltaCls(r.delta_bid)}">${sign(r.delta_bid)}</td>
+              <td class="px-2 py-1 text-right font-mono ${deltaCls(r.delta_ask)}">${sign(r.delta_ask)}</td>
+              <td class="px-2 py-1 text-right font-mono ${deltaCls(r.delta_spread)}">${sign(r.delta_spread)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      <div class="text-[10px] text-slate-500">Δ spread 절대값 큰 행이 위. Δspread &gt; 0 (확대) 빨강 — 고객 불리. &lt; 0 (축소) 초록.</div>
+    </div>
+  `;
 }
 
 async function runMarginWizard() {

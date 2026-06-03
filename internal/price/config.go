@@ -239,6 +239,12 @@ type Config struct {
 	QuoteIDAsyncFlush    time.Duration // default 5ms
 	QuoteIDAsyncBatchMax int           // default 200
 	QuoteIDAsyncTimeout  time.Duration // default 200ms — 단일 PutMany 의 ctx timeout
+
+	// OTel TracerProvider — Endpoint 비고 OtelStdout=false 면 비활성. PR 2/3.
+	OtelEndpoint    string
+	OtelInsecure    bool
+	OtelStdout      bool
+	OtelSampleRatio float64
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -555,6 +561,12 @@ func LoadConfig(args []string) (Config, error) {
 		"AsyncRegistry batch 최대 (default 200)")
 	fs.DurationVar(&cfg.QuoteIDAsyncTimeout, "quoteid-async-timeout", cfg.QuoteIDAsyncTimeout,
 		"AsyncRegistry 단일 PutMany ctx timeout (default 200ms)")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint,
+		"OTel OTLP gRPC endpoint (예: otel-collector:4317). 비면 비활성")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span stdout 출력 (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio,
+		"OTel 샘플링 비율 (0..1, 0=AlwaysSample)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

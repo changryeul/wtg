@@ -43,6 +43,7 @@ import (
 
 	"github.com/winwaysystems/wtg/internal/price"
 	"github.com/winwaysystems/wtg/pkg/metrics"
+	"github.com/winwaysystems/wtg/pkg/otelinit"
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/quote"
 	"github.com/winwaysystems/wtg/pkg/quoteid"
@@ -79,6 +80,13 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// OTel TracerProvider — Endpoint 비면 비활성 (PR 2/3, broker-tracing.md §8).
+	if shutdown := otelinit.SetupIfEnabled(ctx, "mci-price",
+		cfg.OtelEndpoint, cfg.OtelStdout, cfg.OtelInsecure, cfg.OtelSampleRatio,
+		logger); shutdown != nil {
+		defer shutdown(ctx)
+	}
 
 	// 1) stdout dump consumer — 1차 prototype 디버깅용.
 	if cfg.PrintFirstN > 0 {

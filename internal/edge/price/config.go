@@ -145,6 +145,12 @@ type Config struct {
 	// 두 형식이 같은 ws endpoint 에서 mix 되진 않는다 — instance 단위 설정.
 	// 필요 시 두 인스턴스 (best / legacy) 를 별도 포트에 띄워 운영.
 	EnvelopeFormat string
+
+	// OTel TracerProvider — Endpoint 비고 OtelStdout=false 면 비활성. PR 2/3.
+	OtelEndpoint    string
+	OtelInsecure    bool
+	OtelStdout      bool
+	OtelSampleRatio float64
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -282,6 +288,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.StaleThreshold, "stale-threshold", cfg.StaleThreshold, "Phase 4 stale 알림 임계 (0=비활성, default 30s)")
 	fs.DurationVar(&cfg.StaleScanInterval, "stale-scan", cfg.StaleScanInterval, "stale scanner 주기 (default 5s)")
 	fs.StringVar(&cfg.EnvelopeFormat, "envelope-format", cfg.EnvelopeFormat, "ws envelope 형식 — 'best' (default, 신규) 또는 'legacy' (broker subscribe 호환, msgtype/entries)")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (비면 비활성)")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span stdout (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio, "OTel 샘플링 비율 (0..1)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

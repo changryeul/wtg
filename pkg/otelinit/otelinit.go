@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -112,4 +113,45 @@ func buildExporter(ctx context.Context, opt Options) (sdktrace.SpanExporter, err
 		o = append(o, otlptracegrpc.WithHeaders(opt.Headers))
 	}
 	return otlptracegrpc.New(ctx, o...)
+}
+
+// SetupIfEnabled — main boilerplate 축소 helper. endpoint 비고 stdout=false
+// 면 nil 반환 (no-op). 그 외엔 Setup 호출 후 shutdown 반환. Setup 실패는
+// warn log + nil — 운영 fail-open.
+//
+// 사용:
+//
+//	if shutdown := otelinit.SetupIfEnabled(ctx, "mci-price",
+//	    cfg.OtelEndpoint, cfg.OtelStdout, cfg.OtelInsecure, cfg.OtelSampleRatio,
+//	    logger); shutdown != nil {
+//	    defer shutdown(ctx)
+//	}
+func SetupIfEnabled(ctx context.Context, serviceName, endpoint string,
+	stdout, insecure bool, sample float64, logger *slog.Logger,
+) func(context.Context) error {
+	if endpoint == "" && !stdout {
+		return nil
+	}
+	ep := endpoint
+	if stdout {
+		ep = "stdout"
+	}
+	shutdown, err := Setup(ctx, Options{
+		ServiceName: serviceName,
+		Endpoint:    ep,
+		Insecure:    insecure,
+		SampleRatio: sample,
+	})
+	if err != nil {
+		if logger != nil {
+			logger.Warn("OTel Setup 실패 — span 비활성",
+				slog.String("service", serviceName), slog.Any("error", err))
+		}
+		return nil
+	}
+	if logger != nil {
+		logger.Info("OTel TracerProvider 활성",
+			slog.String("service", serviceName), slog.String("endpoint", ep))
+	}
+	return shutdown
 }

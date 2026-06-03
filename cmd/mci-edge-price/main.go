@@ -31,6 +31,7 @@ import (
 	"syscall"
 
 	edgeprice "github.com/winwaysystems/wtg/internal/edge/price"
+	"github.com/winwaysystems/wtg/pkg/otelinit"
 )
 
 func main() {
@@ -54,6 +55,12 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	if shutdown := otelinit.SetupIfEnabled(ctx, "mci-edge-price",
+		cfg.OtelEndpoint, cfg.OtelStdout, cfg.OtelInsecure, cfg.OtelSampleRatio,
+		logger); shutdown != nil {
+		defer shutdown(ctx)
+	}
 
 	srv := edgeprice.NewServer(cfg, logger)
 	if err := srv.Start(ctx); err != nil {

@@ -254,9 +254,12 @@ func (s *Server) buildProxy(upstream *url.URL) *httputil.ReverseProxy {
 				r.Header.Set(middleware.HeaderEdgeSID, p.SessionID)
 			}
 		}
-		// request id 전파.
+		// request id 전파 + W3C traceparent forward (upstream 의 mci-api 가 동일 trace_id 사용).
 		if rid := middleware.RequestIDFromContext(r.Context()); rid != "" {
 			r.Header.Set("X-Request-ID", rid)
+		}
+		if tp, ok := middleware.TraceParentFromContext(r.Context()); ok {
+			r.Header.Set("traceparent", middleware.FormatTraceParent(tp))
 		}
 		// upstream 측이 알아야 하는 원본 정보.
 		r.Header.Set("X-Forwarded-Host", r.Host)

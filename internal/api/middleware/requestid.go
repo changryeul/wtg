@@ -22,26 +22,47 @@ func RequestIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-// RequestID 미들웨어는 요청마다 X-Request-ID 헤더를 검사하고 (없으면 생성)
-// context 에 저장한다. 응답 헤더에도 동일 값을 echo back 한다.
+// RequestID 미들웨어는 요청마다 X-Request-ID + W3C traceparent 헤더 양쪽을
+// 처리한다 — context 에 둘 다 주입, 응답 헤더 양쪽에 echo.
+//
+// 우선순위:
+//   - traceparent 헤더 있고 valid → trace_id 16B 그대로
+//   - 없으면 16B random 생성 + 응답으로 traceparent 발행 (parent_id 도 새로)
+//   - X-Request-ID = trace_id 의 앞 8B hex (호환). 헤더 입력 X-Request-ID
+//     가 있어도 traceparent 의 trace_id 가 truth.
+//
+// docs/broker-tracing.md 와 호환 — context 의 traceID 가 mqhdr.trcid 로
+// 그대로 전달되어 broker / 매매 AP / WTG 의 cross-service correlation.
 func RequestID() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id := r.Header.Get("X-Request-ID")
-			if id == "" {
-				id = newID()
+			var tp TraceParent
+			var hadTP bool
+			if h := r.Header.Get("traceparent"); h != "" {
+				tp, hadTP = parseTraceParent(h)
 			}
-			w.Header().Set("X-Request-ID", id)
-			ctx := context.WithValue(r.Context(), requestIDKey, id)
+			// 입력 X-Request-ID 그대로 보존 (자유 형식 — "rid-abc-123" 같은 사용자
+			// 친화 ID 호환). 16 hex char (8B) 이면 trace_id 앞 8B 로도 사용.
+			rid := r.Header.Get("X-Request-ID")
+			if !hadTP {
+				if seed, err := hex.DecodeString(rid); err == nil && len(seed) == 8 {
+					copy(tp.TraceID[:8], seed)
+					_, _ = rand.Read(tp.TraceID[8:])
+				} else {
+					_, _ = rand.Read(tp.TraceID[:])
+				}
+				_, _ = rand.Read(tp.ParentID[:])
+			}
+			if rid == "" {
+				rid = hex.EncodeToString(tp.TraceID[:8])
+			}
+
+			w.Header().Set("X-Request-ID", rid)
+			w.Header().Set("traceparent", formatTraceParent(tp))
+
+			ctx := context.WithValue(r.Context(), requestIDKey, rid)
+			ctx = context.WithValue(ctx, traceParentKey, tp)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// newID 는 16 hex char (8바이트) 의 랜덤 ID 를 생성한다.
-// crypto/rand 사용 — 충돌 가능성 사실상 0.
-func newID() string {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
 }

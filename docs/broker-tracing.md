@@ -147,20 +147,46 @@ back. AP 는 `content_reset()` 후 `mymq_recv()` 만 호출하면 자동 동작.
 
 ## 6. 운영 흐름
 
+### 6.1 W3C tracecontext (권장 — 전체 16B 사용)
+
 ```
-사용자 → POST /v1/tx                [X-Request-ID: 0123456789abcdef]
-mci-edge-api                         [rid context 주입]
-  ↓ proxy + JWT 검증                 [X-Request-ID forward]
+사용자 → POST /v1/tx                 [traceparent: 00-<32hex>-<16hex>-01]
+mci-edge-api
+  ↓ proxy + JWT 검증                 [traceparent forward]
 mci-api
-  ↓ transaction handler              [middleware.RequestIDFromContext]
-  ↓ env.BuildFrame(ckey, usid, rid)  [TraceIDFromHex(rid)]
-  ↓ mymq.Client.Call                 [wire frame.trcid[0..7] 채움]
+  ↓ middleware.RequestID 가 처리      [TraceParent context 주입]
+  ↓ transaction handler              [TraceIDHexFromContext (32 hex)]
+  ↓ env.BuildFrame(..., 32hex)       [TraceIDFromHex → trcid[0..15] 전체]
 broker (mymqd)                       [trcid passthrough]
-  ↓ broadcast to 매매 AP
-trn                                  [log: trcid=0123456789abcdef]
+  ↓ broadcast
+trn                                  [log: trcid=<32hex>]
 ```
 
-각 service 의 log 에 동일 trcid 등장 → 한 요청의 path 전체 추적 가능.
+### 6.2 X-Request-ID 폴백 (호환성 — 8B만)
+
+```
+사용자 → POST /v1/tx                 [X-Request-ID: 0123456789abcdef]
+mci-edge-api
+  ↓ proxy                            [X-Request-ID forward + 새 traceparent 생성]
+mci-api
+  ↓ middleware.RequestID              [trace_id 새로 생성: 앞 8B = 입력 X-Request-ID]
+  ↓ transaction handler              [TraceIDHexFromContext (32 hex)]
+  ↓ env.BuildFrame(..., 32hex)       [trcid[0..15] — 앞 8B 는 사용자 입력 보존]
+```
+
+### 6.3 W3C / RequestID 비교
+
+| 측면 | X-Request-ID 8B | W3C traceparent 16B |
+|------|-----------------|----------------------|
+| wire | 16 hex char | `00-<32hex>-<16hex>-<flags>` |
+| broker frame trcid | `[0..7]` 만 | `[0..15]` 전체 |
+| span tree 표현 | X (단일 ID) | parent-id 로 가능 |
+| OTel / Jaeger 호환 | X | ✅ |
+| 운영 backward compat | ✅ (legacy 도구) | 신규 |
+
+middleware 가 **둘 다 자동 처리** — 호출자는 차이 인식 X.
+
+각 service 의 log 에 동일 trace_id 등장 → 한 요청의 path 전체 추적 가능.
 
 ## 7. 검증
 

@@ -94,8 +94,13 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			}
 		}
 
-		rid := middleware.RequestIDFromContext(r.Context())
-		frame, err := env.BuildFrame(0, p.Usid, rid, deps.Routes)
+		// W3C tracecontext trace_id 우선 (16B = mqhdr.trcid 전체).
+		// 없으면 X-Request-ID 8B 폴백 (trcid[0..7] 만).
+		traceIDHex := middleware.TraceIDHexFromContext(r.Context())
+		if traceIDHex == "" {
+			traceIDHex = middleware.RequestIDFromContext(r.Context())
+		}
+		frame, err := env.BuildFrame(0, p.Usid, traceIDHex, deps.Routes)
 		if err != nil {
 			recordAlias(true)
 			if errors.Is(err, transform.ErrUnknownAlias) {

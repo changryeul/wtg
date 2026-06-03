@@ -41,6 +41,29 @@ func TestEnvelopeValidateRequest(t *testing.T) {
 	}
 }
 
+// traceIDHex 가 frame.TraceID 로 정확히 전달되는지.
+func TestEnvelopeBuildFrame_TraceIDPropagation(t *testing.T) {
+	env := &Envelope{RoutingKey: "PING"}
+	rid := "0123456789abcdef" // X-Request-ID 8 byte hex
+	frame, err := env.BuildFrame(0xCAFE, "u", rid, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mymq.TraceIDToHex(frame.TraceID)
+	if got != rid {
+		t.Errorf("TraceID = %q, want %q (raw=%x)", got, rid, frame.TraceID)
+	}
+}
+
+// 빈 rid 는 zero array — broker 가 받았을 때 trcid 모두 0 (미설정).
+func TestEnvelopeBuildFrame_EmptyTraceID(t *testing.T) {
+	env := &Envelope{RoutingKey: "PING"}
+	frame, _ := env.BuildFrame(0, "u", "", nil)
+	if mymq.TraceIDToHex(frame.TraceID) != "" {
+		t.Errorf("빈 rid 인데 trace_id 설정됨: %x", frame.TraceID)
+	}
+}
+
 func TestEnvelopeBuildFrame(t *testing.T) {
 	env := &Envelope{
 		Exchange:   "ORDER",

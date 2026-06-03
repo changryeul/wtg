@@ -120,15 +120,59 @@ trn                                  [log: trcid=0123456789abcdef]
 
 ## 7. 검증
 
+### 단위 테스트 (`pkg/mymq`)
+
 ```bash
 go test -run='TestTraceID|TestFrameEncodeIncludesTraceID|TestFrameHdrSizeIs100' \
   ./pkg/mymq/
 ```
 
-- TraceIDFromHex / ToHex round trip (short + W3C 양쪽)
+- TraceIDFromHex / ToHex round trip (short 8 byte + W3C 16 byte 양쪽)
 - 빈 문자열 / 잘못된 hex → zero array
 - FrameInput.TraceID → wire 100B → DecodeFrame 라운드트립
 - HdrSize == 100 확인
+
+### 통합 테스트 (fakeBroker 라운드트립)
+
+```bash
+go test -tags=integration -run='TestClientCallPropagatesTraceID' ./pkg/mymq/
+```
+
+- WTG client → wire frame.trcid (broker 수신 검증)
+- broker → reply.trcid echo back → WTG decode 검증
+- short hex (8 byte) 와 wire 16 byte 매핑 확인
+
+### handler propagation 테스트 (`internal/api/transform`)
+
+```bash
+go test -run='TestEnvelopeBuildFrame_TraceID' ./internal/api/transform/
+```
+
+- BuildFrame 의 traceIDHex 인자가 frame.TraceID 로 정확히 전달
+- 빈 rid 는 zero array
+
+### 라이브 운영 검증
+
+운영 환경에서 매매 1건 후 cross-service log 매칭:
+
+```bash
+# 1. 매매 요청 + X-Request-ID 캡처
+curl -i -X POST http://127.0.0.1:8090/v1/tx \
+  -H "Authorization: Bearer ..." \
+  -H "Content-Type: application/json" \
+  -d '{"alias":"WECHO_PING","data":""}'
+# → 응답 헤더의 X-Request-ID 확인 (예: 0123456789abcdef)
+
+# 2. mci-api log 에서 그 rid 추적
+grep "rid=0123456789abcdef" /var/log/mci-api/*.log
+
+# 3. broker / trn log 에서 trcid hex 매칭
+# (현재는 broker 가 echo only — 매매 AP 측 log 통합은 후속)
+grep "trcid=0123456789abcdef" /var/log/mymqd/*.log
+grep "trcid=0123456789abcdef" /var/log/trn/*.log
+```
+
+각 service log 에 동일 rid/trcid 등장 → 한 요청의 path 전체 추적.
 
 ## 8. 향후
 

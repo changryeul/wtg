@@ -123,6 +123,77 @@ func TestClientCallEchoesCkey(t *testing.T) {
 	}
 }
 
+// Client.Call 의 FrameInput.TraceID 가 wire frame 의 trcid 영역에 정확히
+// 기록되고, broker 가 echo back 한 reply 의 trcid 도 보존되는지.
+func TestClientCallPropagatesTraceID(t *testing.T) {
+	b := newFakeBroker(t)
+	t.Cleanup(b.Close)
+	host, port := b.hostPort()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	c, err := Open(ctx, host, port, Options{ApplName: "mci-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	rid := "deadbeef00112233"
+	want := TraceIDFromHex(rid)
+
+	// fakeBroker 가 받은 trace_id 캡처 + reply 에 동일 trace_id echo.
+	gotChan := make(chan [TraceIDSize]byte, 1)
+	go func() {
+		for df := range b.received {
+			select {
+			case gotChan <- df.Header.TraceID:
+			default:
+			}
+			reply, _ := EncodeFrame(&FrameInput{
+				Func:    df.Header.Func,
+				Subc:    SubTranMsg,
+				Dirf:    DirOrigin,
+				Ckey:    df.Header.Ckey,
+				TraceID: df.Header.TraceID, // broker 가 trcid echo back
+				Body:    []byte(`{"status":"ok"}`),
+			})
+			_ = b.Push(reply)
+		}
+	}()
+
+	callCtx, cancel2 := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel2()
+	r, err := c.Call(callCtx, &FrameInput{
+		Func:    FCTran,
+		Subc:    SubTranMsg,
+		Dirf:    DirForward,
+		Keyc:    KeySend,
+		Xchg:    "ECHOSVC",
+		Rkey:    "PING",
+		TraceID: want,
+		Body:    []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+
+	select {
+	case got := <-gotChan:
+		if got != want {
+			t.Errorf("broker received trace_id = %x, want %x", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("broker frame 수신 timeout")
+	}
+
+	if r.Header.TraceID != want {
+		t.Errorf("reply trace_id = %x, want %x (broker echo back)", r.Header.TraceID, want)
+	}
+	if got := TraceIDToHex(r.Header.TraceID); got != rid {
+		t.Errorf("reply hex = %q, want %q", got, rid)
+	}
+}
+
 func TestClientCallContextCancel(t *testing.T) {
 	b := newFakeBroker(t)
 	t.Cleanup(b.Close)

@@ -81,6 +81,10 @@ type Deps struct {
 	// 있어도 무시 — 기존 동작). 운영 환경에서 활성 권장 — 사용자 더블 클릭 /
 	// 모바일 재연결 retry 시 중복 매매 차단.
 	Idempotency idempotency.Store
+
+	// TxRing — 최근 N 건 매매 audit ring (in-memory). nil 이면 미수집.
+	// /v1/admin/recent-tx 에서 snapshot 노출 — mci-admin 의 매매 감사 dashboard.
+	TxRing *TxRing
 }
 
 // writeJSON 은 표준 JSON 응답 헬퍼. 에러 발생 시 access log 가 캡처하므로

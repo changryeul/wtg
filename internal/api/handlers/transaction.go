@@ -76,6 +76,27 @@ func Transaction(deps *Deps) http.HandlerFunc {
 		recordAlias := func(isErr bool) {
 			deps.AliasMetrics.RecordCall(env.Alias, p.Tier, time.Since(callStart), isErr)
 		}
+		// 매매 audit ring — 모든 응답 path 직전 호출. brokerErrn 0 = 성공/비즈니스
+		// 에러 아님, 그 외는 reply.Errn.
+		recordTx := func(status int, brokerErrn uint32) {
+			if deps.TxRing == nil {
+				return
+			}
+			deps.TxRing.Append(TxEntry{
+				TS:         time.Now(),
+				Usid:       p.Usid,
+				Channel:    p.Channel,
+				Tier:       p.Tier,
+				Alias:      env.Alias,
+				Exchange:   env.Exchange,
+				RoutingKey: env.RoutingKey,
+				HTTPStatus: status,
+				BrokerErrn: brokerErrn,
+				LatencyMs:  float64(time.Since(callStart).Nanoseconds()) / 1e6,
+				RequestID:  middleware.RequestIDFromContext(r.Context()),
+				TraceIDHex: middleware.TraceIDHexFromContext(r.Context()),
+			})
+		}
 
 		// Idempotency 처리 — store + 헤더 둘 다 있을 때만. store 실패는 fail-open.
 		// Reserve 가 Cached / Conflict / InFlight 면 응답 처리 후 handled=true.
@@ -178,6 +199,7 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			)
 			status, code, msg := mapBrokerError(err)
 			recordAlias(true)
+			recordTx(status, 0)
 			writeError(w, status, code, msg)
 			return
 		}
@@ -187,11 +209,13 @@ func Transaction(deps *Deps) http.HandlerFunc {
 		if mqErr := reply.AsError(); mqErr != nil {
 			status, _, _ := mapBrokerError(mqErr)
 			recordAlias(true)
+			recordTx(status, reply.Errn)
 			writeJSON(w, status, transform.FromReply(reply))
 			return
 		}
 
 		recordAlias(false)
+		recordTx(http.StatusOK, 0)
 		writeJSON(w, http.StatusOK, transform.FromReply(reply))
 	}
 }

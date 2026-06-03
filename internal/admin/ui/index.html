@@ -324,6 +324,7 @@
           <button data-page="svcio"      class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
           <button data-page="pricestats" class="nav-btn nav-item"><span class="nav-ico">📊</span>시세 통계 (mci-price)</button>
           <button data-page="aliasstats" class="nav-btn nav-item"><span class="nav-ico">📈</span>매매 통계 (alias × tier)</button>
+          <button data-page="recenttx"   class="nav-btn nav-item"><span class="nav-ico">📜</span>매매 감사 (최근 N건)</button>
         </div>
 
         <!-- 외부 도구 — 별도 서비스의 UI 새 탭으로 열기. SPA 페이지 전환 아님. -->
@@ -2487,6 +2488,75 @@
           </div>
         </div>
 
+        <!-- 매매 감사 — 최근 N 건 ring 시각화. mci-api 의 in-memory ring (TxRingSize > 0). -->
+        <div id="page-recenttx" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">매매 감사 (최근 N건)</h3>
+              <p class="text-sm text-slate-400">mci-api 의 in-memory ring snapshot — 최신 → 옛 순. 분쟁 / spike 분석용. <code>--tx-ring N</code> 으로 활성. 5초마다 갱신.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400">size <span id="rtx-size" class="font-mono text-slate-200">—</span> / cap <span id="rtx-cap" class="font-mono text-slate-200">—</span></span>
+              <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                <input id="rtx-auto" type="checkbox" class="w-4 h-4 accent-accent-500" checked />
+                자동 갱신
+              </label>
+              <button id="rtx-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻</button>
+            </div>
+          </div>
+
+          <div class="border-gradient rounded-xl p-3 flex flex-wrap gap-3 items-center text-xs">
+            <label class="flex items-center gap-1.5">
+              <span class="text-slate-400">limit</span>
+              <input id="rtx-limit" type="number" min="0" placeholder="0(=all)" class="px-2 py-1 rounded bg-ink-900 border border-ink-700 w-20 font-mono" />
+            </label>
+            <label class="flex items-center gap-1.5">
+              <span class="text-slate-400">usid</span>
+              <input id="rtx-usid" type="text" placeholder="contains…" class="px-2 py-1 rounded bg-ink-900 border border-ink-700 w-28 font-mono" />
+            </label>
+            <label class="flex items-center gap-1.5">
+              <span class="text-slate-400">alias</span>
+              <input id="rtx-alias" type="text" placeholder="contains…" class="px-2 py-1 rounded bg-ink-900 border border-ink-700 w-32 font-mono" />
+            </label>
+            <label class="flex items-center gap-1.5">
+              <input id="rtx-errn" type="checkbox" class="w-3.5 h-3.5 accent-accent-500" />
+              <span class="text-slate-400">errors only</span>
+            </label>
+            <label class="flex items-center gap-1.5">
+              <span class="text-slate-400">bulk</span>
+              <select id="rtx-bulk" class="px-2 py-1 rounded bg-ink-900 border border-ink-700 text-xs">
+                <option value="">all</option>
+                <option value="1">bulk only</option>
+                <option value="0">single only</option>
+              </select>
+            </label>
+            <span class="text-slate-500" id="rtx-count">—</span>
+          </div>
+
+          <div class="border-gradient rounded-xl overflow-hidden">
+            <table class="w-full text-xs">
+              <thead class="bg-ink-900/60 text-slate-400 uppercase tracking-wider">
+                <tr>
+                  <th class="text-left px-3 py-2">ts</th>
+                  <th class="text-left px-3 py-2">usid</th>
+                  <th class="text-left px-3 py-2">tier</th>
+                  <th class="text-left px-3 py-2">alias</th>
+                  <th class="text-left px-3 py-2">rkey</th>
+                  <th class="text-right px-3 py-2">status</th>
+                  <th class="text-right px-3 py-2">errn</th>
+                  <th class="text-right px-3 py-2">lat_ms</th>
+                  <th class="text-center px-3 py-2">bulk</th>
+                  <th class="text-left px-3 py-2">trace_id</th>
+                </tr>
+              </thead>
+              <tbody id="rtx-tbody"></tbody>
+            </table>
+            <div id="rtx-empty" class="hidden p-6 text-center text-slate-500 text-sm">
+              매매 기록 없음 — /v1/tx 호출 후 다시. 또는 mci-api 의 <code>--tx-ring</code> 미설정.
+            </div>
+          </div>
+        </div>
+
         <!-- 운영 모니터링 — Prometheus 쿼리 카드 (P7-C) -->
         <div id="page-monitoring" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -3032,6 +3102,8 @@ function goPage(name) {
   if (name === "pricestats") initPriceStats();
   if (name !== "aliasstats") stopAliasStatsPoller();
   if (name === "aliasstats") initAliasStats();
+  if (name !== "recenttx") stopRecentTxPoller();
+  if (name === "recenttx") initRecentTx();
   if (name === "margin-wizard") initMarginWizard();
   if (name !== "audit")     stopAuditPoller();
   if (name === "audit")     initAudit();
@@ -8379,6 +8451,89 @@ function renderAliasStats() {
     tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono " + avgClass, text: avgMs.toFixed(2) }));
     tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono text-slate-400", text: (r.max_latency_ms || 0).toFixed(2) }));
     tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono text-slate-500", text: last }));
+    tbody.appendChild(tr);
+  }
+}
+
+// ───────── Recent Tx Audit (mci-api proxy) ─────────
+const rtxState = { wired: false, poller: null };
+
+function initRecentTx() {
+  if (!rtxState.wired) {
+    rtxState.wired = true;
+    $("#rtx-refresh").onclick = loadRecentTx;
+    $("#rtx-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startRecentTxPoller(); else stopRecentTxPoller();
+    });
+    ["rtx-limit","rtx-usid","rtx-alias","rtx-errn","rtx-bulk"].forEach(id => {
+      $("#"+id).addEventListener("input", loadRecentTx);
+      $("#"+id).addEventListener("change", loadRecentTx);
+    });
+  }
+  loadRecentTx();
+  if ($("#rtx-auto").checked) startRecentTxPoller();
+}
+function startRecentTxPoller() {
+  if (rtxState.poller) return;
+  rtxState.poller = setInterval(loadRecentTx, 5000);
+}
+function stopRecentTxPoller() {
+  if (rtxState.poller) { clearInterval(rtxState.poller); rtxState.poller = null; }
+}
+
+async function loadRecentTx() {
+  const params = new URLSearchParams();
+  const limit = parseInt($("#rtx-limit").value || "0", 10);
+  if (limit > 0) params.set("limit", String(limit));
+  if ($("#rtx-usid").value.trim()) params.set("usid", $("#rtx-usid").value.trim());
+  if ($("#rtx-alias").value.trim()) params.set("alias", $("#rtx-alias").value.trim());
+  if ($("#rtx-errn").checked) params.set("errn", "1");
+  if ($("#rtx-bulk").value) params.set("bulk", $("#rtx-bulk").value);
+  const qs = params.toString() ? "?" + params.toString() : "";
+
+  try {
+    const resp = await api("/v1/admin/recent-tx" + qs);
+    renderRecentTx(resp);
+  } catch (e) {
+    $("#rtx-count").textContent = "로드 실패: " + e.message;
+  }
+}
+
+function renderRecentTx(d) {
+  const tbody = $("#rtx-tbody");
+  const empty = $("#rtx-empty");
+  if (!tbody || !empty) return;
+  tbody.replaceChildren();
+
+  $("#rtx-size").textContent = (d.size ?? 0).toLocaleString();
+  $("#rtx-cap").textContent  = (d.cap ?? 0).toLocaleString();
+
+  const items = d.items || [];
+  $("#rtx-count").textContent = items.length + " row" + (items.length === 1 ? "" : "s");
+  if (items.length === 0) {
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  for (const e of items) {
+    const ts = e.ts ? new Date(e.ts).toLocaleTimeString("ko-KR", { hour12: false, second: "2-digit", minute:"2-digit", hour:"2-digit" }) + "." + String(new Date(e.ts).getMilliseconds()).padStart(3,"0") : "—";
+    const statusCls = e.http_status >= 500 ? "text-bad" : (e.http_status >= 400 ? "text-warn" : "text-good");
+    const errnCls = e.broker_errn > 0 ? "text-bad" : "text-slate-500";
+    const latCls = e.latency_ms >= 100 ? "text-bad" : (e.latency_ms >= 20 ? "text-warn" : "text-slate-400");
+    const traceShort = e.trace_id ? e.trace_id.slice(0, 16) + (e.trace_id.length > 16 ? "…" : "") : "—";
+
+    const tr = h("tr", { class: "border-b border-ink-800/60 hover:bg-ink-800/30" });
+    tr.appendChild(h("td", { class: "px-3 py-1 font-mono text-[10px] text-slate-400", text: ts }));
+    tr.appendChild(h("td", { class: "px-3 py-1 font-mono text-slate-200", text: e.usid || "—" }));
+    tr.appendChild(h("td", { class: "px-3 py-1 font-mono text-[10px] text-slate-500", text: e.tier || "—" }));
+    tr.appendChild(h("td", { class: "px-3 py-1 font-mono text-slate-300", text: e.alias || "(raw)" }));
+    tr.appendChild(h("td", { class: "px-3 py-1 font-mono text-[10px] text-slate-500", text: e.routing_key || "—" }));
+    tr.appendChild(h("td", { class: "px-3 py-1 text-right font-mono " + statusCls, text: String(e.http_status) }));
+    tr.appendChild(h("td", { class: "px-3 py-1 text-right font-mono " + errnCls, text: e.broker_errn ? String(e.broker_errn) : "—" }));
+    tr.appendChild(h("td", { class: "px-3 py-1 text-right font-mono " + latCls, text: (e.latency_ms || 0).toFixed(2) }));
+    tr.appendChild(h("td", { class: "px-3 py-1 text-center font-mono text-[10px] text-slate-500", text: e.is_bulk ? "B" : "—" }));
+    tr.appendChild(h("td", { class: "px-3 py-1 font-mono text-[10px] text-slate-500", text: traceShort, title: e.trace_id || "" }));
     tbody.appendChild(tr);
   }
 }

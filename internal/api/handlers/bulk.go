@@ -144,6 +144,25 @@ func processBulkItem(ctx context.Context, deps *Deps, p *middleware.Principal,
 	recordAlias := func(isErr bool) {
 		deps.AliasMetrics.RecordCall(env.Alias, p.Tier, time.Since(callStart), isErr)
 	}
+	recordTx := func(status int, brokerErrn uint32) {
+		if deps.TxRing == nil {
+			return
+		}
+		deps.TxRing.Append(TxEntry{
+			TS:         time.Now(),
+			Usid:       p.Usid,
+			Channel:    p.Channel,
+			Tier:       p.Tier,
+			Alias:      env.Alias,
+			Exchange:   env.Exchange,
+			RoutingKey: env.RoutingKey,
+			HTTPStatus: status,
+			BrokerErrn: brokerErrn,
+			LatencyMs:  float64(time.Since(callStart).Nanoseconds()) / 1e6,
+			TraceIDHex: traceIDHex,
+			IsBulk:     true,
+		})
+	}
 
 	if err := env.ValidateRequest(); err != nil {
 		recordAlias(true)
@@ -202,6 +221,7 @@ func processBulkItem(ctx context.Context, deps *Deps, p *middleware.Principal,
 			slog.Any("error", err))
 		status, code, msg := mapBrokerError(err)
 		recordAlias(true)
+		recordTx(status, 0)
 		return BulkItemResult{Status: status, Error: code, Message: msg}
 	}
 
@@ -209,9 +229,11 @@ func processBulkItem(ctx context.Context, deps *Deps, p *middleware.Principal,
 	if mqErr := reply.AsError(); mqErr != nil {
 		status, _, _ := mapBrokerError(mqErr)
 		recordAlias(true)
+		recordTx(status, reply.Errn)
 		return BulkItemResult{Status: status, Envelope: transform.FromReply(reply)}
 	}
 
 	recordAlias(false)
+	recordTx(http.StatusOK, 0)
 	return BulkItemResult{Status: http.StatusOK, Envelope: transform.FromReply(reply)}
 }

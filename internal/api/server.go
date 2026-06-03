@@ -341,6 +341,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// 핸들러 dependencies.
 	aliasMetrics := handlers.NewAliasMetrics()
+	var txRing *handlers.TxRing
+	if s.cfg.TxRingSize > 0 {
+		txRing = handlers.NewTxRing(s.cfg.TxRingSize)
+	}
 	deps := &handlers.Deps{
 		MQ:           mq,
 		CallTimeout:  s.cfg.BrokerCallTimeout,
@@ -352,6 +356,7 @@ func (s *Server) Start(ctx context.Context) error {
 		RefreshStore: s.refresh,
 		UserProfiles: upResolver,
 		AliasMetrics: aliasMetrics,
+		TxRing:       txRing,
 	}
 	// Idempotency-Key 처리 — Redis (다중 인스턴스 공유) 또는 Memory (단일).
 	if s.cfg.IdempotencyEnabled {
@@ -396,6 +401,7 @@ func (s *Server) Start(ctx context.Context) error {
 			"aliases": aliasMetrics.Snapshot(),
 		})
 	})
+	mux.HandleFunc("GET /v1/admin/recent-tx", handlers.RecentTx(deps))
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	// 미들웨어 체인 — 바깥 → 안쪽 순서:

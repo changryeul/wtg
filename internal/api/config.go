@@ -130,6 +130,11 @@ type Config struct {
 	RedisSentinelMaster string // sentinel 사용 시 master 이름
 	RedisMode           string // "direct" | "sentinel" | "cluster" (빈값=auto: 1addr→direct, 2+→sentinel)
 
+	// TxRingSize — 매매 audit ring 크기 (in-memory circular). 0 이면 비활성
+	// (기존 동작). >0 이면 최근 N 건 매매가 /v1/admin/recent-tx 로 노출.
+	// 운영 권장 1000~5000.
+	TxRingSize int
+
 	// Idempotency 정책 — `Idempotency-Key` 헤더 처리.
 	// IdempotencyEnabled=false 면 헤더 있어도 무시 (기존 동작).
 	// Backend:
@@ -316,6 +321,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.RedisPrefix, "redis-prefix", cfg.RedisPrefix, "redis 키 prefix (default wtg:auth)")
 	fs.StringVar(&cfg.RedisSentinelMaster, "redis-master", cfg.RedisSentinelMaster, "Sentinel master 이름 (다중 addr + sentinel)")
 	fs.StringVar(&cfg.RedisMode, "redis-mode", cfg.RedisMode, "topology 명시: direct / sentinel / cluster (빈값=auto)")
+	fs.IntVar(&cfg.TxRingSize, "tx-ring", cfg.TxRingSize, "매매 audit ring 크기 (in-memory, 0=비활성). >0 이면 /v1/admin/recent-tx 노출. 운영 권장 1000~5000")
 	fs.BoolVar(&cfg.IdempotencyEnabled, "idempotency", cfg.IdempotencyEnabled, "Idempotency-Key 헤더 처리 활성 (default off — 헤더 무시). 운영 권장 — 중복 매매 차단. backend 는 --redis 가 채워지면 Redis, 비면 Memory (단일 인스턴스).")
 	fs.DurationVar(&cfg.IdempotencyTTL, "idempotency-ttl", cfg.IdempotencyTTL, "Idempotency reservation / cached reply TTL (default 5m)")
 	fs.StringVar(&cfg.IdempotencyRedisPrefix, "idempotency-redis-prefix", cfg.IdempotencyRedisPrefix, "Idempotency Redis key prefix (default wtg:idem:). --redis 활성 시 sessions/refresh 와 prefix 분리")

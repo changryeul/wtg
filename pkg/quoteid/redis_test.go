@@ -144,6 +144,79 @@ func TestRedisRegistry_MarkConsumed_FirstWins(t *testing.T) {
 	}
 }
 
+// 다중 mci-price 인스턴스가 같은 Redis 를 공유할 때 — 두 별도 RedisRegistry
+// 가 동일 quote_id 에 동시 MarkConsumed → Redis SETNX 기반 atomic 으로
+// 정확히 한 건만 ConsumeOK. 다른 건 ConsumeAlreadyDone + 동일 ConsumedBy 관찰.
+func TestRedisRegistry_MultiInstance_FirstWins(t *testing.T) {
+	mr := miniredis.RunT(t)
+
+	// 별도 redis client + RedisRegistry 두 개 = 두 mci-price 인스턴스 시뮬레이션.
+	mkInstance := func(label string) *RedisRegistry {
+		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		t.Cleanup(func() { _ = rdb.Close() })
+		return NewRedisRegistry(rdb, RedisRegistryOptions{Prefix: "shared:qid"})
+	}
+	insA := mkInstance("A")
+	insB := mkInstance("B")
+
+	ctx := context.Background()
+	now := time.Now()
+	rec := mkRec("Q-99", now, time.Hour)
+	if err := insA.Put(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// 두 인스턴스가 동시에 같은 quote_id 에 MarkConsumed.
+	type result struct {
+		who string
+		res ConsumeResult
+		err error
+	}
+	out := make(chan result, 2)
+	go func() {
+		r, e := insA.MarkConsumed(ctx, "Q-99", "order-from-A")
+		out <- result{"A", r, e}
+	}()
+	go func() {
+		r, e := insB.MarkConsumed(ctx, "Q-99", "order-from-B")
+		out <- result{"B", r, e}
+	}()
+
+	var ok, dup int
+	var winnerOrder string // 동시 라운드의 winner 가 어느 인스턴스 의도였는지
+	for i := 0; i < 2; i++ {
+		r := <-out
+		if r.err != nil {
+			t.Fatalf("[%s] err: %v", r.who, r.err)
+		}
+		switch r.res.Status {
+		case ConsumeOK:
+			ok++
+			winnerOrder = "order-from-" + r.who
+		case ConsumeAlreadyDone:
+			dup++
+		default:
+			t.Errorf("[%s] unexpected status: %v", r.who, r.res.Status)
+		}
+	}
+	if ok != 1 || dup != 1 {
+		t.Errorf("동시 MarkConsumed: ok=%d dup=%d, want ok=1 dup=1", ok, dup)
+	}
+
+	// 후속 확인 — 두 인스턴스 모두에서 같은 winner 의 consumed_by 관찰.
+	r3, _ := insA.MarkConsumed(ctx, "Q-99", "order-late-A")
+	r4, _ := insB.MarkConsumed(ctx, "Q-99", "order-late-B")
+	if r3.Status != ConsumeAlreadyDone || r4.Status != ConsumeAlreadyDone {
+		t.Errorf("후속: A=%v B=%v, want 모두 ConsumeAlreadyDone", r3.Status, r4.Status)
+	}
+	if r3.ConsumedBy != r4.ConsumedBy {
+		t.Errorf("인스턴스 간 ConsumedBy 불일치: A=%q B=%q", r3.ConsumedBy, r4.ConsumedBy)
+	}
+	if r3.ConsumedBy != winnerOrder {
+		t.Errorf("ConsumedBy 가 winner 와 불일치: stored=%q winner=%q", r3.ConsumedBy, winnerOrder)
+	}
+}
+
 func TestRedisRegistry_MarkConsumed_NotFound(t *testing.T) {
 	reg, _ := newTestRedis(t)
 	r, _ := reg.MarkConsumed(context.Background(), "A-nope", "order-1")

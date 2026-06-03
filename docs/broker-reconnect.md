@@ -69,14 +69,19 @@ label `service` 는 `mci-api / mci-push / mci-price / mci-admin / quote-forwarde
 
 ---
 
-## 3. 알람 권장
+## 3. 알람
 
-| 알람 | 임계 | severity | 의도 |
-|------|------|----------|------|
-| Broker reconnect rate 비정상 | `rate(wtg_broker_reconnects_total[5m]) > 0.1` | warning | 5분당 30회 = broker 불안정 |
-| Inflight aborted spike | `rate(wtg_broker_inflight_aborted_total[1m]) > 10` | page | 한 끊김에 10건 + RPC 손실 |
-| Heartbeat timeout 누적 | `increase(wtg_broker_heartbeat_timeout_total[10m]) > 3` | page | 네트워크 / broker 응답 지연 |
-| Reconnect duration p95 | `histogram_quantile(0.95, ...) > 30` | warning | backoff 누적이 30s 초과 |
+### Grafana provisioning
+
+`deploy/observability/grafana/provisioning/alerting/p7-broker-alerts.json` 의
+그룹 `wtg-p7-broker` (4 룰) 이 docker-compose 재기동 시 자동 등록.
+
+| 알람 | 임계 | severity | for |
+|------|------|----------|-----|
+| Broker reconnect rate 비정상 | `sum by (service) (rate(wtg_broker_reconnects_total[5m])) > 0.1` | warning | 2m |
+| Inflight RPC abort spike | `sum by (service) (rate(wtg_broker_inflight_aborted_total[1m])) > 10` | page | 1m |
+| Heartbeat watchdog 누적 | `sum by (service) (increase(wtg_broker_heartbeat_timeout_total[10m])) > 3` | page | 5m |
+| Reconnect duration p95 | `histogram_quantile(0.95, ...) > 30s` | warning | 5m |
 
 알람 발화 시:
 1. `service` label 로 어느 서비스인지 (한 서비스만? 여러? broker 측 vs 클라이언트 측 분리)
@@ -130,5 +135,29 @@ go test -tags=integration -run='TestReconnect|TestMetricsHook' -v ./pkg/mymq/
 MYMQD_HOST=10.0.0.10 MYMQD_PORT=11217 go test -v ./test/integration/...
 ```
 
-부하 시나리오 (PR 3 — P7-B 카오스 테스트): broker 재시작 / 인스턴스 재시작 시
-메시지 손실 측정 + 알람 발화 검증.
+### 카오스 시나리오로 검증
+
+`scripts/chaos-broker.sh` — broker (mymqd) docker container 를 잠시 죽이고
+살려서 reconnect 메트릭 + alert 발화를 라이브 관찰.
+
+```bash
+./scripts/chaos-broker.sh quick      # 10초 다운 — metric 발화만
+./scripts/chaos-broker.sh sustained  # 60초 다운 — alert for: 1m 만족
+```
+
+라이브 결과 예시 (10s 다운):
+```
+Before — disconnects=0 reconnects=0 inflight_aborted=0
+After  — disconnects=1 reconnects=1 inflight_aborted=0
+```
+
+### 다중 인스턴스 QuoteID Redis 일관성
+
+`pkg/quoteid/redis_test.go` 의 `TestRedisRegistry_MultiInstance_FirstWins` —
+두 별도 `RedisRegistry` 인스턴스가 같은 Redis 를 공유하며 동시 `MarkConsumed`
+호출 시 정확히 한 건만 `ConsumeOK`, 다른 건 `ConsumeAlreadyDone`. 후속 호출에서
+모든 인스턴스가 같은 `ConsumedBy` 관찰.
+
+```bash
+go test -race -run='TestRedisRegistry_MultiInstance' ./pkg/quoteid/
+```

@@ -1,0 +1,194 @@
+{
+  "apiVersion": 1,
+  "_comment": "WTG P7-B — Broker connection lifecycle alert. Grafana Unified Alerting 그룹 1 (wtg-p7-broker) + 4 rule. pkg/mymq.MetricsHook → pkg/metrics 의 wtg_broker_* 카운터 기반. import: Grafana → Alerting → Alert rules → Import → 이 JSON. 또는 provisioning: /etc/grafana/provisioning/alerting/p7-broker-alerts.json mount.",
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "wtg-p7-broker",
+      "folder": "WTG",
+      "interval": "30s",
+      "rules": [
+        {
+          "uid": "wtg-p7-broker-reconnect-rate",
+          "title": "Broker reconnect rate 비정상 (broker 불안정)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "sum by (service) (rate(wtg_broker_reconnects_total[5m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [0.1]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "2m",
+          "annotations": {
+            "summary": "한 서비스의 broker reconnect rate > 0.1/s (5분당 30회)",
+            "description": "한 서비스가 broker 와 5분당 30회 이상 reconnect — broker 측 (mymqd) 불안정 또는 네트워크 문제 의심. label `service` 로 어느 mci-* 인지 확인. 매매 영향 — `wtg_broker_inflight_aborted_total` 동반 증가 여부 점검.",
+            "runbook_url": "docs/broker-reconnect.md#3-알람-권장"
+          },
+          "labels": {
+            "severity": "warning",
+            "domain": "broker"
+          }
+        },
+        {
+          "uid": "wtg-p7-broker-inflight-spike",
+          "title": "Broker inflight RPC abort spike (매매 손실)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "sum by (service) (rate(wtg_broker_inflight_aborted_total[1m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [10]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "1m",
+          "annotations": {
+            "summary": "한 끊김에 in-flight RPC 10+건 abort — 매매 손실",
+            "description": "broker 끊김 시 failPending 으로 ErrBroker 통보된 pending RPC 가 10/s 초과. mci-api / mci-admin 의 매매 RPC 가 실제로 영향받음. 사용자에게 retry 안내 + audit 로그 점검 필요. 동시에 reconnect 가 빠르게 복구되는지 (`wtg_broker_reconnect_duration_seconds`) 확인.",
+            "runbook_url": "docs/broker-reconnect.md#3-알람-권장"
+          },
+          "labels": {
+            "severity": "page",
+            "domain": "broker"
+          }
+        },
+        {
+          "uid": "wtg-p7-broker-heartbeat-timeout",
+          "title": "Broker heartbeat watchdog 발화 누적 (네트워크 / broker 응답 지연)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "sum by (service) (increase(wtg_broker_heartbeat_timeout_total[10m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [3]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "10분에 heartbeat watchdog 3회 이상 발화",
+            "description": "broker 가 2*interval 동안 heartbeat 응답 없음 — TCP RST 보다 빠른 감지. 원인: broker 측 응답 지연 (load), 네트워크 장애, mymqd 행. broker (`mymqd`) 로그 + 네트워크 / 방화벽 점검.",
+            "runbook_url": "docs/broker-reconnect.md#3-알람-권장"
+          },
+          "labels": {
+            "severity": "page",
+            "domain": "broker"
+          }
+        },
+        {
+          "uid": "wtg-p7-broker-reconnect-duration",
+          "title": "Broker reconnect 소요 p95 비정상 (backoff 누적 30s 초과)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "histogram_quantile(0.95, sum by (service, le) (rate(wtg_broker_reconnect_duration_seconds_bucket[10m])))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [30]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "reconnect p95 > 30s (backoff 누적)",
+            "description": "끊김 → reconnect 성공까지 p95 가 30s 초과. exponential backoff (1s → 30s) 가 여러번 retry 필요 = broker 가 지속적으로 다운 또는 핸드셰이크 실패. 운영자가 broker 측 직접 점검 필요.",
+            "runbook_url": "docs/broker-reconnect.md#3-알람-권장"
+          },
+          "labels": {
+            "severity": "warning",
+            "domain": "broker"
+          }
+        }
+      ]
+    }
+  ]
+}

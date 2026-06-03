@@ -250,6 +250,12 @@ func main() {
 					MaxBackoff:     30 * time.Second,
 					BackoffFactor:  2.0,
 				},
+				Metrics: mymq.MetricsHook{
+					OnDisconnect:       func(_ error) { reg.IncBrokerDisconnect("quote-forwarder") },
+					OnReconnect:        func(_ int, d time.Duration) { reg.IncBrokerReconnect("quote-forwarder", d) },
+					OnInflightAborted:  func(n int) { reg.IncBrokerInflightAborted("quote-forwarder", n) },
+					OnHeartbeatTimeout: func() { reg.IncBrokerHeartbeatTimeout("quote-forwarder") },
+				},
 			})
 			if err != nil {
 				logger.Error("broker 연결 실패", slog.String("feed", f.Label), slog.Any("err", err))

@@ -66,6 +66,7 @@ func (r *ReconnectOptions) effective() ReconnectOptions {
 //   - 새 connection 의 핸드셰이크 자체가 영구 실패 (예: 잘못된 ApplName)
 func (c *Client) supervisorLoop(ctx context.Context) {
 	rc := c.opts.Reconnect.effective()
+	mh := c.opts.Metrics
 	attempt := 0
 	for {
 		// 현재 connection 이 끝날 때까지 대기.
@@ -76,6 +77,11 @@ func (c *Client) supervisorLoop(ctx context.Context) {
 		readErr := c.lastReadErr()
 		c.logBase().With(slog.Any(LogKeyError, readErr)).Warn("connection 끊김 — 재연결 시작")
 
+		// disconnect 시점 기록 — OnReconnect 시 duration 계산.
+		disconnectedAt := time.Now()
+		if mh.OnDisconnect != nil {
+			mh.OnDisconnect(readErr)
+		}
 		if rc.OnDisconnect != nil {
 			go rc.OnDisconnect(c, readErr)
 		}
@@ -132,9 +138,14 @@ func (c *Client) supervisorLoop(ctx context.Context) {
 		}
 
 		c.reconnecting.Store(false)
+		successAttempts := attempt
+		successDuration := time.Since(disconnectedAt)
 		attempt = 0 // 성공 시 attempt 카운터 초기화
 		c.logBase().With(slog.Uint64(LogKeyConnID, uint64(c.whoamiSc))).Info("재연결 성공")
 
+		if mh.OnReconnect != nil {
+			mh.OnReconnect(successAttempts, successDuration)
+		}
 		if rc.OnReconnect != nil {
 			go rc.OnReconnect(c)
 		}
@@ -195,16 +206,23 @@ func (c *Client) failPending(cause error) {
 	if cause == nil {
 		cause = ErrBrokerClosed
 	}
+	aborted := 0
 	c.pending.Range(func(k, v any) bool {
 		if ch, ok := v.(chan *Reply); ok {
 			select {
 			case ch <- &Reply{Errn: ErrBroker, ErrMsg: cause.Error()}:
 			default:
 			}
+			aborted++
 		}
 		c.pending.Delete(k)
 		return true
 	})
+	if aborted > 0 {
+		if hook := c.opts.Metrics.OnInflightAborted; hook != nil {
+			hook(aborted)
+		}
+	}
 }
 
 // nextBackoff 는 지수 backoff 의 다음 단계를 계산한다.

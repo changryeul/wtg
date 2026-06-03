@@ -49,6 +49,13 @@ type Registry struct {
 	rateLimitAllowed *prometheus.CounterVec
 	rateLimitDenied  *prometheus.CounterVec
 
+	// Broker connection lifecycle — P7-B.
+	brokerReconnects      *prometheus.CounterVec
+	brokerReconnectDur    *prometheus.HistogramVec
+	brokerInflightAborted *prometheus.CounterVec
+	brokerHeartbeatTO     *prometheus.CounterVec
+	brokerDisconnects     *prometheus.CounterVec
+
 	customCollectors []prometheus.Collector
 }
 
@@ -194,6 +201,44 @@ func NewRegistry() *Registry {
 		[]string{"service", "kind", "rule"},
 	)
 
+	// Broker connection lifecycle — P7-B.
+	r.brokerReconnects = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_broker_reconnects_total",
+			Help: "Broker connection 재연결 성공 누적.",
+		},
+		[]string{"service"},
+	)
+	r.brokerReconnectDur = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "wtg_broker_reconnect_duration_seconds",
+			Help:    "Broker 끊김부터 재연결 성공까지 소요시간.",
+			Buckets: prometheus.ExponentialBuckets(0.1, 2, 12), // 100ms..410s
+		},
+		[]string{"service"},
+	)
+	r.brokerInflightAborted = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_broker_inflight_aborted_total",
+			Help: "Broker 끊김 시 failPending 으로 ErrBroker 통보된 pending RPC 수.",
+		},
+		[]string{"service"},
+	)
+	r.brokerHeartbeatTO = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_broker_heartbeat_timeout_total",
+			Help: "Heartbeat watchdog 으로 connection 사망 판정 (2*interval 무소식).",
+		},
+		[]string{"service"},
+	)
+	r.brokerDisconnects = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_broker_disconnects_total",
+			Help: "Broker connection 끊김 누적 (재연결 시도 전 트리거).",
+		},
+		[]string{"service"},
+	)
+
 	r.reg.MustRegister(
 		r.httpReqTotal,
 		r.httpReqDuration,
@@ -211,6 +256,11 @@ func NewRegistry() *Registry {
 		r.asyncFailed,
 		r.rateLimitAllowed,
 		r.rateLimitDenied,
+		r.brokerReconnects,
+		r.brokerReconnectDur,
+		r.brokerInflightAborted,
+		r.brokerHeartbeatTO,
+		r.brokerDisconnects,
 	)
 	return r
 }
@@ -223,6 +273,27 @@ func (r *Registry) IncRateLimit(service, kind, rule string, allowed bool) {
 		return
 	}
 	r.rateLimitDenied.WithLabelValues(service, kind, rule).Inc()
+}
+
+// IncBrokerDisconnect — broker connection 끊김 (재연결 직전).
+func (r *Registry) IncBrokerDisconnect(service string) {
+	r.brokerDisconnects.WithLabelValues(service).Inc()
+}
+
+// IncBrokerReconnect — 재연결 성공. duration 은 끊김 ~ 성공까지 wallclock.
+func (r *Registry) IncBrokerReconnect(service string, duration time.Duration) {
+	r.brokerReconnects.WithLabelValues(service).Inc()
+	r.brokerReconnectDur.WithLabelValues(service).Observe(duration.Seconds())
+}
+
+// IncBrokerInflightAborted — failPending 으로 통보된 pending RPC 수.
+func (r *Registry) IncBrokerInflightAborted(service string, count int) {
+	r.brokerInflightAborted.WithLabelValues(service).Add(float64(count))
+}
+
+// IncBrokerHeartbeatTimeout — heartbeat watchdog 발화 (2*interval 무소식).
+func (r *Registry) IncBrokerHeartbeatTimeout(service string) {
+	r.brokerHeartbeatTO.WithLabelValues(service).Inc()
 }
 
 // IncQuoteIDAsync — AsyncRegistry 이벤트 카운터 증가.

@@ -87,6 +87,28 @@ type Options struct {
 	// 권장. Subscribe consumer 가 빠르게 처리할 수 있어야 효과 있음 — 단순히
 	// 늘리는 게 답은 아니고, drop 카운터 (SubDrops()) 로 실측 후 조정.
 	SubBufferSize int
+
+	// Metrics — connection lifecycle 이벤트 hook (Prometheus 등록용). 모든
+	// 필드 nil 가능. 호출 위치: disconnect 직후 / reconnect 성공 / pending
+	// RPC abort / heartbeat watchdog timeout.
+	//
+	// hook 은 짧은 stateless 함수여야 — counter.Inc 같은 cheap 호출만 권장.
+	// 무거운 작업은 별도 goroutine 으로 분리.
+	Metrics MetricsHook
+}
+
+// MetricsHook — broker connection lifecycle 이벤트 callback.
+type MetricsHook struct {
+	// OnDisconnect — connection 끊김 직후 (재연결 시도 전).
+	OnDisconnect func(cause error)
+	// OnReconnect — 재연결 성공. attempts = 누적 시도 횟수,
+	// duration = disconnect 시점부터 핸드셰이크 성공까지 wallclock.
+	OnReconnect func(attempts int, duration time.Duration)
+	// OnInflightAborted — failPending 으로 ErrBroker 통보된 pending RPC 수.
+	OnInflightAborted func(count int)
+	// OnHeartbeatTimeout — heartbeat watchdog 이 2*interval 내 무소식으로
+	// connection 사망 판정한 시점 (TCP 끊김보다 빠른 감지).
+	OnHeartbeatTimeout func()
 }
 
 // applySubBufferDefault — Options.SubBufferSize 가 0 이면 default 적용.
@@ -294,6 +316,9 @@ func (c *Client) heartbeatLoop(interval time.Duration) {
 				c.storeReadErr(errors.New("mymq: heartbeat timeout"))
 				c.logBase().With(slog.Duration(LogKeyHeartbeat, deadInterval)).
 					Warn("heartbeat 타임아웃 — connection 사망 처리")
+				if hook := c.opts.Metrics.OnHeartbeatTimeout; hook != nil {
+					hook()
+				}
 				c.connMu.Lock()
 				if c.conn != nil {
 					_ = c.conn.Close() // readLoop 의 read 를 깨움

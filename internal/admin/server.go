@@ -147,6 +147,12 @@ func (s *Server) Start(ctx context.Context) error {
 				MaxBackoff:     30 * time.Second,
 				BackoffFactor:  2.0,
 			},
+			Metrics: mymq.MetricsHook{
+				OnDisconnect:       func(_ error) { s.metrics.IncBrokerDisconnect("mci-admin") },
+				OnReconnect:        func(_ int, d time.Duration) { s.metrics.IncBrokerReconnect("mci-admin", d) },
+				OnInflightAborted:  func(n int) { s.metrics.IncBrokerInflightAborted("mci-admin", n) },
+				OnHeartbeatTimeout: func() { s.metrics.IncBrokerHeartbeatTimeout("mci-admin") },
+			},
 		})
 		if err != nil {
 			return fmt.Errorf("mymq.Open: %w", err)

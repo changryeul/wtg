@@ -235,3 +235,101 @@ func TestSupervisorIgnoredWhenClosing(t *testing.T) {
 		t.Errorf("Close 후 재연결 발생: count=%d", rcCount.Load())
 	}
 }
+
+// MetricsHook — disconnect/reconnect/inflight_aborted 모두 호출되는지.
+func TestMetricsHook_DisconnectReconnect(t *testing.T) {
+	b := newFakeBroker(t)
+	t.Cleanup(b.Close)
+	host, port := b.hostPort()
+
+	var disc, recAttempt atomic.Int32
+	var lastDur atomic.Int64
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, err := Open(ctx, host, port, Options{
+		ApplName: "mci-test",
+		Reconnect: &ReconnectOptions{
+			InitialBackoff: 30 * time.Millisecond,
+			MaxBackoff:     100 * time.Millisecond,
+			BackoffFactor:  1.5,
+		},
+		Metrics: MetricsHook{
+			OnDisconnect: func(_ error) { disc.Add(1) },
+			OnReconnect: func(attempts int, d time.Duration) {
+				recAttempt.Store(int32(attempts))
+				lastDur.Store(int64(d))
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	b.CloseClientConn()
+
+	// disconnect + reconnect 둘 다 도달.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if disc.Load() >= 1 && recAttempt.Load() >= 1 {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if disc.Load() < 1 {
+		t.Errorf("OnDisconnect 미호출")
+	}
+	if recAttempt.Load() < 1 {
+		t.Errorf("OnReconnect 미호출 (attempts=%d)", recAttempt.Load())
+	}
+	if d := time.Duration(lastDur.Load()); d <= 0 {
+		t.Errorf("OnReconnect duration=%v, want > 0", d)
+	}
+}
+
+// failPending → MetricsHook.OnInflightAborted 호출.
+func TestMetricsHook_InflightAborted(t *testing.T) {
+	b := newFakeBroker(t)
+	t.Cleanup(b.Close)
+	host, port := b.hostPort()
+
+	var aborted atomic.Int32
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, err := Open(ctx, host, port, Options{
+		ApplName: "mci-test",
+		Reconnect: &ReconnectOptions{
+			InitialBackoff: 30 * time.Millisecond,
+			MaxBackoff:     100 * time.Millisecond,
+		},
+		Metrics: MetricsHook{
+			OnInflightAborted: func(n int) { aborted.Add(int32(n)) },
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	// 가짜 pending RPC 3개 등록 — fakeBroker 가 응답 안 보내므로 무한 대기 상태.
+	for i := 0; i < 3; i++ {
+		ch := make(chan *Reply, 1)
+		c.pending.Store(uint64(i+1), ch)
+	}
+
+	// broker 끊김 → failPending → OnInflightAborted(3) 기대.
+	b.CloseClientConn()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if aborted.Load() >= 3 {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if got := aborted.Load(); got < 3 {
+		t.Errorf("OnInflightAborted 누적=%d, want >= 3", got)
+	}
+}

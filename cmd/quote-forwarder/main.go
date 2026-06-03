@@ -38,6 +38,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
+	"github.com/winwaysystems/wtg/pkg/otelinit"
 	"github.com/winwaysystems/wtg/pkg/quote"
 )
 
@@ -131,6 +132,10 @@ func main() {
 		feedBuffer   = flag.Int("feed-buffer", 8192, "feed 별 reader → worker 채널 버퍼 크기. 가득 차면 reader 가 명시적 drop (kernel silent drop 회피, queue_drop 카운터로 가시화).")
 		publishMode  = flag.String("publish-mode", "broker", "envelope publish 전송 path: broker (PRICE exchange, 기본) | grpc (mci-price 직접 PublishTick) | both (dual-write 진단)")
 		priceGRPCURL = flag.String("price-grpc", "127.0.0.1:50051", "grpc/both 모드에서 사용할 mci-price gRPC 주소. ws 가 아니라 grpc — host:port")
+		otelEndpoint = flag.String("otel-endpoint", "", "OTel OTLP gRPC endpoint (비면 비활성)")
+		otelInsecure = flag.Bool("otel-insecure", false, "OTel gRPC TLS 없음 (dev)")
+		otelStdout   = flag.Bool("otel-stdout", false, "OTel span stdout (debug)")
+		otelSample   = flag.Float64("otel-sample", 0, "OTel 샘플링 비율 (0..1)")
 	)
 	flag.Parse()
 
@@ -151,6 +156,12 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	if shutdown := otelinit.SetupIfEnabled(ctx, "quote-forwarder",
+		*otelEndpoint, *otelStdout, *otelInsecure, *otelSample,
+		logger); shutdown != nil {
+		defer shutdown(ctx)
+	}
 
 	// metrics 초기화 + HTTP listener (옵션)
 	reg := metrics.NewRegistry()

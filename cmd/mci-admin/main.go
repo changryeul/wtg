@@ -19,6 +19,7 @@ import (
 	"syscall"
 
 	"github.com/winwaysystems/wtg/internal/admin"
+	"github.com/winwaysystems/wtg/pkg/otelinit"
 )
 
 func main() {
@@ -38,6 +39,12 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	if shutdown := otelinit.SetupIfEnabled(ctx, "mci-admin",
+		cfg.OtelEndpoint, cfg.OtelStdout, cfg.OtelInsecure, cfg.OtelSampleRatio,
+		logger); shutdown != nil {
+		defer shutdown(ctx)
+	}
 
 	srv := admin.NewServer(cfg, logger)
 	if err := srv.Start(ctx); err != nil {

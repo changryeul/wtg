@@ -66,6 +66,12 @@ type Config struct {
 	BrokerTLSKeyFile  string
 	BrokerTLSCAFile   string
 	BrokerTLSSNI      string
+
+	// OTel TracerProvider — Endpoint 비고 OtelStdout=false 면 비활성.
+	OtelEndpoint    string
+	OtelInsecure    bool
+	OtelStdout      bool
+	OtelSampleRatio float64
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -176,6 +182,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.BrokerTLSKeyFile, "broker-tls-key", cfg.BrokerTLSKeyFile, "broker TLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.BrokerTLSCAFile, "broker-tls-ca", cfg.BrokerTLSCAFile, "broker TLS 서버 검증용 CA bundle")
 	fs.StringVar(&cfg.BrokerTLSSNI, "broker-tls-sni", cfg.BrokerTLSSNI, "broker TLS SNI / hostname")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (비면 비활성)")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span stdout (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio, "OTel 샘플링 비율 (0..1)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

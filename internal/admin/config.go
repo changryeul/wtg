@@ -172,6 +172,12 @@ type Config struct {
 	BrokerTLSSNI      string
 
 	LogLevel string
+
+	// OTel TracerProvider.
+	OtelEndpoint    string
+	OtelInsecure    bool
+	OtelStdout      bool
+	OtelSampleRatio float64
 }
 
 // DefaultConfig.
@@ -382,6 +388,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.DevRoutesPolicy, "dev-routes-policy", cfg.DevRoutesPolicy, "cfg ↔ in-memory 동기화 정책. additive(default) | sync. sync 는 cfg 가 진실의 원천 (cfg 삭제 alias 가 in-memory 에서도 제거)")
 	fs.StringVar(&cfg.SvcIncDir, "svc-inc-dir", cfg.SvcIncDir, "매매 svc 헤더 디렉터리 (콤마 구분 다중 path). 부팅 시 일괄 파싱 → /v1/admin/svc-io 노출")
 	fs.StringVar(&cfg.SvcCommonHeaderFile, "svc-common-header", cfg.SvcCommonHeaderFile, "공통 transaction 헤더 파일 (예: ~/mywork/win/src/inc/com/comhdr.h). 운영 svc 의 wire 가 [COMHDR][TX_BODY] 구조라 헤더 직렬화/파싱에 사용")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (비면 비활성)")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span stdout (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio, "OTel 샘플링 비율 (0..1)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

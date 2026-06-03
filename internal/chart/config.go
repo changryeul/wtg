@@ -62,6 +62,12 @@ type Config struct {
 	WsPingInterval    time.Duration
 	WsPongTimeout     time.Duration
 	WsSendQueueSize   int
+
+	// OTel TracerProvider.
+	OtelEndpoint    string
+	OtelInsecure    bool
+	OtelStdout      bool
+	OtelSampleRatio float64
 }
 
 // DefaultConfig 는 운영 디폴트.
@@ -144,6 +150,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.WsPingInterval, "ws-ping", cfg.WsPingInterval, "ws ping 주기")
 	fs.DurationVar(&cfg.WsPongTimeout, "ws-pong", cfg.WsPongTimeout, "ws pong timeout")
 	fs.IntVar(&cfg.WsSendQueueSize, "ws-queue", cfg.WsSendQueueSize, "ws 클라이언트별 send queue 크기")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (비면 비활성)")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span stdout (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio, "OTel 샘플링 비율 (0..1)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

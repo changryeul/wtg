@@ -80,6 +80,12 @@ type Config struct {
 
 	// AllowCIDRs — 외부 허용 CIDR. 비면 모두 허용 (dev).
 	AllowCIDRs []*net.IPNet
+
+	// OTel TracerProvider.
+	OtelEndpoint    string
+	OtelInsecure    bool
+	OtelStdout      bool
+	OtelSampleRatio float64
 }
 
 // DefaultConfig 는 합리적인 디폴트.
@@ -166,6 +172,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.TLSUpstreamCAFile, "tls-upstream-ca", cfg.TLSUpstreamCAFile, "Upstream 서버 검증 CA")
 	fs.StringVar(&cfg.TLSUpstreamServerName, "tls-upstream-sni", cfg.TLSUpstreamServerName, "Upstream SNI / hostname")
 	fs.StringVar(&cidrStr, "allow-cidrs", cidrStr, "외부 허용 CIDR (콤마 구분, 비면 모두 허용)")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (비면 비활성)")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span stdout (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio, "OTel 샘플링 비율 (0..1)")
 	if v := os.Getenv("WTG_ECHART_IP_RATE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.IPRatePerSec = f

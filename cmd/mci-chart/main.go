@@ -21,6 +21,7 @@ import (
 	"syscall"
 
 	"github.com/winwaysystems/wtg/internal/chart"
+	"github.com/winwaysystems/wtg/pkg/otelinit"
 )
 
 func main() {
@@ -41,6 +42,12 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	if shutdown := otelinit.SetupIfEnabled(ctx, "mci-chart",
+		cfg.OtelEndpoint, cfg.OtelStdout, cfg.OtelInsecure, cfg.OtelSampleRatio,
+		logger); shutdown != nil {
+		defer shutdown(ctx)
+	}
 
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("mci-chart 종료", slog.Any("error", err))

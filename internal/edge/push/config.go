@@ -79,6 +79,12 @@ type Config struct {
 	// AllowCIDRs — 외부 접근 허용 CIDR 화이트리스트.
 	// pkg/netutil.IPAllowList 미들웨어가 사용. 비면 모두 허용.
 	AllowCIDRs []*net.IPNet
+
+	// OTel TracerProvider.
+	OtelEndpoint    string
+	OtelInsecure    bool
+	OtelStdout      bool
+	OtelSampleRatio float64
 }
 
 // DefaultConfig.
@@ -173,6 +179,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "외부 TLS 서버 cert PEM (있으면 HTTPS)")
 	fs.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "외부 TLS 서버 key PEM")
 	fs.StringVar(&cfg.TLSClientCAFile, "tls-client-ca", cfg.TLSClientCAFile, "외부 mTLS 클라이언트 CA bundle")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (비면 비활성)")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span stdout (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio, "OTel 샘플링 비율 (0..1)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

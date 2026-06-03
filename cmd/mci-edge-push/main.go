@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	edgepush "github.com/winwaysystems/wtg/internal/edge/push"
+	"github.com/winwaysystems/wtg/pkg/otelinit"
 )
 
 func main() {
@@ -37,6 +38,12 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	if shutdown := otelinit.SetupIfEnabled(ctx, "mci-edge-push",
+		cfg.OtelEndpoint, cfg.OtelStdout, cfg.OtelInsecure, cfg.OtelSampleRatio,
+		logger); shutdown != nil {
+		defer shutdown(ctx)
+	}
 
 	srv := edgepush.NewServer(cfg, logger)
 	if err := srv.Start(ctx); err != nil {

@@ -122,10 +122,16 @@ func Logout(deps *Deps) http.HandlerFunc {
 			}
 		}
 
+		// audit log — 인증 행위는 access log 와 별도로 명시 (security 도메인).
+		// 운영 SIEM 이 evt=auth.logout 로 필터 가능.
 		deps.Logger.InfoContext(r.Context(), "로그아웃",
+			slog.String("evt", "auth.logout"),
 			slog.String("usid", p.Usid),
 			slog.String("sid", p.SessionID),
+			slog.String("remote", r.RemoteAddr),
+			slog.String("ua", r.UserAgent()),
 			slog.String("rid", middleware.RequestIDFromContext(r.Context())),
+			slog.Uint64("broker_errn", uint64(brokerErrn)),
 		)
 
 		resp := map[string]any{"ok": true}

@@ -210,6 +210,126 @@ func TestRefreshUnconfigured(t *testing.T) {
 	}
 }
 
+// refresh 의 single-use 회전 — 같은 토큰을 두 번째 호출하면 401.
+// 운영 보안: 클라이언트가 옛 토큰을 기억해서 다시 보내면 (네트워크 retry 등)
+// 거부 — 이미 새 토큰이 발급됨.
+func TestRefreshReplayDenied(t *testing.T) {
+	caller := &fakeCaller{
+		reply: func(_ context.Context, _ *mymq.FrameInput) (*mymq.Reply, error) {
+			c := &mymq.Cookie{Clid: 0x42}
+			copy(c.Usid[:], "u1")
+			return &mymq.Reply{Cookie: c}, nil
+		},
+	}
+	deps, _ := mkJWTDeps(t, caller)
+
+	// 1) login → 1st refresh
+	loginRR := httptest.NewRecorder()
+	body := `{"data":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/login", strings.NewReader(body))
+	req.ContentLength = int64(len(body))
+	Login(deps)(loginRR, req)
+	var loginResp LoginResponse
+	json.NewDecoder(loginRR.Body).Decode(&loginResp)
+
+	// 2) 1st refresh 사용 → 새 refresh 발급
+	rbody, _ := json.Marshal(RefreshRequest{RefreshToken: loginResp.RefreshToken})
+	first := httptest.NewRecorder()
+	rreq := httptest.NewRequest(http.MethodPost, "/v1/refresh", strings.NewReader(string(rbody)))
+	rreq.ContentLength = int64(len(rbody))
+	Refresh(deps)(first, rreq)
+	if first.Code != http.StatusOK {
+		t.Fatalf("1st refresh: %d", first.Code)
+	}
+
+	// 3) 같은 옛 토큰으로 다시 refresh 시도 — 401.
+	replay := httptest.NewRecorder()
+	rreq2 := httptest.NewRequest(http.MethodPost, "/v1/refresh", strings.NewReader(string(rbody)))
+	rreq2.ContentLength = int64(len(rbody))
+	Refresh(deps)(replay, rreq2)
+	if replay.Code != http.StatusUnauthorized {
+		t.Errorf("replay status=%d, want 401", replay.Code)
+	}
+}
+
+// logout 후 refresh 시도 — session_gone (이미 무효화된 SID).
+func TestRefreshAfterLogoutDenied(t *testing.T) {
+	caller := &fakeCaller{
+		reply: func(_ context.Context, _ *mymq.FrameInput) (*mymq.Reply, error) {
+			c := &mymq.Cookie{Clid: 0x42}
+			copy(c.Usid[:], "u1")
+			return &mymq.Reply{Cookie: c}, nil
+		},
+	}
+	deps, _ := mkJWTDeps(t, caller)
+
+	loginRR := httptest.NewRecorder()
+	body := `{"data":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/login", strings.NewReader(body))
+	req.ContentLength = int64(len(body))
+	Login(deps)(loginRR, req)
+	var loginResp LoginResponse
+	json.NewDecoder(loginRR.Body).Decode(&loginResp)
+
+	// logout
+	rr := doLogout(t, deps, loginResp.SessionID, &mymq.Cookie{Clid: 1}, "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("logout: %d", rr.Code)
+	}
+
+	// 옛 refresh token 으로 다시 시도 — refresh_invalid (Consume) 또는 session_gone.
+	rbody, _ := json.Marshal(RefreshRequest{RefreshToken: loginResp.RefreshToken})
+	rfRR := httptest.NewRecorder()
+	rfReq := httptest.NewRequest(http.MethodPost, "/v1/refresh", strings.NewReader(string(rbody)))
+	rfReq.ContentLength = int64(len(rbody))
+	Refresh(deps)(rfRR, rfReq)
+	if rfRR.Code != http.StatusUnauthorized {
+		t.Errorf("logout 후 refresh status=%d, want 401", rfRR.Code)
+	}
+}
+
+// logout 의 LOGOFF broker 실패 (network) 시에도 세션 삭제 — 보안 우선.
+func TestLogoutBrokerFailureStillDeletesSession(t *testing.T) {
+	caller := &fakeCaller{
+		reply: func(_ context.Context, _ *mymq.FrameInput) (*mymq.Reply, error) {
+			return nil, errors.New("broker network failure")
+		},
+	}
+	deps, _ := mkJWTDeps(t, caller)
+	deps.Sessions.Put(context.Background(), &auth.Session{
+		ID: "sid-fail", Usid: "u", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	rr := doLogout(t, deps, "sid-fail", &mymq.Cookie{Clid: 1}, "")
+	if rr.Code != http.StatusOK {
+		t.Errorf("logout status=%d, want 200 (broker 실패해도 세션 삭제)", rr.Code)
+	}
+	if _, err := deps.Sessions.Get(context.Background(), "sid-fail"); err == nil {
+		t.Errorf("logout 후에도 세션이 살아있음 — broker 실패와 무관하게 삭제되어야")
+	}
+}
+
+// LOGOFF 의 비즈니스 에러 (errn != 0) — 세션 삭제 진행 + 응답에 errn 동봉.
+func TestLogoutBrokerErrnIncludedInResponse(t *testing.T) {
+	caller := &fakeCaller{
+		reply: func(_ context.Context, _ *mymq.FrameInput) (*mymq.Reply, error) {
+			return &mymq.Reply{Errn: 9999, ErrMsg: "engine cleanup deferred"}, nil
+		},
+	}
+	deps, _ := mkJWTDeps(t, caller)
+	deps.Sessions.Put(context.Background(), &auth.Session{
+		ID: "sid-err", Usid: "u", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	rr := doLogout(t, deps, "sid-err", &mymq.Cookie{Clid: 1}, "")
+	if rr.Code != http.StatusOK {
+		t.Errorf("logout status=%d, want 200", rr.Code)
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp["broker_errn"] == nil {
+		t.Errorf("broker_errn 응답에 누락: %v", resp)
+	}
+}
+
 // Logout 이 RefreshStore 도 청소하는지.
 func TestLogoutRevokesRefresh(t *testing.T) {
 	deps, _ := mkJWTDeps(t, &fakeCaller{

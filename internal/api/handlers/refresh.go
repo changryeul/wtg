@@ -63,7 +63,12 @@ func Refresh(deps *Deps) http.HandlerFunc {
 		cancel()
 		if err != nil {
 			if errors.Is(err, auth.ErrRefreshNotFound) || errors.Is(err, auth.ErrRefreshExpired) {
+				// audit log — refresh 거부는 보안 도메인. 알 수 없거나 이미 사용된
+				// 토큰 (replay 시도 포함). 동일 SIEM 룰에서 빈도 추적 가능.
 				deps.Logger.WarnContext(r.Context(), "refresh 거부",
+					slog.String("evt", "auth.refresh_denied"),
+					slog.String("remote", r.RemoteAddr),
+					slog.String("ua", r.UserAgent()),
 					slog.String("rid", middleware.RequestIDFromContext(r.Context())),
 					slog.Any("error", err),
 				)
@@ -126,6 +131,17 @@ func Refresh(deps *Deps) http.HandlerFunc {
 			return
 		}
 
+		// audit log — refresh 성공. usid / sid / 새 만료시각 + client info.
+		deps.Logger.InfoContext(r.Context(), "refresh 성공",
+			slog.String("evt", "auth.refresh"),
+			slog.String("usid", sess.Usid),
+			slog.String("sid", sess.ID),
+			slog.String("remote", r.RemoteAddr),
+			slog.String("ua", r.UserAgent()),
+			slog.String("rid", middleware.RequestIDFromContext(r.Context())),
+			slog.Time("access_exp", accessExp),
+			slog.Time("refresh_exp", refreshExp),
+		)
 		writeJSON(w, http.StatusOK, RefreshResponse{
 			AccessToken:  access,
 			AccessExpAt:  accessExp,

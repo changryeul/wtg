@@ -50,6 +50,13 @@ type Config struct {
 	// 로그 레벨 ("debug" / "info" / "warn" / "error"). 기본 "info".
 	LogLevel string
 
+	// OTel TracerProvider — Endpoint 비면 비활성. Endpoint 채우면 OTLP gRPC,
+	// OtelStdout=true 면 stdout (debug). 자세히는 docs/broker-tracing.md.
+	OtelEndpoint    string  // 예: "otel-collector:4317"
+	OtelInsecure    bool    // dev — TLS 없이 gRPC
+	OtelStdout      bool    // debug — span 을 stdout 으로
+	OtelSampleRatio float64 // 0..1 (default 1.0 = 전체)
+
 	// TLS — 인증서 경로가 있으면 ListenAndServeTLS.
 	// TLSClientCAFile 이 함께 채워지면 mTLS (클라이언트 인증서 요구).
 	TLSCertFile     string
@@ -267,6 +274,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.Instance, "instance", cfg.Instance, "다중 인스턴스 일련번호 (0=비활성)")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드 — JWT 검증 우회")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (예: otel-collector:4317). 비면 비활성")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span 을 stdout 출력 (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio, "OTel 샘플링 비율 (0..1, default 1.0=전체)")
 	fs.DurationVar(&cfg.BrokerCallTimeout, "call-timeout", cfg.BrokerCallTimeout, "MyMQ Call 기본 타임아웃")
 	fs.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "TLS 서버 인증서 PEM (있으면 HTTPS)")
 	fs.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "TLS 서버 private key PEM")

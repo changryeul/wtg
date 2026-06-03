@@ -22,6 +22,7 @@ import (
 	"syscall"
 
 	"github.com/winwaysystems/wtg/internal/api"
+	"github.com/winwaysystems/wtg/pkg/otelinit"
 )
 
 func main() {
@@ -43,6 +44,26 @@ func main() {
 	// SIGINT / SIGTERM 처리.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// OTel TracerProvider — Endpoint 비면 비활성 (span 미수집).
+	if cfg.OtelEndpoint != "" || cfg.OtelStdout {
+		ep := cfg.OtelEndpoint
+		if cfg.OtelStdout {
+			ep = "stdout"
+		}
+		shutdown, err := otelinit.Setup(ctx, otelinit.Options{
+			ServiceName: "mci-api",
+			Endpoint:    ep,
+			Insecure:    cfg.OtelInsecure,
+			SampleRatio: cfg.OtelSampleRatio,
+		})
+		if err != nil {
+			logger.Warn("OTel Setup 실패 — span 비활성", slog.Any("error", err))
+		} else {
+			logger.Info("OTel TracerProvider 활성", slog.String("endpoint", ep))
+			defer shutdown(ctx)
+		}
+	}
 
 	srv := api.NewServer(cfg, logger)
 	if err := srv.Start(ctx); err != nil {

@@ -71,6 +71,12 @@ type Config struct {
 	// 로그 레벨.
 	LogLevel string
 
+	// OTel TracerProvider — Endpoint 비면 비활성.
+	OtelEndpoint    string
+	OtelInsecure    bool
+	OtelStdout      bool
+	OtelSampleRatio float64
+
 	// TLS — 외부 종단점 (브라우저 ↔ edge). 일반적으로 운영에서는 ingress / LB 가
 	// TLS termination 을 담당하지만, edge 자체에서도 처리 가능하게 옵셔널 지원.
 	// TLSClientCAFile 이 함께 채워지면 mTLS — B2B / API key 시나리오용.
@@ -163,6 +169,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.UpstreamTimeout, "upstream-timeout", cfg.UpstreamTimeout, "upstream 호출 timeout")
 	fs.Int64Var(&cfg.MaxRequestBody, "max-body", cfg.MaxRequestBody, "최대 요청 본문 크기 (0=무제한)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨")
+	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (비면 비활성)")
+	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
+	fs.BoolVar(&cfg.OtelStdout, "otel-stdout", cfg.OtelStdout, "OTel span 을 stdout 출력 (debug)")
+	fs.Float64Var(&cfg.OtelSampleRatio, "otel-sample", cfg.OtelSampleRatio, "OTel 샘플링 비율 (0..1, default 1.0)")
 	fs.Float64Var(&cfg.IPRatePerSec, "ip-rate", cfg.IPRatePerSec, "fallback rate limit TPS (룰 매칭 안 된 path 의 한도, 0=비활성)")
 	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "fallback burst 한도")
 	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "etcd endpoints (콤마 구분, 비면 정적 룰만)")

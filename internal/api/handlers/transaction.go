@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/internal/api/transform"
 	"github.com/winwaysystems/wtg/pkg/policy"
@@ -118,7 +122,18 @@ func Transaction(deps *Deps) http.HandlerFunc {
 
 		callCtx, cancel := context.WithTimeout(r.Context(), deps.CallTimeout)
 		defer cancel()
+		// OTel span — broker call wrap. tracer 등록 안 된 환경은 no-op.
+		callCtx, span := otel.Tracer("mci-api").Start(callCtx, "broker.call",
+			trace.WithAttributes(
+				attribute.String("broker.xchg", env.Exchange),
+				attribute.String("broker.rkey", env.RoutingKey),
+				attribute.String("broker.usid", p.Usid),
+			))
 		reply, err := deps.MQ.Call(callCtx, frame)
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.End()
 		if err != nil {
 			deps.Logger.WarnContext(r.Context(), "broker Call 실패",
 				slog.String("path", r.URL.Path),

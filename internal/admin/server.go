@@ -409,6 +409,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// SymbolMap 은 PairMaster derived view 이므로 별도 CRUD 없음 (fx-sync 가 SoT).
 	mux.HandleFunc("GET /v1/admin/pricing/table", GetPricingTable(pricingDeps))
 	mux.HandleFunc("PUT /v1/admin/pricing/table", PutPricingTable(pricingDeps))
+	mux.HandleFunc("POST /v1/admin/pricing/preview", PreviewPricing(pricingDeps))
 
 	mux.HandleFunc("GET /v1/admin/profiles", ListProfiles(profilesDeps))
 	mux.HandleFunc("GET /v1/admin/profiles/{key}", GetProfile(profilesDeps))

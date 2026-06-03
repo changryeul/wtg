@@ -61,7 +61,7 @@ type chartParams struct {
 // 옵션: limit (default = maxLimit)
 //
 // 모든 시각은 RFC3339 (예: "2026-05-23T12:00:00Z"). from < to 강제.
-// tf 는 PersistentTimeframes 만 허용 (TF1s 는 DB 영속 안 됨).
+// tf 는 PersistentTimeframes 만 허용 (TF1s / TF30s 는 DB 영속 안 됨 — 메모리 전용).
 func parseChartParams(r *http.Request, maxLimit int) (chartParams, error) {
 	q := r.URL.Query()
 	var p chartParams
@@ -78,7 +78,7 @@ func parseChartParams(r *http.Request, maxLimit int) (chartParams, error) {
 	}
 	tf := quote.Timeframe(rawTF)
 	if !tf.Persistent() {
-		return p, fmt.Errorf("tf %q 는 영속 timeframe 아님 (지원: 1m,5m,15m,1h,1d)", rawTF)
+		return p, fmt.Errorf("tf %q 는 영속 timeframe 아님 (지원: 1m,5m,15m,1h,4h,1d)", rawTF)
 	}
 	p.TF = tf
 

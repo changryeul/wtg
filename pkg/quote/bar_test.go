@@ -11,10 +11,12 @@ func TestTimeframe_Duration(t *testing.T) {
 		want time.Duration
 	}{
 		{TF1s, time.Second},
+		{TF30s, 30 * time.Second},
 		{TF1m, time.Minute},
 		{TF5m, 5 * time.Minute},
 		{TF15m, 15 * time.Minute},
 		{TF1h, time.Hour},
+		{TF4h, 4 * time.Hour},
 		{TF1d, 24 * time.Hour},
 		{Timeframe("bogus"), 0},
 	}
@@ -31,14 +33,76 @@ func TestTimeframe_Persistent(t *testing.T) {
 	if TF1s.Persistent() {
 		t.Error("TF1s 가 Persistent=true (1s 는 메모리 전용)")
 	}
+	if TF30s.Persistent() {
+		t.Error("TF30s 가 Persistent=true (30s 는 메모리 전용 — 1분 미만)")
+	}
 	if !TF1m.Persistent() {
 		t.Error("TF1m 이 Persistent=false")
+	}
+	if !TF4h.Persistent() {
+		t.Error("TF4h 가 Persistent=false")
 	}
 	if !TF1d.Persistent() {
 		t.Error("TF1d 가 Persistent=false")
 	}
 	if Timeframe("bogus").Persistent() {
 		t.Error("미지원 TF 가 Persistent=true")
+	}
+}
+
+// TF30s / TF4h 의 BucketStart 가 UTC 기준으로 정확히 정렬되는지.
+func TestTimeframe_BucketStart_NewTFs(t *testing.T) {
+	// 2026-05-23T12:34:56.789Z
+	ts := time.Date(2026, 5, 23, 12, 34, 56, 789_000_000, time.UTC)
+	// TF30s: 12:34:30 (30s grid)
+	if got, want := TF30s.BucketStart(ts), time.Date(2026, 5, 23, 12, 34, 30, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("TF30s BucketStart = %v, want %v", got, want)
+	}
+	// TF4h: 12:00 (4h grid: 00/04/08/12/16/20)
+	if got, want := TF4h.BucketStart(ts), time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("TF4h BucketStart = %v, want %v", got, want)
+	}
+	// TF4h boundary: 16:00 → 16:00, 15:59:59 → 12:00
+	ts2 := time.Date(2026, 5, 23, 16, 0, 0, 0, time.UTC)
+	if got, want := TF4h.BucketStart(ts2), ts2; !got.Equal(want) {
+		t.Errorf("TF4h 16:00 BucketStart = %v, want %v", got, want)
+	}
+	ts3 := time.Date(2026, 5, 23, 15, 59, 59, 0, time.UTC)
+	if got, want := TF4h.BucketStart(ts3), time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("TF4h 15:59:59 BucketStart = %v, want %v", got, want)
+	}
+}
+
+// AllTimeframes 가 TF30s / TF4h 포함 + 짧은→긴 순서 정렬.
+func TestAllTimeframes_OrderingIncludesNewTFs(t *testing.T) {
+	want := []Timeframe{TF1s, TF30s, TF1m, TF5m, TF15m, TF1h, TF4h, TF1d}
+	if len(AllTimeframes) != len(want) {
+		t.Fatalf("AllTimeframes len=%d, want %d", len(AllTimeframes), len(want))
+	}
+	for i, tf := range AllTimeframes {
+		if tf != want[i] {
+			t.Errorf("AllTimeframes[%d]=%s, want %s", i, tf, want[i])
+		}
+	}
+	// 짧은→긴 ordering 검증 — Duration 단조 증가.
+	for i := 1; i < len(AllTimeframes); i++ {
+		if AllTimeframes[i].Duration() <= AllTimeframes[i-1].Duration() {
+			t.Errorf("AllTimeframes 순서 깨짐: %s (%v) ≤ %s (%v)",
+				AllTimeframes[i], AllTimeframes[i].Duration(),
+				AllTimeframes[i-1], AllTimeframes[i-1].Duration())
+		}
+	}
+}
+
+// PersistentTimeframes 가 1분 미만 (TF1s / TF30s) 제외.
+func TestPersistentTimeframes_ExcludesSubMinute(t *testing.T) {
+	for _, tf := range PersistentTimeframes {
+		if tf == TF1s || tf == TF30s {
+			t.Errorf("PersistentTimeframes 에 %s 포함됨 — 1분 미만은 메모리 전용", tf)
+		}
+		if !tf.Persistent() {
+			t.Errorf("%s 는 PersistentTimeframes 에 있지만 Persistent()=false", tf)
+		}
 	}
 }
 
@@ -170,6 +234,12 @@ func TestBar_Contains(t *testing.T) {
 func TestTimeframe_Validate(t *testing.T) {
 	if err := TF1m.Validate(); err != nil {
 		t.Errorf("TF1m Validate: %v", err)
+	}
+	if err := TF30s.Validate(); err != nil {
+		t.Errorf("TF30s Validate: %v", err)
+	}
+	if err := TF4h.Validate(); err != nil {
+		t.Errorf("TF4h Validate: %v", err)
 	}
 	if err := Timeframe("bogus").Validate(); err == nil {
 		t.Error("미지원 TF 가 Validate 통과")

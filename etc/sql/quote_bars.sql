@@ -5,7 +5,7 @@
 -- 1) 본 테이블
 CREATE TABLE IF NOT EXISTS quote_bars (
     pair        TEXT             NOT NULL,    -- 'USD/KRW'
-    tf          TEXT             NOT NULL,    -- '1m'|'5m'|'15m'|'1h'|'1d' (1s 봉은 메모리만)
+    tf          TEXT             NOT NULL,    -- '1m'|'5m'|'15m'|'1h'|'4h'|'1d' (1s/30s 봉은 메모리만)
     opened_at   TIMESTAMPTZ      NOT NULL,    -- 봉 시작 (포함)
     closed_at   TIMESTAMPTZ      NOT NULL,    -- 봉 종료 (불포함)
     open_bid    DOUBLE PRECISION NOT NULL,

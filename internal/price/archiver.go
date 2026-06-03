@@ -98,7 +98,7 @@ func NewArchiver(ins Inserter, opts ArchiverOptions) *Archiver {
 }
 
 // OnBarClose 는 Aggregator 의 BarCloseHandler 시그니처와 동일.
-// TF1s 같은 비영속 timeframe 은 여기서 drop. queue full 시 drop + 카운트.
+// TF1s / TF30s 같은 비영속 timeframe 은 여기서 drop. queue full 시 drop + 카운트.
 func (a *Archiver) OnBarClose(b *quote.Bar) {
 	if b == nil || !b.TF.Persistent() {
 		return

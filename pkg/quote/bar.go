@@ -10,7 +10,8 @@ import (
 // Timeframe 은 OHLC 봉의 시간 단위.
 //
 // 영속화 대상:
-//   - TF1s 는 **메모리만** (RingBuffer 와 함께 사용, 챠트 초기 응답용).
+//   - TF1s / TF30s 는 **메모리만** (RingBuffer 와 함께 사용, 챠트 초기 응답용).
+//     1분 미만 봉은 DB 부담 대비 가치 낮음 — 라이브 화면 위주.
 //   - TF1m 이상은 DB 에 영속 (TimescaleDB, docs/chart-schema.md 참조).
 //
 // 봉 경계는 UTC 기준 — 시간대에 상관없이 globally consistent.
@@ -18,26 +19,30 @@ type Timeframe string
 
 const (
 	TF1s  Timeframe = "1s"
+	TF30s Timeframe = "30s" // 메모리 only — 1s 와 1m 사이의 중간 라이브 차트.
 	TF1m  Timeframe = "1m"
 	TF5m  Timeframe = "5m"
 	TF15m Timeframe = "15m"
 	TF1h  Timeframe = "1h"
+	TF4h  Timeframe = "4h" // 영속 — 1h~1d 사이 표준 스윙 차트.
 	TF1d  Timeframe = "1d"
 )
 
 // AllTimeframes 는 시스템이 지원하는 모든 timeframe (선언 순서 = 짧은→긴).
 // Aggregator 가 모든 TF 를 동시에 누적할 때 사용.
-var AllTimeframes = []Timeframe{TF1s, TF1m, TF5m, TF15m, TF1h, TF1d}
+var AllTimeframes = []Timeframe{TF1s, TF30s, TF1m, TF5m, TF15m, TF1h, TF4h, TF1d}
 
-// PersistentTimeframes 는 DB 에 영속되는 timeframe (TF1s 제외).
+// PersistentTimeframes 는 DB 에 영속되는 timeframe (TF1s / TF30s 제외).
 // Archiver 가 이 목록만 INSERT 한다.
-var PersistentTimeframes = []Timeframe{TF1m, TF5m, TF15m, TF1h, TF1d}
+var PersistentTimeframes = []Timeframe{TF1m, TF5m, TF15m, TF1h, TF4h, TF1d}
 
 // Duration 은 timeframe 의 wall-clock 길이.
 func (t Timeframe) Duration() time.Duration {
 	switch t {
 	case TF1s:
 		return time.Second
+	case TF30s:
+		return 30 * time.Second
 	case TF1m:
 		return time.Minute
 	case TF5m:
@@ -46,6 +51,8 @@ func (t Timeframe) Duration() time.Duration {
 		return 15 * time.Minute
 	case TF1h:
 		return time.Hour
+	case TF4h:
+		return 4 * time.Hour
 	case TF1d:
 		return 24 * time.Hour
 	default:
@@ -54,9 +61,13 @@ func (t Timeframe) Duration() time.Duration {
 }
 
 // Persistent 는 이 timeframe 의 봉이 DB 영속 대상인지 반환한다.
-// TF1s 는 메모리 전용, 나머지는 영속.
+// 1분 미만 (TF1s / TF30s) 은 메모리 전용, 나머지는 영속.
 func (t Timeframe) Persistent() bool {
-	return t != TF1s && t.Duration() > 0
+	switch t {
+	case TF1s, TF30s:
+		return false
+	}
+	return t.Duration() > 0
 }
 
 // BucketStart 는 ts 가 속한 봉의 canonical 시작 시각을 반환한다 (UTC).

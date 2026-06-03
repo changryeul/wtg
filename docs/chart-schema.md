@@ -22,7 +22,7 @@ mci-price 의 Aggregator 가 봉을 INSERT, mci-chart 가 SELECT.
 -- 1) 본 테이블 (TimescaleDB hypertable)
 CREATE TABLE IF NOT EXISTS quote_bars (
     pair        TEXT             NOT NULL,    -- 'USD/KRW'
-    tf          TEXT             NOT NULL,    -- '1s'|'1m'|'5m'|'15m'|'1h'|'1d'
+    tf          TEXT             NOT NULL,    -- '1m'|'5m'|'15m'|'1h'|'4h'|'1d' (1s/30s 봉은 메모리만)
     opened_at   TIMESTAMPTZ      NOT NULL,    -- 봉 시작 시각 (포함)
     closed_at   TIMESTAMPTZ      NOT NULL,    -- 봉 종료 시각 (불포함)
     open_bid    DOUBLE PRECISION NOT NULL,

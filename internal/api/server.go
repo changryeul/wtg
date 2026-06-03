@@ -353,10 +353,27 @@ func (s *Server) Start(ctx context.Context) error {
 		UserProfiles: upResolver,
 		AliasMetrics: aliasMetrics,
 	}
-	// Idempotency-Key 처리 — Memory store (현재). 다중 인스턴스 운영은 Redis 후속.
+	// Idempotency-Key 처리 — Redis (다중 인스턴스 공유) 또는 Memory (단일).
 	if s.cfg.IdempotencyEnabled {
-		deps.Idempotency = idempotency.NewMemoryStore(idempotency.Options{TTL: s.cfg.IdempotencyTTL})
-		s.logger.Info("Idempotency-Key 처리 활성", slog.Duration("ttl", s.cfg.IdempotencyTTL))
+		var backend string
+		if s.rdb != nil {
+			store, err := idempotency.NewRedisStore(idempotency.RedisOptions{
+				Client: s.rdb,
+				Prefix: s.cfg.IdempotencyRedisPrefix,
+				TTL:    s.cfg.IdempotencyTTL,
+			})
+			if err != nil {
+				return fmt.Errorf("idempotency redis: %w", err)
+			}
+			deps.Idempotency = store
+			backend = "redis"
+		} else {
+			deps.Idempotency = idempotency.NewMemoryStore(idempotency.Options{TTL: s.cfg.IdempotencyTTL})
+			backend = "memory"
+		}
+		s.logger.Info("Idempotency-Key 처리 활성",
+			slog.String("backend", backend),
+			slog.Duration("ttl", s.cfg.IdempotencyTTL))
 	}
 
 	// 라우팅 — Go 1.22+ ServeMux (method+path 패턴 지원).

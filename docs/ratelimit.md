@@ -175,6 +175,83 @@ catch-all 룰 (`*`) 또는 fallback 으로 인해 무조건 어딘가 매칭됨 
 
 ---
 
+## 5.5 Redis backend (분산 인스턴스 일관성)
+
+### 문제
+
+기본 `Limiter` 는 **in-memory** 토큰 버킷 — mci-edge-* 다중 인스턴스 시
+인스턴스별 독립 버킷이라 **실제 한도가 인스턴스 × N**.
+
+예시: `POST /v1/login` 한도 5/s × edge-api 3 인스턴스 → 사용자가 분당 900 회
+brute force 가능 (의도 60회).
+
+### 해결 — Redis backend
+
+`pkg/ratelimit/redis.go` 의 `RedisLimiter` — atomic Lua token bucket script.
+모든 edge 인스턴스가 같은 Redis 를 공유해 **단일 카운터**.
+
+```bash
+mci-edge-api \
+  --etcd 10.0.0.50:2379 \
+  --ratelimit-redis 10.0.0.60:6379 \
+  --ratelimit-redis-pass <secret> \
+  --ratelimit-redis-db 0
+```
+
+flag 없으면 in-memory (기존 동작 유지).
+
+### Lua script (atomic)
+
+```lua
+local data = redis.call('HMGET', key, 'tokens', 'ts')
+-- elapsed * rate 만큼 token 보충 (burst cap)
+-- cost 만큼 소비 후 HMSET + EXPIRE
+```
+
+단일 `EVAL` 호출이라 race 없음. SCRIPT LOAD 캐시 활용으로 매번 풀 script
+전송 X.
+
+### 키 구조
+
+`wtg:rl:<service>:<rule_pattern>:<user_or_ip>`
+
+- service 별 격리 (`edge-api` vs `edge-push`)
+- rule pattern 별 격리 (`POST /v1/login` vs `POST /v1/tx`)
+- 같은 키라도 룰이 다르면 별도 버킷
+- TTL 60s (idle 키 자동 정리)
+
+### Fail-open 정책
+
+Redis 호출 실패 (network / timeout) 시 **호출자 통과** + `failCount` 증가.
+
+- 운영 안전성 우선 — Redis 장애가 매매 막으면 안 됨
+- 운영자는 `failCount` 카운터로 모니터링
+- Prometheus alert 권장: `rate(wtg_ratelimit_redis_fails_total[1m]) > 1`
+  (현재 metric 미노출 — `RedisLimiter.FailCount()` API 사용)
+
+### 검증
+
+| 테스트 | 검증 |
+|--------|------|
+| `TestRedisLimiter_BurstThenDeny` | in-memory 와 동등 burst 동작 |
+| `TestRedisLimiter_MultiInstance_SharedBudget` | 두 별도 인스턴스 → 단일 카운터 |
+| `TestRedisLimiter_RefillOverTime` | rate refill (allowAt 시간 주입) |
+| `TestRedisLimiter_FailOpenOnRedisError` | Redis 끊김 시 fail-open + count |
+| `TestRedisLimiter_ConcurrentSingleKey` | 100 동시 호출 → 정확히 burst 통과 |
+| `TestRuleSetWithRedisFactory_MultiInstance` | RuleSet 전체 wire-up 검증 |
+
+```bash
+go test -race -run='TestRedisLimiter|TestRuleSetWithRedisFactory' ./pkg/ratelimit/
+```
+
+### 운영 시 권장
+
+1. **prod**: Redis backend 활성 (다중 인스턴스 한도 일관)
+2. **dev / staging**: in-memory (Redis 의존성 zero)
+3. **Redis 인프라**: 기존 mci-price 의 quoteid Redis 와 공유 가능 — DB index 분리
+
+---
+
 ## 6. etcd 기반 hot reload
 
 ### 동작 흐름

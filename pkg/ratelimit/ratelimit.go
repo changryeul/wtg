@@ -74,11 +74,23 @@ func SplitKey(key string) (kind, raw string) {
 	return "ip", key
 }
 
-// Limiter 는 키 단위 토큰 버킷.
+// AllowLimiter — RuleSet 의 compiled rule 에 들어갈 limiter 의 최소 인터페이스.
+// in-memory *Limiter 와 RedisLimiter 둘 다 구현.
+//
+// Allow — 키에 대해 토큰 1개 소비 시도. true=허용, false=거부.
+// Stop — 종료 (in-memory 의 GC goroutine 또는 redis client close 등).
+type AllowLimiter interface {
+	Allow(key string) bool
+	Stop()
+}
+
+// Limiter 는 키 단위 토큰 버킷 (in-memory).
 //
 // rate: 초당 채워지는 토큰 수 (sustained TPS).
 // burst: 버킷의 최대 토큰 수 (순간 폭주 허용 한도).
 // idle: 일정 시간 미사용 키 자동 정리 (메모리 누수 방지).
+//
+// 다중 인스턴스 시는 RedisLimiter 사용 (per-key bucket 이 인스턴스 간 공유).
 type Limiter struct {
 	rate  rate.Limit
 	burst int

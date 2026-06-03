@@ -28,15 +28,21 @@ type compiledRule struct {
 	Rule
 	method   string // "" = any
 	pathGlob string
-	limiter  *Limiter
+	limiter  AllowLimiter
 }
+
+// LimiterFactory — 룰별 Limiter 인스턴스 생성. nil 이면 in-memory NewLimiter
+// 사용. RedisLimiter 등 distributed backend 를 사용할 때 주입.
+//
+// 룰의 Pattern 이 별도 prefix 로 들어가 룰별 키 격리.
+type LimiterFactory func(rule Rule) AllowLimiter
 
 // ruleSetData — atomic.Pointer 로 hot-swap 되는 룰셋 snapshot.
 // in-flight 요청은 swap 전 snapshot 으로 끝까지 수행 — 정책 변경의 순간 race
 // 는 의도된 동작 (어느 한 쪽 정책 그대로 적용).
 type ruleSetData struct {
 	rules    []compiledRule
-	fallback *Limiter
+	fallback AllowLimiter
 }
 
 // RuleSet 은 path-aware 룰 묶음. middleware 가 요청마다 첫 매칭 룰의 limiter
@@ -44,8 +50,13 @@ type ruleSetData struct {
 //
 // hot-swap — Replace(rules, fallbackCfg) 가 atomic 교체. old 의 limiter 는
 // 즉시 Stop (in-flight Allow 는 limiter 자체가 thread-safe 라 safe).
+//
+// 생성 시 factory 가 설정되면 Replace 도 같은 factory 사용 — backend (Redis
+// 등) 일관성 유지.
 type RuleSet struct {
-	data atomic.Pointer[ruleSetData]
+	data            atomic.Pointer[ruleSetData]
+	ruleFactory     LimiterFactory
+	fallbackFactory func(*Config) AllowLimiter
 }
 
 // NewRuleSet — rules 순서대로 컴파일. 각 룰별 별도 Limiter 인스턴스.
@@ -53,17 +64,34 @@ type RuleSet struct {
 //
 // 빈 Pattern 또는 잘못된 glob 은 에러.
 func NewRuleSet(rules []Rule, fallbackCfg *Config) (*RuleSet, error) {
-	data, err := compile(rules, fallbackCfg)
+	return NewRuleSetWithFactory(rules, fallbackCfg, nil, nil)
+}
+
+// NewRuleSetWithFactory — 룰별 limiter 생성에 factory 사용.
+//
+// ruleFactory 가 nil 이면 in-memory NewLimiter. fallbackFactory 가 nil 이면
+// fallback 도 in-memory. RedisLimiter 같은 distributed backend 를 사용할 때
+// 호출자가 factory 안에서 NewRedisLimiter(...) 생성.
+func NewRuleSetWithFactory(
+	rules []Rule, fallbackCfg *Config,
+	ruleFactory LimiterFactory,
+	fallbackFactory func(*Config) AllowLimiter,
+) (*RuleSet, error) {
+	data, err := compile(rules, fallbackCfg, ruleFactory, fallbackFactory)
 	if err != nil {
 		return nil, err
 	}
-	rs := &RuleSet{}
+	rs := &RuleSet{ruleFactory: ruleFactory, fallbackFactory: fallbackFactory}
 	rs.data.Store(data)
 	return rs, nil
 }
 
 // compile — rules + fallbackCfg 를 ruleSetData 로. atomic swap 단위.
-func compile(rules []Rule, fallbackCfg *Config) (*ruleSetData, error) {
+func compile(
+	rules []Rule, fallbackCfg *Config,
+	ruleFactory LimiterFactory,
+	fallbackFactory func(*Config) AllowLimiter,
+) (*ruleSetData, error) {
 	compiled := make([]compiledRule, 0, len(rules))
 	for i, r := range rules {
 		method, glob, err := parsePattern(r.Pattern)
@@ -77,19 +105,26 @@ func compile(rules []Rule, fallbackCfg *Config) (*ruleSetData, error) {
 		if r.Rate < 0 || r.Burst < 0 {
 			return nil, fmt.Errorf("rule[%d] %q: rate/burst 음수", i, r.Pattern)
 		}
+		var lim AllowLimiter
+		if ruleFactory != nil {
+			lim = ruleFactory(r)
+		} else {
+			lim = NewLimiter(Config{RatePerSec: r.Rate, Burst: r.Burst})
+		}
 		compiled = append(compiled, compiledRule{
 			Rule:     r,
 			method:   method,
 			pathGlob: glob,
-			limiter: NewLimiter(Config{
-				RatePerSec: r.Rate,
-				Burst:      r.Burst,
-			}),
+			limiter:  lim,
 		})
 	}
 	d := &ruleSetData{rules: compiled}
 	if fallbackCfg != nil {
-		d.fallback = NewLimiter(*fallbackCfg)
+		if fallbackFactory != nil {
+			d.fallback = fallbackFactory(fallbackCfg)
+		} else {
+			d.fallback = NewLimiter(*fallbackCfg)
+		}
 	}
 	return d, nil
 }
@@ -107,7 +142,7 @@ func (d *ruleSetData) stopAll() {
 // Replace — 새 룰셋으로 hot-swap. compile 단계 실패 시 기존 룰 유지 + 에러.
 // 성공 시 old data 의 limiter 들 즉시 Stop.
 func (rs *RuleSet) Replace(rules []Rule, fallbackCfg *Config) error {
-	newData, err := compile(rules, fallbackCfg)
+	newData, err := compile(rules, fallbackCfg, rs.ruleFactory, rs.fallbackFactory)
 	if err != nil {
 		return err
 	}
@@ -145,7 +180,7 @@ func isHTTPMethod(s string) bool {
 
 // Match — 첫 매칭 룰. 매칭 안 되고 fallback 도 없으면 (nil, "", false).
 // fallback 매칭 시 룰명은 "default".
-func (rs *RuleSet) Match(method, urlPath string) (*Limiter, string, bool) {
+func (rs *RuleSet) Match(method, urlPath string) (AllowLimiter, string, bool) {
 	d := rs.data.Load()
 	if d == nil {
 		return nil, "", false

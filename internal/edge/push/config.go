@@ -56,6 +56,11 @@ type Config struct {
 	EtcdEndpoints    string
 	EtcdRateLimitKey string // default "wtg/ratelimit/edge-push"
 
+	// Redis backend — 다중 인스턴스 단일 카운터. 비면 in-memory.
+	RateLimitRedisAddr     string
+	RateLimitRedisPassword string
+	RateLimitRedisDB       int
+
 	LogLevel string
 
 	// Upstream gRPC TLS — DMZ → Internal mci-push 호출용 클라이언트 인증서.
@@ -158,6 +163,9 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "fallback burst 한도")
 	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "etcd endpoints (콤마 구분, 비면 정적 룰만)")
 	fs.StringVar(&cfg.EtcdRateLimitKey, "etcd-ratelimit-key", cfg.EtcdRateLimitKey, "etcd PolicyDoc key (default wtg/ratelimit/edge-push)")
+	fs.StringVar(&cfg.RateLimitRedisAddr, "ratelimit-redis", cfg.RateLimitRedisAddr, "Redis addr — rate limit 분산 backend (host:port)")
+	fs.StringVar(&cfg.RateLimitRedisPassword, "ratelimit-redis-pass", cfg.RateLimitRedisPassword, "Redis password")
+	fs.IntVar(&cfg.RateLimitRedisDB, "ratelimit-redis-db", cfg.RateLimitRedisDB, "Redis DB index")
 	fs.StringVar(&cfg.GRPCTLSCertFile, "grpc-tls-cert", cfg.GRPCTLSCertFile, "Upstream gRPC mTLS 클라이언트 cert PEM")
 	fs.StringVar(&cfg.GRPCTLSKeyFile, "grpc-tls-key", cfg.GRPCTLSKeyFile, "Upstream gRPC mTLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.GRPCTLSCAFile, "grpc-tls-ca", cfg.GRPCTLSCAFile, "Upstream 서버 검증용 CA bundle")

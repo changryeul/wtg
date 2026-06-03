@@ -19,6 +19,7 @@ import (
 
 	"crypto/rsa"
 
+	"github.com/redis/go-redis/v9"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
@@ -47,6 +48,7 @@ type Server struct {
 	rateLimit        *ratelimit.RuleSet
 	rateLimitWatcher *ratelimit.EtcdWatcher
 	rateLimitEtcdCli *clientv3.Client
+	rateLimitRedis   *redis.Client
 	jwtVer           *auth.Verifier
 	tlsReloader      *tlsutil.Reloader
 
@@ -82,7 +84,16 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 				EvictionPeriod: 1 * time.Minute,
 			}
 		}
-		rs, err := ratelimit.NewRuleSet(rules, fallback)
+		var ruleFactory ratelimit.LimiterFactory
+		var fallbackFactory func(*ratelimit.Config) ratelimit.AllowLimiter
+		if cfg.RateLimitRedisAddr != "" {
+			s.rateLimitRedis = redis.NewClient(&redis.Options{
+				Addr: cfg.RateLimitRedisAddr, Password: cfg.RateLimitRedisPassword, DB: cfg.RateLimitRedisDB,
+			})
+			ruleFactory, fallbackFactory = ratelimit.MakeRedisFactories(s.rateLimitRedis, "edge-chart", logger)
+			logger.Info("rate limit Redis backend 활성", slog.String("addr", cfg.RateLimitRedisAddr))
+		}
+		rs, err := ratelimit.NewRuleSetWithFactory(rules, fallback, ruleFactory, fallbackFactory)
 		if err != nil {
 			logger.Error("rate limit 룰셋 빌드 실패", slog.Any("error", err))
 		} else {
@@ -228,6 +239,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.rateLimit != nil {
 		s.rateLimit.Stop()
+	}
+	if s.rateLimitRedis != nil {
+		_ = s.rateLimitRedis.Close()
 	}
 	if s.tlsReloader != nil {
 		s.tlsReloader.Stop()

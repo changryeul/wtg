@@ -61,6 +61,13 @@ type Config struct {
 	EtcdEndpoints    string // 콤마 구분
 	EtcdRateLimitKey string // default "wtg/ratelimit/edge-api"
 
+	// Redis backend — 다중 인스턴스 운영 시 단일 카운터로 한도 일관성.
+	// 비면 in-memory (인스턴스별 독립 bucket — 한도 ×N). 채우면 Redis 의
+	// atomic Lua token bucket. 자세히는 docs/ratelimit.md.
+	RateLimitRedisAddr     string
+	RateLimitRedisPassword string
+	RateLimitRedisDB       int
+
 	// 로그 레벨.
 	LogLevel string
 
@@ -160,6 +167,9 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.IPBurst, "ip-burst", cfg.IPBurst, "fallback burst 한도")
 	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "etcd endpoints (콤마 구분, 비면 정적 룰만)")
 	fs.StringVar(&cfg.EtcdRateLimitKey, "etcd-ratelimit-key", cfg.EtcdRateLimitKey, "etcd PolicyDoc key (default wtg/ratelimit/edge-api)")
+	fs.StringVar(&cfg.RateLimitRedisAddr, "ratelimit-redis", cfg.RateLimitRedisAddr, "Redis addr — rate limit 분산 backend (host:port, 비면 in-memory)")
+	fs.StringVar(&cfg.RateLimitRedisPassword, "ratelimit-redis-pass", cfg.RateLimitRedisPassword, "Redis password (옵션)")
+	fs.IntVar(&cfg.RateLimitRedisDB, "ratelimit-redis-db", cfg.RateLimitRedisDB, "Redis DB index")
 	fs.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "외부 TLS 서버 cert PEM (있으면 HTTPS)")
 	fs.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "외부 TLS 서버 key PEM")
 	fs.StringVar(&cfg.TLSClientCAFile, "tls-client-ca", cfg.TLSClientCAFile, "외부 mTLS 클라이언트 CA bundle")

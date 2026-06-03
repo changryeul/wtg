@@ -153,6 +153,14 @@ type Config struct {
 	PricingFile  string
 	ProfilesFile string
 
+	// PricingBufferSize — PricingConsumer 의 비동기 buffer 크기. 0 (default) 면
+	// synchronous (broker subscribe goroutine 이 직접 profile fan-out 처리,
+	// 기존 동작). 0 보다 크면 channel + 1 worker — publisher slow 시 upstream
+	// 보호. channel 가득 시 newest drop + buffer_dropped 카운터.
+	//
+	// 운영 권장: 운영 부하 (수만 tick/s × N profiles) 환경에서 4096~16384.
+	PricingBufferSize int
+
 	// ─── etcd hot reload (옵션) ────────────────────────────────────────────
 	//
 	// 설정되면 SymbolMap / PricingTable / Profiles 가 etcd watch 로 자동 갱신된다.
@@ -273,6 +281,8 @@ func DefaultConfig() Config {
 
 		PricingFile:  "",
 		ProfilesFile: "",
+
+		PricingBufferSize: 0,
 
 		EtcdEndpoints:   nil,
 		EtcdPrefix:      "wtg/",
@@ -504,6 +514,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.CrossDebounceWindow, "cross-debounce", cfg.CrossDebounceWindow, "cross emit 의 같은 pair 중복 차단 윈도우 (0=10ms 기본)")
 	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (etcd 비활성 시)")
 	fs.StringVar(&cfg.ProfilesFile, "profiles", cfg.ProfilesFile, "활성 Profile 카탈로그 JSON ([]session.Profile, etcd 비활성 시)")
+	fs.IntVar(&cfg.PricingBufferSize, "pricing-buffer", cfg.PricingBufferSize, "PricingConsumer 비동기 buffer 크기 (0=synchronous, >0=channel+worker. 운영 부하 권장 4096~16384)")
 	etcdStr := strings.Join(cfg.EtcdEndpoints, ",")
 	fs.StringVar(&etcdStr, "etcd", etcdStr, "etcd endpoints 콤마 구분 (설정 시 hot reload 활성, 정적 파일 옵션 무시)")
 	fs.StringVar(&cfg.EtcdPrefix, "etcd-prefix", cfg.EtcdPrefix, "etcd key prefix (default wtg/)")

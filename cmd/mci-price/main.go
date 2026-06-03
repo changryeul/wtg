@@ -470,6 +470,7 @@ func wirePricingConsumerEtcd(
 		QuoteIDRegistry:      quoteIDReg,
 		QuoteValidity:        cfg.QuoteIDValidity,
 		QuoteRegistryTimeout: cfg.QuoteIDRegistryTimeout,
+		TickBufferSize:       cfg.PricingBufferSize,
 	}
 	// Phase 4b — gRPC 활성 시 customer fan-out path 동시 연결.
 	if grpcSrv != nil {
@@ -530,6 +531,7 @@ func wirePricingConsumer(cfg price.Config, symbols *quote.SymbolMap, srv *price.
 		QuoteIDRegistry:      quoteIDReg,
 		QuoteValidity:        cfg.QuoteIDValidity,
 		QuoteRegistryTimeout: cfg.QuoteIDRegistryTimeout,
+		TickBufferSize:       cfg.PricingBufferSize,
 	}
 	// Phase 4b — gRPC 활성 시 customer fan-out path 동시 연결.
 	if grpcSrv != nil {

@@ -392,3 +392,115 @@ func TestPricingConsumer_NoQuoteIDWhenDisabled(t *testing.T) {
 		t.Errorf("ValidUntil 미설정 기대, got %v", calls[0].CQ.ValidUntil)
 	}
 }
+
+// ─── TickBufferSize: 비동기 buffer + backpressure ──────────────────────────────
+
+// 비동기 buffer 활성 — channel 로 enqueue 후 worker 가 처리.
+// publish 호출이 비동기 worker 에서 발생하는지 + Stats 의 buffer 카운터.
+func TestPricingConsumer_BufferedAsyncPublish(t *testing.T) {
+	pub := &fakeQuotePublisher{}
+	syms := quote.NewSymbolMap()
+	syms.Replace([]quote.SymbolEntry{{Symbol: "USDKRW", Pair: "USD/KRW", Active: true}})
+	tbl := &pricing.PricingTable{Version: 1, HQMargin: map[pricing.HQKey]pricing.Margin{
+		{Pair: "USD/KRW", Tier: session.TierStandard}: {BidAmount: 0.10, AskAmount: 0.10},
+	}}
+	store := pricing.NewStore()
+	store.Replace(tbl)
+
+	pc := NewPricingConsumer(PricingConsumerOptions{
+		Store:     store,
+		Symbols:   syms,
+		Decoder:   JSONCookerDecoder(),
+		Publisher: pub,
+		Profiles: &StaticProfileSource{Profiles: []session.Profile{
+			{Channel: session.ChannelWeb, Site: session.SiteBranch, Tier: session.TierStandard},
+		}},
+		TickBufferSize: 64,
+	})
+
+	pc.OnTick(mkEnvTick("USDKRW", 1378.40, 1378.45, time.Now()))
+
+	// worker 가 처리할 시간.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if len(pub.snapshot()) > 0 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if len(pub.snapshot()) != 1 {
+		t.Errorf("buffered async publish 미발생: calls=%d", len(pub.snapshot()))
+	}
+
+	st := pc.Stats()
+	if st.BufferCapacity != 64 {
+		t.Errorf("BufferCapacity=%d, want 64", st.BufferCapacity)
+	}
+	if st.BufferDropped != 0 {
+		t.Errorf("BufferDropped=%d, want 0", st.BufferDropped)
+	}
+}
+
+// channel full 시 newest drop + bufferDropped 카운터 증가.
+// upstream (호출 goroutine) 은 block 되지 않음.
+func TestPricingConsumer_BufferFullDropsNewest(t *testing.T) {
+	// publish 가 느린 publisher — worker 가 첫 tick 에서 멈춰 있는 동안 channel 가득.
+	pub := &slowPublisher{delay: 200 * time.Millisecond}
+	syms := quote.NewSymbolMap()
+	syms.Replace([]quote.SymbolEntry{{Symbol: "USDKRW", Pair: "USD/KRW", Active: true}})
+	store := pricing.NewStore()
+	store.Replace(&pricing.PricingTable{Version: 1})
+
+	pc := NewPricingConsumer(PricingConsumerOptions{
+		Store:     store,
+		Symbols:   syms,
+		Decoder:   JSONCookerDecoder(),
+		Publisher: pub,
+		Profiles: &StaticProfileSource{Profiles: []session.Profile{
+			{Channel: session.ChannelWeb, Site: session.SiteBranch, Tier: session.TierStandard},
+		}},
+		TickBufferSize: 2, // 매우 작은 buffer 로 빠른 가득.
+	})
+
+	// 첫 tick 은 worker 가 즉시 픽업 → publish 안에서 200ms block.
+	// 다음 2 tick 은 channel buffer 점유.
+	// 그 다음 3 tick 은 channel full → drop.
+	for i := 0; i < 6; i++ {
+		pc.OnTick(mkEnvTick("USDKRW", 1378.0+float64(i)*0.01, 1378.1, time.Now()))
+	}
+
+	st := pc.Stats()
+	if st.TicksIn != 6 {
+		t.Errorf("TicksIn=%d, want 6", st.TicksIn)
+	}
+	if st.BufferDropped < 3 {
+		t.Errorf("BufferDropped=%d, want >=3 (6 호출 - 1 worker 픽업 - 2 buffer)", st.BufferDropped)
+	}
+}
+
+// TickBufferSize=0 (default) — synchronous 동작 유지 (기존 path).
+func TestPricingConsumer_SynchronousDefault(t *testing.T) {
+	pub := &fakeQuotePublisher{}
+	pc := newTestPricingConsumer(t, pub, []session.Profile{
+		{Channel: session.ChannelWeb, Site: session.SiteBranch, Tier: session.TierStandard},
+	})
+	pc.OnTick(mkEnvTick("USDKRW", 1378.40, 1378.45, time.Now()))
+	// synchronous — OnTick 반환 직후 publish 호출 완료.
+	if len(pub.snapshot()) != 1 {
+		t.Errorf("synchronous: calls=%d, want 1 (즉시 처리)", len(pub.snapshot()))
+	}
+	st := pc.Stats()
+	if st.BufferCapacity != 0 {
+		t.Errorf("BufferCapacity=%d, want 0 (synchronous)", st.BufferCapacity)
+	}
+}
+
+// slowPublisher — publish 호출 시 지정 시간 block. backpressure 시뮬레이션.
+type slowPublisher struct {
+	delay time.Duration
+}
+
+func (s *slowPublisher) PublishQuote(profile session.Profile, cq pricing.CustomerQuote) error {
+	time.Sleep(s.delay)
+	return nil
+}

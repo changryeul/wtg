@@ -116,6 +116,15 @@ type PricingConsumer struct {
 	profilesSkipped         atomic.Uint64 // Phase 3 — 구독자 0 으로 pruned 한 Profile 발행 횟수
 	customerQuotesPublished atomic.Uint64 // Phase 4a — customer fan-out 성공
 	customerPublishErrors   atomic.Uint64 // Phase 4a — customer publisher 실패
+
+	// 비동기 buffer (옵션) — OnTick 의 broker subscribe goroutine 을 즉시 풀어주고
+	// worker 가 background 에서 profile fan-out 처리. publisher slow 시 upstream
+	// (BestConsumer / broker subscribe) 가 block 되는 것 방지.
+	//
+	// tickCh nil 이면 synchronous (default — 기존 동작).
+	tickCh         chan *Tick
+	bufferDropped  atomic.Uint64 // channel full → drop 한 tick 수
+	bufferCapacity int           // 운영 stat 용 — Stats() 에 노출
 }
 
 // PricingConsumerOptions 는 PricingConsumer 생성 옵션.
@@ -142,6 +151,15 @@ type PricingConsumerOptions struct {
 	// 활성화. 한쪽만 채우면 customer 경로 미실행 + warn.
 	CustomerRegistry *CustomerRegistry
 	CustomerPub      CustomerQuotePublisher
+
+	// TickBufferSize — 0 (default) 면 OnTick 이 호출 goroutine 에서 직접 처리
+	// (synchronous, 기존 동작). 0 보다 크면 channel buffer + 1 worker goroutine
+	// 가 background 처리. publisher slow 시 broker subscribe upstream 이 block
+	// 되는 것 방지 — channel 가득 시 newest drop + bufferDropped 카운터.
+	//
+	// 운영 권장: 운영 부하 (수만 tick/s × N profiles) 환경에서 N×1024 정도. 단일
+	// worker 라 ordering 보장. 다중 worker 는 후속 (현재는 단순성 우선).
+	TickBufferSize int
 }
 
 // NewPricingConsumer 는 PricingConsumer 를 구성한다.
@@ -192,7 +210,21 @@ func NewPricingConsumer(opt PricingConsumerOptions) *PricingConsumer {
 	} else if (opt.CustomerRegistry == nil) != (opt.CustomerPub == nil) {
 		logger.Warn("PricingConsumer: CustomerRegistry/CustomerPub 한쪽만 설정됨 — customer fan-out 비활성화")
 	}
+	// 비동기 buffer 가동 — TickBufferSize > 0 일 때만.
+	if opt.TickBufferSize > 0 {
+		pc.bufferCapacity = opt.TickBufferSize
+		pc.tickCh = make(chan *Tick, opt.TickBufferSize)
+		go pc.workerLoop()
+	}
 	return pc
+}
+
+// workerLoop — 비동기 buffer 활성 시 worker. ordering 보장 위해 단일 goroutine.
+// channel close 시 종료 (현재는 Close 미제공 — process 종료 시 자연 종료).
+func (c *PricingConsumer) workerLoop() {
+	for t := range c.tickCh {
+		c.processTick(t)
+	}
 }
 
 // OnTick 은 TickConsumer 인터페이스.
@@ -207,6 +239,21 @@ func (c *PricingConsumer) OnTick(t *Tick) {
 	}
 	c.ticksIn.Add(1)
 
+	// 비동기 buffer 활성 — channel 로 enqueue. 가득 시 newest drop (caller 가
+	// block 되지 않게 — broker subscribe upstream 보호).
+	if c.tickCh != nil {
+		select {
+		case c.tickCh <- t:
+		default:
+			c.bufferDropped.Add(1)
+		}
+		return
+	}
+	c.processTick(t)
+}
+
+// processTick — OnTick 본문 (실 처리). synchronous 또는 worker goroutine 에서 호출.
+func (c *PricingConsumer) processTick(t *Tick) {
 	pair, active, found := c.symbols.Lookup(t.Symbol)
 	if !found || !active {
 		c.ticksDropped.Add(1)
@@ -313,6 +360,10 @@ type PricingConsumerStats struct {
 	CustomerQuotesPublished uint64 `json:"customer_quotes_published"`
 	CustomerPublishErrors   uint64 `json:"customer_publish_errors"`
 	CustomersRegistered     int    `json:"customers_registered"`
+	// 비동기 buffer 운영 가시성. TickBufferSize=0 (synchronous) 면 0 / 0 / 0.
+	BufferCapacity uint64 `json:"buffer_capacity"`  // 설정된 channel buffer 크기
+	BufferQueueLen uint64 `json:"buffer_queue_len"` // 현재 채널에 대기 중인 tick 수
+	BufferDropped  uint64 `json:"buffer_dropped"`   // channel full → drop 한 tick 누적
 }
 
 // Stats 는 누적 카운터 snapshot 을 반환.
@@ -320,6 +371,11 @@ func (c *PricingConsumer) Stats() PricingConsumerStats {
 	regCount := 0
 	if c.customerRegistry != nil {
 		regCount = c.customerRegistry.Count()
+	}
+	var bufCap, bufLen uint64
+	if c.tickCh != nil {
+		bufCap = uint64(c.bufferCapacity)
+		bufLen = uint64(len(c.tickCh))
 	}
 	return PricingConsumerStats{
 		TicksIn:                 c.ticksIn.Load(),
@@ -331,6 +387,9 @@ func (c *PricingConsumer) Stats() PricingConsumerStats {
 		CustomerQuotesPublished: c.customerQuotesPublished.Load(),
 		CustomerPublishErrors:   c.customerPublishErrors.Load(),
 		CustomersRegistered:     regCount,
+		BufferCapacity:          bufCap,
+		BufferQueueLen:          bufLen,
+		BufferDropped:           c.bufferDropped.Load(),
 	}
 }
 

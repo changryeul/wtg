@@ -384,6 +384,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/ping", handlers.Ping(deps))
 	mux.HandleFunc("POST /v1/tx", handlers.Transaction(deps))
+	mux.HandleFunc("POST /v1/tx/bulk", handlers.BulkTransaction(deps))
 	mux.HandleFunc("POST /v1/login", handlers.Login(deps))
 	mux.HandleFunc("POST /v1/logout", handlers.Logout(deps))
 	mux.HandleFunc("POST /v1/refresh", handlers.Refresh(deps))

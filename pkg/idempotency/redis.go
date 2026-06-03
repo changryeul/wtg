@@ -9,7 +9,27 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// tracer — OTel span 발행 namespace. Jaeger 등 backend 에서 service-level
+// 필터링 및 redis.* span 으로 group. tracer 가 등록 안 된 환경은 no-op.
+var tracer = otel.Tracer("wtg.idempotency.redis")
+
+// startRedisSpan — Redis op 호출 wrap. span attribute 는 OpenTelemetry semantic
+// convention (db.system / db.operation) 따름. key 는 prefix 만 (full key 는
+// PII 가능성 — usid 포함이라 senanitize).
+func startRedisSpan(ctx context.Context, op, prefix string) (context.Context, trace.Span) {
+	return tracer.Start(ctx, "redis.idempotency."+op,
+		trace.WithAttributes(
+			attribute.String("db.system", "redis"),
+			attribute.String("db.operation", op),
+			attribute.String("idempotency.prefix", prefix),
+		))
+}
 
 // RedisStore — 다중 인스턴스 운영용 Redis backend.
 //
@@ -115,57 +135,97 @@ return 1
 `
 
 // Reserve — Lua atomic 으로 상태 점검.
-func (s *RedisStore) Reserve(ctx context.Context, key string, bodyHash [32]byte) (Status, *CachedReply, error) {
+func (s *RedisStore) Reserve(ctx context.Context, key string, bodyHash [32]byte) (status Status, reply *CachedReply, err error) {
+	ctx, span := startRedisSpan(ctx, "reserve", s.prefix)
+	defer func() {
+		span.SetAttributes(attribute.String("idempotency.status", status.String()))
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	hash := hashHex(bodyHash)
 	ttlMs := strconv.FormatInt(s.ttl.Milliseconds(), 10)
-	res, err := s.client.Eval(ctx, luaReserve, []string{s.prefix + key}, hash, ttlMs).Result()
-	if err != nil {
-		return 0, nil, fmt.Errorf("idempotency: redis reserve: %w", err)
+	res, evalErr := s.client.Eval(ctx, luaReserve, []string{s.prefix + key}, hash, ttlMs).Result()
+	if evalErr != nil {
+		err = fmt.Errorf("idempotency: redis reserve: %w", evalErr)
+		return 0, nil, err
 	}
 	arr, ok := res.([]any)
 	if !ok || len(arr) != 2 {
-		return 0, nil, fmt.Errorf("idempotency: redis reserve 응답 형식: %T", res)
+		err = fmt.Errorf("idempotency: redis reserve 응답 형식: %T", res)
+		return 0, nil, err
 	}
 	statusN, _ := arr[0].(int64)
 	switch Status(statusN) {
 	case StatusMiss:
+		status = StatusMiss
 		return StatusMiss, nil, nil
 	case StatusConflict:
+		status = StatusConflict
 		return StatusConflict, nil, nil
 	case StatusInFlight:
+		status = StatusInFlight
 		return StatusInFlight, nil, nil
 	case StatusCached:
 		payload, _ := arr[1].(string)
-		var reply CachedReply
-		if err := json.Unmarshal([]byte(payload), &reply); err != nil {
-			return 0, nil, fmt.Errorf("idempotency: cached reply unmarshal: %w", err)
+		var r CachedReply
+		if jerr := json.Unmarshal([]byte(payload), &r); jerr != nil {
+			err = fmt.Errorf("idempotency: cached reply unmarshal: %w", jerr)
+			return 0, nil, err
 		}
-		return StatusCached, &reply, nil
+		status = StatusCached
+		return StatusCached, &r, nil
 	default:
-		return 0, nil, fmt.Errorf("idempotency: 알 수 없는 status %d", statusN)
+		err = fmt.Errorf("idempotency: 알 수 없는 status %d", statusN)
+		return 0, nil, err
 	}
 }
 
 // Commit — reservation 의 reply 저장 + TTL 갱신.
-func (s *RedisStore) Commit(ctx context.Context, key string, reply *CachedReply) error {
+func (s *RedisStore) Commit(ctx context.Context, key string, reply *CachedReply) (err error) {
+	ctx, span := startRedisSpan(ctx, "commit", s.prefix)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
 	if reply == nil {
-		return errors.New("idempotency: Commit reply nil")
+		err = errors.New("idempotency: Commit reply nil")
+		return err
 	}
-	payload, err := json.Marshal(reply)
-	if err != nil {
-		return fmt.Errorf("idempotency: reply marshal: %w", err)
+	payload, mErr := json.Marshal(reply)
+	if mErr != nil {
+		err = fmt.Errorf("idempotency: reply marshal: %w", mErr)
+		return err
 	}
+	span.SetAttributes(attribute.Int("idempotency.reply_status", reply.StatusCode))
 	ttlMs := strconv.FormatInt(s.ttl.Milliseconds(), 10)
-	if _, err := s.client.Eval(ctx, luaCommit, []string{s.prefix + key}, string(payload), ttlMs).Result(); err != nil {
-		return fmt.Errorf("idempotency: redis commit: %w", err)
+	if _, eErr := s.client.Eval(ctx, luaCommit, []string{s.prefix + key}, string(payload), ttlMs).Result(); eErr != nil {
+		err = fmt.Errorf("idempotency: redis commit: %w", eErr)
+		return err
 	}
 	return nil
 }
 
 // Rollback — reservation 해제. committed 상태면 no-op.
-func (s *RedisStore) Rollback(ctx context.Context, key string) error {
-	if _, err := s.client.Eval(ctx, luaRollback, []string{s.prefix + key}).Result(); err != nil {
-		return fmt.Errorf("idempotency: redis rollback: %w", err)
+func (s *RedisStore) Rollback(ctx context.Context, key string) (err error) {
+	ctx, span := startRedisSpan(ctx, "rollback", s.prefix)
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+	if _, eErr := s.client.Eval(ctx, luaRollback, []string{s.prefix + key}).Result(); eErr != nil {
+		err = fmt.Errorf("idempotency: redis rollback: %w", eErr)
+		return err
 	}
 	return nil
 }

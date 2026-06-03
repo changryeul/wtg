@@ -32,6 +32,22 @@ const (
 	StatusConflict               // 같은 key + 다른 body
 )
 
+// String — OTel span attribute 등 표시용. enum 매칭 + 알 수 없는 값 fallback.
+func (s Status) String() string {
+	switch s {
+	case StatusMiss:
+		return "miss"
+	case StatusCached:
+		return "cached"
+	case StatusInFlight:
+		return "in_flight"
+	case StatusConflict:
+		return "conflict"
+	default:
+		return "unknown"
+	}
+}
+
 // CachedReply — 성공 reply 의 캐시 본문.
 type CachedReply struct {
 	StatusCode int    `json:"status_code"`

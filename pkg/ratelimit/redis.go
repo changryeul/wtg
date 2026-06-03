@@ -8,7 +8,15 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// tracer — OTel span 발행 namespace. backend slow 가 rate limit decision 을
+// fail-open 으로 빠지게 하므로 latency tail 가시화 중요.
+var tracer = otel.Tracer("wtg.ratelimit.redis")
 
 // RedisLimiter — Lua script 기반 distributed token bucket. 다중 인스턴스
 // (mci-edge-* N개) 가 같은 Redis 를 공유해 인스턴스 무관 단일 카운터.
@@ -138,6 +146,14 @@ func (r *RedisLimiter) allowAt(key string, t time.Time) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
+	ctx, span := tracer.Start(ctx, "redis.ratelimit.allow",
+		trace.WithAttributes(
+			attribute.String("db.system", "redis"),
+			attribute.String("db.operation", "eval_token_bucket"),
+			attribute.String("ratelimit.prefix", r.prefix),
+		))
+	defer span.End()
+
 	now := float64(t.UnixNano()) / 1e9
 	res, err := r.client.Eval(ctx, luaTokenBucket,
 		[]string{r.prefix + key},
@@ -154,6 +170,9 @@ func (r *RedisLimiter) allowAt(key string, t time.Time) bool {
 		}
 		r.logger.Warn("Redis rate limit Eval 실패 — fail-open",
 			slog.String("key", key), slog.Any("error", err))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(attribute.Bool("ratelimit.fail_open", true))
 		return true
 	}
 	allowed, ok := res.(int64)
@@ -162,8 +181,11 @@ func (r *RedisLimiter) allowAt(key string, t time.Time) bool {
 		if r.onFail != nil {
 			r.onFail()
 		}
+		span.SetAttributes(attribute.Bool("ratelimit.fail_open", true),
+			attribute.String("ratelimit.error", "invalid response type"))
 		return true
 	}
+	span.SetAttributes(attribute.Bool("ratelimit.allowed", allowed == 1))
 	return allowed == 1
 }
 

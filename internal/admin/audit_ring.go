@@ -9,7 +9,15 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// auditTracer — Redis backend 호출 OTel span 발행. 영구 audit 의 latency tail
+// + failure 시 가시화 — fail 시 in-memory fallback 이라 매 호출 trace 가치.
+var auditTracer = otel.Tracer("wtg.admin.audit.redis")
 
 // AuditEntry 는 단일 admin 액션 기록 (auth.md §10 ADMIN_ACTION).
 //
@@ -157,11 +165,22 @@ func (r *AuditRing) pushRedis(rdb *redis.Client, key string, maxLen int64, logge
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
+	ctx, span := auditTracer.Start(ctx, "redis.audit.push",
+		trace.WithAttributes(
+			attribute.String("db.system", "redis"),
+			attribute.String("db.operation", "lpush+ltrim"),
+			attribute.String("audit.key", key),
+			attribute.String("audit.resource", e.Resource),
+			attribute.String("audit.action", e.Action),
+		))
+	defer span.End()
 	pipe := rdb.Pipeline()
 	pipe.LPush(ctx, key, data)
 	pipe.LTrim(ctx, key, 0, maxLen-1)
 	if _, err := pipe.Exec(ctx); err != nil {
 		r.noteRedisFail()
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		logger.Warn("audit Redis LPUSH/LTRIM 실패 — in-memory 만 보존",
 			slog.String("key", key), slog.Any("error", err))
 	}
@@ -223,10 +242,21 @@ func (r *AuditRing) listRedis(rdb *redis.Client, key string, limit int) ([]Audit
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
+	ctx, span := auditTracer.Start(ctx, "redis.audit.list",
+		trace.WithAttributes(
+			attribute.String("db.system", "redis"),
+			attribute.String("db.operation", "lrange"),
+			attribute.String("audit.key", key),
+			attribute.Int("audit.limit", limit),
+		))
+	defer span.End()
 	vals, err := rdb.LRange(ctx, key, 0, stop).Result()
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, err
 	}
+	span.SetAttributes(attribute.Int("audit.returned", len(vals)))
 	out := make([]AuditEntry, 0, len(vals))
 	for _, v := range vals {
 		var e AuditEntry

@@ -94,7 +94,8 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 			s.rateLimitRedis = redis.NewClient(&redis.Options{
 				Addr: cfg.RateLimitRedisAddr, Password: cfg.RateLimitRedisPassword, DB: cfg.RateLimitRedisDB,
 			})
-			ruleFactory, fallbackFactory = ratelimit.MakeRedisFactories(s.rateLimitRedis, "edge-push", logger)
+			onFail := func() { s.metrics.IncRateLimitRedisFail("mci-edge-push") }
+			ruleFactory, fallbackFactory = ratelimit.MakeRedisFactoriesWithOnFail(s.rateLimitRedis, "edge-push", logger, onFail)
 			logger.Info("rate limit Redis backend 활성", slog.String("addr", cfg.RateLimitRedisAddr))
 		}
 		rs, err := ratelimit.NewRuleSetWithFactory(rules, fallback, ruleFactory, fallbackFactory)

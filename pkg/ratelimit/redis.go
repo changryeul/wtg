@@ -26,6 +26,7 @@ type RedisLimiter struct {
 	prefix string
 	ttl    time.Duration
 	logger *slog.Logger
+	onFail func()
 
 	// fail-open 카운터 — Redis 호출 실패 시 (network 등) 호출자에게 통과
 	// 시키되 운영자가 알람 잡을 수 있도록 누적. operations.md 의 alert 권장.
@@ -47,6 +48,9 @@ type RedisLimiterOptions struct {
 	KeyTTL time.Duration
 	// Logger — Redis call 실패 시 warn. nil 가능.
 	Logger *slog.Logger
+	// OnFail — Redis 호출 실패 (fail-open 발화) 시 callback. Prometheus
+	// 카운터 등에 연결. nil 가능. failCount 는 별도로 계속 누적.
+	OnFail func()
 }
 
 // luaTokenBucket — atomic token bucket script.
@@ -116,6 +120,7 @@ func NewRedisLimiter(opt RedisLimiterOptions) *RedisLimiter {
 		prefix: prefix,
 		ttl:    ttl,
 		logger: logger,
+		onFail: opt.OnFail,
 	}
 }
 
@@ -144,6 +149,9 @@ func (r *RedisLimiter) allowAt(key string, t time.Time) bool {
 	).Result()
 	if err != nil {
 		r.failCount.Add(1)
+		if r.onFail != nil {
+			r.onFail()
+		}
 		r.logger.Warn("Redis rate limit Eval 실패 — fail-open",
 			slog.String("key", key), slog.Any("error", err))
 		return true
@@ -151,6 +159,9 @@ func (r *RedisLimiter) allowAt(key string, t time.Time) bool {
 	allowed, ok := res.(int64)
 	if !ok {
 		r.failCount.Add(1)
+		if r.onFail != nil {
+			r.onFail()
+		}
 		return true
 	}
 	return allowed == 1
@@ -175,18 +186,27 @@ func (r *RedisLimiter) FailCount() uint64 {
 //	rs, err := ratelimit.NewRuleSetWithFactory(rules, fallback,
 //	    ratelimit.MakeRedisFactories(rdb, "edge-api", logger))
 func MakeRedisFactories(client *redis.Client, service string, logger *slog.Logger) (LimiterFactory, func(*Config) AllowLimiter) {
+	return MakeRedisFactoriesWithOnFail(client, service, logger, nil)
+}
+
+// MakeRedisFactoriesWithOnFail — MakeRedisFactories + fail callback.
+// onFail 은 RedisLimiter.Allow 가 Redis 호출 실패로 fail-open 시 호출.
+// Prometheus 카운터 (예: metrics.Registry.IncRateLimitRedisFail) 연결용.
+func MakeRedisFactoriesWithOnFail(client *redis.Client, service string, logger *slog.Logger, onFail func()) (LimiterFactory, func(*Config) AllowLimiter) {
 	base := "wtg:rl:" + service + ":"
 	return func(r Rule) AllowLimiter {
 			return NewRedisLimiter(RedisLimiterOptions{
 				Client: client, RatePerSec: r.Rate, Burst: r.Burst,
 				Prefix: base + r.Pattern + ":",
 				Logger: logger,
+				OnFail: onFail,
 			})
 		}, func(c *Config) AllowLimiter {
 			return NewRedisLimiter(RedisLimiterOptions{
 				Client: client, RatePerSec: c.RatePerSec, Burst: c.Burst,
 				Prefix: base + "default:",
 				Logger: logger,
+				OnFail: onFail,
 			})
 		}
 }

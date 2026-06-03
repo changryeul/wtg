@@ -99,14 +99,16 @@ func TestRedisLimiter_MultiInstance_SharedBudget(t *testing.T) {
 	}
 }
 
-// Redis 끊김 시 fail-open + failCount 증가.
+// Redis 끊김 시 fail-open + failCount 증가 + OnFail callback 호출.
 func TestRedisLimiter_FailOpenOnRedisError(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
+	var onFailCalled atomic.Int32
 	lim := NewRedisLimiter(RedisLimiterOptions{
 		Client: rdb, RatePerSec: 1, Burst: 1, Prefix: "test:",
 		Logger: quietLogger(),
+		OnFail: func() { onFailCalled.Add(1) },
 	})
 
 	// Redis 닫음 → Eval 실패.
@@ -117,6 +119,9 @@ func TestRedisLimiter_FailOpenOnRedisError(t *testing.T) {
 	}
 	if lim.FailCount() != 1 {
 		t.Errorf("FailCount = %d, want 1", lim.FailCount())
+	}
+	if onFailCalled.Load() != 1 {
+		t.Errorf("OnFail callback 호출 수 = %d, want 1", onFailCalled.Load())
 	}
 }
 

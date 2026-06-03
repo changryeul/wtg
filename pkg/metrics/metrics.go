@@ -56,6 +56,9 @@ type Registry struct {
 	brokerHeartbeatTO     *prometheus.CounterVec
 	brokerDisconnects     *prometheus.CounterVec
 
+	// Rate limit Redis backend — fail-open 발생 누적. v1.21.
+	rateLimitRedisFails *prometheus.CounterVec
+
 	customCollectors []prometheus.Collector
 }
 
@@ -239,6 +242,14 @@ func NewRegistry() *Registry {
 		[]string{"service"},
 	)
 
+	r.rateLimitRedisFails = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_ratelimit_redis_fails_total",
+			Help: "Rate limit Redis backend 호출 실패 누적 (fail-open 발화). 증가하면 Redis 장애 / network 문제 의심.",
+		},
+		[]string{"service"},
+	)
+
 	r.reg.MustRegister(
 		r.httpReqTotal,
 		r.httpReqDuration,
@@ -261,6 +272,7 @@ func NewRegistry() *Registry {
 		r.brokerInflightAborted,
 		r.brokerHeartbeatTO,
 		r.brokerDisconnects,
+		r.rateLimitRedisFails,
 	)
 	return r
 }
@@ -329,6 +341,15 @@ func (r *Registry) RegisterAsyncQueueGauge(service string, fn func() float64) er
 		fn,
 	)
 	return r.reg.Register(g)
+}
+
+// IncRateLimitRedisFail — Redis backend rate limit 의 호출 실패 1건 카운트.
+// RedisLimiter.Allow 가 fail-open 통과시킬 때마다 호출 → 운영자가
+// wtg_ratelimit_redis_fails_total{service} 로 모니터링.
+//
+// 증가 = Redis 장애 / network 문제. Grafana alert 권장.
+func (r *Registry) IncRateLimitRedisFail(service string) {
+	r.rateLimitRedisFails.WithLabelValues(service).Inc()
 }
 
 // ObserveQuoteIDOp — 단일 RPC 또는 batch 안의 per-item 결과 카운터.

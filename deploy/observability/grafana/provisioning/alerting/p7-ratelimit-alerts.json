@@ -145,6 +145,51 @@
             "service": "mci-edge-api",
             "domain": "ratelimit"
           }
+        },
+        {
+          "uid": "wtg-p7-ratelimit-redis-fails",
+          "title": "Rate limit Redis backend 실패 — fail-open 발화 (분산 한도 무력화)",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "datasourceUid": "prometheus",
+              "model": {
+                "expr": "sum by (service) (rate(wtg_ratelimit_redis_fails_total[1m]))",
+                "refId": "A",
+                "instant": true
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "type": "threshold",
+                "refId": "C",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {"type": "gt", "params": [1]},
+                    "operator": {"type": "and"}
+                  }
+                ]
+              },
+              "relativeTimeRange": {"from": 600, "to": 0}
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "2m",
+          "annotations": {
+            "summary": "Redis backend 호출 실패 > 1/s — 분산 카운터 무력화",
+            "description": "RedisLimiter 의 Eval 실패로 fail-open 통과 — 분산 인스턴스 간 한도 일관성이 깨진 상태. 운영 영향: 한도가 인스턴스별 in-memory 처럼 ×N 으로 늘어남. brute force / 봇 차단 의미 약화. 원인: Redis 다운 / network / timeout / DB 쓸림. 즉시 Redis 인프라 + mci-edge-* 와 Redis 사이 네트워크 점검.",
+            "runbook_url": "docs/ratelimit.md#55-redis-backend-분산-인스턴스-일관성"
+          },
+          "labels": {
+            "severity": "page",
+            "domain": "ratelimit"
+          }
         }
       ]
     }

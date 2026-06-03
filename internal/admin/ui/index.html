@@ -3170,18 +3170,17 @@ async function loadRateLimit() {
   rlState.service = $("#rl-service").value;
   $("#rl-svc-label").textContent = rlState.service;
   try {
-    const r = await fetch("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service), { credentials: "same-origin" });
-    if (r.status === 404) {
+    rlState.doc = await api("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service));
+    rlState.doc.rules = rlState.doc.rules || [];
+  } catch (e) {
+    if (e.status === 404) {
+      // 정책 미등록 — 빈 상태로 시작.
       rlState.doc = { rules: [], fallback: null, version: 0 };
-    } else if (r.ok) {
-      rlState.doc = await r.json();
-      rlState.doc.rules = rlState.doc.rules || [];
     } else {
-      const t = await r.text();
-      toast("로드 실패: " + t, "err");
+      toast("로드 실패: " + e.message, "err");
       return;
     }
-  } catch (e) { toast("로드 실패: " + e.message, "err"); return; }
+  }
   renderRateLimit();
 }
 
@@ -3272,18 +3271,10 @@ async function saveRateLimit() {
     };
   }
   try {
-    const r = await fetch("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service), {
+    rlState.doc = await api("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service), {
       method: "PUT",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(doc),
     });
-    if (!r.ok) {
-      const t = await r.text();
-      toast("저장 실패: " + t, "err");
-      return;
-    }
-    rlState.doc = await r.json();
     rlState.doc.rules = rlState.doc.rules || [];
     toast(`저장 — version ${rlState.doc.version}, mci-edge-* 즉시 반영`);
     renderRateLimit();
@@ -3293,14 +3284,7 @@ async function saveRateLimit() {
 async function deleteRateLimit() {
   if (!confirm(`정책 "${rlState.service}" 를 삭제할까요? mci-edge-* 가 컴파일 default 로 복원됩니다.`)) return;
   try {
-    const r = await fetch("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service), {
-      method: "DELETE", credentials: "same-origin",
-    });
-    if (!r.ok) {
-      const t = await r.text();
-      toast("삭제 실패: " + t, "err");
-      return;
-    }
+    await api("/v1/admin/ratelimit/" + encodeURIComponent(rlState.service), { method: "DELETE" });
     toast("정책 삭제됨 — defaults 복원");
     rlState.doc = { rules: [], fallback: null, version: 0 };
     renderRateLimit();

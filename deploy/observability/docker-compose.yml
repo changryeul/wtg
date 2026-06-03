@@ -1,12 +1,18 @@
-# WTG 운영 메트릭 시각화 — dev/dev-ops 용 docker-compose.
+# WTG 운영 메트릭 + trace 시각화 — dev/dev-ops 용 docker-compose.
 #
 # 사용:
 #   cd deploy/observability
 #   docker compose up -d
 #
-# Grafana: http://localhost:3030  (admin / admin — 초기 로그인 후 변경 권장)
+# Grafana:    http://localhost:3030  (admin / admin — 초기 로그인 후 변경)
 # Prometheus: http://localhost:9095  (9090 은 mci-admin 과 충돌해 9095 사용)
-# (포트 3000 / 9090 충돌 시 dev 외 다른 서비스가 점유. 변경 가능.)
+# Jaeger UI:  http://localhost:16686 (OTLP receiver :4317 gRPC, :4318 HTTP)
+#
+# WTG 서비스 trace 활성 (PR 2 — broker-tracing.md §8):
+#   mci-api      --otel-endpoint=localhost:4317 --otel-insecure --otel-sample 0.1
+#   mci-edge-api --otel-endpoint=localhost:4317 --otel-insecure
+#
+# Grafana 안에서 Jaeger trace 검색: Explore → Datasource: Jaeger.
 #
 # 종료:
 #   docker compose down  (volume 보존)
@@ -50,6 +56,23 @@ services:
       - grafana-data:/var/lib/grafana
     depends_on:
       - prometheus
+      - jaeger
+
+  # Jaeger all-in-one — OTLP receiver + collector + storage + UI 가 단일 컨테이너.
+  # dev / dev-ops 용. 운영은 OTel Collector + Jaeger (또는 Tempo) 분리 권장.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    container_name: wtg-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC (WTG --otel-endpoint 가 사용)
+      - "4318:4318"    # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      # in-memory storage. 운영은 Elasticsearch/Cassandra/Badger 등 권장.
+      - SPAN_STORAGE_TYPE=memory
+      - MEMORY_MAX_TRACES=50000
 
 volumes:
   prom-data:

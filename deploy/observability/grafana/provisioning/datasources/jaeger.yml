@@ -1,0 +1,24 @@
+# Grafana auto-provisioning — Jaeger datasource (분산 trace).
+#
+# WTG 서비스가 OTLP gRPC (:4317) 로 trace 전송하면 Jaeger 가 수집 + 저장.
+# Grafana Explore 에서 datasource 선택 후 trace_id 검색 또는 service 필터.
+#
+# uid 는 dashboard JSON 의 datasource reference 에 사용.
+
+apiVersion: 1
+
+datasources:
+  - name: Jaeger
+    type: jaeger
+    uid: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: true
+    jsonData:
+      # tracesToMetrics — trace → metrics drill-down. 운영자가 span 의 service
+      # 로부터 Prometheus 메트릭으로 점프.
+      tracesToMetrics:
+        datasourceUid: prometheus
+      # nodeGraph — service graph 시각화 (Jaeger UI 의 의존성 그래프와 동일).
+      nodeGraph:
+        enabled: true

@@ -62,6 +62,7 @@ func RegisterQuoteValidationHTTP(mux *http.ServeMux, srv *QuoteValidationServer,
 	mux.HandleFunc("POST /v1/quoteid/mark-consumed", h.handleMarkConsumed)
 	mux.HandleFunc("POST /v1/quoteid/batch-mark-consumed", h.handleBatchMarkConsumed)
 	mux.HandleFunc("GET /v1/quoteid/stats", h.handleStats)
+	mux.HandleFunc("GET /v1/quoteid/lookup", h.handleLookup)
 }
 
 type quoteValidationHTTP struct {
@@ -163,4 +164,38 @@ func (h *quoteValidationHTTP) handleBatchMarkConsumed(w http.ResponseWriter, r *
 
 func (h *quoteValidationHTTP) handleStats(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.srv.Stats())
+}
+
+// handleLookup — GET /v1/quoteid/lookup?id=...
+//
+// 운영 read-only 조회 — Validate 의 RBAC / consumed-marking side-effect 없음.
+// 응답: {id, found, record(if found), consumed, consumed_by}. 분쟁 / spike 분석.
+//
+// Registry.Lookup 은 not-found 를 Found=false 로 표현 (err=nil) — err != nil
+// 은 store 자체 실패 (Redis 끊김 등) 만 의미.
+func (h *quoteValidationHTTP) handleLookup(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, `{"error":"id 필요"}`, http.StatusBadRequest)
+		return
+	}
+	lr, err := h.srv.LookupReadonly(r.Context(), id)
+	if err != nil {
+		h.logger.Warn("quoteid lookup 실패",
+			slog.String("id", id), slog.Any("err", err))
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error": "store_error", "message": err.Error(),
+		})
+		return
+	}
+	out := map[string]any{
+		"id":          id,
+		"found":       lr.Found,
+		"consumed":    lr.Consumed,
+		"consumed_by": lr.ConsumedBy,
+	}
+	if lr.Found {
+		out["record"] = lr.Record
+	}
+	writeJSON(w, http.StatusOK, out)
 }

@@ -308,6 +308,7 @@
           <button data-page="profiles"        class="nav-btn nav-item"><span class="nav-ico">🧩</span>프로파일</button>
           <button data-page="users"           class="nav-btn nav-item"><span class="nav-ico">👥</span>사용자 프로파일</button>
           <button data-page="quoteid-engines" class="nav-btn nav-item"><span class="nav-ico">🔑</span>QuoteID 엔진</button>
+          <button data-page="quoteid-lookup"  class="nav-btn nav-item"><span class="nav-ico">🔍</span>QuoteID 조회</button>
         </div>
 
         <!-- 진단 도구 — broker/시세/API 흐름 점검 -->
@@ -1549,6 +1550,26 @@
               등록된 engine_id 가 없습니다 — RBAC 비활성 (모든 caller 통과). <button class="text-accent-400 hover:text-accent-500" id="qe-add2">신규 등록</button>
             </div>
           </div>
+        </div>
+
+        <!-- QuoteID 조회 — mci-price 의 Registry.Lookup read-only. 분쟁 / spike 분석. -->
+        <div id="page-quoteid-lookup" class="page hidden space-y-4">
+          <div>
+            <h3 class="text-lg font-semibold">QuoteID 조회</h3>
+            <p class="text-sm text-slate-400">발급된 QuoteID 의 record + consumed 상태를 read-only 로 조회. Validate 와 달리 RBAC / consumed marking side-effect 없음 — 분쟁 / 감사 안전.</p>
+          </div>
+
+          <div class="border-gradient rounded-xl p-4 flex flex-wrap gap-3 items-end">
+            <label class="text-xs space-y-1 flex-1 min-w-[280px]">
+              <span class="text-slate-400">Quote ID</span>
+              <input id="ql-id" type="text" placeholder="A-20260603-00001234"
+                class="w-full px-3 py-2 rounded-lg bg-ink-900 border border-ink-700 focus:border-accent-500 outline-none font-mono"/>
+            </label>
+            <button id="ql-run" class="px-4 py-2 rounded-lg bg-accent-600 hover:bg-accent-500 text-sm font-semibold">▶ 조회</button>
+            <button id="ql-clear" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-xs">지우기</button>
+          </div>
+
+          <div id="ql-result" class="text-sm text-slate-500">QuoteID 입력 후 조회.</div>
         </div>
 
         <!-- 마진 재계산 (margin) — 분쟁/감사 backfill -->
@@ -3107,6 +3128,7 @@ function goPage(name) {
   if (name !== "recenttx") stopRecentTxPoller();
   if (name === "recenttx") initRecentTx();
   if (name === "margin-wizard") initMarginWizard();
+  if (name === "quoteid-lookup") initQuoteIDLookup();
   // broker 의존 페이지 진입 시 connection banner 갱신.
   if (name === "broker" || name === "tester" || name === "wsmon") loadBrokerConnBanner();
   if (name !== "audit")     stopAuditPoller();
@@ -8577,6 +8599,81 @@ function renderRecentTx(d) {
     tr.appendChild(h("td", { class: "px-3 py-1 font-mono text-[10px] text-slate-500", text: traceShort, title: e.trace_id || "" }));
     tbody.appendChild(tr);
   }
+}
+
+// ───────── QuoteID Lookup ─────────
+const qlState = { wired: false };
+
+function initQuoteIDLookup() {
+  if (qlState.wired) return;
+  qlState.wired = true;
+  $("#ql-run").onclick = runQuoteIDLookup;
+  $("#ql-clear").onclick = () => { $("#ql-id").value = ""; $("#ql-result").innerHTML = "QuoteID 입력 후 조회."; };
+  $("#ql-id").addEventListener("keydown", (e) => { if (e.key === "Enter") runQuoteIDLookup(); });
+}
+
+async function runQuoteIDLookup() {
+  const id = ($("#ql-id").value || "").trim();
+  const out = $("#ql-result");
+  if (!id) { out.innerHTML = `<span class="text-warn">id 비어 있음.</span>`; return; }
+  out.textContent = "조회 중...";
+  try {
+    const resp = await fetch("/v1/admin/quoteid-lookup?id=" + encodeURIComponent(id), { credentials: "include" });
+    const data = await resp.json();
+    if (!resp.ok) {
+      out.innerHTML = `<span class="text-bad">HTTP ${resp.status}: ${data.error || data.message || "조회 실패"}</span>`;
+      return;
+    }
+    renderQuoteIDLookup(data);
+  } catch (e) {
+    out.innerHTML = `<span class="text-bad">요청 실패: ${e.message}</span>`;
+  }
+}
+
+function renderQuoteIDLookup(d) {
+  const out = $("#ql-result");
+  if (!d.found) {
+    out.innerHTML = `
+      <div class="border-gradient rounded-xl p-6 text-center">
+        <div class="text-bad font-semibold text-lg">⚠ 미존재 / 만료</div>
+        <div class="text-slate-400 mt-2">QuoteID <code class="font-mono text-slate-200">${d.id}</code> 가 Registry 에 없음 — 발급 안 됐거나 ValidUntil 도래 후 GC 됨.</div>
+        ${d.consumed ? `<div class="text-warn mt-3 text-sm">단, consumed marker 는 존재 — by <code class="font-mono">${d.consumed_by||"?"}</code> (record GC race)</div>` : ""}
+      </div>`;
+    return;
+  }
+  const r = d.record || {};
+  const issued = r.IssuedAt ? new Date(r.IssuedAt / 1e6).toLocaleString("ko-KR") : "—";
+  const validUntil = r.ValidUntil ? new Date(r.ValidUntil / 1e6).toLocaleString("ko-KR") : "—";
+  const now = Date.now() * 1e6;
+  const expired = r.ValidUntil && r.ValidUntil < now;
+  const ttlMs = r.ValidUntil ? Math.round((r.ValidUntil - now) / 1e6) : null;
+  const statusBadge = d.consumed
+    ? `<span class="px-2 py-0.5 rounded bg-warn/20 text-warn text-[10px] font-semibold">CONSUMED</span>`
+    : (expired
+        ? `<span class="px-2 py-0.5 rounded bg-bad/20 text-bad text-[10px] font-semibold">EXPIRED</span>`
+        : `<span class="px-2 py-0.5 rounded bg-good/20 text-good text-[10px] font-semibold">FRESH</span>`);
+
+  out.innerHTML = `
+    <div class="border-gradient rounded-xl p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="font-mono text-slate-200 text-sm">${d.id}</div>
+        <div class="flex gap-2 items-center">${statusBadge}${ttlMs !== null ? `<span class="text-[10px] text-slate-500 font-mono">${expired ? "expired " + Math.abs(Math.round(ttlMs/1000)) + "s ago" : "ttl " + Math.round(ttlMs/1000) + "s"}</span>` : ""}</div>
+      </div>
+      <table class="w-full text-xs">
+        <tbody>
+          <tr class="border-b border-ink-800/60"><td class="px-2 py-1 text-slate-400 w-32">Pair</td><td class="px-2 py-1 font-mono">${r.Pair || "—"}</td></tr>
+          <tr class="border-b border-ink-800/60"><td class="px-2 py-1 text-slate-400">Profile</td><td class="px-2 py-1 font-mono">${r.Profile ? (r.Profile.channel + "." + r.Profile.site + "." + r.Profile.tier) : "—"}</td></tr>
+          <tr class="border-b border-ink-800/60"><td class="px-2 py-1 text-slate-400">Tenor</td><td class="px-2 py-1 font-mono">${r.Tenor || "—"}</td></tr>
+          <tr class="border-b border-ink-800/60"><td class="px-2 py-1 text-slate-400">Bid / Ask</td><td class="px-2 py-1 font-mono"><span class="text-good">${(r.Bid||0).toFixed(4)}</span> / <span class="text-bad">${(r.Ask||0).toFixed(4)}</span> <span class="text-slate-500 text-[10px]">(spread ${((r.Ask||0)-(r.Bid||0)).toFixed(4)})</span></td></tr>
+          <tr class="border-b border-ink-800/60"><td class="px-2 py-1 text-slate-400">Issued</td><td class="px-2 py-1 font-mono text-slate-300">${issued}</td></tr>
+          <tr class="border-b border-ink-800/60"><td class="px-2 py-1 text-slate-400">ValidUntil</td><td class="px-2 py-1 font-mono ${expired ? "text-bad" : "text-slate-300"}">${validUntil}</td></tr>
+          <tr class="border-b border-ink-800/60"><td class="px-2 py-1 text-slate-400">Sequence</td><td class="px-2 py-1 font-mono text-slate-500">${r.Sequence || "—"}</td></tr>
+          <tr class="border-b border-ink-800/60"><td class="px-2 py-1 text-slate-400">Issuer</td><td class="px-2 py-1 font-mono text-slate-400">${r.Issuer || "—"}</td></tr>
+          ${d.consumed ? `<tr><td class="px-2 py-1 text-slate-400">Consumed By</td><td class="px-2 py-1 font-mono text-warn">${d.consumed_by || "—"}</td></tr>` : ""}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 // ───────── Margin Change Wizard (preview) ─────────

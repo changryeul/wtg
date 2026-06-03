@@ -97,6 +97,13 @@ func NewQuoteValidationServer(registry quoteid.Registry, logger *slog.Logger) *Q
 // SetMetrics — Prometheus Registry 주입. nil 이면 메트릭 미발행.
 func (s *QuoteValidationServer) SetMetrics(m *metrics.Registry) { s.metrics = m }
 
+// LookupReadonly — quote_id 운영 조회 (read-only). 카운터 영향 X — admin UI
+// 가 운영자 입력으로 호출. Validate 와 달리 RBAC / consumed 표시 같은
+// side-effect 없음.
+func (s *QuoteValidationServer) LookupReadonly(ctx context.Context, id string) (quoteid.LookupResult, error) {
+	return s.registry.Lookup(ctx, quoteid.QuoteID(id))
+}
+
 // observeOp / observeBatch — metrics 가 nil 일 때 no-op.
 func (s *QuoteValidationServer) observeOp(op, statusLabel string, latency time.Duration) {
 	if s.metrics == nil {

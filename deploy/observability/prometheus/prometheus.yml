@@ -9,6 +9,7 @@ global:
 
 scrape_configs:
   # mci-price /metrics — P6 (cross/pricing/master) + quoteid + http + broker.
+  # 다중 인스턴스 운영 시 각 target 에 instance label 추가 — docs/mci-price-ha.md §3.
   - job_name: mci-price
     metrics_path: /metrics
     scrape_interval: 5s
@@ -16,6 +17,12 @@ scrape_configs:
       - targets: ["host.docker.internal:8082"]
         labels:
           service: mci-price
+          # instance: "1"   # 다중 인스턴스 시 식별
+      # 두번째 인스턴스 예시:
+      # - targets: ["host.docker.internal:8092"]
+      #   labels:
+      #     service: mci-price
+      #     instance: "2"
 
   # quote-forwarder /metrics — feed별 throughput / drop.
   - job_name: quote-forwarder

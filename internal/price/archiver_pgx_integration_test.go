@@ -78,6 +78,52 @@ func TestPgxInserter_OnConflictDoNothing(t *testing.T) {
 	}
 }
 
+// 다중 mci-price 인스턴스가 동일 broker 의 같은 bar 를 동시 archive 시도하는
+// 시나리오 — PK (pair, tf, opened_at) 의 ON CONFLICT DO NOTHING 으로
+// 두 인스턴스 모두 에러 X, DB row 1건만 보존.
+func TestPgxInserter_MultiInstanceConcurrent(t *testing.T) {
+	pool := pgxtest.StartTimescale(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 두 인스턴스 — 같은 pool 이지만 별도 Inserter (운영 시엔 별 프로세스).
+	insA := NewPgxInserter(pool)
+	insB := NewPgxInserter(pool)
+
+	t0 := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	mkBars := func(seed float64) []*quote.Bar {
+		bars := make([]*quote.Bar, 0, 5)
+		for i := 0; i < 5; i++ {
+			open := t0.Add(time.Duration(i) * time.Minute)
+			b := quote.NewBar(quote.TF1m,
+				quote.Quote{Pair: "USD/KRW", Bid: 1400 + seed + float64(i), Ask: 1400.1 + seed + float64(i), TS: open})
+			b.Close()
+			bars = append(bars, b)
+		}
+		return bars
+	}
+
+	// 두 인스턴스 동시 Insert (goroutine).
+	errA, errB := make(chan error, 1), make(chan error, 1)
+	go func() { errA <- insA.Insert(ctx, mkBars(0)) }()
+	go func() { errB <- insB.Insert(ctx, mkBars(100)) }()
+	if e := <-errA; e != nil {
+		t.Errorf("insA: %v", e)
+	}
+	if e := <-errB; e != nil {
+		t.Errorf("insB: %v", e)
+	}
+
+	// 5건만 (인스턴스 수 무관) — first-write-wins.
+	var n int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM quote_bars WHERE pair=$1 AND tf=$2", "USD/KRW", "1m").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Errorf("멀티 인스턴스 동시 archive 후 row 수 = %d, want 5", n)
+	}
+}
+
 func TestPgxInserter_EmptyBatch(t *testing.T) {
 	pool := pgxtest.StartTimescale(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

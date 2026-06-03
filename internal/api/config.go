@@ -129,6 +129,12 @@ type Config struct {
 	RedisPrefix         string // default "wtg:auth"
 	RedisSentinelMaster string // sentinel 사용 시 master 이름
 	RedisMode           string // "direct" | "sentinel" | "cluster" (빈값=auto: 1addr→direct, 2+→sentinel)
+
+	// Idempotency 정책 — `Idempotency-Key` 헤더 처리.
+	// IdempotencyEnabled=false 면 헤더 있어도 무시 (기존 동작).
+	// Backend: 현재는 memory 만 — multi-instance 운영은 Redis 후속.
+	IdempotencyEnabled bool
+	IdempotencyTTL     time.Duration // 0 이면 5분 default (pkg/idempotency.Options)
 }
 
 // DefaultConfig 는 합리적인 디폴트가 채워진 Config 를 반환한다.
@@ -305,6 +311,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.RedisPrefix, "redis-prefix", cfg.RedisPrefix, "redis 키 prefix (default wtg:auth)")
 	fs.StringVar(&cfg.RedisSentinelMaster, "redis-master", cfg.RedisSentinelMaster, "Sentinel master 이름 (다중 addr + sentinel)")
 	fs.StringVar(&cfg.RedisMode, "redis-mode", cfg.RedisMode, "topology 명시: direct / sentinel / cluster (빈값=auto)")
+	fs.BoolVar(&cfg.IdempotencyEnabled, "idempotency", cfg.IdempotencyEnabled, "Idempotency-Key 헤더 처리 활성 (default off — 헤더 무시). 활성 시 memory store. 운영 권장 — 중복 매매 차단")
+	fs.DurationVar(&cfg.IdempotencyTTL, "idempotency-ttl", cfg.IdempotencyTTL, "Idempotency reservation / cached reply TTL (default 5m)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err

@@ -15,6 +15,7 @@ import (
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
+	"github.com/winwaysystems/wtg/pkg/idempotency"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/policy"
 	"github.com/winwaysystems/wtg/pkg/routing"
@@ -75,6 +76,11 @@ type Deps struct {
 	// AliasMetrics — /v1/tx 호출 1건마다 alias 별 호출 수 / 에러 / 평균 latency
 	// 누적. /v1/admin/alias-stats endpoint 에서 노출 (운영 가시화). nil 이면 미수집.
 	AliasMetrics *AliasMetrics
+
+	// Idempotency — 매매 transaction 의 중복 제출 방지. nil 이면 비활성 (헤더
+	// 있어도 무시 — 기존 동작). 운영 환경에서 활성 권장 — 사용자 더블 클릭 /
+	// 모바일 재연결 retry 시 중복 매매 차단.
+	Idempotency idempotency.Store
 }
 
 // writeJSON 은 표준 JSON 응답 헬퍼. 에러 발생 시 access log 가 캡처하므로

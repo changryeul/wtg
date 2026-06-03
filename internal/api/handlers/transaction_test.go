@@ -14,6 +14,7 @@ import (
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/internal/api/transform"
+	"github.com/winwaysystems/wtg/pkg/idempotency"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/policy"
 	"github.com/winwaysystems/wtg/pkg/routing"
@@ -453,4 +454,178 @@ func TestTransactionNilReplyError(t *testing.T) {
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("status: %d", rr.Code)
 	}
+}
+
+// ─── Idempotency-Key ──────────────────────────────────────────────────────────
+
+// doAuthenticatedTxWith — header 포함 변형. body 같이 단일 호출.
+func doAuthenticatedTxWith(t *testing.T, deps *Deps, body string, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/tx", strings.NewReader(body))
+	req = req.WithContext(middleware.ContextWithPrincipal(req.Context(), &middleware.Principal{
+		Usid:    "trader01",
+		Channel: "WEB",
+	}))
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	rr := httptest.NewRecorder()
+	Transaction(deps)(rr, req)
+	return rr
+}
+
+// 첫 호출은 broker 도달 + reply 캐시. 같은 키 + body 두 번째는 broker 호출
+// X + 캐시된 응답 + Idempotency-Cached 헤더.
+func TestTransactionIdempotency_CachedReplay(t *testing.T) {
+	calls := 0
+	caller := &fakeCaller{
+		reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+			calls++
+			return &mymq.Reply{Body: []byte(`{"order_id":"O-99","status":"ACCEPTED"}`)}, nil
+		},
+	}
+	deps := quietDeps(caller)
+	deps.Idempotency = idempotency.NewMemoryStore(idempotency.Options{})
+	body := `{"exchange":"ORDER","routing_key":"NEW","data":{"symbol":"USDKRW","qty":1000}}`
+
+	// 1차
+	rr1 := doAuthenticatedTxWith(t, deps, body, map[string]string{"Idempotency-Key": "KEY-1"})
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("1차 status=%d, want 200", rr1.Code)
+	}
+	if calls != 1 {
+		t.Errorf("1차 broker calls=%d, want 1", calls)
+	}
+	if rr1.Header().Get("Idempotency-Cached") != "" {
+		t.Errorf("1차에 Idempotency-Cached 헤더 — 새 요청이어야")
+	}
+
+	// 2차 (replay)
+	rr2 := doAuthenticatedTxWith(t, deps, body, map[string]string{"Idempotency-Key": "KEY-1"})
+	if rr2.Code != http.StatusOK {
+		t.Errorf("2차 status=%d, want 200 (replay)", rr2.Code)
+	}
+	if calls != 1 {
+		t.Errorf("2차 broker calls=%d, want 1 (skip)", calls)
+	}
+	if rr2.Header().Get("Idempotency-Cached") != "true" {
+		t.Errorf("2차에 Idempotency-Cached=true 누락")
+	}
+	if rr1.Body.String() != rr2.Body.String() {
+		t.Errorf("응답 본문 불일치:\n1차=%s\n2차=%s", rr1.Body.String(), rr2.Body.String())
+	}
+}
+
+// 같은 키 + 다른 body → 409 conflict.
+func TestTransactionIdempotency_BodyConflict(t *testing.T) {
+	caller := &fakeCaller{
+		reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+			return &mymq.Reply{Body: []byte(`{"ok":true}`)}, nil
+		},
+	}
+	deps := quietDeps(caller)
+	deps.Idempotency = idempotency.NewMemoryStore(idempotency.Options{})
+
+	// 1차 — KEY-2 + body A
+	_ = doAuthenticatedTxWith(t, deps,
+		`{"exchange":"ORDER","routing_key":"NEW","data":{"qty":100}}`,
+		map[string]string{"Idempotency-Key": "KEY-2"})
+
+	// 2차 — KEY-2 + body B
+	rr := doAuthenticatedTxWith(t, deps,
+		`{"exchange":"ORDER","routing_key":"NEW","data":{"qty":999}}`,
+		map[string]string{"Idempotency-Key": "KEY-2"})
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("2차 status=%d, want 409 (다른 body 충돌)", rr.Code)
+	}
+}
+
+// 헤더 부재 — idempotency 미적용 (broker 매번 호출, 캐시 X).
+func TestTransactionIdempotency_NoHeaderPassThrough(t *testing.T) {
+	calls := 0
+	caller := &fakeCaller{
+		reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+			calls++
+			return &mymq.Reply{Body: []byte(`{"ok":true}`)}, nil
+		},
+	}
+	deps := quietDeps(caller)
+	deps.Idempotency = idempotency.NewMemoryStore(idempotency.Options{})
+
+	body := `{"exchange":"ORDER","routing_key":"NEW","data":{}}`
+	_ = doAuthenticatedTx(t, deps, body)
+	_ = doAuthenticatedTx(t, deps, body)
+	if calls != 2 {
+		t.Errorf("헤더 없으면 매번 broker — calls=%d, want 2", calls)
+	}
+}
+
+// store nil — 헤더 있어도 idempotency 미적용 (기존 동작).
+func TestTransactionIdempotency_StoreDisabled(t *testing.T) {
+	calls := 0
+	caller := &fakeCaller{
+		reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+			calls++
+			return &mymq.Reply{Body: []byte(`{"ok":true}`)}, nil
+		},
+	}
+	deps := quietDeps(caller) // Idempotency nil
+	body := `{"exchange":"ORDER","routing_key":"NEW","data":{}}`
+	_ = doAuthenticatedTxWith(t, deps, body, map[string]string{"Idempotency-Key": "KEY-3"})
+	_ = doAuthenticatedTxWith(t, deps, body, map[string]string{"Idempotency-Key": "KEY-3"})
+	if calls != 2 {
+		t.Errorf("store nil 이면 매번 broker — calls=%d, want 2", calls)
+	}
+}
+
+// broker 비즈니스 에러 (errn != 0, 422) 도 캐시 — 결정적 응답.
+func TestTransactionIdempotency_BusinessErrorCached(t *testing.T) {
+	calls := 0
+	caller := &fakeCaller{
+		reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+			calls++
+			return &mymq.Reply{Errn: mymq.ErrNoSvc, ErrMsg: "no service"}, nil
+		},
+	}
+	deps := quietDeps(caller)
+	deps.Idempotency = idempotency.NewMemoryStore(idempotency.Options{})
+
+	body := `{"exchange":"X","routing_key":"Y","data":{}}`
+	rr1 := doAuthenticatedTxWith(t, deps, body, map[string]string{"Idempotency-Key": "KEY-4"})
+	rr2 := doAuthenticatedTxWith(t, deps, body, map[string]string{"Idempotency-Key": "KEY-4"})
+
+	if calls != 1 {
+		t.Errorf("비즈니스 에러도 캐시 — calls=%d, want 1", calls)
+	}
+	if rr1.Code != rr2.Code {
+		t.Errorf("status mismatch: %d vs %d", rr1.Code, rr2.Code)
+	}
+	if rr2.Header().Get("Idempotency-Cached") != "true" {
+		t.Errorf("2차 비즈니스 에러 응답이 캐시 미표시")
+	}
+}
+
+// broker network 에러 (5xx) — 캐시 X, 재시도 시 broker 다시 호출.
+func TestTransactionIdempotency_BrokerErrorRollback(t *testing.T) {
+	calls := 0
+	caller := &fakeCaller{
+		reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+			calls++
+			return nil, errors.New("connection lost")
+		},
+	}
+	deps := quietDeps(caller)
+	deps.Idempotency = idempotency.NewMemoryStore(idempotency.Options{})
+
+	body := `{"exchange":"X","routing_key":"Y","data":{}}`
+	rr1 := doAuthenticatedTxWith(t, deps, body, map[string]string{"Idempotency-Key": "KEY-5"})
+	if rr1.Code != http.StatusInternalServerError {
+		t.Errorf("1차 status=%d, want 500", rr1.Code)
+	}
+	rr2 := doAuthenticatedTxWith(t, deps, body, map[string]string{"Idempotency-Key": "KEY-5"})
+	if calls != 2 {
+		t.Errorf("5xx 에러 후 재시도 — broker 다시 호출되어야: calls=%d, want 2", calls)
+	}
+	_ = rr2
 }

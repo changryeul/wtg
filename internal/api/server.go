@@ -18,6 +18,7 @@ import (
 	"github.com/winwaysystems/wtg/internal/api/handlers"
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
+	"github.com/winwaysystems/wtg/pkg/idempotency"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/policy"
@@ -351,6 +352,11 @@ func (s *Server) Start(ctx context.Context) error {
 		RefreshStore: s.refresh,
 		UserProfiles: upResolver,
 		AliasMetrics: aliasMetrics,
+	}
+	// Idempotency-Key 처리 — Memory store (현재). 다중 인스턴스 운영은 Redis 후속.
+	if s.cfg.IdempotencyEnabled {
+		deps.Idempotency = idempotency.NewMemoryStore(idempotency.Options{TTL: s.cfg.IdempotencyTTL})
+		s.logger.Info("Idempotency-Key 처리 활성", slog.Duration("ttl", s.cfg.IdempotencyTTL))
 	}
 
 	// 라우팅 — Go 1.22+ ServeMux (method+path 패턴 지원).

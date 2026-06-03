@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/internal/api/transform"
+	"github.com/winwaysystems/wtg/pkg/idempotency"
 	"github.com/winwaysystems/wtg/pkg/policy"
 )
 
@@ -54,8 +56,14 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			return
 		}
 
+		// body raw 캐싱 — Idempotency-Key hash 계산용 + json unmarshal 양쪽 사용.
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_body", err.Error())
+			return
+		}
 		var env transform.Envelope
-		if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		if err := json.Unmarshal(bodyBytes, &env); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 			return
 		}
@@ -68,6 +76,31 @@ func Transaction(deps *Deps) http.HandlerFunc {
 		recordAlias := func(isErr bool) {
 			deps.AliasMetrics.RecordCall(env.Alias, time.Since(callStart), isErr)
 		}
+
+		// Idempotency 처리 — store + 헤더 둘 다 있을 때만. store 실패는 fail-open.
+		// Reserve 가 Cached / Conflict / InFlight 면 응답 처리 후 handled=true.
+		idemKey, idemActive, handled := reserveIdempotency(w, r, deps, p.Usid, bodyBytes, recordAlias)
+		if handled {
+			return
+		}
+		// leader path — 응답 캡처해서 끝에서 commit/rollback.
+		var cw *captureWriter
+		if idemActive {
+			cw = &captureWriter{ResponseWriter: w, status: http.StatusOK}
+			w = cw
+			defer func() {
+				// 5xx 는 재시도 가능 — Rollback. 4xx / 2xx / 422 는 결정적 — Commit.
+				if cw.status >= 500 {
+					_ = deps.Idempotency.Rollback(r.Context(), idemKey)
+					return
+				}
+				_ = deps.Idempotency.Commit(r.Context(), idemKey, &idempotency.CachedReply{
+					StatusCode: cw.status,
+					Body:       append([]byte(nil), cw.body.Bytes()...),
+				})
+			}()
+		}
+		_ = idemKey // commitOrRollback 은 defer 안에서 직접 호출.
 
 		// 운영 정책 검사 — kill switch / 정비창 / 차단 심볼·routing-key.
 		// 비즈니스 거부는 매매 엔진이 담당, 본 검사는 운영 차원만 (auth.md §1).

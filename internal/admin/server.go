@@ -497,6 +497,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// cfg.PriceURL 사용 (기존 price-stats 와 동일 backend).
 	mux.HandleFunc("GET /v1/admin/quoteid-lookup", UpstreamProxy(s.cfg.PriceURL, "/v1/quoteid/lookup", s.logger))
 	mux.HandleFunc("GET /v1/admin/quoteid-stats", UpstreamProxy(s.cfg.PriceURL, "/v1/quoteid/stats", s.logger))
+	// 차트 통계 — mci-chart 의 누적 카운터 + Hub state. ws 클라이언트 health.
+	mux.HandleFunc("GET /v1/admin/chart-stats", UpstreamProxy(s.cfg.ChartURL, "/v1/chart-stats", s.logger))
 	// Push 테스터 — mci-admin 의 broker connection 으로 user-targeted unsolicited
 	// 메시지(FC_PUSH/SubPush) 를 발사한다. mci-push 띄워둔 상태에서 ws 로 흘러오는지
 	// 시각 검증용. NoBroker 모드면 503.

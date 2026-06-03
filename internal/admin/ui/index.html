@@ -310,6 +310,7 @@
           <button data-page="quoteid-engines" class="nav-btn nav-item"><span class="nav-ico">🔑</span>QuoteID 엔진</button>
           <button data-page="quoteid-lookup"  class="nav-btn nav-item"><span class="nav-ico">🔍</span>QuoteID 조회</button>
           <button data-page="quoteid-stats"   class="nav-btn nav-item"><span class="nav-ico">📊</span>QuoteID Validate 통계</button>
+          <button data-page="chartstats"      class="nav-btn nav-item"><span class="nav-ico">📈</span>차트 통계 (mci-chart)</button>
         </div>
 
         <!-- 진단 도구 — broker/시세/API 흐름 점검 -->
@@ -2584,6 +2585,59 @@
           </div>
         </div>
 
+        <!-- 차트 통계 — mci-chart 의 누적 카운터 + WS Hub state. -->
+        <div id="page-chartstats" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">차트 통계 (mci-chart)</h3>
+              <p class="text-sm text-slate-400">REST 요청 / 에러 / row 수 + WS 라이브 봉 수신 + Hub (connected ws 클라이언트) 누적. 5초 자동 갱신.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400">갱신 <span id="cs-updated" class="font-mono text-slate-200">—</span></span>
+              <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer">
+                <input id="cs-auto" type="checkbox" class="w-4 h-4 accent-accent-500" checked />
+                자동 갱신
+              </label>
+              <button id="cs-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻</button>
+            </div>
+          </div>
+
+          <!-- REST -->
+          <div class="border-gradient rounded-xl p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="text-sm font-semibold text-slate-300">REST (/v1/chart)</div>
+              <div class="text-xs text-slate-500"><span id="cs-err-rate" class="font-mono">—</span> error%</div>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div class="border-gradient rounded-lg p-2.5"><div class="text-[10px] uppercase text-slate-400">requests</div><div id="cs-req" class="text-xl font-mono mt-0.5">—</div></div>
+              <div class="border-gradient rounded-lg p-2.5"><div class="text-[10px] uppercase text-slate-400">errors</div><div id="cs-err" class="text-xl font-mono mt-0.5 text-bad">—</div></div>
+              <div class="border-gradient rounded-lg p-2.5"><div class="text-[10px] uppercase text-slate-400">rows returned</div><div id="cs-rows" class="text-xl font-mono mt-0.5 text-slate-300">—</div></div>
+              <div class="border-gradient rounded-lg p-2.5"><div class="text-[10px] uppercase text-slate-400">avg rows / req</div><div id="cs-avg" class="text-xl font-mono mt-0.5 text-slate-400">—</div></div>
+            </div>
+          </div>
+
+          <!-- WS Live Bar -->
+          <div class="border-gradient rounded-xl p-4 space-y-3">
+            <div class="text-sm font-semibold text-slate-300">WS 라이브 봉 (gRPC SubscribeBar 수신)</div>
+            <div class="border-gradient rounded-lg p-2.5">
+              <div class="text-[10px] uppercase text-slate-400">bars received</div>
+              <div id="cs-bars" class="text-2xl font-mono mt-0.5 text-good">—</div>
+              <div class="text-[10px] text-slate-500 mt-1">mci-price 에서 stream 으로 받은 봉 누적. 0 이면 mci-price 연결 끊김 또는 SubscribeBar 미활성.</div>
+            </div>
+          </div>
+
+          <!-- Hub -->
+          <div class="border-gradient rounded-xl p-4 space-y-3">
+            <div class="text-sm font-semibold text-slate-300">WS Hub (클라이언트 fan-out)</div>
+            <div class="grid grid-cols-3 gap-3">
+              <div class="border-gradient rounded-lg p-2.5"><div class="text-[10px] uppercase text-slate-400">connected</div><div id="cs-hub-cnt" class="text-xl font-mono mt-0.5 text-good">—</div><div class="text-[10px] text-slate-500 mt-1">현재 ws 구독</div></div>
+              <div class="border-gradient rounded-lg p-2.5"><div class="text-[10px] uppercase text-slate-400">sent</div><div id="cs-hub-sent" class="text-xl font-mono mt-0.5 text-slate-300">—</div><div class="text-[10px] text-slate-500 mt-1">총 push 수</div></div>
+              <div class="border-gradient rounded-lg p-2.5"><div class="text-[10px] uppercase text-slate-400">dropped</div><div id="cs-hub-drop" class="text-xl font-mono mt-0.5 text-warn">—</div><div class="text-[10px] text-slate-500 mt-1">slow subscriber drop</div></div>
+            </div>
+            <div class="text-[11px] text-slate-500">drop_rate <span id="cs-hub-drop-rate" class="font-mono">—</span> % — &gt;1% 면 ws 클라이언트 부하 점검 (backpressure).</div>
+          </div>
+        </div>
+
         <!-- 매매 감사 — 최근 N 건 ring 시각화. mci-api 의 in-memory ring (TxRingSize > 0). -->
         <div id="page-recenttx" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -3204,6 +3258,8 @@ function goPage(name) {
   if (name === "quoteid-lookup") initQuoteIDLookup();
   if (name !== "quoteid-stats") stopQuoteIDStatsPoller();
   if (name === "quoteid-stats") initQuoteIDStats();
+  if (name !== "chartstats") stopChartStatsPoller();
+  if (name === "chartstats") initChartStats();
   // broker 의존 페이지 진입 시 connection banner 갱신.
   if (name === "broker" || name === "tester" || name === "wsmon") loadBrokerConnBanner();
   if (name !== "audit")     stopAuditPoller();
@@ -8673,6 +8729,65 @@ function renderRecentTx(d) {
     tr.appendChild(h("td", { class: "px-3 py-1 text-center font-mono text-[10px] text-slate-500", text: e.is_bulk ? "B" : "—" }));
     tr.appendChild(h("td", { class: "px-3 py-1 font-mono text-[10px] text-slate-500", text: traceShort, title: e.trace_id || "" }));
     tbody.appendChild(tr);
+  }
+}
+
+// ───────── Chart Stats (mci-chart proxy) ─────────
+const csState = { wired: false, poller: null };
+
+function initChartStats() {
+  if (!csState.wired) {
+    csState.wired = true;
+    $("#cs-refresh").onclick = loadChartStats;
+    $("#cs-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startChartStatsPoller(); else stopChartStatsPoller();
+    });
+  }
+  loadChartStats();
+  if ($("#cs-auto").checked) startChartStatsPoller();
+}
+function startChartStatsPoller() {
+  if (csState.poller) return;
+  csState.poller = setInterval(loadChartStats, 5000);
+}
+function stopChartStatsPoller() {
+  if (csState.poller) { clearInterval(csState.poller); csState.poller = null; }
+}
+
+async function loadChartStats() {
+  try {
+    const s = await api("/v1/admin/chart-stats");
+    renderChartStats(s);
+    $("#cs-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    $("#cs-updated").textContent = "로드 실패: " + e.message;
+  }
+}
+
+function renderChartStats(s) {
+  const num = (n) => (n || 0).toLocaleString();
+  const pct = (n, total) => total > 0 ? (n / total * 100).toFixed(2) + "%" : "—";
+  const req = s.requests || 0, err = s.errors || 0, rows = s.rows || 0;
+  $("#cs-req").textContent = num(req);
+  $("#cs-err").textContent = num(err);
+  $("#cs-rows").textContent = num(rows);
+  $("#cs-avg").textContent = req > 0 ? (rows / req).toFixed(1) : "—";
+  $("#cs-err-rate").textContent = pct(err, req);
+
+  $("#cs-bars").textContent = num(s.bars_received);
+
+  const hub = s.hub || {};
+  $("#cs-hub-cnt").textContent  = num(hub.count);
+  $("#cs-hub-sent").textContent = num(hub.sent);
+  $("#cs-hub-drop").textContent = num(hub.dropped);
+  $("#cs-hub-drop-rate").textContent = pct(hub.dropped, hub.sent);
+
+  // drop_rate > 1% 색상 강조
+  const dropEl = $("#cs-hub-drop");
+  if ((hub.sent || 0) > 0 && (hub.dropped || 0) / hub.sent > 0.01) {
+    dropEl.classList.remove("text-warn"); dropEl.classList.add("text-bad");
+  } else {
+    dropEl.classList.add("text-warn"); dropEl.classList.remove("text-bad");
   }
 }
 

@@ -209,4 +209,84 @@ func TestCrossRate_NoReentry(t *testing.T) {
 	}
 }
 
+// LatestCross 의 isStale 플래그 — emit 직후 false, maxStaleness 지나면 true.
+// 운영 시 forward-snapshot 등 외부 호출자가 stale 한 cross 호가를 거부 가능.
+func TestCrossRate_LatestCrossStaleFlag(t *testing.T) {
+	cr := NewCrossRateConsumer(CrossRateOptions{
+		MaxStaleness:   30 * time.Millisecond,
+		DebounceWindow: 1 * time.Millisecond,
+	})
+	cr.ReplaceFormulas(map[session.Pair]pricing.CrossFormula{
+		"EUR/KRW": {LegA: "EUR/USD", OpA: pricing.CrossOpMul, LegB: "USD/KRW", OpB: pricing.CrossOpMul, Scale: 1},
+	})
+	cr.OnTick(mkLegTick("EUR/USD", 1.08, 1.081))
+	cr.OnTick(mkLegTick("USD/KRW", 1378, 1379))
+
+	// 직후 — fresh
+	_, _, _, isStale, ok := cr.LatestCross("EUR/KRW")
+	if !ok {
+		t.Fatalf("LatestCross ok=false right after emit")
+	}
+	if isStale {
+		t.Errorf("emit 직후 isStale=true (예상 false)")
+	}
+
+	// maxStaleness 지나면 isStale=true 가 되어야 (재 emit 없어도 ts 가 옛 것)
+	time.Sleep(60 * time.Millisecond)
+	_, _, _, isStale2, ok2 := cr.LatestCross("EUR/KRW")
+	if !ok2 {
+		t.Fatalf("LatestCross ok=false after delay (lastEmits 캐시는 유지되어야)")
+	}
+	if !isStale2 {
+		t.Errorf("60ms 후 isStale=false (예상 true — maxStaleness=30ms)")
+	}
+}
+
+// 등록 안 된 pair 는 ok=false.
+func TestCrossRate_LatestCrossMissing(t *testing.T) {
+	cr := NewCrossRateConsumer(CrossRateOptions{})
+	_, _, _, isStale, ok := cr.LatestCross("USD/UNKNOWN")
+	if ok {
+		t.Errorf("등록 안 된 pair 에 ok=true")
+	}
+	if isStale {
+		t.Errorf("ok=false 인데 isStale=true")
+	}
+}
+
+// CrossRateStats 의 LastEmitsTotal / LastEmitsStale — 운영 가시성.
+// 등록된 cross pair 가 lastEmits 에 얼마나 있고 그중 stale 비율은 얼마.
+func TestCrossRate_StatsLastEmitsSnapshot(t *testing.T) {
+	cr := NewCrossRateConsumer(CrossRateOptions{
+		MaxStaleness:   30 * time.Millisecond,
+		DebounceWindow: 1 * time.Millisecond,
+	})
+	cr.AddDownstream(&captureConsumer{})
+	cr.ReplaceFormulas(map[session.Pair]pricing.CrossFormula{
+		"EUR/KRW": {LegA: "EUR/USD", OpA: pricing.CrossOpMul, LegB: "USD/KRW", OpB: pricing.CrossOpMul, Scale: 1},
+		"JPY/KRW": {LegA: "USD/KRW", OpA: pricing.CrossOpMul, LegB: "USD/JPY", OpB: pricing.CrossOpDiv, Scale: 100},
+	})
+
+	// EUR/KRW emit
+	cr.OnTick(mkLegTick("EUR/USD", 1.08, 1.081))
+	cr.OnTick(mkLegTick("USD/KRW", 1378, 1379))
+	// JPY/KRW emit
+	cr.OnTick(mkLegTick("USD/JPY", 151.2, 151.45))
+
+	st := cr.Stats()
+	if st.LastEmitsTotal != 2 {
+		t.Errorf("LastEmitsTotal=%d, want 2 (EUR/KRW + JPY/KRW)", st.LastEmitsTotal)
+	}
+	if st.LastEmitsStale != 0 {
+		t.Errorf("emit 직후 LastEmitsStale=%d, want 0", st.LastEmitsStale)
+	}
+
+	// 두 cross 모두 stale 되도록 대기
+	time.Sleep(60 * time.Millisecond)
+	st2 := cr.Stats()
+	if st2.LastEmitsStale != 2 {
+		t.Errorf("60ms 후 LastEmitsStale=%d, want 2 (둘 다 maxStaleness=30ms 초과)", st2.LastEmitsStale)
+	}
+}
+
 // floatNear 는 다른 파일에 정의되어 있음 (pricing_consumer_test.go).

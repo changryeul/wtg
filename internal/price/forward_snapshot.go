@@ -101,9 +101,15 @@ func ForwardSnapshotHandler(deps ForwardSnapshotDeps, devMode bool) http.Handler
 			rawBid, rawAsk = spotStat.BestBid, spotStat.BestAsk
 		} else if deps.Cross != nil {
 			// BEST miss → cross consumer 의 last emit cache 시도.
-			bid, ask, _, ok := deps.Cross.LatestCross(session.Pair(pair))
+			// stale 한 cross 호가는 forward-snapshot 으로 새지 않게 거부 —
+			// 분쟁 재계산 같은 운영 시점은 신선 데이터만 사용 (auth.md 정책).
+			bid, ask, _, isStale, ok := deps.Cross.LatestCross(session.Pair(pair))
 			if !ok {
 				writeForwardErr(w, http.StatusNotFound, "no BEST/cross snapshot for "+sym)
+				return
+			}
+			if isStale {
+				writeForwardErr(w, http.StatusNotFound, "cross snapshot stale for "+sym)
 				return
 			}
 			rawBid, rawAsk = bid, ask

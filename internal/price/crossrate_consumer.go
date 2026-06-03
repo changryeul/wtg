@@ -259,13 +259,19 @@ func (c *CrossRateConsumer) maybeEmitCross(crossPair session.Pair, srcTick *Tick
 
 // LatestCross — 본 cross pair 의 마지막 emit 결과. 외부 (forward-snapshot 등)
 // 가 BestConsumer cache 에 없는 cross 호가를 조회하는 경로.
-func (c *CrossRateConsumer) LatestCross(pair session.Pair) (bid, ask float64, ts time.Time, ok bool) {
+//
+// isStale: lastEmits 의 ts 가 maxStaleness 보다 오래된 경우 true. 운영 시
+// stale 한 cross 호가가 forward-snapshot 등 외부로 새는 것을 방지하려면
+// 호출자가 isStale 시 별도 처리 (fallback path 또는 거부). 기존 동작 유지가
+// 필요한 호출자는 isStale 무시.
+func (c *CrossRateConsumer) LatestCross(pair session.Pair) (bid, ask float64, ts time.Time, isStale, ok bool) {
 	v, found := c.lastEmits.Load(pair)
 	if !found {
-		return 0, 0, time.Time{}, false
+		return 0, 0, time.Time{}, false, false
 	}
 	s := v.(*crossSnap)
-	return s.Bid, s.Ask, s.TS, true
+	stale := time.Since(s.TS) > c.maxStaleness
+	return s.Bid, s.Ask, s.TS, stale, true
 }
 
 // reverseSymbol — cross pair 의 외부 symbol. PairMaster 우선, SymbolMap.Reverse
@@ -291,7 +297,7 @@ func (c *CrossRateConsumer) reverseSymbol(pair session.Pair) string {
 	return string(out)
 }
 
-// CrossRateStats — 누적 카운터 snapshot.
+// CrossRateStats — 누적 카운터 + 실시간 cache 상태 snapshot.
 type CrossRateStats struct {
 	EmitsTotal         uint64 `json:"emits_total"`
 	SkippedDebounce    uint64 `json:"skipped_debounce"`
@@ -301,6 +307,10 @@ type CrossRateStats struct {
 	Errors             uint64 `json:"errors"`
 	FormulaCount       int    `json:"formula_count"`
 	LegKeysCount       int    `json:"leg_keys_count"`
+	// 실시간 lastEmits cache snapshot — Stats() 호출 시점 기준.
+	// 운영 가시성: 등록된 cross pair 중 신선/stale 비율.
+	LastEmitsTotal int `json:"last_emits_total"`
+	LastEmitsStale int `json:"last_emits_stale"` // ts 가 maxStaleness 초과
 }
 
 func (c *CrossRateConsumer) Stats() CrossRateStats {
@@ -308,6 +318,18 @@ func (c *CrossRateConsumer) Stats() CrossRateStats {
 	fc := len(c.formulas)
 	lc := len(c.leg2cross)
 	c.mu.RUnlock()
+
+	// lastEmits cache snapshot — 운영 시점의 신선/stale 분포.
+	var total, stale int
+	now := time.Now()
+	c.lastEmits.Range(func(_, v any) bool {
+		total++
+		if s, ok := v.(*crossSnap); ok && now.Sub(s.TS) > c.maxStaleness {
+			stale++
+		}
+		return true
+	})
+
 	return CrossRateStats{
 		EmitsTotal:         c.emitsTotal.Load(),
 		SkippedDebounce:    c.skippedDebounce.Load(),
@@ -317,5 +339,7 @@ func (c *CrossRateConsumer) Stats() CrossRateStats {
 		Errors:             c.errors.Load(),
 		FormulaCount:       fc,
 		LegKeysCount:       lc,
+		LastEmitsTotal:     total,
+		LastEmitsStale:     stale,
 	}
 }

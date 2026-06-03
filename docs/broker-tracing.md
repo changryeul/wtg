@@ -251,10 +251,172 @@ grep "trcid=$RID" /var/log/mymqd/*.log
 
 각 service log 에 동일 rid/trcid 등장 → 한 요청의 path 전체 추적.
 
-## 8. 향후
+## 8. OTel SDK + span 발행 (PR 2)
 
-- 매매 AP (trn) 측 trcid 로그 통합
+W3C tracecontext 의 trace_id 가 정해진 후 (PR 1) 외부 backend (Jaeger /
+Tempo / Datadog / Honeycomb) 에 span tree 발행하려면 OTel SDK 도입.
+
+### 8.1 운영 활성
+
+```bash
+mci-api \
+  --otel-endpoint otel-collector:4317 \
+  --otel-insecure \
+  --otel-sample 0.1
+
+mci-edge-api \
+  --otel-endpoint otel-collector:4317 \
+  --otel-insecure
+```
+
+flag 비면 비활성 (span 미수집). `--otel-stdout` 으로 stdout 출력 (debug).
+
+### 8.2 자동 propagation
+
+W3C tracecontext propagator 가 등록되어 — 외부 client → mci-edge-api →
+mci-api 의 traceparent 헤더가 자동 trace tree 로 연결.
+
+### 8.3 현재 발행되는 span
+
+| service | span | attributes |
+|---------|------|------------|
+| mci-api | `broker.call` | broker.xchg, broker.rkey, broker.usid |
+
+후속 (PR 3): edge-api proxy, gRPC, etcd watch, Redis call.
+
+### 8.4 sampling
+
+운영 권장 `--otel-sample 0.01..0.1` (1~10%). dev 1.0 (전체).
+`ParentBased(TraceIDRatioBased(ratio))` — 외부 client 가 sampled bit
+설정한 trace 는 100% 수집.
+
+## 9. wire codec 운영 — image rebuild + win 측 동기화
+
+wire schema (mqhdr 100B + trcid) 변경 시 양쪽 합의 + big-bang deploy.
+
+### 9.1 변경 대상 파일
+
+| repo / 파일 | 역할 |
+|-------------|------|
+| `mymq/src/inc/mq.h` (line 215) | wire mqhdr `trcid[16]` 필드 |
+| `mymq/src/inc/mymq.h` (line 111) | content `trcid[16]` + `MQ_TRCID_HEX_LEN` + `mq_trcid_hex()` |
+| `mymq/src/lib/mymq/mq_frame.c` | wire encode/decode 시 trcid 복사 |
+| `win/src/inc/com/mymq.h` | AP 측 content 동일 필드 + helper (운영 trn 빌드 시 노출) |
+
+`win/src/inc/com/mymq.h` 는 fork (`mymq/src/inc/mymq.h`) 와 **ABI 일치 검증
+필수** — 같은 offset (`trcid` @ 260, `content_t` size 608).
+
+### 9.2 image rebuild 절차
+
+```bash
+# 1) mymq fork → wtg-mymqd:amd64
+cd ~/mywork/mymq
+docker build --platform linux/amd64 \
+  --build-context win=~/mywork/win \
+  -f scripts/Dockerfile.runtime \
+  -t wtg-mymqd:amd64 .
+
+# 2) (선택) win-builder image — Oracle Pro*C 빌드 시
+cd ~/mywork/win/docker
+docker compose build win-builder
+
+# 3) broker container 교체
+docker stop mymqd && docker rm mymqd
+docker run --rm -d --platform linux/amd64 -p 11217:11217 --name mymqd wtg-mymqd:amd64
+```
+
+### 9.3 검증
+
+```bash
+# mqhdr 크기 100 확인 (옛 빌드면 84)
+docker run --rm wtg-mymqd:amd64 sh -c '
+cat > /tmp/sz.c << EOF
+#include <stdio.h>
+#include <stddef.h>
+#include <mq.h>
+int main(){printf("%zu\n", sizeof(mqhdr_t));return 0;}
+EOF
+gcc -I/opt/mymq/include /tmp/sz.c -o /tmp/sz && /tmp/sz'
+# 기대: 100
+```
+
+### 9.4 주의 — Oracle Instant Client precomp
+
+2026-06 시점 Oracle 카탈로그 개편으로 `oracle-instantclient-precomp`
+(Pro*C precompiler) 패키지 제거. `win-builder` Dockerfile 은 본 패키지를
+빼고 `oracle-instantclient-tools` 만 설치. Pro*C 가 필요한 sqc 빌드는 별도
+zip 다운로드 (oracle.com 무료 라이선스). DB-free 빌드 (db2stub +
+sqc_strip) 트랙은 영향 없음.
+
+## 10. e2e 검증 (실 broker 라이브)
+
+### 10.1 정상 흐름
+
+```bash
+# broker + WECHO 자동 entrypoint
+docker run --rm -d --platform linux/amd64 -p 11217:11217 --name mymqd wtg-mymqd:amd64
+
+# mci-api 띄움 (단일 인스턴스 — port 충돌 주의)
+mci-api --dev --broker-host=127.0.0.1 --broker-port=11217 --listen=:8080
+
+# traceparent 박은 /v1/tx
+curl -is -X POST http://127.0.0.1:8080/v1/tx \
+  -H "X-WTG-User: alice" \
+  -H "traceparent: 00-deadbeef0123456789abcdef01234567-1122334455667788-01" \
+  -H "Content-Type: application/json" \
+  -d '{"alias":"WECHO_PING","data":""}'
+
+# 기대 응답:
+#   HTTP/1.1 200 OK
+#   Traceparent: 00-deadbeef0123456789abcdef01234567-1122334455667788-01
+#   X-Request-Id: deadbeef01234567
+#   {"data":"PONG"}
+```
+
+### 10.2 image 안 W1100 + dev_main 검증
+
+```bash
+# image 안 W1100 + dev_main IO 표준화 실 동작
+docker exec -d mymqd sh -c \
+  'DEV_MAIN_LOG=info /opt/mymq/bin/W1100 -h 127.0.0.1:11217 -e WTRN -n W1100 > /tmp/w1100.log 2>&1'
+
+# 호출
+docker exec mymqd /opt/mymq/bin/test_client \
+  -h 127.0.0.1:11217 -n W1T -e WTRN -r W1101S01 -m call "TEST"
+
+# dev_main log 확인
+docker exec mymqd cat /tmp/w1100.log
+# [dev_main] evt=recv rkey=[W1101S01] len=4 trcid=-
+# [dev_main] evt=reply rkey=[W1101S01] trcid=- ret=0 lat_us=20 sndl=0
+
+# SIGUSR1 → 통계 dump
+docker exec mymqd sh -c 'kill -USR1 $(pgrep -f W1100)'
+docker exec mymqd cat /tmp/w1100.log | tail -3
+# [dev_main] === stats dump pid=NN ===
+# [dev_main]   rkey=W1101S01 count=K err=0 avg_us=NNN max_us=NNN
+```
+
+### 10.3 디버깅 — port 충돌 진단
+
+`/v1/tx` 가 즉시 `503 reconnecting` + `time<1ms` 반환하면 **이미 같은 port
+의 다른 mci-api 인스턴스가 떠 있어 backoff 상태일 가능성**:
+
+```bash
+pgrep -fl mci-api
+# 옛 인스턴스가 있으면 kill PID
+```
+
+### 10.4 wire frame 디버그 (필요 시)
+
+`pkg/mymq/client.go` 의 `readLoop` 에 임시 `WTG_MYMQ_FRAME_DEBUG=1` env
+hook 을 추가하면 모든 frame 의 `func/subc/ckey/errn/body_len` stderr 출력.
+A3 진단 사례에서 이 패턴으로 root cause (port 충돌 → 옛 인스턴스의 무한
+backoff) 식별. 진단 후 패치 revert 권장.
+
+## 11. 향후
+
+- 매매 AP (trn) 측 trcid 로그 통합 (운영 W3xxx 추가 적용)
 - broker 측 audit log 에 trcid 동봉
 - WTG 의 broker call wrapper 가 자동 propagation (현재는 호출자 명시)
-- W3C tracecontext (`traceparent` HTTP 헤더) 추가 — `traceparent: 00-<trace-id>-<parent-id>-01`
-- OTel SDK 도입 — span 자동 생성/연결
+- 추가 instrumentation — gRPC / etcd watch / Redis (PR 3)
+- Jaeger/Tempo backend 운영 가이드

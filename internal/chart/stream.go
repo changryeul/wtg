@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/winwaysystems/wtg/pkg/quote"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
@@ -110,6 +111,48 @@ func (s *Server) upstreamCreds() (credentials.TransportCredentials, error) {
 		return nil, fmt.Errorf("upstream TLS: %w", err)
 	}
 	return credentials.NewTLS(tlsCfg), nil
+}
+
+// encodeBarJSONFromQuote — quote.Bar (DB Repository.QueryBars 결과) → ws envelope.
+// encodeBarJSON 의 wtgpb.Bar 변형과 동일 모양 + type="bar" — 클라이언트가
+// live / backfill 차이 없이 처리 가능.
+func encodeBarJSONFromQuote(b quote.Bar) ([]byte, error) {
+	out := struct {
+		Type      string  `json:"type"`
+		Pair      string  `json:"pair"`
+		TF        string  `json:"tf"`
+		OpenedAt  string  `json:"opened_at"`
+		ClosedAt  string  `json:"closed_at"`
+		OpenBid   float64 `json:"open_bid"`
+		OpenAsk   float64 `json:"open_ask"`
+		HighBid   float64 `json:"high_bid"`
+		HighAsk   float64 `json:"high_ask"`
+		LowBid    float64 `json:"low_bid"`
+		LowAsk    float64 `json:"low_ask"`
+		CloseBid  float64 `json:"close_bid"`
+		CloseAsk  float64 `json:"close_ask"`
+		TickCount int     `json:"tick_count"`
+		// Source — "backfill" 만 표시 (live 는 omit). 클라이언트가 backfill 인지
+		// 인식해서 progress bar / loading 등 표시 가능.
+		Source string `json:"source,omitempty"`
+	}{
+		Type:      "bar",
+		Pair:      string(b.Pair),
+		TF:        string(b.TF),
+		OpenedAt:  b.OpenedAt.UTC().Format(time.RFC3339Nano),
+		ClosedAt:  b.ClosedAt.UTC().Format(time.RFC3339Nano),
+		OpenBid:   b.OpenBid,
+		OpenAsk:   b.OpenAsk,
+		HighBid:   b.HighBid,
+		HighAsk:   b.HighAsk,
+		LowBid:    b.LowBid,
+		LowAsk:    b.LowAsk,
+		CloseBid:  b.CloseBid,
+		CloseAsk:  b.CloseAsk,
+		TickCount: b.TickCount,
+		Source:    "backfill",
+	}
+	return json.Marshal(out)
 }
 
 // encodeBarJSON 은 proto Bar → 클라이언트 JSON envelope.

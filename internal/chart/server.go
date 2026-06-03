@@ -14,6 +14,9 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/winwaysystems/wtg/pkg/quote"
+	"github.com/winwaysystems/wtg/pkg/session"
 )
 
 // Server 는 mci-chart 의 핵심 컴포넌트.
@@ -166,9 +169,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 //
 //	pairs=USD/KRW,EUR/KRW  (콤마 구분; 비면 모든 pair)
 //	tfs=1m,5m              (콤마 구분; 비면 모든 tf)
+//	since=RFC3339          (gap fill — ws 재연결 후 missing bar backfill)
+//
+// since 가 있고 pairs+tfs 명시되면 ws upgrade 직후 Repository.QueryBars 로
+// since~now 범위의 closed 봉을 backfill 송신 (`"source":"backfill"`) 후
+// `{"type":"backfill_done"}` 센티넬 → 일반 live stream 시작. 클라이언트는
+// 마지막 봉 ts 를 since 로 재연결 → gap 자동 충전.
 //
 // ws 메시지 (in): {"op":"sub","pairs":[...],"tfs":[...]} — 런타임 필터 갱신.
-// ws 메시지 (out): {"type":"bar", ...} (encodeBarJSON 결과)
+// ws 메시지 (out): {"type":"bar", ...} (encodeBarJSON 결과) / {"type":"backfill_done"}
 func (s *Server) handleChartStream(w http.ResponseWriter, r *http.Request) {
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  4096,
@@ -194,9 +203,91 @@ func (s *Server) handleChartStream(w http.ResponseWriter, r *http.Request) {
 	tfs := splitFilter(r.URL.Query().Get("tfs"))
 	sub.SetFilters(pairs, tfs)
 
-	s.hub.Add(sub)
 	go s.chartWriteLoop(sub)
 	go s.chartReadLoop(sub)
+
+	// gap fill — since 가 있고 pairs+tfs 모두 명시되면 backfill.
+	// since 만 있고 pairs/tfs 한쪽이라도 비면 무리 (전체 fetch 위험) — skip + warn.
+	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
+		s.backfillSubscriber(r.Context(), sub, pairs, tfs, sinceStr)
+	}
+
+	// live stream 등록 — backfill 후 (ordering: backfill 봉 먼저, 그 다음 live).
+	s.hub.Add(sub)
+}
+
+// backfillSubscriber — since 이후 closed 봉을 DB 에서 fetch 해서 sub 의 send
+// 채널로 enqueue. 채널 capacity 초과 시 drop + 카운트 (sub.SendBlocked).
+//
+// 한도: pair × tf 조합 당 maxBackfillBars (default 500). 그 이상은 운영자가
+// REST /v1/chart 로 직접 fetch.
+const maxBackfillBars = 500
+
+func (s *Server) backfillSubscriber(ctx context.Context, sub *Subscriber, pairs, tfs []string, sinceStr string) {
+	if len(pairs) == 0 || len(tfs) == 0 {
+		s.logger.Warn("backfill skip — pairs+tfs 둘 다 명시 필요",
+			slog.String("since", sinceStr))
+		return
+	}
+	if s.repo == nil {
+		s.logger.Warn("backfill skip — repository nil (DB 미연결)")
+		return
+	}
+	since, err := time.Parse(time.RFC3339, sinceStr)
+	if err != nil {
+		s.logger.Warn("backfill skip — since RFC3339 파싱 실패",
+			slog.String("since", sinceStr), slog.Any("err", err))
+		return
+	}
+	now := time.Now().UTC()
+
+	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	totalSent := 0
+	for _, pairStr := range pairs {
+		for _, tfStr := range tfs {
+			tf := quote.Timeframe(tfStr)
+			if tf.Duration() <= 0 {
+				continue
+			}
+			bars, qerr := s.repo.QueryBars(queryCtx, session.Pair(pairStr), tf, since, now, maxBackfillBars)
+			if qerr != nil {
+				s.logger.Warn("backfill query 실패",
+					slog.String("pair", pairStr), slog.String("tf", tfStr),
+					slog.Any("err", qerr))
+				continue
+			}
+			for i := range bars {
+				payload, perr := encodeBarJSONFromQuote(bars[i])
+				if perr != nil {
+					continue
+				}
+				if serr := sub.Send(payload); serr != nil {
+					// 채널 full — backfill 양 과다. 운영자에게 알릴 수 있게 break.
+					s.logger.Warn("backfill send queue full",
+						slog.String("pair", pairStr), slog.String("tf", tfStr),
+						slog.Int("sent_before_drop", totalSent),
+						slog.Any("err", serr))
+					goto done
+				}
+				totalSent++
+			}
+		}
+	}
+done:
+	// sentinel — 클라이언트가 backfill 종료 알 수 있게.
+	doneMsg, _ := json.Marshal(map[string]any{
+		"type":  "backfill_done",
+		"count": totalSent,
+		"since": sinceStr,
+	})
+	_ = sub.Send(doneMsg)
+	s.logger.Info("backfill 완료",
+		slog.String("since", sinceStr),
+		slog.Int("count", totalSent),
+		slog.Int("pairs", len(pairs)),
+		slog.Int("tfs", len(tfs)))
 }
 
 func splitFilter(s string) []string {

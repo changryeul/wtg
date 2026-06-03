@@ -417,6 +417,13 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("PUT /v1/admin/ratelimit/{service}", PutRateLimitPolicy(rateLimitDeps))
 	mux.HandleFunc("DELETE /v1/admin/ratelimit/{service}", DeleteRateLimitPolicy(rateLimitDeps))
 
+	// Prometheus query proxy — 운영 모니터링 페이지가 사용.
+	promDeps := &PromProxyDeps{
+		BaseURL: s.cfg.PromURL,
+		Logger:  s.logger,
+	}
+	mux.HandleFunc("GET /v1/admin/prom-query", PromQuery(promDeps))
+
 	mux.HandleFunc("POST /v1/admin/margin/recompute", PostMarginRecompute(marginDeps))
 	// 정책 엔진 — kill switch / 정비 창 / 차단 심볼·라우팅키.
 	mux.HandleFunc("GET /v1/admin/policy", GetPolicy(policyDeps))

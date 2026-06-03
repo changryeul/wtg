@@ -95,6 +95,11 @@ type Config struct {
 	// Rate limit 정책 etcd prefix (mci-edge-* 의 EtcdWatcher 가 동일 prefix watch).
 	EtcdRateLimitPrefix string // default "wtg/ratelimit/"
 
+	// PromURL — Prometheus base URL (예: "http://prometheus:9090"). 채우면
+	// admin UI "운영 모니터링" 페이지에서 metric 카드 노출. 빈값이면 페이지
+	// 표시는 되지만 카드가 503 처리.
+	PromURL string
+
 	// ChartDSN — TimescaleDB quote_bars 접근용 DSN. 채워지면 마진 재계산
 	// (분쟁/감사 backfill) endpoint 활성. mci-chart / mci-price 와 같은 DB.
 	// 빈 값이면 /v1/admin/margin/* 는 503 반환.
@@ -237,6 +242,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_ADMIN_CHART_DSN"); v != "" {
 		cfg.ChartDSN = v
 	}
+	if v := os.Getenv("WTG_ADMIN_PROM_URL"); v != "" {
+		cfg.PromURL = v
+	}
 	if v := os.Getenv("WTG_ADMIN_CHART_POOL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.ChartPoolMaxConns = n
@@ -308,6 +316,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdUserProfilesPrefix, "etcd-user-profiles-prefix", cfg.EtcdUserProfilesPrefix, "etcd 사용자 프로파일 prefix (default wtg/auth/user-profiles/)")
 	fs.StringVar(&cfg.EtcdQuoteIDEnginesPrefix, "etcd-quoteid-engines-prefix", cfg.EtcdQuoteIDEnginesPrefix, "etcd QuoteID engine allowlist prefix (default wtg/quoteid/engines/)")
 	fs.StringVar(&cfg.EtcdRateLimitPrefix, "etcd-ratelimit-prefix", cfg.EtcdRateLimitPrefix, "etcd rate limit 정책 prefix (default wtg/ratelimit/)")
+	fs.StringVar(&cfg.PromURL, "prom-url", cfg.PromURL, "Prometheus base URL — 채우면 admin UI 운영 모니터링 페이지 활성 (예: http://prometheus:9090)")
 	fs.StringVar(&cfg.ChartDSN, "chart-dsn", cfg.ChartDSN, "TimescaleDB DSN — 채우면 마진 재계산 endpoint 활성")
 	fs.IntVar(&cfg.ChartPoolMaxConns, "chart-pool", cfg.ChartPoolMaxConns, "pgxpool 최대 connection (default 5)")
 	fs.StringVar(&cfg.EtcdTLSCertFile, "etcd-tls-cert", cfg.EtcdTLSCertFile, "etcd 클라이언트 cert PEM (공유 client mTLS)")

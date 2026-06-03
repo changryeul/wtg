@@ -1,0 +1,110 @@
+# WTG 운영 모니터링 명세
+
+admin UI 의 "운영 모니터링" 페이지 카드 정의 + Prometheus proxy 동작 + tuning.
+
+코드 참조: `internal/admin/admin_promproxy.go` (proxy), `internal/admin/ui/index.html`
+(MON_CARDS 정의).
+
+---
+
+## 1. 동작
+
+```
+admin UI 의 카드
+   ↓ GET /v1/admin/prom-query?path=query&query=<PromQL>
+admin (Go)
+   ↓ http GET <PromURL>/api/v1/query?query=...
+Prometheus
+```
+
+- proxy 가 path 화이트리스트 (`query`, `query_range`) 만 허용
+- POST 거부 (write 차단)
+- admin `--prom-url` 미설정 시 503 → UI 가 배너 표시
+- 모든 호출은 인증 거친 후 (admin 의 기존 미들웨어 체인)
+
+## 2. 카드 카탈로그
+
+자세한 의미는 `index.html` 의 `MON_CARDS` const.
+
+| Key | Title | Query | Warn | Page |
+|-----|-------|-------|------|------|
+| `http_rate` | HTTP 요청율 (전체) | `sum(rate(wtg_http_requests_total[5m]))` | — | — |
+| `http_5xx` | 5xx 에러율 | `sum(rate(wtg_http_requests_total{status=~"5.."}[5m]))` | 0.1/s | 1/s |
+| `rl_denied` | Rate limit 거부율 | `sum(rate(wtg_ratelimit_denied_total[5m]))` | 0.5/s | 5/s |
+| `rl_login_denied` | Login brute force | `sum(rate(wtg_ratelimit_denied_total{rule="POST /v1/login"}[5m]))` | 0.5/s | 1/s |
+| `broker_disc` | Broker 끊김율 | `sum(rate(wtg_broker_disconnects_total[5m]))` | 0.05/s | 0.5/s |
+| `broker_inflight` | Broker inflight abort | `sum(rate(wtg_broker_inflight_aborted_total[5m]))` | 1/s | 10/s |
+| `qid_denied` | QuoteID RBAC denied | `sum(rate(wtg_quoteid_op_total{status="denied"}[5m]))` | 0.5/s | 5/s |
+| `qid_replay` | QuoteID ALREADY_CONSUMED | `sum(rate(wtg_quoteid_op_total{status="already_consumed"}[5m]))` | 0.5/s | 5/s |
+
+표시 단위는 모두 `/s`. 임계 색상:
+
+| 상태 | 색 | 의미 |
+|------|----|------|
+| 정상 | 녹색 dot | `value < warn` |
+| 경고 | 노란 dot | `warn <= value < page` |
+| 심각 | 빨간 dot | `value >= page` |
+
+## 3. 시간 윈도우
+
+상단 드롭다운으로 `1m / 5m / 15m / 1h` 변경 가능. 카드 query 의 `__W__` 가
+런타임에 치환됨. 자동 새로고침 (10s) 토글 가능.
+
+## 4. 운영자 사용 패턴
+
+| 시나리오 | 보는 카드 |
+|---------|-----------|
+| 알람 발화 직후 빠른 확인 | 해당 도메인 카드 (rl_login_denied, broker_disc 등) |
+| 평소 daily 점검 | http_rate, http_5xx, broker_disc |
+| 매매 영향 의심 시 | broker_inflight, qid_denied |
+| replay 의심 시 | qid_replay |
+
+장기 추세 / 상관 분석은 Grafana 사용 권장 — 본 페이지는 "지금 상태" 만.
+
+## 5. 카드 추가하기
+
+`index.html` 의 `MON_CARDS` 배열에 entry 추가:
+
+```js
+{
+  key: "my_metric",
+  title: "My Metric",
+  query: "sum(rate(wtg_my_metric_total[__W__]))",
+  unit: "/s",
+  format: v => v.toFixed(2),
+  warn: 1, page: 10,
+},
+```
+
+영어 prefix `wtg_` 만 사용 (admin proxy 가 path 만 막고 query 자체는 자유 PromQL,
+실수로 노출 카드의 query 가 잘못 쓰여 운영 정보 누설되지 않도록 docs review).
+
+## 6. Prometheus URL 운영 설정
+
+```bash
+mci-admin --prom-url http://prometheus:9090
+# 또는
+WTG_ADMIN_PROM_URL=http://prometheus:9090 mci-admin
+```
+
+docker-compose 환경:
+```yaml
+WTG_ADMIN_PROM_URL=http://wtg-prometheus:9090
+```
+
+dev 환경 (host network):
+```bash
+mci-admin --prom-url http://127.0.0.1:9095
+```
+
+## 7. 한계
+
+- instant query 만 — 시계열 sparkline 은 후속 PR (`query_range` 사용)
+- query 화이트리스트 X — 잘못된 PromQL 도 proxy 통과 (Prometheus 가 에러)
+- 운영 페이지 자체에 alert 미연동 — Grafana alert UI 와 분리
+
+## 8. 향후
+
+- sparkline (mini chart, 1~5분 트렌드)
+- Grafana alert state 통합 (`/api/prometheus/grafana/api/v1/rules` 라이브 표시)
+- 클릭 시 Grafana panel 으로 deep link

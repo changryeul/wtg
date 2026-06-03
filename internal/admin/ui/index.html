@@ -345,9 +345,10 @@
         <!-- 감사 & 도움말 -->
         <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">감사 & 도움말</div>
         <div class="space-y-0.5 mb-2">
-          <button data-page="audit" class="nav-btn nav-item"><span class="nav-ico">📜</span>감사 로그</button>
-          <button data-page="guide" class="nav-btn nav-item"><span class="nav-ico">📖</span>운영 가이드</button>
-          <button data-page="tools" class="nav-btn nav-item"><span class="nav-ico">🧰</span>운영 도구 (외부 링크)</button>
+          <button data-page="monitoring" class="nav-btn nav-item"><span class="nav-ico">📊</span>운영 모니터링</button>
+          <button data-page="audit"      class="nav-btn nav-item"><span class="nav-ico">📜</span>감사 로그</button>
+          <button data-page="guide"      class="nav-btn nav-item"><span class="nav-ico">📖</span>운영 가이드</button>
+          <button data-page="tools"      class="nav-btn nav-item"><span class="nav-ico">🧰</span>운영 도구 (외부 링크)</button>
         </div>
       </nav>
 
@@ -2227,6 +2228,42 @@
           </div>
         </div>
 
+        <!-- 운영 모니터링 — Prometheus 쿼리 카드 (P7-C) -->
+        <div id="page-monitoring" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">운영 모니터링</h3>
+              <p class="text-sm text-slate-400">
+                Prometheus 쿼리 결과 카드. admin <code>--prom-url</code> 채워야 작동.
+                자세한 분석은 Grafana — 본 페이지는 빠른 확인용.
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <select id="mon-window" class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 text-sm">
+                <option value="1m">최근 1분</option>
+                <option value="5m" selected>최근 5분</option>
+                <option value="15m">최근 15분</option>
+                <option value="1h">최근 1시간</option>
+              </select>
+              <button id="mon-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻ 새로고침</button>
+              <label class="text-xs text-slate-400 flex items-center gap-1">
+                <input type="checkbox" id="mon-auto" /> 자동 (10s)
+              </label>
+            </div>
+          </div>
+
+          <div id="mon-banner" class="hidden p-3 rounded-lg bg-warn/15 border border-warn/30 text-sm text-slate-200">
+            <span class="font-mono">PromURL 미구성</span> — admin 의 <code>--prom-url</code> 또는 <code>WTG_ADMIN_PROM_URL</code> 환경변수로 Prometheus base URL 을 채워주세요.
+          </div>
+
+          <div id="mon-cards" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3"></div>
+
+          <p class="text-[10px] text-slate-500">
+            카드 정의는 <a href="/docs/monitoring.md" class="text-accent-400 hover:text-accent-300">docs/monitoring.md</a>.
+            쿼리 부족 시 Grafana 와 함께 사용 권장.
+          </p>
+        </div>
+
         <!-- Audit timeline -->
         <div id="page-audit" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -2673,6 +2710,7 @@ function goPage(name) {
                    svcio: "서비스 명세", pricestats: "시세 통계",
                    margin: "마진 재계산", "margin-calc": "마진 계산기 (5-Layer)",
                    "margin-policy": "마진 정책 명세",
+                   monitoring: "운영 모니터링",
                    audit: "감사 로그", guide: "운영 가이드", tools: "운영 도구 (외부 링크)" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
@@ -2700,6 +2738,8 @@ function goPage(name) {
   if (name !== "audit")     stopAuditPoller();
   if (name === "audit")     initAudit();
   if (name === "policy")    loadPolicy();
+  if (name !== "monitoring") stopMonPoller();
+  if (name === "monitoring") initMonitoring();
 }
 
 // ───────── Dashboard ─────────
@@ -4925,6 +4965,128 @@ async function swSave() {
   } catch (e) {
     toast("저장 실패: " + e.message, "err");
   }
+}
+
+// ───────── 운영 모니터링 (Prometheus proxy 카드) ─────────
+//
+// 카드 정의:
+//   key:    내부 식별자
+//   title:  카드 라벨
+//   query:  PromQL (instant)
+//   unit:   "/s", "%", "" 등 표시 단위
+//   format: 값 포맷 (수 변환 함수)
+//   warn:   숫자 임계 (초과 시 경고색)
+//   page:   심각 임계 (초과 시 알람색)
+//
+// 자세한 의미는 docs/monitoring.md 참조.
+const MON_CARDS = [
+  // 트래픽
+  { key: "http_rate",     title: "HTTP 요청율 (전체)",
+    query: "sum(rate(wtg_http_requests_total[__W__]))",
+    unit: "/s", format: v => v.toFixed(1) },
+  { key: "http_5xx",      title: "5xx 에러율",
+    query: "sum(rate(wtg_http_requests_total{status=~\"5..\"}[__W__]))",
+    unit: "/s", format: v => v.toFixed(2), warn: 0.1, page: 1 },
+  // Rate limit
+  { key: "rl_denied",     title: "Rate limit 거부율",
+    query: "sum(rate(wtg_ratelimit_denied_total[__W__]))",
+    unit: "/s", format: v => v.toFixed(2), warn: 0.5, page: 5 },
+  { key: "rl_login_denied", title: "Login brute force (denied)",
+    query: "sum(rate(wtg_ratelimit_denied_total{rule=\"POST /v1/login\"}[__W__]))",
+    unit: "/s", format: v => v.toFixed(2), warn: 0.5, page: 1 },
+  // Broker
+  { key: "broker_disc",   title: "Broker 끊김율",
+    query: "sum(rate(wtg_broker_disconnects_total[__W__]))",
+    unit: "/s", format: v => v.toFixed(3), warn: 0.05, page: 0.5 },
+  { key: "broker_inflight", title: "Broker inflight abort",
+    query: "sum(rate(wtg_broker_inflight_aborted_total[__W__]))",
+    unit: "/s", format: v => v.toFixed(2), warn: 1, page: 10 },
+  // QuoteID
+  { key: "qid_denied",    title: "QuoteID RBAC denied",
+    query: "sum(rate(wtg_quoteid_op_total{status=\"denied\"}[__W__]))",
+    unit: "/s", format: v => v.toFixed(2), warn: 0.5, page: 5 },
+  { key: "qid_replay",    title: "QuoteID ALREADY_CONSUMED",
+    query: "sum(rate(wtg_quoteid_op_total{status=\"already_consumed\"}[__W__]))",
+    unit: "/s", format: v => v.toFixed(2), warn: 0.5, page: 5 },
+];
+
+let monState = { wired: false, autoTimer: null, window: "5m" };
+
+function initMonitoring() {
+  if (!monState.wired) {
+    monState.wired = true;
+    $("#mon-refresh").onclick = loadMonitoring;
+    $("#mon-window").onchange = (e) => { monState.window = e.target.value; loadMonitoring(); };
+    $("#mon-auto").onchange = (e) => {
+      if (e.target.checked) {
+        monState.autoTimer = setInterval(loadMonitoring, 10000);
+      } else {
+        stopMonPoller();
+      }
+    };
+    renderMonCards(); // skeleton
+  }
+  loadMonitoring();
+}
+
+function stopMonPoller() {
+  if (monState.autoTimer) { clearInterval(monState.autoTimer); monState.autoTimer = null; }
+  const cb = $("#mon-auto"); if (cb) cb.checked = false;
+}
+
+function renderMonCards() {
+  const grid = $("#mon-cards");
+  if (!grid) return;
+  grid.replaceChildren();
+  for (const c of MON_CARDS) {
+    const valEl = h("div", { id: "mon-val-" + c.key, class: "font-mono text-2xl text-slate-200", text: "—" });
+    const unitEl = h("span", { class: "text-xs text-slate-500 ml-1", text: c.unit || "" });
+    const titleEl = h("div", { class: "text-[10px] uppercase tracking-widest text-slate-400", text: c.title });
+    const stateEl = h("div", { id: "mon-state-" + c.key, class: "w-2 h-2 rounded-full bg-ink-700" });
+    const headerEl = h("div", { class: "flex items-center justify-between" }, titleEl, stateEl);
+    const valLine = h("div", { class: "flex items-baseline" }, valEl, unitEl);
+    const card = h("div", { class: "border-gradient rounded-2xl p-3 bg-ink-850/40 space-y-2" }, headerEl, valLine);
+    grid.appendChild(card);
+  }
+}
+
+async function loadMonitoring() {
+  const w = monState.window;
+  // 503 (PromURL 미구성) 한 번만 검사 — 첫 카드로 판별.
+  let bannerShown = false;
+  for (const c of MON_CARDS) {
+    const q = c.query.replaceAll("__W__", w);
+    try {
+      const r = await api("/v1/admin/prom-query?path=query&query=" + encodeURIComponent(q));
+      const val = parseFloat(((r || {}).data || {}).result?.[0]?.value?.[1] ?? "0") || 0;
+      updateMonCard(c, val);
+    } catch (e) {
+      if (e.status === 503 && !bannerShown) {
+        $("#mon-banner").classList.remove("hidden");
+        bannerShown = true;
+      } else if (!bannerShown) {
+        // 다른 에러는 카드만 에러 표시.
+        const el = $("#mon-val-" + c.key);
+        if (el) el.textContent = "ERR";
+        const st = $("#mon-state-" + c.key);
+        if (st) st.className = "w-2 h-2 rounded-full bg-bad";
+      }
+    }
+  }
+  if (!bannerShown) $("#mon-banner").classList.add("hidden");
+}
+
+function updateMonCard(card, val) {
+  const valEl = $("#mon-val-" + card.key);
+  const stEl = $("#mon-state-" + card.key);
+  if (!valEl || !stEl) return;
+  valEl.textContent = card.format ? card.format(val) : String(val);
+
+  // 상태 결정: page > warn > 정상 (낮을수록 좋다 가정).
+  let cls = "bg-good";
+  if (card.page != null && val >= card.page) cls = "bg-bad";
+  else if (card.warn != null && val >= card.warn) cls = "bg-warn";
+  stEl.className = "w-2 h-2 rounded-full " + cls;
 }
 
 // ───────── 운영 도구 (외부 링크 모음) ─────────

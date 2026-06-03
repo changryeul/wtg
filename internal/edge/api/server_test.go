@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/winwaysystems/wtg/pkg/netutil"
+	"github.com/winwaysystems/wtg/pkg/ratelimit"
 )
 
 func quietLogger() *slog.Logger {
@@ -306,13 +307,18 @@ func TestEdgeMaxBodyEnforced(t *testing.T) {
 
 // IP rate-limit — burst 이상 요청 시 429. /v1/ping 은 인증 면제이지만
 // rate-limit / IPAllow 미들웨어는 동일하게 적용된다.
+//
+// path-aware 룰셋 이후 (default 룰 ping=1000/s) — 본 테스트는 한도 1/2 인
+// 명시적 룰셋을 주입해 미들웨어 차단 동작만 검증.
 func TestEdgeRateLimitBurstExhausted(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.UpstreamURL = "http://127.0.0.1:1"
 	cfg.DevMode = true
 	cfg.MaxRequestBody = 0
-	cfg.IPRatePerSec = 1
-	cfg.IPBurst = 2
+	cfg.IPRatePerSec = 0 // fallback 비활성
+	cfg.RateLimitRules = []ratelimit.Rule{
+		{Pattern: "GET /v1/ping", Rate: 1, Burst: 2},
+	}
 
 	srv := NewServer(cfg, quietLogger())
 	handler, err := srv.BuildHandler()
@@ -341,5 +347,84 @@ func TestEdgeRateLimitBurstExhausted(t *testing.T) {
 	}
 	if got429 < 1 {
 		t.Errorf("burst 초과 후 429 없음: 429=%d, 200=%d", got429, got200)
+	}
+}
+
+// path-aware — 같은 IP 가 cheap path 한도 소진해도 critical path 는 별개 버킷.
+func TestEdgeRateLimitPathAware_IndependentBuckets(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.UpstreamURL = "http://127.0.0.1:1"
+	cfg.DevMode = true
+	cfg.MaxRequestBody = 0
+	cfg.IPRatePerSec = 0
+	cfg.RateLimitRules = []ratelimit.Rule{
+		{Pattern: "GET /v1/ping", Rate: 1, Burst: 1},
+		{Pattern: "POST /v1/tx", Rate: 1, Burst: 1},
+	}
+	srv := NewServer(cfg, quietLogger())
+	handler, err := srv.BuildHandler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	// ping 한도 소진.
+	r1, _ := http.Get(ts.URL + "/v1/ping")
+	r1.Body.Close()
+	r2, _ := http.Get(ts.URL + "/v1/ping")
+	r2.Body.Close()
+	if r1.StatusCode != 200 || r2.StatusCode != 429 {
+		t.Errorf("ping burst: r1=%d r2=%d, want 200/429", r1.StatusCode, r2.StatusCode)
+	}
+
+	// 같은 IP 의 tx 요청 — 다른 룰 버킷이라 통과해야 함.
+	// (POST /v1/tx 는 upstream 502 가능하지만 429 는 아니어야).
+	r3, _ := http.Post(ts.URL+"/v1/tx", "application/json", strings.NewReader(`{}`))
+	r3.Body.Close()
+	if r3.StatusCode == 429 {
+		t.Errorf("tx: ping 한도 소진으로 영향받음 (별개 버킷이어야): %d", r3.StatusCode)
+	}
+}
+
+// 사용자별 버킷 — 같은 IP 의 다른 X-WTG-User 는 한도 별개.
+func TestEdgeRateLimitUserKey_IndependentPerUser(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.UpstreamURL = "http://127.0.0.1:1"
+	cfg.DevMode = true
+	cfg.MaxRequestBody = 0
+	cfg.IPRatePerSec = 0
+	cfg.RateLimitRules = []ratelimit.Rule{
+		{Pattern: "GET /v1/ping", Rate: 1, Burst: 1},
+	}
+	srv := NewServer(cfg, quietLogger())
+	handler, err := srv.BuildHandler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	pingAs := func(user string) int {
+		req, _ := http.NewRequest("GET", ts.URL+"/v1/ping", nil)
+		req.Header.Set("X-WTG-User", user)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	// alice 의 첫 ping — 통과.
+	if c := pingAs("alice"); c != 200 {
+		t.Errorf("alice 첫: %d", c)
+	}
+	// alice 의 두번째 — burst=1 초과 → 429.
+	if c := pingAs("alice"); c != 429 {
+		t.Errorf("alice 두번째: %d, want 429", c)
+	}
+	// bob — 별개 사용자 → 첫 토큰 그대로.
+	if c := pingAs("bob"); c != 200 {
+		t.Errorf("bob 첫: %d (alice 한도와 별개여야)", c)
 	}
 }

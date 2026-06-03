@@ -40,10 +40,15 @@ type Registry struct {
 	quoteIDBatchLat  *prometheus.HistogramVec
 
 	// AsyncRegistry 카운터 — v1.19.
-	asyncEnqueued    *prometheus.CounterVec
-	asyncDropped     *prometheus.CounterVec
-	asyncWritten     *prometheus.CounterVec
-	asyncFailed      *prometheus.CounterVec
+	asyncEnqueued *prometheus.CounterVec
+	asyncDropped  *prometheus.CounterVec
+	asyncWritten  *prometheus.CounterVec
+	asyncFailed   *prometheus.CounterVec
+
+	// Rate limit 카운터 — path-aware RuleSet 결과. v1.20.
+	rateLimitAllowed *prometheus.CounterVec
+	rateLimitDenied  *prometheus.CounterVec
+
 	customCollectors []prometheus.Collector
 }
 
@@ -173,6 +178,22 @@ func NewRegistry() *Registry {
 		[]string{"service"},
 	)
 
+	// Rate limit — kind ∈ {ip, user}, rule = pattern 또는 "default".
+	r.rateLimitAllowed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_ratelimit_allowed_total",
+			Help: "Rate limit: 룰 매칭 통과한 요청 수.",
+		},
+		[]string{"service", "kind", "rule"},
+	)
+	r.rateLimitDenied = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "wtg_ratelimit_denied_total",
+			Help: "Rate limit: 룰 초과로 거부된 요청 수 (429).",
+		},
+		[]string{"service", "kind", "rule"},
+	)
+
 	r.reg.MustRegister(
 		r.httpReqTotal,
 		r.httpReqDuration,
@@ -188,8 +209,20 @@ func NewRegistry() *Registry {
 		r.asyncDropped,
 		r.asyncWritten,
 		r.asyncFailed,
+		r.rateLimitAllowed,
+		r.rateLimitDenied,
 	)
 	return r
+}
+
+// IncRateLimit — RuleSet 매칭 결과 카운터. allowed/denied 분기.
+// kind 는 "ip" 또는 "user", rule 은 룰 패턴 또는 "default".
+func (r *Registry) IncRateLimit(service, kind, rule string, allowed bool) {
+	if allowed {
+		r.rateLimitAllowed.WithLabelValues(service, kind, rule).Inc()
+		return
+	}
+	r.rateLimitDenied.WithLabelValues(service, kind, rule).Inc()
 }
 
 // IncQuoteIDAsync — AsyncRegistry 이벤트 카운터 증가.

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/winwaysystems/wtg/pkg/netutil"
+	"github.com/winwaysystems/wtg/pkg/ratelimit"
 )
 
 // Config 는 mci-edge-api 런타임 설정.
@@ -46,9 +47,14 @@ type Config struct {
 	// 최대 요청 본문 크기 (bytes). 0 = 제한 없음.
 	MaxRequestBody int64
 
-	// IP 단위 rate limit. 0 = 비활성.
+	// Rate limit fallback — 어느 룰도 매칭 안 된 path 의 한도. 0 = fallback 비활성
+	// (default 룰셋만 작동, 다른 path 는 통과).
 	IPRatePerSec float64
 	IPBurst      int
+
+	// Path-aware rate limit 룰셋. nil 이면 DefaultRateLimitRules() 사용.
+	// 빈 슬라이스 [] 면 룰셋 자체를 비활성 (fallback 만 작동, 또는 비활성).
+	RateLimitRules []ratelimit.Rule
 
 	// 로그 레벨.
 	LogLevel string

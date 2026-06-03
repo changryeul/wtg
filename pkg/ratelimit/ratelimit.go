@@ -46,6 +46,34 @@ func HeaderKey(name string) KeyFunc {
 	}
 }
 
+// UserOrIPKey — 사용자 헤더 (예: X-WTG-User) 가 채워져 있으면 "user:<usid>",
+// 아니면 IP fallback "ip:<addr>" 키.
+//
+// metric kind 라벨 (ip / user) 을 prefix 로 운반 → middleware 가 분기. 인증된
+// 사용자는 IP 가 NAT 뒤에 있어 다른 사용자와 같은 IP 라도 별도 버킷 → 한 명
+// abuse 가 다른 사용자에 영향 없음.
+func UserOrIPKey(headerName string) KeyFunc {
+	return func(r *http.Request) string {
+		if u := r.Header.Get(headerName); u != "" {
+			return "user:" + u
+		}
+		return "ip:" + IPKey(r)
+	}
+}
+
+// SplitKey — UserOrIPKey 로 만들어진 키를 (kind, raw) 로 분해.
+// kind 는 "user" 또는 "ip", raw 는 prefix 제거된 식별자.
+// prefix 가 없으면 ("ip", key) 로 보수적 해석.
+func SplitKey(key string) (kind, raw string) {
+	if i := strings.IndexByte(key, ':'); i > 0 {
+		switch key[:i] {
+		case "user", "ip":
+			return key[:i], key[i+1:]
+		}
+	}
+	return "ip", key
+}
+
 // Limiter 는 키 단위 토큰 버킷.
 //
 // rate: 초당 채워지는 토큰 수 (sustained TPS).
@@ -179,13 +207,69 @@ func Middleware(l *Limiter, keyFn KeyFunc) func(http.Handler) http.Handler {
 				return
 			}
 			if !l.Allow(key) {
-				w.Header().Set("Retry-After", "1")
-				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				w.WriteHeader(http.StatusTooManyRequests)
-				_, _ = w.Write([]byte(`{"error":"rate_limited","message":"요청 한도 초과"}`))
+				writeRateLimited(w, "")
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// MetricsHook — Allow / Deny 시점 callback (Prometheus 카운터 등록용).
+//
+// rule 은 RuleSet.Match 가 반환한 패턴 명 ("POST /v1/tx", "default", "").
+// kind 는 "user" 또는 "ip" (UserOrIPKey 의 prefix 에서 추출).
+type MetricsHook struct {
+	OnAllowed func(rule, kind string)
+	OnDenied  func(rule, kind string)
+}
+
+// MiddlewareRules — path-aware 룰셋 기반 미들웨어. RuleSet.Allow 의 결과로
+// 분기. 거부 시 429 + 룰명 동봉 (운영 디버그 용).
+//
+// keyFn 이 nil 키 반환 시 보수적 통과 (이전 동작과 동일).
+// metrics 는 nil 가능 — 카운터 hook 만 빠짐, 동작은 동일.
+func MiddlewareRules(rs *RuleSet, keyFn KeyFunc, metrics MetricsHook) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := keyFn(r)
+			if key == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			rule, allowed := rs.Allow(r.Method, r.URL.Path, key)
+			if rule == "" {
+				// 매칭 룰 없고 fallback 도 없음 — 통과.
+				next.ServeHTTP(w, r)
+				return
+			}
+			kind, _ := SplitKey(key)
+			if !allowed {
+				if metrics.OnDenied != nil {
+					metrics.OnDenied(rule, kind)
+				}
+				writeRateLimited(w, rule)
+				return
+			}
+			if metrics.OnAllowed != nil {
+				metrics.OnAllowed(rule, kind)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// writeRateLimited — 429 응답 통일. rule 이 비어있지 않으면 본문에 동봉.
+func writeRateLimited(w http.ResponseWriter, rule string) {
+	w.Header().Set("Retry-After", "1")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusTooManyRequests)
+	if rule == "" {
+		_, _ = w.Write([]byte(`{"error":"rate_limited","message":"요청 한도 초과"}`))
+		return
+	}
+	// rule 동봉 — `"` 이스케이프 (룰 패턴에 따옴표 없을 거지만 안전).
+	body := `{"error":"rate_limited","message":"요청 한도 초과","rule":"` +
+		strings.ReplaceAll(rule, `"`, `\"`) + `"}`
+	_, _ = w.Write([]byte(body))
 }

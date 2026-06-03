@@ -30,7 +30,7 @@ type Server struct {
 	cfg         Config
 	logger      *slog.Logger
 	metrics     *metrics.Registry
-	ipLimiter   *ratelimit.Limiter
+	rateLimit   *ratelimit.RuleSet
 	jwtVer      *auth.Verifier
 	tlsReloader *tlsutil.Reloader
 	http        *http.Server
@@ -55,13 +55,29 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 		logger:  logger,
 		metrics: metrics.NewRegistry(),
 	}
-	if cfg.IPRatePerSec > 0 {
-		s.ipLimiter = ratelimit.NewLimiter(ratelimit.Config{
-			RatePerSec:     cfg.IPRatePerSec,
-			Burst:          cfg.IPBurst,
-			IdleEviction:   5 * time.Minute,
-			EvictionPeriod: 1 * time.Minute,
-		})
+	// Rate limit — path-aware RuleSet. 빈 룰이면 default.
+	// IPRatePerSec/IPBurst 는 fallback (모든 룰 매칭 안 됨) 한도.
+	rules := cfg.RateLimitRules
+	if rules == nil {
+		rules = DefaultRateLimitRules()
+	}
+	if cfg.IPRatePerSec > 0 || len(rules) > 0 {
+		var fallback *ratelimit.Config
+		if cfg.IPRatePerSec > 0 {
+			fallback = &ratelimit.Config{
+				RatePerSec:     cfg.IPRatePerSec,
+				Burst:          cfg.IPBurst,
+				IdleEviction:   5 * time.Minute,
+				EvictionPeriod: 1 * time.Minute,
+			}
+		}
+		rs, err := ratelimit.NewRuleSet(rules, fallback)
+		if err != nil {
+			// 잘못된 룰은 부팅 실패 — 운영 cfg 검증 단계에서 잡혀야.
+			logger.Error("rate limit 룰셋 빌드 실패", slog.Any("error", err))
+		} else {
+			s.rateLimit = rs
+		}
 	}
 	return s
 }
@@ -102,8 +118,19 @@ func (s *Server) BuildHandler() (http.Handler, error) {
 		middleware.RequestID(),
 		middleware.Recover(s.logger),
 	}
-	if s.cfg.IPRatePerSec > 0 {
-		mws = append(mws, ratelimit.Middleware(s.ipLimiter, ratelimit.IPKey))
+	if s.rateLimit != nil {
+		mws = append(mws, ratelimit.MiddlewareRules(
+			s.rateLimit,
+			ratelimit.UserOrIPKey(middleware.HeaderEdgeUser),
+			ratelimit.MetricsHook{
+				OnAllowed: func(rule, kind string) {
+					s.metrics.IncRateLimit("mci-edge-api", kind, rule, true)
+				},
+				OnDenied: func(rule, kind string) {
+					s.metrics.IncRateLimit("mci-edge-api", kind, rule, false)
+				},
+			},
+		))
 	}
 	// IP allowlist — Chain semantics 상 slice 마지막이 *가장 바깥*. ratelimit
 	// 도 거치기 전 즉시 거부되어 token 소모를 막고, auth/proxy 자원도 절약.
@@ -291,8 +318,8 @@ func (s *Server) maxBytesWrapper(h http.Handler) http.Handler {
 
 // Shutdown 은 그레이스풀 종료.
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.ipLimiter != nil {
-		s.ipLimiter.Stop()
+	if s.rateLimit != nil {
+		s.rateLimit.Stop()
 	}
 	if s.tlsReloader != nil {
 		s.tlsReloader.Stop()

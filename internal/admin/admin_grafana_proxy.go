@@ -31,6 +31,16 @@ func (d *GrafanaProxyDeps) client() *http.Client {
 	return &http.Client{Timeout: 10 * time.Second}
 }
 
+// GrafanaConfig — GET /v1/admin/grafana-config.
+// UI 가 alert deep link 빌드용으로 base URL 만 알면 충분. 인증 정보는 노출 X.
+func GrafanaConfig(deps *GrafanaProxyDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"base_url": deps.BaseURL,
+		})
+	}
+}
+
 // GrafanaAlerts — GET /v1/admin/grafana-alerts.
 // Grafana 의 alert rule 상태를 그대로 반환 (운영 UI 가 파싱).
 func GrafanaAlerts(deps *GrafanaProxyDeps) http.HandlerFunc {

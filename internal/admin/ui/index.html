@@ -5046,7 +5046,11 @@ const MON_CARDS = [
     unit: "/s", format: v => v.toFixed(2), warn: 0.5, page: 5 },
 ];
 
-let monState = { wired: false, autoTimer: null, window: "5m" };
+let monState = { wired: false, autoTimer: null, window: "5m", grafanaBase: "" };
+
+// Grafana base URL — 첫 alert 호출 응답 헤더에서 추정 또는 운영자 안내. 가장
+// 단순: 동일 origin 의 운영 도구 페이지에 외부 링크 등록되어 있을 가능성 있음.
+// 여기선 환경변수 노출 없이 alert deep link 만 의도 — URL 입력 없으면 link 미동작.
 
 function initMonitoring() {
   if (!monState.wired) {
@@ -5062,6 +5066,10 @@ function initMonitoring() {
     };
     $("#mon-alert-onlyactive").onchange = renderAlerts;
     renderMonCards(); // skeleton
+    // Grafana base URL — alert deep link 빌드용. 1회만.
+    api("/v1/admin/grafana-config").then(c => {
+      monState.grafanaBase = (c && c.base_url) ? c.base_url.replace(/\/$/, "") : "";
+    }).catch(() => {});
   }
   loadMonitoring();
 }
@@ -5082,15 +5090,63 @@ function renderMonCards() {
     const stateEl = h("div", { id: "mon-state-" + c.key, class: "w-2 h-2 rounded-full bg-ink-700" });
     const headerEl = h("div", { class: "flex items-center justify-between" }, titleEl, stateEl);
     const valLine = h("div", { class: "flex items-baseline" }, valEl, unitEl);
+    // sparkline SVG (100×30 viewBox) — drawSparkline 가 path 채움.
+    const sparkEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    sparkEl.setAttribute("id", "mon-spark-" + c.key);
+    sparkEl.setAttribute("viewBox", "0 0 100 30");
+    sparkEl.setAttribute("preserveAspectRatio", "none");
+    sparkEl.setAttribute("class", "w-full h-8 mt-1");
     const card = h("div", { class: "border-gradient rounded-2xl p-3 bg-ink-850/40 space-y-2" }, headerEl, valLine);
+    card.appendChild(sparkEl);
     grid.appendChild(card);
   }
+}
+
+// drawSparkline — values: [number,...] 시계열. card 임계와 색상 매핑.
+function drawSparkline(key, values, card) {
+  const svg = document.getElementById("mon-spark-" + key);
+  if (!svg) return;
+  svg.replaceChildren();
+  if (!values || values.length < 2) return;
+
+  const W = 100, H = 30, PAD = 2;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const step = (W - PAD * 2) / (values.length - 1);
+
+  const pts = values.map((v, i) => {
+    const x = PAD + i * step;
+    const y = H - PAD - ((v - min) / range) * (H - PAD * 2);
+    return x.toFixed(1) + "," + y.toFixed(1);
+  }).join(" ");
+
+  // 마지막 값으로 색상 결정 (card 임계 기준).
+  const last = values[values.length - 1];
+  let stroke = "#10b981"; // good
+  if (card.page != null && last >= card.page) stroke = "#ef4444";
+  else if (card.warn != null && last >= card.warn) stroke = "#f59e0b";
+
+  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  polyline.setAttribute("fill", "none");
+  polyline.setAttribute("stroke", stroke);
+  polyline.setAttribute("stroke-width", "1.2");
+  polyline.setAttribute("points", pts);
+  svg.appendChild(polyline);
 }
 
 async function loadMonitoring() {
   const w = monState.window;
   // 503 (PromURL 미구성) 한 번만 검사 — 첫 카드로 판별.
   let bannerShown = false;
+
+  // sparkline 범위 — window 의 2배를 시계열로, step = window / 40 (40 포인트).
+  const winSec = parseWindowSec(w);
+  const trendSec = winSec * 2;
+  const stepSec = Math.max(5, Math.floor(winSec / 40));
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - trendSec;
+
   for (const c of MON_CARDS) {
     const q = c.query.replaceAll("__W__", w);
     try {
@@ -5109,9 +5165,30 @@ async function loadMonitoring() {
         if (st) st.className = "w-2 h-2 rounded-full bg-bad";
       }
     }
+    // sparkline — query_range 호출 (인스턴트 query 와 별개 실패 허용).
+    try {
+      const params = new URLSearchParams({
+        path: "query_range",
+        query: q,
+        start: String(start),
+        end: String(end),
+        step: stepSec + "s",
+      });
+      const rr = await api("/v1/admin/prom-query?" + params.toString());
+      const series = ((rr || {}).data || {}).result?.[0]?.values || [];
+      const values = series.map(p => parseFloat(p[1]) || 0);
+      drawSparkline(c.key, values, c);
+    } catch (_) { /* sparkline 실패는 silent — 인스턴트 값은 표시됨 */ }
   }
   if (!bannerShown) $("#mon-banner").classList.add("hidden");
   loadAlerts();
+}
+
+function parseWindowSec(w) {
+  const m = String(w || "5m").match(/^(\d+)([smh])$/);
+  if (!m) return 300;
+  const n = parseInt(m[1], 10);
+  return n * ({ s: 1, m: 60, h: 3600 }[m[2]] || 60);
 }
 
 let monAlertCache = []; // 마지막 alert 리스트 (rerender 시 재사용)
@@ -5186,9 +5263,23 @@ function renderAlerts() {
                     : a.severity === "warning" ? "text-warn"
                     : "text-slate-400";
     const sevEl = h("span", { class: "text-xs font-mono " + sevColor, text: a.severity || "—" });
+    // title 셀 — Grafana base 가 알려져 있으면 alert search deep link.
+    let titleCell;
+    if (monState.grafanaBase) {
+      const link = h("a", {
+        class: "text-slate-200 hover:text-accent-400 underline-offset-2 hover:underline",
+        href: monState.grafanaBase + "/alerting/list?queryString=" + encodeURIComponent(a.title),
+        target: "_blank",
+        rel: "noopener",
+        text: a.title,
+      });
+      titleCell = h("td", { class: "px-3 py-2" }, link);
+    } else {
+      titleCell = h("td", { class: "px-3 py-2 text-slate-200", text: a.title });
+    }
     const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
       h("td", { class: "px-3 py-2" }, stateBadge),
-      h("td", { class: "px-3 py-2 text-slate-200", text: a.title }),
+      titleCell,
       h("td", { class: "px-3 py-2" }, sevEl),
       h("td", { class: "px-3 py-2 text-xs font-mono text-slate-400", text: a.domain || "—" }),
       h("td", { class: "px-3 py-2 text-right text-xs font-mono text-slate-300",

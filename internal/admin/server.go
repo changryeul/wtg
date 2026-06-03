@@ -432,6 +432,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Logger:   s.logger,
 	}
 	mux.HandleFunc("GET /v1/admin/grafana-alerts", GrafanaAlerts(grafanaDeps))
+	mux.HandleFunc("GET /v1/admin/grafana-config", GrafanaConfig(grafanaDeps))
 
 	mux.HandleFunc("POST /v1/admin/margin/recompute", PostMarginRecompute(marginDeps))
 	// 정책 엔진 — kill switch / 정비 창 / 차단 심볼·라우팅키.

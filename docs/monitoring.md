@@ -150,8 +150,43 @@ mci-admin
 - alert 진압 / annotation snooze 는 UI 안 — Grafana 콘솔에서 직접
 - alert history (시작 시각, 평가 횟수) 미표시
 
-## 9. 향후
+## 9. Sparkline (mini trend)
 
-- sparkline (mini chart, 1~5분 트렌드, query_range 사용)
-- alert 클릭 시 Grafana 의 해당 룰 페이지로 deep link
+각 카드 하단의 mini line chart — Prometheus `query_range` 호출로 최근
+**시간 윈도우 × 2** 의 시계열을 그린다 (예: 5m 윈도우 → 10m 시계열).
+
+- 라이브러리 없이 vanilla SVG `<polyline>`
+- 점 수: 약 40개 (step = window / 40, 최소 5s)
+- 마지막 값의 warn/page 임계로 선 색상 결정
+- query 실패 시 silent — 인스턴트 카드 값은 표시 유지
+
+### query_range proxy
+
+PR 1 의 PromQuery 핸들러가 `path=query_range` 도 처리 — `start / end / step`
+파라미터 전달. UI 자동.
+
+## 10. Alert deep link
+
+alert 테이블의 title 셀 클릭 시 Grafana 의 alert 리스트 페이지로 이동.
+
+- URL: `<GrafanaURL>/alerting/list?queryString=<encoded-name>`
+- Grafana 검색 바에 alert 이름이 자동 입력되어 필터링됨
+- target=_blank — 새 탭으로 열림
+
+GrafanaURL 은 admin 의 `/v1/admin/grafana-config` endpoint 가 반환 (UI 가 1회
+호출). admin `--grafana-url` 미설정 시 빈 string — 링크 미동작 (plain text).
+
+### Limitation
+
+- Grafana 의 prometheus rules API 는 alert UID 를 반환하지 않음
+- 그래서 검색 기반 deep link 사용 (정확한 단일 페이지 X)
+- 운영자가 검색 결과에서 한 번 클릭 더 필요
+
+향후 — Grafana 의 `provisioning/alert-rules` API 추가 호출로 name → UID
+매핑하면 정확한 단일 페이지로 link 가능. cardinality 낮으니 비용 적음.
+
+## 11. 향후
+
 - alert annotation / silence 통합
+- 카드 hover 시 source query 표시 (디버그)
+- threshold 동적 변경 (admin UI 에서)

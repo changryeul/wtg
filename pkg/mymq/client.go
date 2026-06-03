@@ -362,6 +362,23 @@ func (c *Client) SessionInfo() DeclareSessionResponse {
 	return c.session
 }
 
+// Reconnecting 은 supervisor 가 재연결 시도 중인지 반환. 운영 health endpoint 가
+// "broker 와의 통신 가능 여부" 표시할 때 사용. nil receiver 안전.
+func (c *Client) Reconnecting() bool {
+	if c == nil {
+		return false
+	}
+	return c.reconnecting.Load()
+}
+
+// Closed 은 Client 가 종료된 상태인지 반환 (closing 또는 영구 종료).
+func (c *Client) Closed() bool {
+	if c == nil {
+		return true
+	}
+	return c.closed.Load() || c.closing.Load()
+}
+
 // ConnectInfo 는 CONNECT 핸드셰이크 사용 시 broker 가 부여한 큐 정보를 반환한다.
 // DECLARE_SESSION 만 사용한 클라이언트의 경우 nil.
 func (c *Client) ConnectInfo() *ConnectResponse {

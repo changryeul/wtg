@@ -768,6 +768,8 @@
             <h3 class="text-lg font-semibold">브로커 명령</h3>
             <p class="text-sm text-slate-400">mymqd 의 admin 명령을 호출합니다. 결과는 raw JSON 으로 표시.</p>
           </div>
+          <!-- broker connection 상태 banner — broker 의존 페이지 진입 시 표시. -->
+          <div id="brk-conn-banner" class="hidden border-gradient rounded-xl p-3 text-xs"></div>
           <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <button class="brk-btn" data-path="/v1/admin/status"    data-label="Status">Status</button>
             <button class="brk-btn" data-path="/v1/admin/clients"   data-label="Clients">Clients</button>
@@ -3105,6 +3107,8 @@ function goPage(name) {
   if (name !== "recenttx") stopRecentTxPoller();
   if (name === "recenttx") initRecentTx();
   if (name === "margin-wizard") initMarginWizard();
+  // broker 의존 페이지 진입 시 connection banner 갱신.
+  if (name === "broker" || name === "tester" || name === "wsmon") loadBrokerConnBanner();
   if (name !== "audit")     stopAuditPoller();
   if (name === "audit")     initAudit();
   if (name === "policy")    loadPolicy();
@@ -3504,6 +3508,43 @@ function openRouteModal(rule) {
 function closeRouteModal() { $("#route-modal").classList.add("hidden"); }
 
 // ───────── Broker commands ─────────
+// broker connection 상태 banner — mci-admin 의 broker connection 모드 표시.
+// 호출 가능 페이지 (broker / tester / wsmon) 진입 시 갱신.
+// connected=true 면 banner 숨김, 아니면 친화 메시지 + 모드별 색상.
+async function loadBrokerConnBanner() {
+  const banner = $("#brk-conn-banner");
+  if (!banner) return;
+  try {
+    const st = await api("/v1/admin/broker-conn");
+    if (st.connected) {
+      banner.classList.add("hidden");
+      banner.innerHTML = "";
+      // broker 호출 버튼들 활성.
+      $$(".brk-btn").forEach(b => { b.disabled = false; b.classList.remove("opacity-50","cursor-not-allowed"); });
+      return;
+    }
+    // 비연결 — 친화 메시지.
+    const modeIcon = { no_broker: "🚫", reconnecting: "🔄", closed: "❌" }[st.mode] || "⚠";
+    const modeCls  = st.mode === "reconnecting" ? "text-warn" : "text-bad";
+    const where = (st.host && st.port) ? ` <span class="text-slate-400">@ ${st.host}:${st.port}</span>` : "";
+    banner.classList.remove("hidden");
+    banner.innerHTML = `
+      <div class="flex items-start gap-2">
+        <span class="${modeCls} text-lg leading-none">${modeIcon}</span>
+        <div class="flex-1">
+          <div class="font-semibold ${modeCls}">broker 통신 불가 — mode=<span class="font-mono">${st.mode}</span>${where}</div>
+          <div class="text-slate-300 mt-1">${st.message}</div>
+        </div>
+      </div>
+    `;
+    // broker 호출 버튼들 비활성 — 클릭해도 동일 메시지 떠 사용성 안 좋음.
+    $$(".brk-btn").forEach(b => { b.disabled = true; b.classList.add("opacity-50","cursor-not-allowed"); });
+  } catch (e) {
+    banner.classList.remove("hidden");
+    banner.innerHTML = `<div class="text-bad">broker 상태 조회 실패: ${e.message}</div>`;
+  }
+}
+
 async function brkRun(path, label) {
   $("#brk-label").textContent = label;
   $("#brk-status").textContent = "요청 중…";

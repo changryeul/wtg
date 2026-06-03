@@ -133,10 +133,17 @@ back. AP 는 `content_reset()` 후 `mymq_recv()` 만 호출하면 자동 동작.
 
 ### 적용 대상
 
-| AP | log 통합 상태 |
-|----|---------------|
-| `test/integration/test_service.c` | ✅ (샘플) |
-| `trn`, `WECHO`, `W*/BW*` 등 운영 AP | 후속 — 동일 패턴 적용 |
+대부분의 운영 AP 는 **공통 main 루프** (`win/src/lib/db2stub/dev_main.c`) 사용 —
+한 곳 적용으로 58개 AP 전체 자동 반영.
+
+| AP / 위치 | log 통합 상태 | 비고 |
+|----------|---------------|------|
+| `mymq/test/integration/test_service.c` | ✅ | 샘플 (mymq 패키지) |
+| `win/src/lib/db2stub/dev_main.c` | ✅ | **공통 main** — `[dev_main] received rkey=[...] trcid=...` |
+| `win/src/trn/WECHO/WECHO.c` | ✅ | 자체 main — 에러 시 trcid 동봉 |
+| `win/src/trn/W1100`~`W3300` (57개) | ✅ (간접) | `dev_main` 통과 |
+| `win/src/trn/WECHOSTD/WECHOSTD.c` | ✅ (간접) | 핸들러만 정의 → `dev_main` 통과 |
+| broker (`mymqd`) audit log | ⏳ 후속 | broker 자체 log 에 trcid 동봉 (옵션) |
 
 ## 6. 운영 흐름
 

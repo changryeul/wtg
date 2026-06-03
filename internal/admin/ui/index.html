@@ -1243,11 +1243,123 @@
               <span>Swap: <span id="pricing-count-swap" class="font-mono text-slate-200">—</span></span>
               <span>TimeWindow: <span id="pricing-count-tw" class="font-mono text-good">—</span></span>
             </div>
-            <textarea id="pricing-editor"
-              spellcheck="false"
-              class="w-full font-mono text-xs bg-ink-900 border border-ink-700 rounded-lg p-3 outline-none focus:border-accent-500"
-              style="height: 60vh; resize: vertical;"
-              placeholder='{"version":1,"time_windows":[],"hq_margin":[],"site_margin":[],"customer_margin":[],"swap_point":[]}'></textarea>
+
+            <!-- 탭 nav -->
+            <div class="flex gap-1 border-b border-ink-700/60">
+              <button data-pricing-tab="hq"       class="pr-tab px-3 py-2 text-sm border-b-2 border-transparent hover:text-slate-200">HQ Margin</button>
+              <button data-pricing-tab="site"     class="pr-tab px-3 py-2 text-sm border-b-2 border-transparent hover:text-slate-200">Site Margin</button>
+              <button data-pricing-tab="customer" class="pr-tab px-3 py-2 text-sm border-b-2 border-transparent hover:text-slate-200">Customer Margin</button>
+              <button data-pricing-tab="window"   class="pr-tab px-3 py-2 text-sm border-b-2 border-transparent hover:text-slate-200">Time Window</button>
+              <button data-pricing-tab="raw"      class="pr-tab px-3 py-2 text-sm border-b-2 border-transparent hover:text-slate-200">{ } Raw JSON</button>
+            </div>
+
+            <!-- HQ Margin -->
+            <div data-pricing-panel="hq" class="pr-panel hidden">
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-xs text-slate-500">본점 마진 (pair × tier). tier="" 는 와일드카드</p>
+                <button id="pr-hq-add" class="text-xs px-2 py-1 rounded bg-ink-800 hover:bg-ink-700">+ 행</button>
+              </div>
+              <div class="border-gradient rounded-lg overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                    <tr class="border-b border-ink-700/60">
+                      <th class="text-left px-3 py-2 font-medium">Pair</th>
+                      <th class="text-left px-3 py-2 font-medium">Tier</th>
+                      <th class="text-right px-3 py-2 font-medium">Bid</th>
+                      <th class="text-right px-3 py-2 font-medium">Ask</th>
+                      <th class="text-right px-3 py-2 font-medium w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="pr-hq-tbody"></tbody>
+                </table>
+                <div id="pr-hq-empty" class="hidden p-6 text-center text-slate-500 text-sm">행이 없습니다. <button class="text-accent-400 hover:text-accent-300" id="pr-hq-add2">+ 행 추가</button></div>
+              </div>
+            </div>
+
+            <!-- Site Margin -->
+            <div data-pricing-panel="site" class="pr-panel hidden">
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-xs text-slate-500">영업점·채널 마진 (pair × channel × site). 빈 값은 와일드카드</p>
+                <button id="pr-site-add" class="text-xs px-2 py-1 rounded bg-ink-800 hover:bg-ink-700">+ 행</button>
+              </div>
+              <div class="border-gradient rounded-lg overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                    <tr class="border-b border-ink-700/60">
+                      <th class="text-left px-3 py-2 font-medium">Pair</th>
+                      <th class="text-left px-3 py-2 font-medium">Channel</th>
+                      <th class="text-left px-3 py-2 font-medium">Site</th>
+                      <th class="text-right px-3 py-2 font-medium">Bid</th>
+                      <th class="text-right px-3 py-2 font-medium">Ask</th>
+                      <th class="text-right px-3 py-2 font-medium w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="pr-site-tbody"></tbody>
+                </table>
+                <div id="pr-site-empty" class="hidden p-6 text-center text-slate-500 text-sm">행이 없습니다. <button class="text-accent-400 hover:text-accent-300" id="pr-site-add2">+ 행 추가</button></div>
+              </div>
+            </div>
+
+            <!-- Customer Margin -->
+            <div data-pricing-panel="customer" class="pr-panel hidden">
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-xs text-slate-500">고객별 추가/대체 마진. mode="add" 는 HQ+Site 누계에 더함, "override" 는 단독 적용. priority 큰 값 우선</p>
+                <button id="pr-cust-add" class="text-xs px-2 py-1 rounded bg-ink-800 hover:bg-ink-700">+ 행</button>
+              </div>
+              <div class="border-gradient rounded-lg overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                    <tr class="border-b border-ink-700/60">
+                      <th class="text-left px-3 py-2 font-medium">Customer ID</th>
+                      <th class="text-left px-3 py-2 font-medium">Pair</th>
+                      <th class="text-right px-3 py-2 font-medium">Bid Δ</th>
+                      <th class="text-right px-3 py-2 font-medium">Ask Δ</th>
+                      <th class="text-left px-3 py-2 font-medium">Mode</th>
+                      <th class="text-right px-3 py-2 font-medium">Priority</th>
+                      <th class="text-right px-3 py-2 font-medium w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="pr-cust-tbody"></tbody>
+                </table>
+                <div id="pr-cust-empty" class="hidden p-6 text-center text-slate-500 text-sm">행이 없습니다. <button class="text-accent-400 hover:text-accent-300" id="pr-cust-add2">+ 행 추가</button></div>
+              </div>
+            </div>
+
+            <!-- Time Window -->
+            <div data-pricing-panel="window" class="pr-panel hidden">
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-xs text-slate-500">시간대 정의. margin entry 의 <code>window</code> 필드가 참조. <code>complement_of</code> 로 보집합 정의 (예: off_hours = regular 반대)</p>
+                <button id="pr-tw-add" class="text-xs px-2 py-1 rounded bg-ink-800 hover:bg-ink-700">+ 행</button>
+              </div>
+              <div class="border-gradient rounded-lg overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                    <tr class="border-b border-ink-700/60">
+                      <th class="text-left px-3 py-2 font-medium">Name</th>
+                      <th class="text-left px-3 py-2 font-medium">Start</th>
+                      <th class="text-left px-3 py-2 font-medium">End</th>
+                      <th class="text-left px-3 py-2 font-medium">TZ</th>
+                      <th class="text-left px-3 py-2 font-medium">Days</th>
+                      <th class="text-left px-3 py-2 font-medium">Complement of</th>
+                      <th class="text-right px-3 py-2 font-medium w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="pr-tw-tbody"></tbody>
+                </table>
+                <div id="pr-tw-empty" class="hidden p-6 text-center text-slate-500 text-sm">행이 없습니다. <button class="text-accent-400 hover:text-accent-300" id="pr-tw-add2">+ 행 추가</button></div>
+              </div>
+            </div>
+
+            <!-- Raw JSON -->
+            <div data-pricing-panel="raw" class="pr-panel hidden">
+              <p class="text-xs text-slate-500 mb-2">전체 PricingTableDoc — 직접 편집하면 다른 탭의 grid 도 동기화됨. 저장 버튼은 grid 또는 raw 어느 쪽에서든 동일 결과.</p>
+              <textarea id="pricing-editor"
+                spellcheck="false"
+                class="w-full font-mono text-xs bg-ink-900 border border-ink-700 rounded-lg p-3 outline-none focus:border-accent-500"
+                style="height: 55vh; resize: vertical;"
+                placeholder='{"version":1,"time_windows":[],"hq_margin":[],"site_margin":[],"customer_margin":[],"swap_point":[]}'></textarea>
+            </div>
+
             <div id="pricing-error" class="hidden text-xs text-bad font-mono"></div>
           </div>
         </div>
@@ -3367,7 +3479,63 @@ async function deleteRateLimit() {
   } catch (e) { toast("삭제 실패: " + e.message, "err"); }
 }
 
-// ───────── Pricing (마진 테이블) ─────────
+// ───────── Pricing (마진 테이블) — 5 탭 (HQ/Site/Customer/TimeWindow/Raw) ─────────
+const pricingState = {
+  doc: { version: 0, hq_margin: [], site_margin: [], customer_margin: [], time_windows: [], swap_point: [], holidays: [] },
+  activeTab: "hq",
+  wired: false,
+};
+
+function initPricing() {
+  if (!pricingState.wired) {
+    pricingState.wired = true;
+    // 탭 클릭.
+    document.querySelectorAll(".pr-tab").forEach(btn => {
+      btn.onclick = () => switchPricingTab(btn.dataset.pricingTab);
+    });
+    // 행 추가 버튼.
+    $("#pr-hq-add").onclick = $("#pr-hq-add2").onclick = () => prAddRow("hq");
+    $("#pr-site-add").onclick = $("#pr-site-add2").onclick = () => prAddRow("site");
+    $("#pr-cust-add").onclick = $("#pr-cust-add2").onclick = () => prAddRow("cust");
+    $("#pr-tw-add").onclick = $("#pr-tw-add2").onclick = () => prAddRow("tw");
+    // raw textarea 편집 → state sync (포커스 잃을 때).
+    $("#pricing-editor").addEventListener("blur", () => {
+      const raw = $("#pricing-editor").value.trim();
+      if (!raw) return;
+      try {
+        const doc = JSON.parse(raw);
+        pricingState.doc = doc;
+        renderPricingCounts();
+        renderAllGrids();
+        $("#pricing-error").classList.add("hidden");
+      } catch (e) {
+        showPricingError("raw JSON 파싱 실패: " + e.message);
+      }
+    });
+  }
+  switchPricingTab(pricingState.activeTab);
+}
+
+function switchPricingTab(name) {
+  pricingState.activeTab = name;
+  document.querySelectorAll(".pr-tab").forEach(b => {
+    if (b.dataset.pricingTab === name) {
+      b.classList.add("border-accent-500", "text-accent-400");
+      b.classList.remove("border-transparent");
+    } else {
+      b.classList.remove("border-accent-500", "text-accent-400");
+      b.classList.add("border-transparent");
+    }
+  });
+  document.querySelectorAll(".pr-panel").forEach(p => {
+    p.classList.toggle("hidden", p.dataset.pricingPanel !== name);
+  });
+  // raw 탭 진입 시 doc → textarea 동기화.
+  if (name === "raw") {
+    $("#pricing-editor").value = JSON.stringify(pricingState.doc, null, 2);
+  }
+}
+
 async function loadPricing() {
   try {
     const resp = await fetch("/v1/admin/pricing/table", {
@@ -3375,50 +3543,177 @@ async function loadPricing() {
       headers: authHeaders(),
     });
     if (resp.status === 404) {
-      $("#pricing-editor").value = "";
+      pricingState.doc = { version: 0, hq_margin: [], site_margin: [], customer_margin: [], time_windows: [], swap_point: [], holidays: [] };
       $("#pricing-version").textContent = "(미등록)";
-      $("#pricing-count-hq").textContent = "0";
-      $("#pricing-count-site").textContent = "0";
-      $("#pricing-count-cust").textContent = "0";
-      $("#pricing-count-swap").textContent = "0";
-      $("#pricing-count-tw").textContent = "0";
+      renderPricingCounts();
+      renderAllGrids();
+      initPricing();
       return;
     }
     if (!resp.ok) throw new Error("HTTP " + resp.status);
-    const text = await resp.text();
-    $("#pricing-editor").value = text;
-    try {
-      const doc = JSON.parse(text);
-      $("#pricing-version").textContent = doc.version != null ? String(doc.version) : "—";
-      $("#pricing-count-hq").textContent = (doc.hq_margin || []).length;
-      $("#pricing-count-site").textContent = (doc.site_margin || []).length;
-      $("#pricing-count-cust").textContent = (doc.customer_margin || []).length;
-      $("#pricing-count-swap").textContent = (doc.swap_point || []).length;
-      $("#pricing-count-tw").textContent = (doc.time_windows || []).length;
-    } catch (_) {}
+    const doc = await resp.json();
+    pricingState.doc = doc;
+    pricingState.doc.hq_margin       ||= [];
+    pricingState.doc.site_margin     ||= [];
+    pricingState.doc.customer_margin ||= [];
+    pricingState.doc.time_windows    ||= [];
+    pricingState.doc.swap_point      ||= [];
+    pricingState.doc.holidays        ||= [];
+    $("#pricing-version").textContent = doc.version != null ? String(doc.version) : "—";
+    renderPricingCounts();
+    renderAllGrids();
     $("#pricing-error").classList.add("hidden");
+    initPricing();
   } catch (e) {
     toast("마진 테이블 로드 실패: " + e.message, "err");
   }
 }
-async function savePricing() {
-  const raw = $("#pricing-editor").value.trim();
-  if (!raw) {
-    showPricingError("본문이 비어있음");
-    return;
+
+function renderPricingCounts() {
+  const d = pricingState.doc;
+  $("#pricing-count-hq").textContent   = (d.hq_margin || []).length;
+  $("#pricing-count-site").textContent = (d.site_margin || []).length;
+  $("#pricing-count-cust").textContent = (d.customer_margin || []).length;
+  $("#pricing-count-swap").textContent = (d.swap_point || []).length;
+  $("#pricing-count-tw").textContent   = (d.time_windows || []).length;
+}
+
+function renderAllGrids() {
+  renderHQGrid();
+  renderSiteGrid();
+  renderCustGrid();
+  renderTWGrid();
+}
+
+// 공통 input 헬퍼 — 셀 안 input 이 직접 state 수정.
+function prInput(value, kind, onChange, extraClass) {
+  const cls = "w-full bg-transparent border border-ink-700/40 rounded px-1 py-0.5 text-xs " +
+              (kind === "num" ? "font-mono text-right " : "font-mono ") + (extraClass || "");
+  const el = h("input", {
+    type: kind === "num" ? "number" : "text",
+    step: kind === "num" ? "0.0001" : undefined,
+    class: cls,
+    value: value == null ? "" : String(value),
+  });
+  el.addEventListener("change", () => onChange(kind === "num" ? parseFloat(el.value) || 0 : el.value));
+  return el;
+}
+
+function prDelBtn(onClick) {
+  const b = h("button", {
+    class: "text-xs px-2 py-1 rounded bg-ink-800 hover:bg-bad/20 hover:text-bad",
+    text: "삭제",
+  });
+  b.onclick = onClick;
+  return b;
+}
+
+function prAddRow(kind) {
+  switch (kind) {
+    case "hq":   pricingState.doc.hq_margin.push({ pair: "", tier: "", bid_amount: 0, ask_amount: 0 }); renderHQGrid(); break;
+    case "site": pricingState.doc.site_margin.push({ pair: "", channel: "", site: "", bid_amount: 0, ask_amount: 0 }); renderSiteGrid(); break;
+    case "cust": pricingState.doc.customer_margin.push({ customer_id: "", pair: "", bid_delta: 0, ask_delta: 0, mode: "add", priority: 100 }); renderCustGrid(); break;
+    case "tw":   pricingState.doc.time_windows.push({ name: "" }); renderTWGrid(); break;
   }
-  try {
-    JSON.parse(raw); // 클라이언트 사전 검증
-  } catch (e) {
-    showPricingError("JSON 파싱 실패: " + e.message);
-    return;
+  renderPricingCounts();
+}
+
+function renderHQGrid() {
+  const rows = pricingState.doc.hq_margin || [];
+  const tb = $("#pr-hq-tbody"); tb.replaceChildren();
+  if (rows.length === 0) { $("#pr-hq-empty").classList.remove("hidden"); return; }
+  $("#pr-hq-empty").classList.add("hidden");
+  rows.forEach((r, i) => {
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40" },
+      h("td", { class: "px-3 py-2" }, prInput(r.pair, "str", v => r.pair = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.tier, "str", v => r.tier = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.bid_amount, "num", v => r.bid_amount = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.ask_amount, "num", v => r.ask_amount = v)),
+      h("td", { class: "px-3 py-2 text-right" }, prDelBtn(() => { rows.splice(i, 1); renderHQGrid(); renderPricingCounts(); })),
+    );
+    tb.appendChild(tr);
+  });
+}
+
+function renderSiteGrid() {
+  const rows = pricingState.doc.site_margin || [];
+  const tb = $("#pr-site-tbody"); tb.replaceChildren();
+  if (rows.length === 0) { $("#pr-site-empty").classList.remove("hidden"); return; }
+  $("#pr-site-empty").classList.add("hidden");
+  rows.forEach((r, i) => {
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40" },
+      h("td", { class: "px-3 py-2" }, prInput(r.pair, "str", v => r.pair = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.channel, "str", v => r.channel = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.site, "str", v => r.site = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.bid_amount, "num", v => r.bid_amount = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.ask_amount, "num", v => r.ask_amount = v)),
+      h("td", { class: "px-3 py-2 text-right" }, prDelBtn(() => { rows.splice(i, 1); renderSiteGrid(); renderPricingCounts(); })),
+    );
+    tb.appendChild(tr);
+  });
+}
+
+function renderCustGrid() {
+  const rows = pricingState.doc.customer_margin || [];
+  const tb = $("#pr-cust-tbody"); tb.replaceChildren();
+  if (rows.length === 0) { $("#pr-cust-empty").classList.remove("hidden"); return; }
+  $("#pr-cust-empty").classList.add("hidden");
+  rows.forEach((r, i) => {
+    const modeSelect = h("select", {
+      class: "bg-ink-900 border border-ink-700/40 rounded px-1 py-0.5 text-xs font-mono",
+    },
+      h("option", { value: "add", text: "add", selected: r.mode !== "override" ? "selected" : undefined }),
+      h("option", { value: "override", text: "override", selected: r.mode === "override" ? "selected" : undefined }),
+    );
+    modeSelect.value = r.mode || "add";
+    modeSelect.onchange = () => r.mode = modeSelect.value;
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40" },
+      h("td", { class: "px-3 py-2" }, prInput(r.customer_id, "str", v => r.customer_id = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.pair, "str", v => r.pair = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.bid_delta, "num", v => r.bid_delta = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.ask_delta, "num", v => r.ask_delta = v)),
+      h("td", { class: "px-3 py-2" }, modeSelect),
+      h("td", { class: "px-3 py-2" }, prInput(r.priority, "num", v => r.priority = v)),
+      h("td", { class: "px-3 py-2 text-right" }, prDelBtn(() => { rows.splice(i, 1); renderCustGrid(); renderPricingCounts(); })),
+    );
+    tb.appendChild(tr);
+  });
+}
+
+function renderTWGrid() {
+  const rows = pricingState.doc.time_windows || [];
+  const tb = $("#pr-tw-tbody"); tb.replaceChildren();
+  if (rows.length === 0) { $("#pr-tw-empty").classList.remove("hidden"); return; }
+  $("#pr-tw-empty").classList.add("hidden");
+  rows.forEach((r, i) => {
+    const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40" },
+      h("td", { class: "px-3 py-2" }, prInput(r.name, "str", v => r.name = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.start, "str", v => r.start = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.end, "str", v => r.end = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.tz, "str", v => r.tz = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.days, "str", v => r.days = v)),
+      h("td", { class: "px-3 py-2" }, prInput(r.complement_of, "str", v => r.complement_of = v)),
+      h("td", { class: "px-3 py-2 text-right" }, prDelBtn(() => { rows.splice(i, 1); renderTWGrid(); renderPricingCounts(); })),
+    );
+    tb.appendChild(tr);
+  });
+}
+
+async function savePricing() {
+  // raw 탭에 있으면 textarea → state sync 먼저.
+  if (pricingState.activeTab === "raw") {
+    const raw = $("#pricing-editor").value.trim();
+    if (raw) {
+      try { pricingState.doc = JSON.parse(raw); }
+      catch (e) { showPricingError("raw JSON 파싱 실패: " + e.message); return; }
+    }
   }
   try {
     const resp = await fetch("/v1/admin/pricing/table", {
       method: "PUT",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: raw,
+      body: JSON.stringify(pricingState.doc),
     });
     if (!resp.ok) {
       let body = {};
@@ -3432,17 +3727,23 @@ async function savePricing() {
     showPricingError(e.message);
   }
 }
+
 function showPricingError(msg) {
   const el = $("#pricing-error");
   el.textContent = msg;
   el.classList.remove("hidden");
 }
+
 function formatPricingEditor() {
+  // raw 탭 textarea 의 pretty print.
   const raw = $("#pricing-editor").value.trim();
   if (!raw) return;
   try {
     const obj = JSON.parse(raw);
     $("#pricing-editor").value = JSON.stringify(obj, null, 2);
+    pricingState.doc = obj;
+    renderAllGrids();
+    renderPricingCounts();
     $("#pricing-error").classList.add("hidden");
   } catch (e) {
     showPricingError("포맷 실패: " + e.message);

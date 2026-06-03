@@ -483,6 +483,9 @@ func (s *Server) Start(ctx context.Context) error {
 	// Tx 테스터 — UI 안에서 mci-api 의 /v1/tx 로 reverse proxy.
 	// UpstreamAPIURL 이 비어있으면 503. DevMode 검증용 우회 path.
 	mux.HandleFunc("POST /v1/admin/tx-test", TxTestProxy(s.cfg.UpstreamAPIURL, s.logger))
+	// alias × tier 통계 — mci-api 의 /v1/admin/alias-stats 로 reverse proxy.
+	// UI 의 운영 대시보드에서 alias 별 calls/latency/error_rate × tier 분리 관찰.
+	mux.HandleFunc("GET /v1/admin/alias-stats", UpstreamProxy(s.cfg.UpstreamAPIURL, "/v1/admin/alias-stats", s.logger))
 	// Push 테스터 — mci-admin 의 broker connection 으로 user-targeted unsolicited
 	// 메시지(FC_PUSH/SubPush) 를 발사한다. mci-push 띄워둔 상태에서 ws 로 흘러오는지
 	// 시각 검증용. NoBroker 모드면 503.

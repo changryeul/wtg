@@ -322,6 +322,7 @@
           <button data-page="margin-policy" class="nav-btn nav-item"><span class="nav-ico">📜</span>마진 정책 명세</button>
           <button data-page="svcio"      class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
           <button data-page="pricestats" class="nav-btn nav-item"><span class="nav-ico">📊</span>시세 통계 (mci-price)</button>
+          <button data-page="aliasstats" class="nav-btn nav-item"><span class="nav-ico">📈</span>매매 통계 (alias × tier)</button>
         </div>
 
         <!-- 외부 도구 — 별도 서비스의 UI 새 탭으로 열기. SPA 페이지 전환 아님. -->
@@ -2340,6 +2341,63 @@
           </div>
         </div>
 
+        <!-- 매매 통계 (alias × tier) — mci-api 의 /v1/admin/alias-stats reverse proxy. -->
+        <div id="page-aliasstats" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="text-lg font-semibold">매매 통계 (alias × tier)</h3>
+              <p class="text-sm text-slate-400">/v1/tx + /v1/tx/bulk 호출의 alias 별 calls / errors / latency, tier 별로 분리. mci-admin proxy 경유 (mci-api 의 누적값). 5초마다 자동 갱신.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400">마지막 갱신 <span id="as-updated" class="font-mono text-slate-200">—</span></span>
+              <label class="flex items-center gap-1.5 text-xs text-slate-400 select-none cursor-pointer">
+                <input id="as-auto" type="checkbox" class="w-4 h-4 accent-accent-500" checked />
+                자동 갱신
+              </label>
+              <button id="as-refresh" class="px-3 py-2 rounded-lg bg-ink-800 hover:bg-ink-700 text-sm">↻</button>
+            </div>
+          </div>
+
+          <!-- 필터 — alias / tier 부분일치, error_rate 임계값 -->
+          <div class="border-gradient rounded-xl p-3 flex flex-wrap gap-3 items-center text-xs">
+            <label class="flex items-center gap-1.5">
+              <span class="text-slate-400">alias</span>
+              <input id="as-filter-alias" type="text" placeholder="contains…" class="px-2 py-1 rounded bg-ink-900 border border-ink-700 w-40 font-mono" />
+            </label>
+            <label class="flex items-center gap-1.5">
+              <span class="text-slate-400">tier</span>
+              <input id="as-filter-tier" type="text" placeholder="contains…" class="px-2 py-1 rounded bg-ink-900 border border-ink-700 w-28 font-mono" />
+            </label>
+            <label class="flex items-center gap-1.5">
+              <span class="text-slate-400">error_rate ≥</span>
+              <input id="as-filter-err" type="number" min="0" max="100" step="0.1" placeholder="0" class="px-2 py-1 rounded bg-ink-900 border border-ink-700 w-20 font-mono" />
+              <span class="text-slate-500">%</span>
+            </label>
+            <span class="text-slate-500" id="as-count">—</span>
+          </div>
+
+          <div class="border-gradient rounded-xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-ink-900/60 text-slate-400 text-xs uppercase tracking-wider">
+                <tr>
+                  <th class="text-left px-3 py-2">alias</th>
+                  <th class="text-left px-3 py-2">tier</th>
+                  <th class="text-right px-3 py-2">calls</th>
+                  <th class="text-right px-3 py-2">errors</th>
+                  <th class="text-right px-3 py-2">error_rate</th>
+                  <th class="text-right px-3 py-2">avg_ms</th>
+                  <th class="text-right px-3 py-2">max_ms</th>
+                  <th class="text-right px-3 py-2">last_call</th>
+                </tr>
+              </thead>
+              <tbody id="as-tbody"></tbody>
+            </table>
+            <div id="as-empty" class="hidden p-6 text-center text-slate-500 text-sm">
+              alias 통계 없음 — /v1/tx 호출 후 다시. 또는 mci-admin 기동 시 <code>--upstream-api</code> 미설정.
+            </div>
+          </div>
+        </div>
+
         <!-- 운영 모니터링 — Prometheus 쿼리 카드 (P7-C) -->
         <div id="page-monitoring" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
@@ -2883,6 +2941,8 @@ function goPage(name) {
   if (name === "svcio")     initSvcIO();
   if (name !== "pricestats") stopPriceStatsPoller();
   if (name === "pricestats") initPriceStats();
+  if (name !== "aliasstats") stopAliasStatsPoller();
+  if (name === "aliasstats") initAliasStats();
   if (name !== "audit")     stopAuditPoller();
   if (name === "audit")     initAudit();
   if (name === "policy")    loadPolicy();
@@ -8146,6 +8206,89 @@ function renderBestStats(d) {
     tr.appendChild(h("td", { class: "px-4 py-1.5 text-right font-mono " + (spread < 0 ? "text-bad" : "text-slate-300"), text: spread ? spread.toFixed(4) : "—" }));
     tr.appendChild(h("td", { class: "px-4 py-1.5 text-right font-mono text-slate-400", text: tick.toLocaleString() }));
     tr.appendChild(h("td", { class: "px-4 py-1.5 text-right font-mono " + (cross ? "text-bad" : "text-slate-500"), text: cross ? "⚠ cross" : "✓" }));
+    tbody.appendChild(tr);
+  }
+}
+
+// ───────── Alias × Tier Stats (mci-api proxy) ─────────
+const asState = { wired: false, poller: null, last: [] };
+
+function initAliasStats() {
+  if (!asState.wired) {
+    asState.wired = true;
+    $("#as-refresh").onclick = loadAliasStats;
+    $("#as-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startAliasStatsPoller(); else stopAliasStatsPoller();
+    });
+    $("#as-filter-alias").addEventListener("input", renderAliasStats);
+    $("#as-filter-tier").addEventListener("input", renderAliasStats);
+    $("#as-filter-err").addEventListener("input", renderAliasStats);
+  }
+  loadAliasStats();
+  if ($("#as-auto").checked) startAliasStatsPoller();
+}
+
+function startAliasStatsPoller() {
+  if (asState.poller) return;
+  asState.poller = setInterval(loadAliasStats, 5000);
+}
+function stopAliasStatsPoller() {
+  if (asState.poller) { clearInterval(asState.poller); asState.poller = null; }
+}
+
+async function loadAliasStats() {
+  try {
+    const rows = await api("/v1/admin/alias-stats");
+    // mci-api 의 응답 형식 — 직접 array 또는 { items: [...] } 둘 다 호환.
+    asState.last = Array.isArray(rows) ? rows : (rows.items || []);
+    renderAliasStats();
+    $("#as-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    $("#as-updated").textContent = "로드 실패: " + e.message;
+  }
+}
+
+function renderAliasStats() {
+  const tbody = $("#as-tbody");
+  const empty = $("#as-empty");
+  if (!tbody || !empty) return;
+  tbody.replaceChildren();
+
+  const fA = ($("#as-filter-alias").value || "").trim().toLowerCase();
+  const fT = ($("#as-filter-tier").value || "").trim().toLowerCase();
+  const fE = parseFloat($("#as-filter-err").value || "0");
+
+  const rows = (asState.last || []).filter(r => {
+    if (fA && !((r.alias || "").toLowerCase().includes(fA))) return false;
+    if (fT && !((r.tier || "").toLowerCase().includes(fT))) return false;
+    if (fE > 0 && (r.error_rate_pct || 0) < fE) return false;
+    return true;
+  });
+
+  $("#as-count").textContent = rows.length + " row" + (rows.length === 1 ? "" : "s");
+
+  if (rows.length === 0) {
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  for (const r of rows) {
+    const errRate = r.error_rate_pct || 0;
+    const errClass = errRate >= 10 ? "text-bad" : (errRate >= 1 ? "text-warn" : "text-slate-400");
+    const avgMs = r.avg_latency_ms || 0;
+    const avgClass = avgMs >= 100 ? "text-bad" : (avgMs >= 20 ? "text-warn" : "text-slate-300");
+    const last = r.last_call_unix ? new Date(r.last_call_unix * 1000).toLocaleTimeString("ko-KR", { hour12: false }) : "—";
+
+    const tr = h("tr", { class: "border-b border-ink-800/60 hover:bg-ink-800/30" });
+    tr.appendChild(h("td", { class: "px-3 py-1.5 font-mono text-slate-200", text: r.alias || "—" }));
+    tr.appendChild(h("td", { class: "px-3 py-1.5 font-mono text-slate-400", text: r.tier || "—" }));
+    tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono text-slate-200", text: (r.calls || 0).toLocaleString() }));
+    tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono " + (r.errors > 0 ? "text-bad" : "text-slate-500"), text: (r.errors || 0).toLocaleString() }));
+    tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono " + errClass, text: errRate.toFixed(2) + "%" }));
+    tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono " + avgClass, text: avgMs.toFixed(2) }));
+    tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono text-slate-400", text: (r.max_latency_ms || 0).toFixed(2) }));
+    tr.appendChild(h("td", { class: "px-3 py-1.5 text-right font-mono text-slate-500", text: last }));
     tbody.appendChild(tr);
   }
 }

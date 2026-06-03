@@ -59,3 +59,44 @@ func TxTestProxy(upstreamURL string, logger *slog.Logger) http.HandlerFunc {
 		proxy.ServeHTTP(w, r)
 	}
 }
+
+// UpstreamProxy — generic mci-api reverse proxy. (path rewrite) 만 다르고
+// TxTestProxy 와 동일 패턴. 추가 endpoint 들이 모두 같은 upstream/dev 정책을
+// 공유하므로 별도 핸들러 만들 필요 X.
+func UpstreamProxy(upstreamURL, upstreamPath string, logger *slog.Logger) http.HandlerFunc {
+	if upstreamURL == "" {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"upstream_disabled","message":"--upstream-api 미설정"}`))
+		}
+	}
+	target, err := url.Parse(upstreamURL)
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"upstream_invalid"}`))
+		}
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	origDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		origDirector(req)
+		req.URL.Path = upstreamPath
+		req.URL.RawPath = ""
+		req.Host = target.Host
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		logger.Warn("upstream proxy 실패",
+			slog.String("upstream", upstreamURL),
+			slog.String("path", upstreamPath),
+			slog.Any("err", err))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"upstream_unreachable"}`))
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+	}
+}

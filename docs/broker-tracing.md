@@ -88,18 +88,55 @@ broker (`mymqd`) 는 trcid 를 **echo / passthrough** — 라우팅 X.
 
 ## 5. 매매 AP 측 사용
 
-trn 등의 매매 AP 가 trcid 를 읽어 log 에 동봉하면 분산 trace 완성:
+AP layer 의 `content_t` (mq.h) 에 `trcid[16]` 추가 + `mq.h` 의 inline helper
+`mq_trcid_hex()` 로 logging.
+
+### content_t 자동 채움
+
+`mq_frame.c` 의 pack/unpack 이 `mqhdr.trcid ↔ content.trcid` 자동 복사:
 
 ```c
-mqhdr_t *mqhdr = (mqhdr_t *)pktbuf;
-char trcid_hex[33];
-for (int i = 0; i < 16; i++) {
-    sprintf(&trcid_hex[i*2], "%02x", mqhdr->trcid[i]);
-}
-log_info("tx start: trcid=%s usid=%s ...", trcid_hex, usid);
+/* mq_frame.c pack (송신) */
+memcpy(mqhdr->trcid, content->trcid, sizeof(mqhdr->trcid));
+
+/* mq_frame.c unpack (수신) */
+memcpy(content->trcid, mqhdr->trcid, sizeof(mqhdr->trcid));
 ```
 
-(현 단계는 schema 만. 매매 AP 의 log 통합은 후속.)
+AP 가 별도 코드 추가 없이 `content->trcid` 사용 가능.
+
+### log 동봉 패턴
+
+`mymq.h` 의 inline helper:
+
+```c
+#define MQ_TRCID_HEX_LEN 33     /* 16 byte * 2 hex + NUL */
+static inline void mq_trcid_hex(const content_t *content, char *buf);
+```
+
+사용 예 (test_service.c):
+
+```c
+char trcid_hex[MQ_TRCID_HEX_LEN];
+mq_trcid_hex(content, trcid_hex);
+if (trcid_hex[0])
+    printf("[RECV #%d] trcid=%s ...\n", recv_count, trcid_hex);
+```
+
+- trailing 0 byte 자동 trim — 8 byte WTG ID 면 16 char, 16 byte W3C 면 32 char
+- 전부 0 (미설정) 이면 빈 문자열 — 호출자가 분기 처리
+
+### 매매 (FC_TRAN) reply 의 trcid
+
+`mymq_reply()` 가 `content->trcid` 를 그대로 reply 의 `mqhdr->trcid` 로 echo
+back. AP 는 `content_reset()` 후 `mymq_recv()` 만 호출하면 자동 동작.
+
+### 적용 대상
+
+| AP | log 통합 상태 |
+|----|---------------|
+| `test/integration/test_service.c` | ✅ (샘플) |
+| `trn`, `WECHO`, `W*/BW*` 등 운영 AP | 후속 — 동일 패턴 적용 |
 
 ## 6. 운영 흐름
 
@@ -156,20 +193,27 @@ go test -run='TestEnvelopeBuildFrame_TraceID' ./internal/api/transform/
 운영 환경에서 매매 1건 후 cross-service log 매칭:
 
 ```bash
-# 1. 매매 요청 + X-Request-ID 캡처
-curl -i -X POST http://127.0.0.1:8090/v1/tx \
+# 1. test_service 띄움 (또는 운영 AP)
+./test_service -e ECHOSVC -r PING
+
+# 2. 매매 요청 + X-Request-ID 캡처
+RID=$(curl -is -X POST http://127.0.0.1:8090/v1/tx \
   -H "Authorization: Bearer ..." \
   -H "Content-Type: application/json" \
-  -d '{"alias":"WECHO_PING","data":""}'
-# → 응답 헤더의 X-Request-ID 확인 (예: 0123456789abcdef)
+  -d '{"alias":"WECHO_PING","data":""}' \
+  | grep -i "X-Request-ID:" | awk '{print $2}' | tr -d '\r')
+echo "rid: $RID"
+# 예: 0123456789abcdef
 
-# 2. mci-api log 에서 그 rid 추적
-grep "rid=0123456789abcdef" /var/log/mci-api/*.log
+# 3. mci-api log 에서 rid 추적
+grep "rid=$RID" /var/log/mci-api/*.log
 
-# 3. broker / trn log 에서 trcid hex 매칭
-# (현재는 broker 가 echo only — 매매 AP 측 log 통합은 후속)
-grep "trcid=0123456789abcdef" /var/log/mymqd/*.log
-grep "trcid=0123456789abcdef" /var/log/trn/*.log
+# 4. AP (test_service) stdout 의 trcid 매칭
+# [RECV #N] trcid=0123456789abcdef data="..."
+grep "trcid=$RID" /var/log/test_service/*.log
+
+# 5. broker (mymqd) 의 audit log (있으면)
+grep "trcid=$RID" /var/log/mymqd/*.log
 ```
 
 각 service log 에 동일 rid/trcid 등장 → 한 요청의 path 전체 추적.

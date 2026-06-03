@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/winwaysystems/wtg/pkg/quote"
@@ -44,6 +45,10 @@ type BestConsumer struct {
 	cache map[string]map[string]sourceQuote // symbol → source → quote
 
 	downstream []TickConsumer
+
+	// invariant 위반으로 reject 한 raw quote 수 — bid<=0 / ask<=0 / bid>ask.
+	// feed cooker / forwarder 의 데이터 sanity 진단. /v1/best-stats 노출 (후속).
+	rejectedQuotes atomic.Uint64
 }
 
 type sourceQuote struct {
@@ -94,10 +99,15 @@ func (b *BestConsumer) OnTick(t *Tick) {
 		return
 	}
 
-	// raw body 에서 bid/ask 추출.
+	// raw body 에서 bid/ask 추출. DecodeJSONEnvelope 자체가 invariant 검증
+	// (bid<=0 / ask<=0 / bid>ask / missing sym) — ErrEnvelopeInvalidBidAsk 등
+	// 으로 거부. 즉 broken raw 가 cache 를 오염시키지는 않음.
+	//
+	// 다만 운영 가시성을 위해 decoder reject 를 카운터로 노출 — feed cooker /
+	// forwarder 의 데이터 sanity 진단. /v1/best-stats 의 rejected_quotes 모니터링.
 	env, err := quote.DecodeJSONEnvelope(t.Body)
 	if err != nil {
-		// 디코딩 실패는 quiet drop — Aggregator/Conflation 도 동일 정책.
+		b.rejectedQuotes.Add(1)
 		return
 	}
 
@@ -192,6 +202,9 @@ func (b *BestConsumer) recomputeLocked(bySource map[string]sourceQuote) (bid, as
 // Stats — 디버깅용 스냅샷 (per-symbol active source count + last best).
 type BestStats struct {
 	Symbols map[string]BestSymbolStat `json:"symbols"`
+	// 운영 가시성 — invariant 위반으로 reject 한 raw quote 누적.
+	// 0 이 아니면 cooker / forwarder 의 데이터 sanity 점검 필요.
+	RejectedQuotes uint64 `json:"rejected_quotes"`
 }
 
 type BestSymbolStat struct {
@@ -205,7 +218,10 @@ type BestSymbolStat struct {
 func (b *BestConsumer) Stats() BestStats {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := BestStats{Symbols: make(map[string]BestSymbolStat, len(b.cache))}
+	out := BestStats{
+		Symbols:        make(map[string]BestSymbolStat, len(b.cache)),
+		RejectedQuotes: b.rejectedQuotes.Load(),
+	}
 	for sym, bySource := range b.cache {
 		bid, ask, n := b.recomputeLocked(bySource)
 		crossed := n < 0

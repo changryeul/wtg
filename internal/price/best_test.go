@@ -352,6 +352,85 @@ func TestBestConsumer_NilAndEmptySymbolDropped(t *testing.T) {
 	}
 }
 
+// Invariant — broken raw (bid<=0 / ask<=0 / bid>ask / missing sym) 는 decoder
+// 가 ErrEnvelopeInvalidBidAsk 등으로 거부. BestConsumer 는 그 reject 를
+// rejectedQuotes 카운터로 노출 — feed cooker / forwarder 데이터 sanity 진단.
+//
+// cache 는 정상 raw 만 받음 → broken 입력이 best 를 깎지 않음.
+func TestBestConsumer_DecoderRejectIncrementsCounter(t *testing.T) {
+	// buildRaw 는 무조건 marshal 하므로 invariant 위반 (bid>ask 등) raw 도
+	// 만들 수 있지만, decoder 가 거부.
+	cases := []struct {
+		name string
+		bid  float64
+		ask  float64
+	}{
+		{"bid_zero", 0, 1380.10},
+		{"ask_zero", 1380.05, 0},
+		{"both_zero", 0, 0},
+		{"bid_negative", -1, 1380.10},
+		{"ask_negative", 1380.05, -1},
+		{"bid_greater_than_ask", 1380.20, 1380.10}, // crossed single feed
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &collector{}
+			bc := NewBestConsumer(BestOptions{}, c)
+			bc.OnTick(buildRaw("USDKRW", "SMB", tc.bid, tc.ask))
+			if len(c.snapshot()) != 0 {
+				t.Errorf("broken raw 가 downstream 으로 흘렀음: bid=%v ask=%v", tc.bid, tc.ask)
+			}
+			if bc.Stats().RejectedQuotes != 1 {
+				t.Errorf("RejectedQuotes=%d, want 1", bc.Stats().RejectedQuotes)
+			}
+		})
+	}
+}
+
+// 정상 raw 는 counter 증가 안 함.
+func TestBestConsumer_ValidRawDoesNotIncrementReject(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10))
+	if len(c.snapshot()) != 1 {
+		t.Errorf("정상 raw 가 reject 됨: snapshot=%d", len(c.snapshot()))
+	}
+	if bc.Stats().RejectedQuotes != 0 {
+		t.Errorf("RejectedQuotes=%d, want 0", bc.Stats().RejectedQuotes)
+	}
+}
+
+// 정상 feed 가 cache 에 있을 때 broken raw 가 들어와도 cache 오염 X.
+func TestBestConsumer_BrokenRawDoesNotOverwriteCache(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	// 정상 입력
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10))
+	// 같은 source 가 broken (ask=0) — decoder reject → cache 덮어쓰지 않음.
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.05, 0))
+
+	if len(c.snapshot()) != 1 {
+		t.Errorf("snapshot=%d, want 1 (broken 후속은 reject)", len(c.snapshot()))
+	}
+	st := bc.Stats()
+	if st.Symbols["USDKRW"].BestAsk != 1380.10 {
+		t.Errorf("BestAsk=%v, want 1380.10 (broken 후속 무시)", st.Symbols["USDKRW"].BestAsk)
+	}
+	if st.RejectedQuotes != 1 {
+		t.Errorf("RejectedQuotes=%d, want 1", st.RejectedQuotes)
+	}
+}
+
+// not-json body 도 decoder reject — RejectedQuotes 카운트.
+func TestBestConsumer_InvalidJSONRejectIncrementsCounter(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	bc.OnTick(&Tick{Symbol: "USDKRW", Source: "SMB", Body: []byte("not json")})
+	if bc.Stats().RejectedQuotes != 1 {
+		t.Errorf("RejectedQuotes=%d, want 1 (non-JSON body)", bc.Stats().RejectedQuotes)
+	}
+}
+
 // Concurrent OnTick — race detector 로 데이터 race 검증.
 //
 //	go test -race -run TestBestConsumer_ConcurrentSafe ./internal/price/

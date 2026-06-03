@@ -130,6 +130,16 @@ type Config struct {
 	BestEnabled      bool
 	BestMaxStaleness time.Duration // 0 이면 30s 기본, 음수면 stale 검사 비활성
 
+	// ─── CrossRateConsumer (cross pair 합성 — direct leg 두 개로 cross 산식 적용) ──
+	//
+	// PairMaster 에 cross 산식이 등록되면 활성. 두 leg 모두 fresh (CrossMaxStaleness
+	// 이내) 이고 마지막 emit 후 CrossDebounceWindow 이상 경과한 경우만 emit.
+	//
+	// 운영 권장: cross 는 best 보다 더 엄격 (한 쪽 leg 만 stale 해도 즉시 cross 도
+	// 죽기 시작 — 두 leg 의 결합) — best 보다 짧게 설정 가능.
+	CrossMaxStaleness   time.Duration // 0 이면 30s 기본
+	CrossDebounceWindow time.Duration // 0 이면 10ms 기본 — 짧은 시간 중복 emit 차단
+
 	// ─── PricingConsumer (Profile 별 마진 적용 후 broker publish) ──────────
 	//
 	// 두 가지 카탈로그 소스 모드 (상호배타):
@@ -257,6 +267,9 @@ func DefaultConfig() Config {
 
 		BestEnabled:      true,
 		BestMaxStaleness: 30 * time.Second,
+
+		CrossMaxStaleness:   30 * time.Second,
+		CrossDebounceWindow: 10 * time.Millisecond,
 
 		PricingFile:  "",
 		ProfilesFile: "",
@@ -487,6 +500,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.AggregatorSweepInterval, "agg-sweep", cfg.AggregatorSweepInterval, "Aggregator 만료 봉 sweeper 주기")
 	fs.BoolVar(&cfg.BestEnabled, "best", cfg.BestEnabled, "다중시장 best 호가 산정 활성 (raw tick 들을 합산해 합성 BEST 만 downstream 에 흘림)")
 	fs.DurationVar(&cfg.BestMaxStaleness, "best-staleness", cfg.BestMaxStaleness, "feed quote 가 이 시간 이상 갱신 없으면 best 계산에서 제외 (0=30s 기본, 음수=비활성)")
+	fs.DurationVar(&cfg.CrossMaxStaleness, "cross-staleness", cfg.CrossMaxStaleness, "cross leg quote 가 이 시간 이상 갱신 없으면 cross emit 차단 (0=30s 기본)")
+	fs.DurationVar(&cfg.CrossDebounceWindow, "cross-debounce", cfg.CrossDebounceWindow, "cross emit 의 같은 pair 중복 차단 윈도우 (0=10ms 기본)")
 	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (etcd 비활성 시)")
 	fs.StringVar(&cfg.ProfilesFile, "profiles", cfg.ProfilesFile, "활성 Profile 카탈로그 JSON ([]session.Profile, etcd 비활성 시)")
 	etcdStr := strings.Join(cfg.EtcdEndpoints, ",")

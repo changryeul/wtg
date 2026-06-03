@@ -179,9 +179,11 @@ func main() {
 		//   ReplaceFormulas 자동 호출 (OnChange callback).
 		pairMaster = pricing.NewPairMaster()
 		crossCR = price.NewCrossRateConsumer(price.CrossRateOptions{
-			Symbols: symbols,
-			Pairs:   pairMaster,
-			Logger:  logger,
+			Symbols:        symbols,
+			Pairs:          pairMaster,
+			Logger:         logger,
+			MaxStaleness:   cfg.CrossMaxStaleness,
+			DebounceWindow: cfg.CrossDebounceWindow,
 		})
 		srv.AttachCross(crossCR)
 		pairWatcher, err := pricing.NewEtcdPairWatcher(ctx, pricing.EtcdPairWatcherOptions{

@@ -94,7 +94,8 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			}
 		}
 
-		frame, err := env.BuildFrame(0, p.Usid, deps.Routes)
+		rid := middleware.RequestIDFromContext(r.Context())
+		frame, err := env.BuildFrame(0, p.Usid, rid, deps.Routes)
 		if err != nil {
 			recordAlias(true)
 			if errors.Is(err, transform.ErrUnknownAlias) {

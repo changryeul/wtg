@@ -105,7 +105,7 @@ var ErrUnknownAlias = errors.New("alias 미등록 또는 비활성")
 //
 // usid 는 cookie_t 복원에 사용될 사용자 ID (Principal.Cookie 가 별도 경로로
 // 첨부되므로 여기서는 사용 안 함).
-func (e *Envelope) BuildFrame(ckey uint32, usid string, reg routing.Registry) (*mymq.FrameInput, error) {
+func (e *Envelope) BuildFrame(ckey uint32, usid, traceIDHex string, reg routing.Registry) (*mymq.FrameInput, error) {
 	if err := e.ValidateRequest(); err != nil {
 		return nil, err
 	}
@@ -121,14 +121,15 @@ func (e *Envelope) BuildFrame(ckey uint32, usid string, reg routing.Registry) (*
 	}
 	body := []byte(e.Data)
 	in := &mymq.FrameInput{
-		Func: mymq.FCTran,
-		Subc: mymq.SubTranMsg,
-		Dirf: mymq.DirForward,
-		Keyc: e.keycValue(),
-		Xchg: exchange,
-		Rkey: rkey,
-		Ckey: ckey,
-		Body: body,
+		Func:    mymq.FCTran,
+		Subc:    mymq.SubTranMsg,
+		Dirf:    mymq.DirForward,
+		Keyc:    e.keycValue(),
+		Xchg:    exchange,
+		Rkey:    rkey,
+		Ckey:    ckey,
+		Body:    body,
+		TraceID: mymq.TraceIDFromHex(traceIDHex),
 	}
 	if e.Pkey != "" {
 		in.Pkey = []byte(e.Pkey)

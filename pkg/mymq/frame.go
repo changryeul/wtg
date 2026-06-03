@@ -29,6 +29,7 @@ import (
 //   72..75 pkey       SZOFF       이전 키
 //   76..79 nkey       SZOFF       다음 키
 //   80..83 body       WHERE       본문 위치
+//   84..99 trcid[16]              trace_id (W3C tracecontext) — broker echo/passthrough
 
 // 고정 헤더 안의 각 필드 오프셋.
 const (
@@ -54,6 +55,7 @@ const (
 	offPkey     = 72
 	offNkey     = 76
 	offBody     = 80
+	offTraceID  = 84
 )
 
 // 프레임 파싱 시 발생할 수 있는 에러.
@@ -65,7 +67,7 @@ var (
 	ErrInvalidOffset = errors.New("mymq: 가변 영역 오프셋이 범위를 벗어남")
 )
 
-// EncodeHeader 는 84바이트 고정 헤더를 dst 에 기록한다.
+// EncodeHeader 는 100바이트 고정 헤더를 dst 에 기록한다.
 // Length 필드는 h.Length 에서 가져온다. 일반적으로 호출자는 EncodeFrame 안에서
 // 전체 프레임을 조립한 뒤 마지막에 Length 를 채운다.
 func EncodeHeader(dst []byte, h *Header) error {
@@ -94,10 +96,11 @@ func EncodeHeader(dst []byte, h *Header) error {
 	encodeSzoff(dst[offPkey:offPkey+4], h.PkeyLen, h.PkeyOff)
 	encodeSzoff(dst[offNkey:offNkey+4], h.NkeyLen, h.NkeyOff)
 	encodeWhere(dst[offBody:offBody+4], h.BodyZipf, h.BodyOff)
+	copy(dst[offTraceID:offTraceID+TraceIDSize], h.TraceID[:])
 	return nil
 }
 
-// DecodeHeader 는 src 로부터 84바이트 고정 헤더를 파싱한다.
+// DecodeHeader 는 src 로부터 100바이트 고정 헤더를 파싱한다.
 func DecodeHeader(src []byte) (Header, error) {
 	var h Header
 	if len(src) < HdrSize {
@@ -124,6 +127,7 @@ func DecodeHeader(src []byte) (Header, error) {
 	h.PkeyLen, h.PkeyOff = decodeSzoff(src[offPkey : offPkey+4])
 	h.NkeyLen, h.NkeyOff = decodeSzoff(src[offNkey : offNkey+4])
 	h.BodyZipf, h.BodyOff = decodeWhere(src[offBody : offBody+4])
+	copy(h.TraceID[:], src[offTraceID:offTraceID+TraceIDSize])
 	return h, nil
 }
 
@@ -143,6 +147,11 @@ type FrameInput struct {
 	Clid uint32
 	Wkey [8]byte
 	Chan [4]byte
+
+	// TraceID — mqhdr.trcid[16]. 비어있으면 (모두 0) Client.applyDefaults 가
+	// 호출자 컨텍스트의 RequestID 등을 자동 채울 수 있다. 명시적으로 채우면
+	// 그대로 wire 에 전달.
+	TraceID [TraceIDSize]byte
 
 	Navis []Navi // navigation 엔트리 (최대 MaxVia 개)
 
@@ -211,6 +220,7 @@ func EncodeFrame(in *FrameInput) ([]byte, error) {
 	hdr.Clid = in.Clid
 	hdr.Wkey = in.Wkey
 	hdr.Chan = in.Chan
+	hdr.TraceID = in.TraceID
 	hdr.Errn = in.Errn
 	hdr.Nvia = uint8(len(in.Navis))
 

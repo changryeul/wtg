@@ -47,7 +47,7 @@ func TestEnvelopeBuildFrame(t *testing.T) {
 		RoutingKey: "NEW",
 		Data:       json.RawMessage(`{"symbol":"USDKRW","qty":100}`),
 	}
-	frame, err := env.BuildFrame(0xCAFE, "trader01", nil)
+	frame, err := env.BuildFrame(0xCAFE, "trader01", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestEnvelopeBuildFrameWithKeys(t *testing.T) {
 		Pkey:       "p1",
 		Nkey:       "n2",
 	}
-	frame, err := env.BuildFrame(1, "", nil)
+	frame, err := env.BuildFrame(1, "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestEnvelopeBuildFrameWithKeys(t *testing.T) {
 
 func TestEnvelopeBuildFrameRejectsInvalid(t *testing.T) {
 	env := &Envelope{} // alias/routing_key 둘 다 없음
-	if _, err := env.BuildFrame(0, "", nil); err == nil {
+	if _, err := env.BuildFrame(0, "", "", nil); err == nil {
 		t.Error("validation 에러를 기대했으나 통과")
 	}
 }
@@ -109,7 +109,7 @@ func TestEnvelopeBuildFrameResolvesAlias(t *testing.T) {
 		Exchange:   "OLD_EXCHANGE",    // 무시되어야 함
 		RoutingKey: "OLD_ROUTING_KEY", // 무시되어야 함
 	}
-	frame, err := env.BuildFrame(0, "u", reg)
+	frame, err := env.BuildFrame(0, "u", "", reg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestEnvelopeBuildFrameResolvesAlias(t *testing.T) {
 func TestEnvelopeBuildFrameUnknownAlias(t *testing.T) {
 	reg := routing.NewInMemoryRegistry(nil)
 	env := &Envelope{Alias: "NOPE", RoutingKey: "fallback-ignored"}
-	_, err := env.BuildFrame(0, "u", reg)
+	_, err := env.BuildFrame(0, "u", "", reg)
 	if !errors.Is(err, ErrUnknownAlias) {
 		t.Errorf("err=%v, want ErrUnknownAlias", err)
 	}
@@ -133,7 +133,7 @@ func TestEnvelopeBuildFrameInactiveAlias(t *testing.T) {
 	reg := routing.NewInMemoryRegistry(nil)
 	reg.Put(&routing.Rule{Alias: "OFF", Exchange: "X", RoutingKey: "Y", Active: false}, "admin")
 	env := &Envelope{Alias: "OFF"}
-	_, err := env.BuildFrame(0, "u", reg)
+	_, err := env.BuildFrame(0, "u", "", reg)
 	if !errors.Is(err, ErrUnknownAlias) {
 		t.Errorf("err=%v, want ErrUnknownAlias", err)
 	}
@@ -142,7 +142,7 @@ func TestEnvelopeBuildFrameInactiveAlias(t *testing.T) {
 // alias 미사용 + Registry nil — 기존 raw passthrough.
 func TestEnvelopeBuildFrameNoAliasNoRegistry(t *testing.T) {
 	env := &Envelope{Exchange: "ORDER", RoutingKey: "NEW"}
-	frame, err := env.BuildFrame(0, "u", nil)
+	frame, err := env.BuildFrame(0, "u", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

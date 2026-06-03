@@ -30,9 +30,12 @@ const (
 
 // 구조체 wire 크기 (struct 레이아웃에서 계산).
 const (
-	HdrSize    = 84                               // mqhdr_t 고정 헤더
+	HdrSize    = 100                              // mqhdr_t 고정 헤더 (84 + trace_id 16)
 	NaviSize   = 32                               // navi_t 1개
 	CookieWire = 16 + 12 + 24 + 20 + 20 + 4 + 256 // cookie_t (압축 안된 상태)
+
+	// TraceIDSize — mqhdr.trcid[16] (W3C tracecontext 의 trace-id 16 byte).
+	TraceIDSize = 16
 )
 
 // Func 는 메시지의 function code (mqhdr.func).
@@ -363,4 +366,9 @@ type Header struct {
 	NkeyOff  uint16 // nkey 오프셋
 	BodyZipf uint8  // 본문 압축 방식
 	BodyOff  uint32 // 본문 오프셋
+
+	// TraceID — mqhdr.trcid[16]. W3C tracecontext 의 trace-id (16 byte).
+	// broker (mymqd) 가 echo/passthrough — 라우팅에 사용 X. WTG 측이 set/get.
+	// 모두 0 = 미설정 (DecodeHeader 는 그래도 zero array 채움).
+	TraceID [TraceIDSize]byte
 }

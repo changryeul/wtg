@@ -142,7 +142,7 @@ func processBulkItem(ctx context.Context, deps *Deps, p *middleware.Principal,
 
 	callStart := time.Now()
 	recordAlias := func(isErr bool) {
-		deps.AliasMetrics.RecordCall(env.Alias, time.Since(callStart), isErr)
+		deps.AliasMetrics.RecordCall(env.Alias, p.Tier, time.Since(callStart), isErr)
 	}
 
 	if err := env.ValidateRequest(); err != nil {

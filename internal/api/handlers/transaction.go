@@ -74,7 +74,7 @@ func Transaction(deps *Deps) http.HandlerFunc {
 		// alias 별 호출 시작 시각 — 응답 직전까지 latency 측정.
 		callStart := time.Now()
 		recordAlias := func(isErr bool) {
-			deps.AliasMetrics.RecordCall(env.Alias, time.Since(callStart), isErr)
+			deps.AliasMetrics.RecordCall(env.Alias, p.Tier, time.Since(callStart), isErr)
 		}
 
 		// Idempotency 처리 — store + 헤더 둘 다 있을 때만. store 실패는 fail-open.

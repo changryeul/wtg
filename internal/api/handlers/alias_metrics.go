@@ -6,7 +6,11 @@ import (
 	"time"
 )
 
-// AliasMetrics — per-alias 호출 통계. /v1/tx 호출마다 RecordCall 누적.
+// AliasMetrics — per-(alias, tier) 호출 통계. /v1/tx 호출마다 RecordCall 누적.
+//
+// Tier dimension 으로 같은 alias 의 VIP / GOLD / STD 별 latency / error rate 분리
+// 관찰 가능 — 운영자가 특정 tier 의 매매 품질 저하 식별. UserProfileResolver
+// 비활성 (degraded) 의 빈 tier 는 "__notier__" 로 묶음.
 //
 // 두 가지 model:
 //   - 합산 (Calls / Errors / TotalLatencyNs / MaxLatencyNs) — 정확한 누계 + p50/p95 추정 불가
@@ -15,8 +19,14 @@ import (
 // 1차는 합산만. 정확한 percentile 필요 시 별도 도입.
 type AliasMetrics struct {
 	mu sync.RWMutex
-	// alias → stat. unknown_alias 도 별도 키 ("__unknown__") 로 트래킹.
-	stats map[string]*aliasStat
+	// (alias, tier) → stat. unknown_alias 는 alias="__unknown__".
+	stats map[aliasTierKey]*aliasStat
+}
+
+// aliasTierKey — map composite key. alias 빈값 → "__raw__", tier 빈값 → "__notier__".
+type aliasTierKey struct {
+	Alias string
+	Tier  string
 }
 
 type aliasStat struct {
@@ -29,18 +39,24 @@ type aliasStat struct {
 
 // NewAliasMetrics — 빈 통계 store 생성.
 func NewAliasMetrics() *AliasMetrics {
-	return &AliasMetrics{stats: make(map[string]*aliasStat)}
+	return &AliasMetrics{stats: make(map[aliasTierKey]*aliasStat)}
 }
 
-// RecordCall — alias 호출 1건 누적. alias 빈 문자열 → "__raw__" 로 묶어 둠
-// (envelope 에 alias 없이 exchange/routing_key 만 보낸 경우).
-func (m *AliasMetrics) RecordCall(alias string, latency time.Duration, isError bool) {
+// RecordCall — (alias, tier) 호출 1건 누적.
+//
+// 빈값 처리:
+//   - alias 빈 문자열 → "__raw__" (envelope 에 alias 없이 exchange/routing_key 만)
+//   - tier 빈 문자열  → "__notier__" (UserProfileResolver 비활성 degraded 모드)
+func (m *AliasMetrics) RecordCall(alias, tier string, latency time.Duration, isError bool) {
 	if m == nil {
 		return
 	}
-	key := alias
-	if key == "" {
-		key = "__raw__"
+	key := aliasTierKey{Alias: alias, Tier: tier}
+	if key.Alias == "" {
+		key.Alias = "__raw__"
+	}
+	if key.Tier == "" {
+		key.Tier = "__notier__"
 	}
 	m.mu.RLock()
 	st, ok := m.stats[key]
@@ -72,9 +88,10 @@ func (m *AliasMetrics) RecordCall(alias string, latency time.Duration, isError b
 	st.lastUnix.Store(time.Now().Unix())
 }
 
-// AliasStatSnapshot — 외부 노출용 직렬화 친화 모양.
+// AliasStatSnapshot — 외부 노출용 직렬화 친화 모양 (alias × tier matrix row).
 type AliasStatSnapshot struct {
 	Alias        string  `json:"alias"`
+	Tier         string  `json:"tier"`
 	Calls        uint64  `json:"calls"`
 	Errors       uint64  `json:"errors"`
 	AvgLatencyMs float64 `json:"avg_latency_ms"`
@@ -83,7 +100,7 @@ type AliasStatSnapshot struct {
 	LastCallUnix int64   `json:"last_call_unix"`
 }
 
-// Snapshot — 모든 alias 통계의 현재 스냅샷 (sorted by Calls desc).
+// Snapshot — 모든 (alias, tier) 통계의 현재 스냅샷 (sorted by Calls desc).
 func (m *AliasMetrics) Snapshot() []AliasStatSnapshot {
 	if m == nil {
 		return nil
@@ -91,7 +108,7 @@ func (m *AliasMetrics) Snapshot() []AliasStatSnapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]AliasStatSnapshot, 0, len(m.stats))
-	for alias, st := range m.stats {
+	for key, st := range m.stats {
 		calls := st.calls.Load()
 		errs := st.errors.Load()
 		sumNs := st.sumNs.Load()
@@ -104,7 +121,8 @@ func (m *AliasMetrics) Snapshot() []AliasStatSnapshot {
 			errPct = float64(errs) / float64(calls) * 100
 		}
 		out = append(out, AliasStatSnapshot{
-			Alias:        alias,
+			Alias:        key.Alias,
+			Tier:         key.Tier,
 			Calls:        calls,
 			Errors:       errs,
 			AvgLatencyMs: avgMs,
@@ -113,10 +131,19 @@ func (m *AliasMetrics) Snapshot() []AliasStatSnapshot {
 			LastCallUnix: st.lastUnix.Load(),
 		})
 	}
-	// 내림차순 sort by Calls
+	// 내림차순 sort by Calls (동률은 alias 사전순 → tier 사전순 — 안정).
 	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j-1].Calls < out[j].Calls; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
+		for j := i; j > 0; j-- {
+			a, b := out[j-1], out[j]
+			if a.Calls > b.Calls {
+				break
+			}
+			if a.Calls == b.Calls {
+				if a.Alias < b.Alias || (a.Alias == b.Alias && a.Tier <= b.Tier) {
+					break
+				}
+			}
+			out[j-1], out[j] = b, a
 		}
 	}
 	return out

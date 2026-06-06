@@ -1,0 +1,36 @@
+publish.c: strcpy → strncpy + NUL 강제 (publish_packet 의 logon_id 처리)
+
+mq.h 에 trcid[16] 추가로 mqhdr 가 84B → 100B 확장된 이후 broker 의
+publish_packet 이 부팅 5~30초 안에 stack-buffer-overflow 로 자체 종료
+(SIGABRT 134 — stack canary trip).
+
+ASAN 으로 정확한 위치 추적:
+    ERROR: AddressSanitizer: stack-buffer-overflow
+    WRITE of size 3901 at pubmsg[80B] buffer
+    publish_packet /work/src/mqd/publish.c:115 (strcpy)
+    caller: packet_proc /work/src/mqd/packet.c:284
+    dispatcher thread (mymqd.c:198 → dispatch.c:37)
+
+원인: line 115 의 strcpy(pubmsg.userid, broadcast->logon_id) 가
+NUL terminator 가정. broadcast->logon_id 가 16B field 인데 새 wire
+layout 변경 (trcid 추가) 이후 그 뒤 NUL 가 없는 데이터가 들어오면서
+strcpy 가 3901B 까지 읽어 80B 인 pubmsg buffer overflow.
+
+위쪽 line 100/105/110 의 user/exchange/chan 처리는 모두 strncpy +
+sizeof-1 안전 패턴 — line 115 만 단독으로 strcpy 로 남아있었던 bug.
+
+--- a/src/mqd/publish.c
++++ b/src/mqd/publish.c
+@@ -112,7 +112,11 @@ int publish_packet(CLIENT *client, struct pktbuf *pktbuf, int pktlen)
+ 	}
+ 	if (strlen(broadcast->logon_id))
+ 	{
+-		strcpy(pubmsg.userid, broadcast->logon_id);	// with logon user's id
++		// strncpy + NUL 종단 강제 — broadcast->logon_id 가 16B 다 채워져 NUL 없는
++		// 경우 (wire schema 확장 후 layout 변화) strcpy 가 stack overflow 일으킨다.
++		// 위 line 100/105/110 의 user/exchange/chan 와 동일 안전 패턴.
++		strncpy(pubmsg.userid, broadcast->logon_id, sizeof(pubmsg.userid)-1);
++		pubmsg.userid[sizeof(pubmsg.userid)-1] = 0;
+ 		pubmsg.check |= TO_USID;
+ 	}
+ 	if (broadcast->via_net)

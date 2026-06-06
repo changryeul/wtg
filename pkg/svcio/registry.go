@@ -36,6 +36,10 @@ type SvcSummary struct {
 	// broker 에 svc 가 떠있을 가능성이 높아 wire 테스트가 동작. false 면 운영
 	// spec 만 있고 dev broker 에 svc 가 없을 가능성 — wire 호출 시 MB-1002.
 	Dev bool `json:"dev"`
+	// MatchHint — Search 가 어디서 매칭했는지 (검색 결과만 채워짐). "code" /
+	// "name" / "field:NAME" / "comment:KOREAN". UI 가 검색 결과 옆에 작은
+	// badge 로 표시해 운영자가 매칭 이유를 즉시 확인.
+	MatchHint string `json:"match_hint,omitempty"`
 }
 
 // NewRegistry — 빈 Registry 반환.
@@ -275,8 +279,19 @@ func isDevSpec(s *SvcSpec) bool {
 }
 
 // Search — code/name prefix 일치 (case insensitive). max 0 이면 전체.
+// Search — q 매칭 SvcSummary 들. 검색 영역:
+//  1. Code prefix / substring (영문 식별자)
+//  2. Name (한글 program description)
+//  3. Input / Output / HeaderFields 의 field name (예: "empid")
+//  4. Input / Output / HeaderFields 의 한글 comment (예: "직원번호")
+//
+// 매칭 우선순위 (앞에서 매치되면 그 hint 로 stop):
+//
+//	code → name → field:NAME → comment:KOREAN
+//
+// 한글 입력은 lowercase 변환 영향 없음 — 그대로 비교.
 func (r *Registry) Search(q string, max int) []SvcSummary {
-	q = strings.ToLower(strings.TrimSpace(q))
+	q = strings.TrimSpace(q)
 	all := r.List()
 	if q == "" {
 		if max > 0 && len(all) > max {
@@ -284,17 +299,79 @@ func (r *Registry) Search(q string, max int) []SvcSummary {
 		}
 		return all
 	}
+	qLower := strings.ToLower(q)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]SvcSummary, 0, 32)
 	for _, s := range all {
-		if strings.Contains(strings.ToLower(s.Code), q) ||
-			strings.Contains(strings.ToLower(s.Name), q) {
-			out = append(out, s)
-			if max > 0 && len(out) >= max {
-				break
-			}
+		hint, ok := r.matchSpec(s.Code, qLower, q)
+		if !ok {
+			continue
+		}
+		s.MatchHint = hint
+		out = append(out, s)
+		if max > 0 && len(out) >= max {
+			break
 		}
 	}
 	return out
+}
+
+// matchSpec — 단일 spec 의 모든 검색 영역을 우선순위 순으로 검사.
+// 한 영역에서 매칭되면 즉시 hint 반환 (이후 영역 skip — 성능).
+func (r *Registry) matchSpec(code, qLower, qRaw string) (string, bool) {
+	spec := r.specs[code]
+	if spec == nil {
+		return "", false
+	}
+	// 1. code (영문, lowercase 비교)
+	if strings.Contains(strings.ToLower(spec.Code), qLower) {
+		return "code", true
+	}
+	// 2. name (한글 가능 — 원본 q 도 같이 비교)
+	if spec.Name != "" {
+		if strings.Contains(strings.ToLower(spec.Name), qLower) ||
+			strings.Contains(spec.Name, qRaw) {
+			return "name", true
+		}
+	}
+	// 3 + 4. field 트리 walk — header / input / output 차례.
+	for _, sect := range [][]Field{spec.HeaderFields, spec.Input, spec.Output} {
+		if h := walkMatch(sect, qLower, qRaw); h != "" {
+			return h, true
+		}
+	}
+	return "", false
+}
+
+// walkMatch — Field 트리 재귀 탐색. name (영문) 또는 comment (한글) 매칭.
+func walkMatch(fields []Field, qLower, qRaw string) string {
+	for _, f := range fields {
+		if f.Name != "" && strings.Contains(strings.ToLower(f.Name), qLower) {
+			return "field:" + f.Name
+		}
+		if f.Comment != "" {
+			if strings.Contains(strings.ToLower(f.Comment), qLower) ||
+				strings.Contains(f.Comment, qRaw) {
+				return "comment:" + truncate(f.Comment, 20)
+			}
+		}
+		if len(f.Children) > 0 {
+			if h := walkMatch(f.Children, qLower, qRaw); h != "" {
+				return h
+			}
+		}
+	}
+	return ""
+}
+
+// truncate — UI badge 표시용. comment 한글 20자 (rune) 제한.
+func truncate(s string, n int) string {
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "…"
 }
 
 // Count — 등록된 spec 개수.

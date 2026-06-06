@@ -2252,7 +2252,8 @@ WEB.HQ.VIP</textarea>
           <div class="grid grid-cols-12 gap-4">
             <!-- 좌: 검색 + 목록 -->
             <div class="col-span-4 rounded-xl bg-ink-900 border border-ink-800 p-3 flex flex-col" style="max-height: 70vh">
-              <input id="svcio-q" placeholder="코드 / 한글 이름 검색"
+              <input id="svcio-q" placeholder="코드 · 한글 이름 · 필드명(empid) · 한글 주석(직원번호) 검색"
+                title="검색 영역: code, name, field name, comment. 한글 직접 입력 가능."
                 class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm mb-2" />
               <div id="svcio-list" class="flex-1 overflow-y-auto space-y-1"></div>
             </div>
@@ -8057,6 +8058,21 @@ function renderSvcIOList() {
       h("span", { class: "text-xs text-slate-300 truncate flex-1", text: s.name || "(이름 없음)" }),
       h("span", { class: "text-[10px] text-slate-500 font-mono", text: `${s.input_fields}I/${s.output_fields}O` }),
     );
+    // match_hint — Search 결과에만 채워짐. UI badge 로 매칭 이유 표시.
+    if (s.match_hint) {
+      const hint = s.match_hint;
+      let badgeClass = "bg-ink-800 text-slate-400";
+      let prefix = "";
+      if (hint === "code") { badgeClass = "bg-accent-500/15 text-accent-400"; prefix = "🔑 "; }
+      else if (hint === "name") { badgeClass = "bg-good/15 text-good"; prefix = "📛 "; }
+      else if (hint.startsWith("field:")) { badgeClass = "bg-warn/15 text-warn"; prefix = "⚙ "; }
+      else if (hint.startsWith("comment:")) { badgeClass = "bg-accent-500/10 text-slate-300"; prefix = "💬 "; }
+      row.appendChild(h("span", {
+        class: "text-[9px] px-1.5 py-0.5 rounded font-mono " + badgeClass,
+        text: prefix + hint,
+        title: "검색 매칭 위치",
+      }));
+    }
     if (svcioState.selected && svcioState.selected.code === s.code) {
       row.classList.add("bg-ink-800");
     }

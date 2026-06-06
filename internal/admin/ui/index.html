@@ -2188,11 +2188,16 @@
               <div class="space-y-3">
                 <label class="block text-xs space-y-1">
                   <span class="text-slate-400">Profiles (한 줄에 하나, 형식: Channel.Site.Tier)</span>
-                  <textarea id="mwm-profiles" rows="4" class="w-full px-2 py-1 rounded bg-ink-900 border border-ink-700 font-mono text-[11px]" placeholder="WEB.BRANCH.VIP&#10;WEB.BRANCH.STD&#10;WEB.HQ.VIP"></textarea>
+                  <textarea id="mwm-profiles" rows="4" class="w-full px-2 py-1 rounded bg-ink-900 border border-ink-700 font-mono text-[11px]" placeholder="WEB.BRANCH.VIP&#10;WEB.BRANCH.STD&#10;WEB.HQ.VIP">WEB.BRANCH.VIP
+WEB.BRANCH.STD
+WEB.HQ.VIP</textarea>
                 </label>
                 <label class="block text-xs space-y-1">
                   <span class="text-slate-400">Sample Quotes (JSON dict: pair → {bid, ask})</span>
-                  <textarea id="mwm-samples" rows="6" class="w-full px-2 py-1 rounded bg-ink-900 border border-ink-700 font-mono text-[11px]" placeholder='{&#10;  "USD/KRW": {"bid":1380.00, "ask":1380.10},&#10;  "EUR/USD": {"bid":1.0850, "ask":1.0852}&#10;}'></textarea>
+                  <textarea id="mwm-samples" rows="6" class="w-full px-2 py-1 rounded bg-ink-900 border border-ink-700 font-mono text-[11px]" placeholder='{&#10;  "USD/KRW": {"bid":1380.00, "ask":1380.10},&#10;  "EUR/USD": {"bid":1.0850, "ask":1.0852}&#10;}'>{
+  "USD/KRW": {"bid":1380.00, "ask":1380.10},
+  "EUR/USD": {"bid":1.0850, "ask":1.0852}
+}</textarea>
                 </label>
                 <label class="block text-xs space-y-1">
                   <span class="text-slate-400">Tenor (빈값=SPOT)</span>
@@ -8879,7 +8884,7 @@ async function runQuoteIDLookup() {
   if (!id) { out.innerHTML = `<span class="text-warn">id 비어 있음.</span>`; return; }
   out.textContent = "조회 중...";
   try {
-    const resp = await fetch("/v1/admin/quoteid-lookup?id=" + encodeURIComponent(id), { credentials: "include" });
+    const resp = await fetch("/v1/admin/quoteid-lookup?id=" + encodeURIComponent(id), { credentials: "include", headers: authHeaders() });
     const data = await resp.json();
     if (!resp.ok) {
       out.innerHTML = `<span class="text-bad">HTTP ${resp.status}: ${data.error || data.message || "조회 실패"}</span>`;
@@ -8948,7 +8953,7 @@ function initMarginWizard() {
   $("#mw-fetch-current").onclick = async (e) => {
     e.preventDefault();
     try {
-      const resp = await fetch("/v1/admin/pricing/table", { credentials: "include" });
+      const resp = await fetch("/v1/admin/pricing/table", { credentials: "include", headers: authHeaders() });
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const text = await resp.text();
       $("#mw-changes").value = text;
@@ -9000,7 +9005,7 @@ async function runMarginWizardMatrix() {
   try {
     const resp = await fetch("/v1/admin/pricing/preview-matrix", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
       credentials: "include",
       body: JSON.stringify(body),
     });
@@ -9095,7 +9100,7 @@ async function runMarginWizard() {
   try {
     const resp = await fetch("/v1/admin/pricing/preview", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
       credentials: "include",
       body: JSON.stringify(body),
     });

@@ -54,11 +54,16 @@ type TimeWindowDoc struct {
 }
 
 // SwapEntryDoc — 한 (pair, tenor) 의 스왑포인트.
+//
+// skew_amount / spread_amount 는 P6 신규 — 만기별 시세 skew/spread 적용 가능.
+// 미설정 (0) 이면 기존 동작과 동일.
 type SwapEntryDoc struct {
-	Pair      session.Pair `json:"pair"`
-	Tenor     Tenor        `json:"tenor"`
-	BidAmount float64      `json:"bid_amount"`
-	AskAmount float64      `json:"ask_amount"`
+	Pair         session.Pair `json:"pair"`
+	Tenor        Tenor        `json:"tenor"`
+	BidAmount    float64      `json:"bid_amount"`
+	AskAmount    float64      `json:"ask_amount"`
+	SkewAmount   float64      `json:"skew_amount,omitempty"`   // P6: bid+ask 동방향 shift
+	SpreadAmount float64      `json:"spread_amount,omitempty"` // P6: bid/ask 폭 추가 확대
 }
 
 // HQEntryDoc — 한 (pair, tier) 의 본점 마진. Tier="" 는 와일드카드.
@@ -66,22 +71,26 @@ type SwapEntryDoc struct {
 // Window 가 비어있으면 모든 시간대 적용 (current behavior). 채우면 해당 window
 // 활성 시각 동안만 적용. 같은 (Pair, Tier) 가 여러 window 로 분기 가능.
 type HQEntryDoc struct {
-	Pair      session.Pair `json:"pair"`
-	Tier      session.Tier `json:"tier"`
-	BidAmount float64      `json:"bid_amount"`
-	AskAmount float64      `json:"ask_amount"`
-	Window    string       `json:"window,omitempty"` // P1 신규 — TimeWindow.Name 참조. 비면 모든 시간
+	Pair         session.Pair `json:"pair"`
+	Tier         session.Tier `json:"tier"`
+	BidAmount    float64      `json:"bid_amount"`
+	AskAmount    float64      `json:"ask_amount"`
+	SkewAmount   float64      `json:"skew_amount,omitempty"`   // P6: bid+ask 동방향 shift
+	SpreadAmount float64      `json:"spread_amount,omitempty"` // P6: bid/ask 폭 추가 확대
+	Window       string       `json:"window,omitempty"`        // P1 신규 — TimeWindow.Name 참조. 비면 모든 시간
 }
 
 // SiteEntryDoc — 한 (pair, channel, site) 의 영업점·채널 마진.
 // Channel="" 또는 Site="" 는 와일드카드 fallback.
 type SiteEntryDoc struct {
-	Pair      session.Pair    `json:"pair"`
-	Channel   session.Channel `json:"channel"`
-	Site      session.Site    `json:"site"`
-	BidAmount float64         `json:"bid_amount"`
-	AskAmount float64         `json:"ask_amount"`
-	Window    string          `json:"window,omitempty"` // P1 신규
+	Pair         session.Pair    `json:"pair"`
+	Channel      session.Channel `json:"channel"`
+	Site         session.Site    `json:"site"`
+	BidAmount    float64         `json:"bid_amount"`
+	AskAmount    float64         `json:"ask_amount"`
+	SkewAmount   float64         `json:"skew_amount,omitempty"`   // P6: bid+ask 동방향 shift
+	SpreadAmount float64         `json:"spread_amount,omitempty"` // P6: bid/ask 폭 추가 확대
+	Window       string          `json:"window,omitempty"`        // P1 신규
 }
 
 // CustomerEntryDoc — 특정 customer 의 추가/대체 마진 (P1 신규).
@@ -99,13 +108,15 @@ type SiteEntryDoc struct {
 //   - 특별 계약 고객 → mode=override, 별도 마진 단독 적용
 //   - 시간대별 차등 → 같은 customer 의 여러 entry × window
 type CustomerEntryDoc struct {
-	CustomerID string       `json:"customer_id"`
-	Pair       session.Pair `json:"pair,omitempty"`
-	BidDelta   float64      `json:"bid_delta"`
-	AskDelta   float64      `json:"ask_delta"`
-	Mode       string       `json:"mode,omitempty"` // "add" (default) | "override"
-	Priority   int          `json:"priority,omitempty"`
-	Window     string       `json:"window,omitempty"`
+	CustomerID  string       `json:"customer_id"`
+	Pair        session.Pair `json:"pair,omitempty"`
+	BidDelta    float64      `json:"bid_delta"`
+	AskDelta    float64      `json:"ask_delta"`
+	SkewDelta   float64      `json:"skew_delta,omitempty"`   // P6: bid+ask 동방향 shift delta
+	SpreadDelta float64      `json:"spread_delta,omitempty"` // P6: bid/ask 폭 추가 delta
+	Mode        string       `json:"mode,omitempty"`         // "add" (default) | "override"
+	Priority    int          `json:"priority,omitempty"`
+	Window      string       `json:"window,omitempty"`
 }
 
 // ParsePricingTable 은 JSON 바이트를 PricingTable 로 변환한다.
@@ -134,16 +145,28 @@ func BuildPricingTable(doc PricingTableDoc) *PricingTable {
 		TimeWindows: make(map[string]TimeWindowRule, len(doc.TimeWindows)),
 	}
 	for _, e := range doc.SwapPoint {
-		t.SwapPoint[SwapKey{Pair: e.Pair, Tenor: e.Tenor}] =
-			Margin{BidAmount: e.BidAmount, AskAmount: e.AskAmount}
+		t.SwapPoint[SwapKey{Pair: e.Pair, Tenor: e.Tenor}] = Margin{
+			BidAmount:    e.BidAmount,
+			AskAmount:    e.AskAmount,
+			SkewAmount:   e.SkewAmount,
+			SpreadAmount: e.SpreadAmount,
+		}
 	}
 	for _, e := range doc.HQMargin {
-		t.HQMargin[HQKey{Pair: e.Pair, Tier: e.Tier, Window: normalizeName(e.Window)}] =
-			Margin{BidAmount: e.BidAmount, AskAmount: e.AskAmount}
+		t.HQMargin[HQKey{Pair: e.Pair, Tier: e.Tier, Window: normalizeName(e.Window)}] = Margin{
+			BidAmount:    e.BidAmount,
+			AskAmount:    e.AskAmount,
+			SkewAmount:   e.SkewAmount,
+			SpreadAmount: e.SpreadAmount,
+		}
 	}
 	for _, e := range doc.SiteMargin {
-		t.SiteMargin[SiteKey{Pair: e.Pair, Channel: e.Channel, Site: e.Site, Window: normalizeName(e.Window)}] =
-			Margin{BidAmount: e.BidAmount, AskAmount: e.AskAmount}
+		t.SiteMargin[SiteKey{Pair: e.Pair, Channel: e.Channel, Site: e.Site, Window: normalizeName(e.Window)}] = Margin{
+			BidAmount:    e.BidAmount,
+			AskAmount:    e.AskAmount,
+			SkewAmount:   e.SkewAmount,
+			SpreadAmount: e.SpreadAmount,
+		}
 	}
 	// TimeWindows — 이름 lowercase 정규화.
 	for _, w := range doc.TimeWindows {
@@ -167,13 +190,15 @@ func BuildPricingTable(doc PricingTableDoc) *PricingTable {
 			mode = "add"
 		}
 		t.CustomerMargin = append(t.CustomerMargin, CustomerRule{
-			CustomerID: e.CustomerID,
-			Pair:       e.Pair,
-			BidDelta:   e.BidDelta,
-			AskDelta:   e.AskDelta,
-			Mode:       mode,
-			Priority:   e.Priority,
-			Window:     normalizeName(e.Window),
+			CustomerID:  e.CustomerID,
+			Pair:        e.Pair,
+			BidDelta:    e.BidDelta,
+			AskDelta:    e.AskDelta,
+			SkewDelta:   e.SkewDelta,
+			SpreadDelta: e.SpreadDelta,
+			Mode:        mode,
+			Priority:    e.Priority,
+			Window:      normalizeName(e.Window),
 		})
 	}
 	// 삽입 정렬 (priority desc) — 운영 entry 수 작음 가정.

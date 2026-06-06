@@ -38,13 +38,15 @@ type PricingTable struct {
 // 같은 CustomerID 가 여러 entry 가능 (pair × window 별). priority desc 정렬되어
 // lookup 시 첫 매칭 사용.
 type CustomerRule struct {
-	CustomerID string
-	Pair       session.Pair // "" = 모든 pair
-	BidDelta   float64
-	AskDelta   float64
-	Mode       string // "add" | "override"
-	Priority   int
-	Window     string // TimeWindow.Name 참조. "" = 모든 시간.
+	CustomerID  string
+	Pair        session.Pair // "" = 모든 pair
+	BidDelta    float64
+	AskDelta    float64
+	SkewDelta   float64 // P6 신규 — bid+ask 동방향 shift delta
+	SpreadDelta float64 // P6 신규 — bid/ask 폭 추가 delta
+	Mode        string  // "add" | "override"
+	Priority    int
+	Window      string // TimeWindow.Name 참조. "" = 모든 시간.
 }
 
 // TimeWindowRule — 빌드된 시간대 규칙. Doc 의 TimeWindowDoc 의 in-memory 형태.

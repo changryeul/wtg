@@ -8,13 +8,19 @@ import (
 
 // Apply 는 raw quote 에 PricingTable 의 마진을 적용해 CustomerQuote 를 반환한다.
 //
-// 산식:
+// 산식 (P6 — Skew/Spread 통합):
 //
-//	bid = raw.Bid - (swap.BidAmount + hq.BidAmount + site.BidAmount)
-//	ask = raw.Ask + (swap.AskAmount + hq.AskAmount + site.AskAmount)
+//	skewSum   = swap.Skew   + hq.Skew   + site.Skew
+//	spreadSum = swap.Spread + hq.Spread + site.Spread
+//	bid = raw.Bid + skewSum − (swap.Bid + hq.Bid + site.Bid) − spreadSum/2
+//	ask = raw.Ask + skewSum + (swap.Ask + hq.Ask + site.Ask) + spreadSum/2
 //
-// Bid 는 차감, Ask 는 가산 (스프레드 확대 = 고객 불리) 방향이 표준.
-// 스왑포인트는 음수도 허용 — 만기·금리차에 따라 부호 반전 가능하므로 그대로 합산.
+//   - Bid 는 차감, Ask 는 가산 (마진 확대 = 고객 불리) 방향이 표준.
+//   - Skew 는 양쪽 (bid, ask) 동방향 shift — 딜러 인벤토리 헷지. 양수 = 양쪽 위로.
+//   - Spread 는 양쪽 폭 추가 확대 — 변동성/유동성 대응. 양수 = 폭 +.
+//   - 스왑포인트의 BidAmount/AskAmount 는 만기·금리차로 부호 반전 가능 — 그대로 합산.
+//
+// backward compat: Skew/Spread 가 0 이면 기존 산식과 정확히 동일.
 //
 // Time window 미사용 환경 (TimeWindows 비어있는 PricingTable) 에서는 기존 동작과
 // 완전 동일. backward compat 보장.
@@ -66,29 +72,36 @@ func (t *PricingTable) ApplyForCustomer(raw Quote, profile session.Profile, teno
 	// customer 매칭 시도 (있을 때만).
 	rule, ok := t.matchCustomerRule(customerID, raw.Pair, activeWindows)
 
-	var totalBid, totalAsk float64
+	var totalBid, totalAsk, totalSkew, totalSpread float64
 	if ok && rule.Mode == "override" {
 		// HQ/Site 무시. swap + customer 만.
 		totalBid = swap.BidAmount + rule.BidDelta
 		totalAsk = swap.AskAmount + rule.AskDelta
+		totalSkew = swap.SkewAmount + rule.SkewDelta
+		totalSpread = swap.SpreadAmount + rule.SpreadDelta
 	} else {
 		// add 모드 또는 customer 미매칭 — HQ/Site 누계.
 		hq := t.lookupHQ(raw.Pair, profile.Tier, activeWindows)
 		site := t.lookupSite(raw.Pair, profile.Channel, profile.Site, activeWindows)
 		totalBid = swap.BidAmount + hq.BidAmount + site.BidAmount
 		totalAsk = swap.AskAmount + hq.AskAmount + site.AskAmount
+		totalSkew = swap.SkewAmount + hq.SkewAmount + site.SkewAmount
+		totalSpread = swap.SpreadAmount + hq.SpreadAmount + site.SpreadAmount
 		if ok { // mode=add
 			totalBid += rule.BidDelta
 			totalAsk += rule.AskDelta
+			totalSkew += rule.SkewDelta
+			totalSpread += rule.SpreadDelta
 		}
 	}
 
+	spreadHalf := totalSpread / 2
 	return CustomerQuote{
 		Pair:         raw.Pair,
 		Profile:      profile,
 		Tenor:        tenor,
-		Bid:          raw.Bid - totalBid,
-		Ask:          raw.Ask + totalAsk,
+		Bid:          raw.Bid + totalSkew - totalBid - spreadHalf,
+		Ask:          raw.Ask + totalSkew + totalAsk + spreadHalf,
 		TS:           raw.TS,
 		RawBid:       raw.Bid,
 		RawAsk:       raw.Ask,
@@ -128,18 +141,24 @@ func (t *PricingTable) ApplyForValueDate(raw Quote, profile session.Profile,
 	activeWindows := t.ActiveWindows(now)
 	rule, ok := t.matchCustomerRule(customerID, raw.Pair, activeWindows)
 
-	var totalBid, totalAsk float64
+	var totalBid, totalAsk, totalSkew, totalSpread float64
 	if ok && rule.Mode == "override" {
 		totalBid = interp.Margin.BidAmount + rule.BidDelta
 		totalAsk = interp.Margin.AskAmount + rule.AskDelta
+		totalSkew = interp.Margin.SkewAmount + rule.SkewDelta
+		totalSpread = interp.Margin.SpreadAmount + rule.SpreadDelta
 	} else {
 		hq := t.lookupHQ(raw.Pair, profile.Tier, activeWindows)
 		site := t.lookupSite(raw.Pair, profile.Channel, profile.Site, activeWindows)
 		totalBid = interp.Margin.BidAmount + hq.BidAmount + site.BidAmount
 		totalAsk = interp.Margin.AskAmount + hq.AskAmount + site.AskAmount
+		totalSkew = interp.Margin.SkewAmount + hq.SkewAmount + site.SkewAmount
+		totalSpread = interp.Margin.SpreadAmount + hq.SpreadAmount + site.SpreadAmount
 		if ok {
 			totalBid += rule.BidDelta
 			totalAsk += rule.AskDelta
+			totalSkew += rule.SkewDelta
+			totalSpread += rule.SpreadDelta
 		}
 	}
 
@@ -150,12 +169,13 @@ func (t *PricingTable) ApplyForValueDate(raw Quote, profile session.Profile,
 		tenor = interp.From
 	}
 
+	spreadHalf := totalSpread / 2
 	return CustomerQuote{
 		Pair:         raw.Pair,
 		Profile:      profile,
 		Tenor:        tenor,
-		Bid:          raw.Bid - totalBid,
-		Ask:          raw.Ask + totalAsk,
+		Bid:          raw.Bid + totalSkew - totalBid - spreadHalf,
+		Ask:          raw.Ask + totalSkew + totalAsk + spreadHalf,
 		TS:           raw.TS,
 		RawBid:       raw.Bid,
 		RawAsk:       raw.Ask,

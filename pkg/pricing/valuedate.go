@@ -252,8 +252,10 @@ func (t *PricingTable) InterpolateSwap(pair session.Pair, offsetDays int) (SwapI
 	w := float64(offsetDays-prev.days) / float64(next.days-prev.days)
 	return SwapInterpolation{
 		Margin: Margin{
-			BidAmount: prev.m.BidAmount + (next.m.BidAmount-prev.m.BidAmount)*w,
-			AskAmount: prev.m.AskAmount + (next.m.AskAmount-prev.m.AskAmount)*w,
+			BidAmount:    prev.m.BidAmount + (next.m.BidAmount-prev.m.BidAmount)*w,
+			AskAmount:    prev.m.AskAmount + (next.m.AskAmount-prev.m.AskAmount)*w,
+			SkewAmount:   prev.m.SkewAmount + (next.m.SkewAmount-prev.m.SkewAmount)*w,
+			SpreadAmount: prev.m.SpreadAmount + (next.m.SpreadAmount-prev.m.SpreadAmount)*w,
 		},
 		From: prev.tenor, FromDays: prev.days,
 		To: next.tenor, ToDays: next.days,

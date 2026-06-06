@@ -2386,6 +2386,9 @@ WEB.HQ.VIP</textarea>
                         class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">📋 코드</button>
                       <button id="svcio-copy-json" title="Input 필드들의 zero-filled JSON sample — test-wire body 로 바로 사용 가능"
                         class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">📋 JSON</button>
+                      <span class="text-slate-700 self-center px-0.5">│</span>
+                      <button id="svcio-run-tester" title="API 테스터로 deep link — alias + sample input 자동 채움"
+                        class="px-2 py-1 rounded-md bg-accent-500/15 text-accent-400 border border-accent-500/40 hover:bg-accent-500/25">▶ 실행</button>
                     </div>
                   </div>
                   <pre id="svcio-gen" class="rounded-lg bg-ink-950 border border-ink-800 p-3 font-mono text-xs overflow-x-auto whitespace-pre"></pre>
@@ -7684,6 +7687,32 @@ async function initSvcIO() {
       if (!spec) return;
       const sample = makeInputExample(spec.input || []);
       svcioCopyToClipboard(JSON.stringify(sample, null, 2), "JSON sample");
+    };
+    // ▶ 실행 — API 테스터로 deep link. alias 매칭 우선, 없으면 raw envelope.
+    const runBtn = $("#svcio-run-tester");
+    if (runBtn) runBtn.onclick = () => {
+      const spec = svcioState.selected;
+      if (!spec) return;
+      const sample = makeInputExample(spec.input || []);
+      // alias 매칭 — routing rules 의 routing_key 또는 alias 와 code 일치.
+      const rules = Array.isArray(svcioState.rules) ? svcioState.rules : [];
+      const matched = rules.filter(r => r && (
+        r.alias === spec.code ||
+        r.routing_key === spec.code ||
+        (r.exchange + "_" + r.routing_key) === spec.code));
+      const rule = matched.find(r => r.active) || matched[0] || null;
+      const body = rule
+        ? { alias: rule.alias, data: sample }
+        : { exchange: spec.code, routing_key: spec.code, data: sample };
+      goPage("tester");
+      setTimeout(() => {
+        testerLoadPreset({
+          method: "POST",
+          path: "/v1/admin/tx-test",
+          body,
+        });
+        toast("API 테스터 — " + (rule ? "alias=" + rule.alias : "raw envelope (" + spec.code + ")"));
+      }, 50);
     };
     const wireCh = $("#svcio-wire-channel");
     if (wireCh) wireCh.addEventListener("change", () => {

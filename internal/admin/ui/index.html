@@ -2412,6 +2412,9 @@ WEB.HQ.VIP</textarea>
                         <span class="text-slate-700">·</span>
                         <input id="svcio-wire-rkey" placeholder="rkey"
                           class="w-16 px-2 py-1 rounded-md bg-ink-800 border border-ink-700 outline-none font-mono text-xs" />
+                        <button id="svcio-wire-lock" title="라우팅 룰에서 자동 채움 — 클릭해 편집 unlock"
+                          class="px-1.5 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 text-xs"
+                          data-locked="false">🔓</button>
                         <button id="svcio-wire-preview" title="broker 호출 없이 wire 직렬화 hex 만 확인"
                           class="px-3 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 text-xs">
                           🔍 미리보기
@@ -7756,9 +7759,31 @@ function renderWireForm() {
     rule = matched.find(r => r.active) || matched[0] || null;
   } catch (e) { rule = null; }
   // 갱신 정책:
-  //   - 라우팅 룰 매칭이 있으면 → 항상 룰 값으로 set (룰을 single source of truth).
-  //   - 룰 매칭이 없으면 → spec 이 바뀔 때만 비움 (사용자 수동 입력 보존).
-  //     dataset.lastSpec 으로 추적.
+  //   - 라우팅 룰 매칭이 있으면 → 항상 룰 값으로 set + lock (read-only).
+  //   - 룰 매칭이 없으면 → spec 이 바뀔 때만 비움 + editable (사용자 직접 입력 유도).
+  //   - 운영자가 룰을 우회해야 할 경우 옆의 🔓 토글로 unlock 가능 (안전 모드 우선).
+  const lockBtn = $("#svcio-wire-lock");
+  const applyLock = (locked) => {
+    if (ex) {
+      ex.readOnly = locked;
+      ex.classList.toggle("bg-ink-900", locked);
+      ex.classList.toggle("text-slate-500", locked);
+      ex.classList.toggle("cursor-not-allowed", locked);
+    }
+    if (rk) {
+      rk.readOnly = locked;
+      rk.classList.toggle("bg-ink-900", locked);
+      rk.classList.toggle("text-slate-500", locked);
+      rk.classList.toggle("cursor-not-allowed", locked);
+    }
+    if (lockBtn) {
+      lockBtn.textContent = locked ? "🔒" : "🔓";
+      lockBtn.title = locked
+        ? "라우팅 룰에서 자동 채움 — 클릭해 편집 unlock"
+        : "수동 편집 활성 — 클릭해 룰 값으로 복귀 + lock";
+      lockBtn.dataset.locked = String(locked);
+    }
+  };
   if (ex) {
     if (rule) {
       ex.value = rule.exchange;
@@ -7777,12 +7802,35 @@ function renderWireForm() {
       rk.dataset.lastSpec = spec.code;
     }
   }
+  // lock 상태 결정 — 매칭 있으면 default lock, 없으면 editable.
+  applyLock(!!rule);
+  if (lockBtn && !lockBtn.dataset.wired) {
+    lockBtn.dataset.wired = "1";
+    lockBtn.onclick = () => {
+      const wasLocked = lockBtn.dataset.locked === "true";
+      if (wasLocked) {
+        // unlock — 운영자가 수동 편집할 의도.
+        applyLock(false);
+        toast("exchange/rkey 편집 unlock — 룰 매칭 우회", "warn");
+      } else {
+        // lock — 룰 값으로 복귀 (있는 경우만).
+        if (rule) {
+          if (ex) ex.value = rule.exchange;
+          if (rk) rk.value = rule.routing_key;
+          applyLock(true);
+          toast("라우팅 룰 \"" + rule.alias + "\" 값으로 복귀 + lock");
+        } else {
+          toast("매칭 라우팅 룰 없음 — lock 불가", "warn");
+        }
+      }
+    };
+  }
   if (hint) {
     if (rule) {
-      hint.textContent = "라우팅 룰 \"" + rule.alias + "\" 매핑 (" + rule.exchange + "/" + rule.routing_key + ")" + (rule.active ? "" : " - 비활성");
+      hint.textContent = "🔒 라우팅 룰 \"" + rule.alias + "\" 매핑 (" + rule.exchange + "/" + rule.routing_key + ")" + (rule.active ? "" : " — 비활성") + " · 직접 호출하려면 🔓 클릭";
       hint.className = "text-[11px] text-emerald-400";
     } else {
-      hint.textContent = "라우팅 룰 미등록 — broker 의 진짜 매핑은 /v1/admin/whois?argv1=" + spec.code + " 로 조회. 또는 scripts/import-svc-routes.sh 로 일괄 import";
+      hint.textContent = "📌 라우팅 룰 미등록 — 직접 입력. 진짜 매핑은 /v1/admin/whois?argv1=" + spec.code + " 로 조회. 또는 scripts/import-svc-routes.sh 로 일괄 import";
       hint.className = "text-[11px] text-amber-500";
     }
   }

@@ -2363,6 +2363,12 @@ WEB.HQ.VIP</textarea>
                       </label>
                     </div>
                   </div>
+                  <!-- API 모드에서만 보이는 안내 — WIRE 로 전환해야 wire 테스트 form/버튼이 나타남.
+                       svcio-wire-test 컨테이너는 default hidden 이라 처음 사용자가 발견 못함. -->
+                  <div id="svcio-wire-hint" class="text-[11px] text-slate-500 bg-ink-900/60 border border-ink-800 rounded px-2 py-1">
+                    💡 <span class="text-accent-400">wire 테스트</span> (▶ 전송 / 🔍 미리보기 / hex 검증) 는 위 형식을
+                    <span class="text-accent-400 font-mono">전문 (WIRE)</span> 로 전환하면 나타납니다.
+                  </div>
                   <!-- 채널 탭 — API 형식일 때만 의미. WIRE 형식은 채널 무관해 자동 hide. -->
                   <div class="flex items-center justify-between" id="svcio-channels-row">
                     <div class="text-xs text-slate-500">채널 (송신자)</div>
@@ -7718,6 +7724,9 @@ function renderSvcIOFormat() {
   $("#svcio-channels-row").classList.toggle("hidden", isWire);
   $("#svcio-wire-test").classList.toggle("hidden", !isWire);
   $("#svcio-wire-note").classList.toggle("hidden", !isWire);
+  // hint — API 모드에서만 표시 (WIRE 모드는 form 자체가 보이므로 hint 불필요).
+  const hint = $("#svcio-wire-hint");
+  if (hint) hint.classList.toggle("hidden", isWire);
   if (isWire) renderWireForm();
 }
 

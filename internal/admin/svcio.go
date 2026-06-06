@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,7 @@ func ListSvcIO(reg *svcio.Registry) http.HandlerFunc {
 			return
 		}
 		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		sortMode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort"))) // "" | "recent"
 		max := 200
 		if v := r.URL.Query().Get("max"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -37,20 +39,38 @@ func ListSvcIO(reg *svcio.Registry) http.HandlerFunc {
 		}
 		var items []svcio.SvcSummary
 		if q != "" {
+			// Search 가 max 까지 자체 컷. 정렬은 후 단계에서 적용.
 			items = reg.Search(q, max)
 		} else {
 			items = reg.List()
-			if len(items) > max {
-				items = items[:max]
-			}
+		}
+		// 정렬 — recent 는 mtime desc 우선, 같은 mtime 은 code 순 (List 기본).
+		if sortMode == "recent" {
+			svcioSortRecent(items)
+		}
+		if len(items) > max {
+			items = items[:max]
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"total": reg.Count(),
 			"shown": len(items),
 			"q":     q,
+			"sort":  sortMode,
 			"items": items,
 		})
 	}
+}
+
+// svcioSortRecent — mtime desc 우선 + 같은 mtime 은 code asc (안정 정렬).
+// mtime 0 (stat 실패) 는 가장 아래로.
+func svcioSortRecent(items []svcio.SvcSummary) {
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i].SourceModUnix, items[j].SourceModUnix
+		if a != b {
+			return a > b
+		}
+		return items[i].Code < items[j].Code
+	})
 }
 
 // ListSvcIOHeaders — GET /v1/admin/svc-io/headers

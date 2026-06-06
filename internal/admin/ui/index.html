@@ -2252,6 +2252,11 @@ WEB.HQ.VIP</textarea>
           <div class="grid grid-cols-12 gap-4">
             <!-- 좌: 검색 + 목록 -->
             <div class="col-span-4 rounded-xl bg-ink-900 border border-ink-800 p-3 flex flex-col" style="max-height: 70vh">
+              <div class="flex items-center gap-1 mb-2 text-[10px] text-slate-500">
+                <span>정렬:</span>
+                <button id="svcio-sort-code" class="px-1.5 py-0.5 rounded bg-accent-500/20 text-accent-400">코드</button>
+                <button id="svcio-sort-recent" class="px-1.5 py-0.5 rounded bg-ink-800 hover:bg-ink-700">최근 변경</button>
+              </div>
               <input id="svcio-q" placeholder="코드 · 한글 이름 · 필드명(empid) · 한글 주석(직원번호) 검색"
                 title="검색 영역: code, name, field name, comment. 한글 직접 입력 가능."
                 class="px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none text-sm mb-2" />
@@ -2269,6 +2274,7 @@ WEB.HQ.VIP</textarea>
                     <span id="svcio-name" class="text-base text-accent-400"></span>
                   </div>
                   <div id="svcio-aliases" class="text-xs text-slate-500 mt-1"></div>
+                  <div id="svcio-mtime" class="text-[10px] text-slate-600 mt-0.5 font-mono"></div>
                 </div>
 
                 <!-- 운영 통계 — alias-stats join. mci-api 미접속이면 grey out. -->
@@ -7619,6 +7625,23 @@ async function initSvcIO() {
   if (!svcioState.wired) {
     svcioState.wired = true;
     $("#svcio-q").addEventListener("input", debounceSvcIO);
+    // 정렬 토글 — 코드 (default) | 최근 변경 (mtime desc).
+    const sortBtns = { "": $("#svcio-sort-code"), "recent": $("#svcio-sort-recent") };
+    Object.entries(sortBtns).forEach(([mode, btn]) => {
+      if (!btn) return;
+      btn.onclick = () => {
+        svcioState.sort = mode;
+        Object.entries(sortBtns).forEach(([m, b]) => {
+          const on = m === mode;
+          if (b) {
+            b.classList.toggle("bg-accent-500/20", on);
+            b.classList.toggle("text-accent-400", on);
+            b.classList.toggle("bg-ink-800", !on);
+          }
+        });
+        loadSvcIOList();
+      };
+    });
     $$("#svcio-gen-tabs .gen-tab").forEach(btn => {
       btn.addEventListener("click", () => {
         svcioState.gen = btn.dataset.gen;
@@ -8038,10 +8061,13 @@ function debounceSvcIO() {
 
 async function loadSvcIOList() {
   const q = $("#svcio-q").value.trim();
+  const sortMode = svcioState.sort || "";
   let res;
   try {
-    const url = "/v1/admin/svc-io" + (q ? "?q=" + encodeURIComponent(q) + "&max=200" : "?max=200");
-    res = await api(url);
+    const params = ["max=200"];
+    if (q) params.push("q=" + encodeURIComponent(q));
+    if (sortMode === "recent") params.push("sort=recent");
+    res = await api("/v1/admin/svc-io?" + params.join("&"));
   } catch (e) {
     $("#svcio-list").replaceChildren(h("div", { class: "text-xs text-slate-500 text-center py-2",
       text: "목록 로드 실패: " + e.message }));
@@ -8076,6 +8102,12 @@ function renderSvcIOList() {
       h("span", { class: "text-xs text-slate-300 truncate flex-1", text: s.name || "(이름 없음)" }),
       h("span", { class: "text-[10px] text-slate-500 font-mono", text: `${s.input_fields}I/${s.output_fields}O` }),
     );
+    // mtime — sort=recent 일 때만 추가로 row 우측에 짧은 날짜 (MM-DD).
+    if (svcioState.sort === "recent" && s.source_mod_unix) {
+      const d = new Date(s.source_mod_unix * 1000);
+      const mmdd = ("0"+(d.getMonth()+1)).slice(-2) + "-" + ("0"+d.getDate()).slice(-2);
+      row.appendChild(h("span", { class: "text-[9px] text-slate-600 font-mono", text: mmdd }));
+    }
     // match_hint — Search 결과에만 채워짐. UI badge 로 매칭 이유 표시.
     if (s.match_hint) {
       const hint = s.match_hint;
@@ -8147,6 +8179,21 @@ async function loadSvcIODetail(code) {
     });
   } else {
     aliasEl.textContent = "alias 미연결 — 라우팅 룰에 등록되지 않음";
+  }
+
+  // 파일 mtime + source path — 변경 추적용.
+  const mtimeEl = $("#svcio-mtime");
+  if (mtimeEl) {
+    const parts = [];
+    if (spec.source_mod_unix) {
+      const d = new Date(spec.source_mod_unix * 1000);
+      parts.push("마지막 변경: " + d.toLocaleString());
+    }
+    if (spec.source_path) {
+      const short = spec.source_path.split("/").slice(-3).join("/");
+      parts.push("source: " + short);
+    }
+    mtimeEl.textContent = parts.join("  ·  ");
   }
 
   // 운영 통계 패널 — runtime_stats 가 있을 때만 표시.

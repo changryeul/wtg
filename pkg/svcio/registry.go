@@ -40,6 +40,9 @@ type SvcSummary struct {
 	// "name" / "field:NAME" / "comment:KOREAN". UI 가 검색 결과 옆에 작은
 	// badge 로 표시해 운영자가 매칭 이유를 즉시 확인.
 	MatchHint string `json:"match_hint,omitempty"`
+	// SourceModUnix — 헤더 파일 마지막 수정 시각 (Unix epoch sec).
+	// UI 가 "마지막 변경" 칼럼 / "최근 변경 정렬" 에 사용.
+	SourceModUnix int64 `json:"source_mod_unix,omitempty"`
 }
 
 // NewRegistry — 빈 Registry 반환.
@@ -259,13 +262,14 @@ func (r *Registry) List() []SvcSummary {
 	out := make([]SvcSummary, 0, len(r.specs))
 	for _, s := range r.specs {
 		out = append(out, SvcSummary{
-			Code:         s.Code,
-			Name:         s.Name,
-			HasInput:     len(s.Input) > 0,
-			HasOutput:    len(s.Output) > 0,
-			InputFields:  countFields(s.Input),
-			OutputFields: countFields(s.Output),
-			Dev:          isDevSpec(s),
+			Code:          s.Code,
+			Name:          s.Name,
+			HasInput:      len(s.Input) > 0,
+			HasOutput:     len(s.Output) > 0,
+			InputFields:   countFields(s.Input),
+			OutputFields:  countFields(s.Output),
+			Dev:           isDevSpec(s),
+			SourceModUnix: s.SourceModUnix,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })

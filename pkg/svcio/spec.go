@@ -41,6 +41,11 @@ type SvcSpec struct {
 	// SourcePath — 파싱 출처 파일 절대 경로. 디버그/감사용.
 	SourcePath string `json:"source_path,omitempty"`
 
+	// SourceModUnix — 파일 시스템의 마지막 수정 시각 (Unix epoch sec).
+	// ParseFile 가 os.Stat 으로 자동 캡처. 0 이면 stat 실패 또는 미지원.
+	// UI 가 "마지막 변경: 2026-06-06 14:32:05" 와 "정렬: 최근 변경" 에 사용.
+	SourceModUnix int64 `json:"source_mod_unix,omitempty"`
+
 	// HeaderType — 이 svc 가 사용하는 공통 헤더 이름. "COMHDR" / "" (없음) 등.
 	// wire frame = [HeaderFields][Input] 으로 구성.
 	// 운영 svc (win/src/inc/trn) 는 default "COMHDR", dev svc (svc-headers) 는
@@ -96,6 +101,11 @@ func ParseFile(path string) (*SvcSpec, error) {
 	}
 	abs, _ := filepath.Abs(path)
 	spec.SourcePath = abs
+	// 파일 mtime 캡처 — UI 의 "마지막 변경" / "최근 변경 정렬" 용.
+	// stat 실패는 무시 (Linux 의 일부 read-only 마운트 등 edge case).
+	if fi, statErr := os.Stat(path); statErr == nil {
+		spec.SourceModUnix = fi.ModTime().Unix()
+	}
 	return spec, nil
 }
 

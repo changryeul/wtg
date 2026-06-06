@@ -417,6 +417,11 @@ func readInlineStruct(scanner *bufio.Scanner) (body, name string, repeat int, er
 
 // parseFieldLine — `char name [size]; // comment` 또는 `TYPE_T name[];` 한 줄 파싱.
 func parseFieldLine(line string) (Field, bool) {
+	// trailing block comment `/* ... */` 를 `// ...` 로 정규화.
+	// reFieldArray / reFieldArrayUnsized 가 `//` 만 capture 하기 때문에 일부
+	// 헤더 (예: W1901*S01, *_dmnd_ctnt 등 tab + /* */ 스타일) 가 field 매칭에
+	// 실패하던 1% 격차를 해소.
+	line = normalizeTrailingBlockComment(line)
 	if m := reFieldArray.FindStringSubmatch(line); len(m) > 0 {
 		size, _ := strconv.Atoi(m[3])
 		f := Field{
@@ -438,6 +443,31 @@ func parseFieldLine(line string) (Field, bool) {
 		return f, true
 	}
 	return Field{}, false
+}
+
+// normalizeTrailingBlockComment — line 끝에 붙은 `/* ... */` 블록 주석을
+// `// ...` 로 변환. nested `/* ... */` 는 지원 X (운영 헤더 sample 에 없음).
+// `*/` 가 라인 끝이 아닌 경우 (drop-through) 는 변환 skip — 정확한 위치 추론
+// 어려운 corner case 는 그대로 두어 안전.
+func normalizeTrailingBlockComment(line string) string {
+	i := strings.Index(line, "/*")
+	if i < 0 {
+		return line
+	}
+	// `*/` 가 line 끝쪽인지 확인.
+	rest := line[i+2:]
+	j := strings.Index(rest, "*/")
+	if j < 0 {
+		return line // 미완 — 그대로
+	}
+	body := strings.TrimSpace(rest[:j])
+	tail := strings.TrimSpace(rest[j+2:])
+	if tail != "" {
+		// `*/` 뒤에 코드가 더 있는 케이스 — 변환 안전하지 않음.
+		return line
+	}
+	prefix := strings.TrimRight(line[:i], " \t")
+	return prefix + " // " + body
 }
 
 func cleanComment(s string) string {

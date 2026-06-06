@@ -8244,23 +8244,56 @@ function showSvcioEditMsg(text, level) {
 }
 
 // renderSvcIOFields — Field[] 트리를 indent 로 렌더. nested children 재귀.
-function renderSvcIOFields(fields, depth) {
+// fieldByteLen — 한 field 의 wire byte 길이. 가변 grid (orec[]) 는 null 반환.
+// char[N] / int 등 기본 타입은 size×repeat. nested struct 는 children 합산×repeat.
+// 운영 데이터 거의 char 라 size = byte 직접 (char[16]=16B).
+function fieldByteLen(f) {
+  if (f.children && f.children.length > 0) {
+    if (f.repeat === -1) return null; // 가변 grid
+    let sum = 0;
+    for (const c of f.children) {
+      const cb = fieldByteLen(c);
+      if (cb === null) return null;
+      sum += cb;
+    }
+    return sum * Math.max(1, f.repeat || 1);
+  }
+  return (f.size || 0) * Math.max(1, f.repeat || 1);
+}
+
+// renderSvcIOFields — fields 트리를 row 로 렌더. cumulative offset (@N) 표시.
+// baseOffset 부터 누계. 가변 size 이후는 @? 로 fallback.
+function renderSvcIOFields(fields, depth, baseOffset) {
+  if (baseOffset === undefined) baseOffset = 0;
   const out = [];
+  let off = baseOffset;
+  let lost = false; // 한 번 가변 만나면 그 이후 offset 정확 계산 불가
   for (const f of fields) {
     const indent = depth * 16;
     const sizeStr = f.size ? `[${f.size}]` : (f.repeat === -1 ? "[]" : (f.repeat ? `[${f.repeat}]` : ""));
+    const offTxt = lost ? "@?" : ("@" + off);
+    const myLen = fieldByteLen(f);
+    const lenTxt = myLen === null ? "+?B" : ("+" + myLen + "B");
     const row = h("div", {
       class: "flex items-baseline gap-2 py-0.5",
       style: `padding-left: ${indent}px`,
     },
+      h("span", { class: "text-slate-600 w-10 text-right font-mono text-[10px]", text: offTxt }),
       h("span", { class: "text-slate-400 w-16 truncate", text: f.ctype }),
       h("span", { class: "text-accent-400 truncate", text: f.name }),
-      h("span", { class: "text-slate-500 w-16 text-right", text: sizeStr }),
+      h("span", { class: "text-slate-500 w-12 text-right text-[10px]", text: sizeStr }),
+      h("span", { class: "text-slate-600 w-12 text-right font-mono text-[10px]", text: lenTxt }),
       h("span", { class: "text-slate-300 truncate flex-1", text: f.comment || "" }),
     );
     out.push(row);
     if (f.children && f.children.length > 0) {
-      out.push(...renderSvcIOFields(f.children, depth + 1));
+      // nested struct 안의 첫 child 는 부모 row 의 시작 offset 부터.
+      out.push(...renderSvcIOFields(f.children, depth + 1, lost ? 0 : off));
+    }
+    if (myLen === null) {
+      lost = true;
+    } else if (!lost) {
+      off += myLen;
     }
   }
   return out;

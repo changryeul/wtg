@@ -70,12 +70,136 @@ func ListSvcIOHeaders(reg *svcio.Registry) http.HandlerFunc {
 	}
 }
 
+// SvcRuntimeStats — 운영 호출 통계. mci-api 의 alias-stats 를 svc code 단위로
+// 누계한 결과. 페이지 진입 시 한 번 조회 + UI 캐시.
+type SvcRuntimeStats struct {
+	Aliases       []string `json:"aliases"`         // 이 svc code 로 라우팅되는 alias 목록 (routing_key 매칭)
+	Calls         int64    `json:"calls"`           // 누적 호출수
+	Errors        int64    `json:"errors"`          // 누적 에러
+	AvgLatencyMs  float64  `json:"avg_latency_ms"`  // 가중 평균 (calls × avg)
+	MaxLatencyMs  float64  `json:"max_latency_ms"`  // 모든 alias 중 최대
+	ErrorRatePct  float64  `json:"error_rate_pct"`  // errors/calls × 100
+	LastCallUnix  int64    `json:"last_call_unix"`  // 모든 alias 중 최근 호출 시각
+	StatsAvailable bool    `json:"stats_available"` // false 면 mci-api 미접속 — UI 가 grey out
+}
+
+// aliasStatsResponse — mci-api 의 /v1/admin/alias-stats 응답.
+type aliasStatsResponse struct {
+	Aliases []struct {
+		Alias         string  `json:"alias"`
+		Tier          string  `json:"tier"`
+		Calls         int64   `json:"calls"`
+		Errors        int64   `json:"errors"`
+		AvgLatencyMs  float64 `json:"avg_latency_ms"`
+		MaxLatencyMs  float64 `json:"max_latency_ms"`
+		ErrorRatePct  float64 `json:"error_rate_pct"`
+		LastCallUnix  int64   `json:"last_call_unix"`
+	} `json:"aliases"`
+}
+
+// SvcIOWithStats — GetSvcIO 응답 wrapper. 기존 SvcSpec 필드 inline + runtime_stats 추가.
+type SvcIOWithStats struct {
+	*svcio.SvcSpec
+	RuntimeStats *SvcRuntimeStats `json:"runtime_stats,omitempty"`
+}
+
+// SvcIODeps — GetSvcIO 의 의존성. server.go 가 채움.
+type SvcIODeps struct {
+	Registry       *svcio.Registry
+	Routes         routing.Registry // svc code → alias 들 reverse lookup
+	UpstreamAPIURL string           // mci-api /v1/admin/alias-stats fetch
+	HTTPClient     *http.Client     // 짧은 timeout, nil 이면 default 사용
+	Logger         *slog.Logger
+}
+
+// fetchAliasStats — mci-api 의 alias-stats 를 fetch.
+// 1s timeout, 실패 시 nil 반환 (panel 자체를 hide).
+func (d *SvcIODeps) fetchAliasStats(ctx context.Context) *aliasStatsResponse {
+	if d.UpstreamAPIURL == "" {
+		return nil
+	}
+	cli := d.HTTPClient
+	if cli == nil {
+		cli = &http.Client{Timeout: 1 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(d.UpstreamAPIURL, "/")+"/v1/admin/alias-stats", nil)
+	if err != nil {
+		return nil
+	}
+	// DevMode handshake — admin 가 mci-api 내부 endpoint 호출.
+	req.Header.Set("X-WTG-User", "admin")
+	resp, err := cli.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var out aliasStatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil
+	}
+	return &out
+}
+
+// computeRuntimeStats — routes 에서 routing_key=code 인 alias 들을 추출 + alias-stats
+// 누계. 매칭 alias 0건이거나 stats 없으면 (Aliases=[], Calls=0, StatsAvailable=true)
+// 반환 — UI 가 "운영 호출 없음" 표시.
+func (d *SvcIODeps) computeRuntimeStats(ctx context.Context, code string) *SvcRuntimeStats {
+	stats := &SvcRuntimeStats{Aliases: []string{}, StatsAvailable: false}
+	// 1. routes 에서 routing_key == code 인 alias 들 lookup.
+	if d.Routes != nil {
+		for _, rule := range d.Routes.List() {
+			if !rule.Active {
+				continue
+			}
+			if strings.EqualFold(rule.RoutingKey, code) {
+				stats.Aliases = append(stats.Aliases, rule.Alias)
+			}
+		}
+	}
+	// 2. mci-api alias-stats fetch.
+	resp := d.fetchAliasStats(ctx)
+	if resp == nil {
+		// stats source 미동작 — Aliases 만 채워서 반환 (UI 가 "통계 미접속" 표시).
+		return stats
+	}
+	stats.StatsAvailable = true
+	aliasSet := make(map[string]bool, len(stats.Aliases))
+	for _, a := range stats.Aliases {
+		aliasSet[strings.ToLower(a)] = true
+	}
+	// 3. 누계 — alias-stats 의 entry 가 alias × tier 분리이므로 동일 alias 의 여러 tier 합산.
+	var totalLatencyMs float64
+	for _, e := range resp.Aliases {
+		if !aliasSet[strings.ToLower(e.Alias)] {
+			continue
+		}
+		stats.Calls += e.Calls
+		stats.Errors += e.Errors
+		totalLatencyMs += e.AvgLatencyMs * float64(e.Calls) // 가중합
+		if e.MaxLatencyMs > stats.MaxLatencyMs {
+			stats.MaxLatencyMs = e.MaxLatencyMs
+		}
+		if e.LastCallUnix > stats.LastCallUnix {
+			stats.LastCallUnix = e.LastCallUnix
+		}
+	}
+	if stats.Calls > 0 {
+		stats.AvgLatencyMs = totalLatencyMs / float64(stats.Calls)
+		stats.ErrorRatePct = float64(stats.Errors) / float64(stats.Calls) * 100
+	}
+	return stats
+}
+
 // GetSvcIO — GET /v1/admin/svc-io/{code}
 //
 // 단건 SvcSpec — Input/Output 트리 + Records (named typedef) 메타데이터.
-func GetSvcIO(reg *svcio.Registry) http.HandlerFunc {
+func GetSvcIO(deps *SvcIODeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if reg == nil {
+		if deps == nil || deps.Registry == nil {
 			writeJSONError(w, http.StatusServiceUnavailable, "svcio_disabled",
 				"svc-inc-dir 미설정")
 			return
@@ -85,12 +209,15 @@ func GetSvcIO(reg *svcio.Registry) http.HandlerFunc {
 			writeJSONError(w, http.StatusBadRequest, "invalid", "code 필수")
 			return
 		}
-		spec, ok := reg.Get(code)
+		spec, ok := deps.Registry.Get(code)
 		if !ok {
 			writeJSONError(w, http.StatusNotFound, "not_found", "code 미등록: "+code)
 			return
 		}
-		writeJSON(w, http.StatusOK, spec)
+		// runtime stats join — routes 의 routing_key 매칭 alias 들 + alias-stats 누계.
+		// fetch 실패해도 spec 자체는 반환 (StatsAvailable=false 만 다름).
+		stats := deps.computeRuntimeStats(r.Context(), code)
+		writeJSON(w, http.StatusOK, SvcIOWithStats{SvcSpec: spec, RuntimeStats: stats})
 	}
 }
 

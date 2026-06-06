@@ -464,7 +464,12 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/admin/svc-io", ListSvcIO(s.svcio))
 	// 공통 헤더 (COMHDR/BROADCAST_H/...) 등록 list.
 	mux.HandleFunc("GET /v1/admin/svc-io/headers", ListSvcIOHeaders(s.svcio))
-	mux.HandleFunc("GET /v1/admin/svc-io/{code}", GetSvcIO(s.svcio))
+	mux.HandleFunc("GET /v1/admin/svc-io/{code}", GetSvcIO(&SvcIODeps{
+		Registry:       s.svcio,
+		Routes:         s.routes,
+		UpstreamAPIURL: s.cfg.UpstreamAPIURL,
+		Logger:         s.logger,
+	}))
 	// 전문 (wire frame) 테스트 — JSON input → wire 직렬화 → broker → byte 응답 parse.
 	// mci 의 정책/감사 layer 통과. legacy native client 가 보낼 wire 와 동일.
 	wireDeps := &TestWireDeps{

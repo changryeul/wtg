@@ -2270,6 +2270,35 @@ WEB.HQ.VIP</textarea>
                   <div id="svcio-aliases" class="text-xs text-slate-500 mt-1"></div>
                 </div>
 
+                <!-- 운영 통계 — alias-stats join. mci-api 미접속이면 grey out. -->
+                <div id="svcio-stats-section" class="hidden rounded-lg bg-ink-950 border border-ink-800 p-3">
+                  <div class="flex items-baseline justify-between mb-2">
+                    <div class="text-xs uppercase tracking-widest text-slate-400">운영 호출 통계
+                      <span id="svcio-stats-source" class="text-[10px] text-slate-600 normal-case"></span>
+                    </div>
+                    <div id="svcio-stats-last" class="text-[10px] text-slate-500 font-mono"></div>
+                  </div>
+                  <div class="grid grid-cols-4 gap-3 text-xs font-mono">
+                    <div>
+                      <div class="text-[10px] uppercase text-slate-500">호출수</div>
+                      <div id="svcio-stats-calls" class="text-base text-slate-200">—</div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] uppercase text-slate-500">평균 latency</div>
+                      <div id="svcio-stats-avg" class="text-base text-slate-200">—</div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] uppercase text-slate-500">최대 latency</div>
+                      <div id="svcio-stats-max" class="text-base text-slate-200">—</div>
+                    </div>
+                    <div>
+                      <div class="text-[10px] uppercase text-slate-500">에러율</div>
+                      <div id="svcio-stats-error" class="text-base text-slate-200">—</div>
+                    </div>
+                  </div>
+                  <div id="svcio-stats-aliases" class="mt-2 text-[10px] text-slate-500 font-mono"></div>
+                </div>
+
                 <!-- 공통 헤더 — header_type 이 있을 때만 표시 (운영 svc) -->
                 <div id="svcio-header-section" class="hidden">
                   <div class="flex items-baseline gap-2 mb-1">
@@ -8077,6 +8106,36 @@ async function loadSvcIODetail(code) {
     });
   } else {
     aliasEl.textContent = "alias 미연결 — 라우팅 룰에 등록되지 않음";
+  }
+
+  // 운영 통계 패널 — runtime_stats 가 있을 때만 표시.
+  const stSec = $("#svcio-stats-section");
+  const st = spec.runtime_stats;
+  if (st) {
+    stSec.classList.remove("hidden");
+    const aliasesTxt = (st.aliases && st.aliases.length > 0)
+      ? st.aliases.join(", ") : "(svc 코드 매칭 alias 없음)";
+    $("#svcio-stats-source").textContent = st.stats_available
+      ? "  mci-api alias-stats join"
+      : "  mci-api 미접속 — 통계 캐시 없음";
+    $("#svcio-stats-aliases").textContent = "라우팅 alias: " + aliasesTxt;
+    if (st.stats_available && st.calls > 0) {
+      $("#svcio-stats-calls").textContent = st.calls.toLocaleString();
+      $("#svcio-stats-avg").textContent = st.avg_latency_ms.toFixed(2) + " ms";
+      $("#svcio-stats-max").textContent = st.max_latency_ms.toFixed(2) + " ms";
+      const errPct = st.error_rate_pct;
+      const errEl = $("#svcio-stats-error");
+      errEl.textContent = errPct.toFixed(2) + "%";
+      errEl.className = "text-base " + (errPct > 5 ? "text-bad" : errPct > 0 ? "text-warn" : "text-slate-200");
+      const last = new Date(st.last_call_unix * 1000);
+      $("#svcio-stats-last").textContent = "최근: " + last.toLocaleString();
+    } else {
+      ["#svcio-stats-calls", "#svcio-stats-avg", "#svcio-stats-max", "#svcio-stats-error"]
+        .forEach(s => { $(s).textContent = "—"; $(s).className = "text-base text-slate-500"; });
+      $("#svcio-stats-last").textContent = st.stats_available ? "운영 호출 없음" : "—";
+    }
+  } else {
+    stSec.classList.add("hidden");
   }
 
   // 공통 헤더 섹션 — spec.header_type 있을 때만 표시.

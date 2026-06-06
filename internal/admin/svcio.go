@@ -240,6 +240,7 @@ type testWireRequest struct {
 	RoutingKey string                 `json:"routing_key,omitempty"`
 	Header     map[string]interface{} `json:"header,omitempty"` // 공통 헤더 (COMHDR 등) 의 필드 → 값. spec.HeaderType 이 비어있으면 무시.
 	Input      map[string]interface{} `json:"input"`            // SvcSpec.Input 필드 → 값
+	DryRun     bool                   `json:"dry_run,omitempty"` // true 면 wire 직렬화만 + broker 호출 skip. UI 의 ▶ 미리보기 용.
 }
 
 // testWireResponse — 응답 panel.
@@ -352,6 +353,24 @@ func TestWireSvc(deps *TestWireDeps) http.HandlerFunc {
 		body, err := svcio.SerializeWithHeader(spec.HeaderFields, req.Header, spec.Input, req.Input)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, "serialize_failed", err.Error())
+			return
+		}
+
+		// dry_run — broker 호출 skip, wire hex 만 응답.
+		// UI 의 ▶ 미리보기 버튼이 form 입력 변경 후 broker 부담 없이 wire layout
+		// 검증 가능. 운영 정책 검사 (kill switch 등) 는 이미 통과 — 운영자가 dry_run
+		// 만 반복해 form 을 다듬은 후 정식 ▶ 전송 으로 broker 호출.
+		if req.DryRun {
+			writeJSON(w, http.StatusOK, testWireResponse{
+				Code:       code,
+				Channel:    channel,
+				Exchange:   exchange,
+				RoutingKey: rkey,
+				HeaderType: spec.HeaderType,
+				SentBytes:  len(body),
+				SentHex:    hex.EncodeToString(body),
+				DurationMs: 0,
+			})
 			return
 		}
 

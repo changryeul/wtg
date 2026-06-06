@@ -2392,6 +2392,10 @@ WEB.HQ.VIP</textarea>
                         <span class="text-slate-700">·</span>
                         <input id="svcio-wire-rkey" placeholder="rkey"
                           class="w-16 px-2 py-1 rounded-md bg-ink-800 border border-ink-700 outline-none font-mono text-xs" />
+                        <button id="svcio-wire-preview" title="broker 호출 없이 wire 직렬화 hex 만 확인"
+                          class="px-3 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400 text-xs">
+                          🔍 미리보기
+                        </button>
                         <button id="svcio-wire-send"
                           class="px-3 py-1 rounded-md bg-gradient-to-r from-accent-500 to-indigo-500 text-ink-950 font-semibold">
                           ▶ wire 테스트
@@ -7627,7 +7631,9 @@ async function initSvcIO() {
     });
     // wire 테스트 버튼 + 채널 select 변경 시 LS 동기화.
     const wireBtn = $("#svcio-wire-send");
-    if (wireBtn) wireBtn.onclick = wireSend;
+    if (wireBtn) wireBtn.onclick = () => wireSend(false);
+    const prevBtn = $("#svcio-wire-preview");
+    if (prevBtn) prevBtn.onclick = () => wireSend(true);
     const wireCh = $("#svcio-wire-channel");
     if (wireCh) wireCh.addEventListener("change", () => {
       if (wireCh.value) localStorage.setItem(LS_TESTER_CHANNEL, wireCh.value);
@@ -7787,7 +7793,8 @@ function renderWireForm() {
 }
 
 // wireSend — 입력 form 모아 /v1/admin/svc-io/{code}/test-wire 호출.
-async function wireSend() {
+// dryRun=true 면 broker 호출 없이 wire 직렬화 hex 만 응답 — ▶ 미리보기 버튼.
+async function wireSend(dryRun = false) {
   const spec = svcioState.selected;
   if (!spec) return;
   const ex = ($("#svcio-wire-exchange") || {}).value || "";
@@ -7806,24 +7813,24 @@ async function wireSend() {
   if (spec.header_type && header.trxc === undefined) {
     header.trxc = spec.code;
   }
-  const btn = $("#svcio-wire-send");
-  btn.disabled = true;
+  const sendBtn = $("#svcio-wire-send");
+  const prevBtn = $("#svcio-wire-preview");
+  if (sendBtn) sendBtn.disabled = true;
+  if (prevBtn) prevBtn.disabled = true;
   const t0 = performance.now();
   try {
     const res = await api("/v1/admin/svc-io/" + encodeURIComponent(spec.code) + "/test-wire", {
       method: "POST",
-      body: JSON.stringify({ channel, exchange: ex, routing_key: rk, header, input }),
+      body: JSON.stringify({ channel, exchange: ex, routing_key: rk, header, input, dry_run: dryRun }),
     });
-    showWireResult(res, "200 OK · " + (performance.now() - t0).toFixed(0) + " ms");
+    const tag = dryRun ? "🔍 미리보기" : "200 OK";
+    showWireResult(res, tag + " · " + (performance.now() - t0).toFixed(0) + " ms");
   } catch (e) {
-    // api() 가 throw — error response 도 시각화하려면 res 내용 보여주기.
     let body = e.message;
-    try {
-      // api() 가 status + body 를 message 에 합침. fallback 표시.
-    } catch (_) {}
     showWireResult({ errm: body }, "ERR · " + (performance.now() - t0).toFixed(0) + " ms");
   } finally {
-    btn.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+    if (prevBtn) prevBtn.disabled = false;
   }
 }
 

@@ -560,65 +560,78 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	}
 
 	// Currency master 노출 — fx-sync 가 미러링한 통화 카탈로그.
-	if s.currencyMaster != nil {
-		mux.HandleFunc("GET /v1/currency", func(w http.ResponseWriter, r *http.Request) {
-			if s.cfg.DevMode {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			}
-			writeJSON(w, http.StatusOK, map[string]any{
-				"count":      s.currencyMaster.Size(),
-				"currencies": s.currencyMaster.List(),
-			})
+	// etcd 미연결 시 master 가 nil 이지만 endpoint 자체는 항상 노출 — UI 가
+	// "0개" 라는 정확한 상태를 표시하도록 (404 가 아니라 빈 결과).
+	mux.HandleFunc("GET /v1/currency", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.DevMode {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		if s.currencyMaster == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"count": 0, "currencies": []any{}})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":      s.currencyMaster.Size(),
+			"currencies": s.currencyMaster.List(),
 		})
-		mux.HandleFunc("GET /v1/currency/{code}", func(w http.ResponseWriter, r *http.Request) {
-			if s.cfg.DevMode {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			}
-			c, ok := s.currencyMaster.Get(r.PathValue("code"))
-			if !ok {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			writeJSON(w, http.StatusOK, c)
-		})
-		s.logger.Info("Currency master endpoint 활성 — GET /v1/currency[/{code}]")
-	}
+	})
+	mux.HandleFunc("GET /v1/currency/{code}", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.DevMode {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		if s.currencyMaster == nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		c, ok := s.currencyMaster.Get(r.PathValue("code"))
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, c)
+	})
 
-	// Pair master 노출.
-	if s.pairMaster != nil {
-		mux.HandleFunc("GET /v1/pair", func(w http.ResponseWriter, r *http.Request) {
-			if s.cfg.DevMode {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			}
-			writeJSON(w, http.StatusOK, map[string]any{
-				"count": s.pairMaster.Size(),
-				"pairs": s.pairMaster.List(),
-			})
+	// Pair master 노출 — etcd 미연결 시도 endpoint 노출 (빈 결과).
+	mux.HandleFunc("GET /v1/pair", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.DevMode {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		if s.pairMaster == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"count": 0, "pairs": []any{}})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count": s.pairMaster.Size(),
+			"pairs": s.pairMaster.List(),
 		})
-		mux.HandleFunc("GET /v1/pair/{id}", func(w http.ResponseWriter, r *http.Request) {
-			if s.cfg.DevMode {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			}
-			p, ok := s.pairMaster.Get(r.PathValue("id"))
-			if !ok {
-				http.Error(w, "not found", http.StatusNotFound)
-				return
-			}
-			writeJSON(w, http.StatusOK, p)
-		})
-		s.logger.Info("Pair master endpoint 활성 — GET /v1/pair[/{id}]")
-	}
+	})
+	mux.HandleFunc("GET /v1/pair/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.DevMode {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		if s.pairMaster == nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		p, ok := s.pairMaster.Get(r.PathValue("id"))
+		if !ok {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+	})
 
-	// Cross-rate consumer stats — 운영 진단 (emits_total / skipped_* / errors).
-	if s.crossConsumer != nil {
-		mux.HandleFunc("GET /v1/cross-stats", func(w http.ResponseWriter, r *http.Request) {
-			if s.cfg.DevMode {
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-			}
-			writeJSON(w, http.StatusOK, s.crossConsumer.Stats())
-		})
-		s.logger.Info("Cross-rate stats endpoint 활성 — GET /v1/cross-stats")
-	}
+	// Cross-rate consumer stats — etcd 미연결 시도 endpoint 노출 (빈 stats).
+	mux.HandleFunc("GET /v1/cross-stats", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.DevMode {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		if s.crossConsumer == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+			return
+		}
+		writeJSON(w, http.StatusOK, s.crossConsumer.Stats())
+	})
 
 	// Forward 시세 snapshot — pricingStore 가 주입돼 있고 best 가 활성일 때만 노출.
 	if s.pricingStore != nil && s.best != nil {

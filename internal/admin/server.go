@@ -508,6 +508,9 @@ func (s *Server) Start(ctx context.Context) error {
 	// 메시지(FC_PUSH/SubPush) 를 발사한다. mci-push 띄워둔 상태에서 ws 로 흘러오는지
 	// 시각 검증용. NoBroker 모드면 503.
 	mux.HandleFunc("POST /v1/admin/push-test", PushTestHandler(s.mq, s.logger))
+	// Broadcast 테스터 — mci-admin 의 broker connection 으로 FC_CAST/SubBroadcast
+	// 발사. broker 가 exchange 매칭된 모든 subscriber 에 fan-out. NoBroker 모드면 503.
+	mux.HandleFunc("POST /v1/admin/broadcast-test", BroadcastTestHandler(s.mq, s.logger))
 	// 실시간 이벤트 ws 채널.
 	mux.HandleFunc("GET /v1/admin/stream", StreamHandler(s.hub, s.logger))
 	mux.Handle("GET /metrics", s.metrics.Handler())

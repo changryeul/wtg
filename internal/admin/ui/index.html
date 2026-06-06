@@ -4774,6 +4774,10 @@ const TESTER_PRESETS = [
   // Push 발사 — mci-admin 의 broker connection 으로 user-targeted unsolicited 발사.
   { label: "Push 발사",       method: "POST", path: "/v1/admin/push-test",
     body: { user: "tester01", data: { event: "alert", text: "hello via push" } } },
+  // Broadcast 발사 — FC_CAST/SubBroadcast. exchange 매칭된 모든 subscriber 에 fan-out.
+  // (mci-push / mci-price / mci-edge-* / 운영 svc 가 같이 받음).
+  { label: "Broadcast 발사",  method: "POST", path: "/v1/admin/broadcast-test",
+    body: { exchange: "QUOTE", routing_key: "", data: { type: "demo", text: "hello via broadcast" } } },
   { label: "로그아웃",        method: "POST", path: "/v1/logout" },
 ];
 

@@ -2119,15 +2119,23 @@
             <div>
               <h3 class="text-lg font-semibold">마진 정책 명세</h3>
               <p class="text-sm text-slate-400">
-                WTG 의 5-Layer 마진 / Cross-rate 합성 / Value-date 보간 / Holiday 캘린더 / TimeWindow 의
-                <strong>산식 정의 + 부호 + lookup 우선순위 + 회사별 변형 가능 항목</strong>.
-                source: <code>docs/margin-policy.md</code>.
+                두 문서를 탭으로 분리 노출. <strong>업무 정의서</strong> 는 운영자/딜링·리스크용
+                (워크플로우·시나리오·권한·FAQ), <strong>산식 명세</strong> 는 개발/시스템 운영용
+                (5-Layer 산식·Cross 합성·Value-date 보간 등).
               </p>
             </div>
             <div class="flex items-center gap-2 text-xs">
               <button id="mp-reload" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">↻ 새로고침</button>
-              <a id="mp-raw" href="docs/margin-policy.md" target="_blank" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">raw .md ↗</a>
+              <a id="mp-raw" href="docs/margin-business-spec.md" target="_blank" class="px-2 py-1 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400">raw .md ↗</a>
             </div>
+          </div>
+
+          <!-- 탭 — 업무 정의서 (운영자) | 산식 명세 (개발자) -->
+          <div class="flex gap-1 text-xs border-b border-ink-700/60">
+            <button id="mp-tab-business" data-doc="margin-business-spec.md"
+              class="mp-tab px-3 py-2 text-sm border-b-2 border-transparent hover:text-slate-200">📋 업무 정의서</button>
+            <button id="mp-tab-tech" data-doc="margin-policy.md"
+              class="mp-tab px-3 py-2 text-sm border-b-2 border-transparent hover:text-slate-200">⚙ 산식 명세</button>
           </div>
 
           <div class="border-gradient rounded-2xl p-6">
@@ -6349,20 +6357,45 @@ async function pmLoadStats() {
 
 // ───────── 마진 정책 명세 (docs/margin-policy.md 렌더) ─────────
 
-const mpState = { wired: false, loaded: false };
+// 두 문서 탭 분리 — 업무 정의서 (default) / 산식 명세.
+const mpState = { wired: false, loaded: false, doc: "margin-business-spec.md" };
 
 async function initMarginPolicy() {
   if (!mpState.wired) {
     mpState.wired = true;
     $("#mp-reload").addEventListener("click", () => { mpState.loaded = false; mpLoad(); });
+    // 탭 — data-doc 으로 md 파일 결정. raw .md 링크도 함께 갱신.
+    $$(".mp-tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const doc = btn.dataset.doc;
+        if (mpState.doc !== doc) {
+          mpState.doc = doc;
+          mpState.loaded = false;
+          $("#mp-raw").setAttribute("href", "docs/" + doc);
+        }
+        mpRenderTabs();
+        if (!mpState.loaded) mpLoad();
+      });
+    });
+    mpRenderTabs();
   }
   if (!mpState.loaded) await mpLoad();
+}
+
+function mpRenderTabs() {
+  $$(".mp-tab").forEach(btn => {
+    const on = btn.dataset.doc === mpState.doc;
+    btn.classList.toggle("border-accent-500", on);
+    btn.classList.toggle("text-accent-400", on);
+    btn.classList.toggle("border-transparent", !on);
+    btn.classList.toggle("text-slate-400", !on);
+  });
 }
 
 async function mpLoad() {
   const el = $("#mp-content");
   try {
-    const r = await fetch("docs/margin-policy.md", { cache: "no-store" });
+    const r = await fetch("docs/" + mpState.doc, { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const md = await r.text();
     // marked 옵션 — table / gfm.

@@ -609,7 +609,18 @@ func loadSymbolEntries(path string) ([]quote.SymbolEntry, error) {
 //
 // closer 는 Redis 클라이언트 lifecycle 정리 — Redis 미사용이면 no-op.
 func wireQuoteID(cfg price.Config, mreg *metrics.Registry, logger *slog.Logger) (*quoteid.Generator, quoteid.Registry, func()) {
+	// DevMode 자동 활성 — instance 가 비어있어도 "dev" 로 fallback.
+	// admin UI 의 [QuoteID Validate 통계] 페이지가 미리 동작하도록 친절.
+	// 운영은 명시 instance (예: A/B) 만 사용하므로 영향 X.
+	if cfg.QuoteIDInstance == "" && cfg.DevMode {
+		cfg.QuoteIDInstance = "dev"
+		logger.Info("DevMode — QuoteID instance 자동 활성",
+			slog.String("instance", "dev"),
+			slog.String("note", "운영은 --quoteid-instance=A/B 등 명시"))
+	}
 	if cfg.QuoteIDInstance == "" {
+		logger.Warn("QuoteID 비활성 — --quoteid-instance 미설정 → /v1/quoteid/* 모두 404",
+			slog.String("hint", "운영: --quoteid-instance=A 또는 B. dev: --dev 자동 fallback"))
 		return nil, nil, func() {}
 	}
 	gen := quoteid.NewGenerator(cfg.QuoteIDInstance)

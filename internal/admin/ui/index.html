@@ -289,53 +289,67 @@
           <button data-page="dashboard" class="nav-btn nav-item"><span class="nav-ico">📊</span>대시보드</button>
         </div>
 
-        <!-- 운영 정책 -->
-        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">운영 정책</div>
+        <!-- 1. 운영 정책 — broker 라우팅 / 정책 게이트 / 부하 제한 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">🛡 운영 정책</div>
         <div class="space-y-0.5 mb-3">
           <button data-page="routes"    class="nav-btn nav-item"><span class="nav-ico">🔀</span>라우팅 룰</button>
           <button data-page="policy"    class="nav-btn nav-item"><span class="nav-ico">🛡</span>정책 엔진</button>
           <button data-page="ratelimit" class="nav-btn nav-item"><span class="nav-ico">🚦</span>Rate Limit 정책</button>
         </div>
 
-        <!-- 시세 카탈로그 — etcd watch 로 mci-price/mci-api 가 hot reload -->
-        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">시세 카탈로그</div>
+        <!-- 2. 시세 마스터 — 통화/통화쌍/캘린더/프로파일 (etcd watch hot reload) -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">🪙 시세 마스터</div>
         <div class="space-y-0.5 mb-3">
-          <button data-page="currency"        class="nav-btn nav-item"><span class="nav-ico">🪙</span>통화 마스터</button>
-          <button data-page="pair-master"     class="nav-btn nav-item"><span class="nav-ico">🔗</span>통화쌍 마스터</button>
-          <button data-page="pricing"         class="nav-btn nav-item"><span class="nav-ico">💰</span>마진 테이블</button>
-          <button data-page="swap"            class="nav-btn nav-item"><span class="nav-ico">📅</span>선물환 스왑</button>
-          <button data-page="holidays"        class="nav-btn nav-item"><span class="nav-ico">📆</span>휴일 캘린더</button>
-          <button data-page="profiles"        class="nav-btn nav-item"><span class="nav-ico">🧩</span>프로파일</button>
-          <button data-page="users"           class="nav-btn nav-item"><span class="nav-ico">👥</span>사용자 프로파일</button>
-          <button data-page="quoteid-engines" class="nav-btn nav-item"><span class="nav-ico">🔑</span>QuoteID 엔진</button>
-          <button data-page="quoteid-lookup"  class="nav-btn nav-item"><span class="nav-ico">🔍</span>QuoteID 조회</button>
-          <button data-page="quoteid-stats"   class="nav-btn nav-item"><span class="nav-ico">📊</span>QuoteID Validate 통계</button>
-          <button data-page="chartstats"      class="nav-btn nav-item"><span class="nav-ico">📈</span>차트 통계 (mci-chart)</button>
+          <button data-page="currency"    class="nav-btn nav-item"><span class="nav-ico">🪙</span>통화 마스터</button>
+          <button data-page="pair-master" class="nav-btn nav-item"><span class="nav-ico">🔗</span>통화쌍 마스터</button>
+          <button data-page="swap"        class="nav-btn nav-item"><span class="nav-ico">📅</span>선물환 스왑</button>
+          <button data-page="holidays"    class="nav-btn nav-item"><span class="nav-ico">📆</span>휴일 캘린더</button>
+          <button data-page="profiles"    class="nav-btn nav-item"><span class="nav-ico">🧩</span>프로파일</button>
+          <button data-page="users"       class="nav-btn nav-item"><span class="nav-ico">👥</span>사용자 프로파일</button>
         </div>
 
-        <!-- 진단 도구 — broker/시세/API 흐름 점검 -->
-        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">진단 도구</div>
+        <!-- 3. 마진 정책 — 마진 5종 한곳 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">💰 마진 정책</div>
         <div class="space-y-0.5 mb-3">
+          <button data-page="pricing"       class="nav-btn nav-item"><span class="nav-ico">💰</span>마진 테이블</button>
+          <button data-page="margin-policy" class="nav-btn nav-item"><span class="nav-ico">📜</span>마진 정책 명세</button>
+          <button data-page="margin-calc"   class="nav-btn nav-item"><span class="nav-ico">🔬</span>마진 계산기 (5-Layer)</button>
+          <button data-page="margin"        class="nav-btn nav-item"><span class="nav-ico">🧮</span>마진 재계산</button>
+          <button data-page="margin-wizard" class="nav-btn nav-item"><span class="nav-ico">🪄</span>마진 변경 미리보기</button>
+        </div>
+
+        <!-- 4. QuoteID — 엔진 / 조회 / 검증 통계 (RBAC 도메인) -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">🔑 QuoteID</div>
+        <div class="space-y-0.5 mb-3">
+          <button data-page="quoteid-engines" class="nav-btn nav-item"><span class="nav-ico">🔑</span>QuoteID 엔진</button>
+          <button data-page="quoteid-lookup"  class="nav-btn nav-item"><span class="nav-ico">🔍</span>QuoteID 조회</button>
+          <button data-page="quoteid-stats"   class="nav-btn nav-item"><span class="nav-ico">📊</span>Validate 통계</button>
+        </div>
+
+        <!-- 5. 검증 / 호출 — 운영자가 broker 직접 호출하는 도구들 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">🔧 검증 / 호출</div>
+        <div class="space-y-0.5 mb-3">
+          <button data-page="svcio"  class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
           <button data-page="tester" class="nav-btn nav-item"><span class="nav-ico">🔌</span>API 테스터</button>
           <button data-page="broker" class="nav-btn nav-item"><span class="nav-ico">🖥</span>브로커 명령</button>
           <button data-page="wsmon"  class="nav-btn nav-item"><span class="nav-ico">📡</span>WS 모니터</button>
-          <button data-page="quote"  class="nav-btn nav-item"><span class="nav-ico">💱</span>시세</button>
-          <button data-page="margin"     class="nav-btn nav-item"><span class="nav-ico">🧮</span>마진 재계산</button>
-          <button data-page="margin-calc" class="nav-btn nav-item"><span class="nav-ico">🔬</span>마진 계산기 (5-Layer)</button>
-          <button data-page="margin-policy" class="nav-btn nav-item"><span class="nav-ico">📜</span>마진 정책 명세</button>
-          <button data-page="margin-wizard" class="nav-btn nav-item"><span class="nav-ico">🪄</span>마진 변경 미리보기</button>
-          <button data-page="svcio"      class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
-          <button data-page="pricestats" class="nav-btn nav-item"><span class="nav-ico">📊</span>시세 통계 (mci-price)</button>
-          <button data-page="aliasstats" class="nav-btn nav-item"><span class="nav-ico">📈</span>매매 통계 (alias × tier)</button>
-          <button data-page="recenttx"   class="nav-btn nav-item"><span class="nav-ico">📜</span>매매 감사 (최근 N건)</button>
+          <button data-page="quote"  class="nav-btn nav-item"><span class="nav-ico">💱</span>시세 (라이브 ws)</button>
         </div>
 
-        <!-- 외부 도구 — 별도 서비스의 UI 새 탭으로 열기. SPA 페이지 전환 아님. -->
-        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">외부 도구</div>
+        <!-- 6. 통계 / 감사 — 관측 (Prometheus/Grafana 포함) + 사후 감사 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">📊 통계 / 감사</div>
         <div class="space-y-0.5 mb-3">
-          <!-- 외부 chart UI 새 탭 — 클릭 시 현재 인증 정보 (dev: x_wtg_user, 운영: access_token)
-               를 query 로 첨부. chart UI 가 그 query 를 ws connect 시 그대로 전달 → edge-chart
-               의 UserFromQuery/BearerFromQuery 미들웨어가 헤더로 변환 → 인증 통과. -->
+          <button data-page="monitoring" class="nav-btn nav-item"><span class="nav-ico">📊</span>운영 모니터링</button>
+          <button data-page="pricestats" class="nav-btn nav-item"><span class="nav-ico">📊</span>시세 통계 (mci-price)</button>
+          <button data-page="aliasstats" class="nav-btn nav-item"><span class="nav-ico">📈</span>매매 통계 (alias × tier)</button>
+          <button data-page="chartstats" class="nav-btn nav-item"><span class="nav-ico">📈</span>차트 통계 (mci-chart)</button>
+          <button data-page="recenttx"   class="nav-btn nav-item"><span class="nav-ico">📜</span>매매 감사 (최근 N건)</button>
+          <button data-page="audit"      class="nav-btn nav-item"><span class="nav-ico">📜</span>감사 로그</button>
+        </div>
+
+        <!-- 7. 외부 도구 — chart 별도 탭 열기 (SPA 전환 아님) -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">🔗 외부 도구</div>
+        <div class="space-y-0.5 mb-3">
           <a href="#" target="_blank" rel="noopener" class="nav-item" title="mci-chart — TradingView lightweight-charts UI (사내망 직접 접속)"
              onclick="event.preventDefault();window.open(chartLinkURL('http://localhost:8086/'),'_blank','noopener');">
             <span class="nav-ico">📈</span>차트 (mci-chart)
@@ -348,13 +362,11 @@
           </a>
         </div>
 
-        <!-- 감사 & 도움말 -->
-        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">감사 & 도움말</div>
+        <!-- 7. 도움말 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">📖 도움말</div>
         <div class="space-y-0.5 mb-2">
-          <button data-page="monitoring" class="nav-btn nav-item"><span class="nav-ico">📊</span>운영 모니터링</button>
-          <button data-page="audit"      class="nav-btn nav-item"><span class="nav-ico">📜</span>감사 로그</button>
-          <button data-page="guide"      class="nav-btn nav-item"><span class="nav-ico">📖</span>운영 가이드</button>
-          <button data-page="tools"      class="nav-btn nav-item"><span class="nav-ico">🧰</span>운영 도구 (외부 링크)</button>
+          <button data-page="guide" class="nav-btn nav-item"><span class="nav-ico">📖</span>운영 가이드</button>
+          <button data-page="tools" class="nav-btn nav-item"><span class="nav-ico">🧰</span>운영 도구 (외부 링크)</button>
         </div>
       </nav>
 

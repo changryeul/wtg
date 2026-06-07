@@ -148,6 +148,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/ping", PingHandler())
 	mux.HandleFunc("GET /v1/push-stats", StatsHandler(deps))
 	mux.HandleFunc("GET /v1/subscribe", SubscribeHandler(deps))
+	// Phase-1 PoC — broker 없이 unsolicited 주입 받는 internal endpoint.
+	// 운영 svc 가 점차 broker 의존 줄이도록. cfg.PushSecret 으로 인증 (X-Push-Secret 헤더).
+	mux.HandleFunc("POST /v1/internal/push", HTTPPushHandler(s.dispatcher, s.cfg.PushSecret))
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	authMW := middleware.Auth(middleware.AuthConfig{

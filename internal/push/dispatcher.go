@@ -37,6 +37,14 @@ type Dispatcher struct {
 	hooks    []UnsolicitedHook
 	logger   *slog.Logger
 
+	// injectCh — broker subscribe 외 다른 source (HTTP push 등) 가 주입할 buffered
+	// channel. Phase-1 PoC: mci-push 가 broker 와 HTTP 양쪽 source 받음. Inject
+	// 메소드가 producer side, Run 의 select 가 consumer.
+	//
+	// buffered size 256 — broker subscribe channel 과 동등. burst 시 backpressure
+	// 는 Inject 가 non-blocking 으로 dropInjectFull 카운트 후 drop.
+	injectCh chan *mymq.Unsolicited
+
 	// ── 메트릭 카운터 (외부에서 조회 가능). 누적 단조증가 ──
 	//
 	// totalRecv         : Run() 이 채널에서 가져온 모든 메시지.
@@ -58,6 +66,11 @@ type Dispatcher struct {
 	dropUnknownUser atomic.Uint64
 	dropNoBroadcast atomic.Uint64
 	sendFailed      atomic.Uint64
+
+	// source 별 분리 카운터 — Phase-1 PoC 의 broker / HTTP source 가시화.
+	recvBroker      atomic.Uint64
+	recvHTTP        atomic.Uint64
+	dropInjectFull  atomic.Uint64 // HTTP inject channel full → drop
 }
 
 // DispatcherOptions 는 Dispatcher 구성 의존성.
@@ -76,6 +89,20 @@ func NewDispatcher(opts DispatcherOptions) *Dispatcher {
 		sub:      opts.Sub,
 		registry: opts.Registry,
 		logger:   opts.Logger,
+		injectCh: make(chan *mymq.Unsolicited, 256),
+	}
+}
+
+// Inject — 외부 source (HTTP push handler 등) 가 unsolicited 메시지 주입.
+// non-blocking — buffer full 시 즉시 drop + dropInjectFull 카운트.
+// 호출자 (HTTP handler) 는 false 반환 시 client 에 503 응답 가능.
+func (d *Dispatcher) Inject(msg *mymq.Unsolicited) bool {
+	select {
+	case d.injectCh <- msg:
+		return true
+	default:
+		d.dropInjectFull.Add(1)
+		return false
 	}
 }
 
@@ -98,6 +125,13 @@ func (d *Dispatcher) Run(ctx context.Context) {
 				d.logger.Info("subscribe 채널 종료 — Dispatcher 종료")
 				return
 			}
+			d.recvBroker.Add(1)
+			d.handle(msg)
+		case msg, ok := <-d.injectCh:
+			if !ok {
+				return
+			}
+			d.recvHTTP.Add(1)
 			d.handle(msg)
 		}
 	}
@@ -177,6 +211,10 @@ type Stats struct {
 	DropUnknownUser uint64 `json:"drop_unknown_user"` // LogonID 명시 됐는데 conn 없음
 	DropNoBroadcast uint64 `json:"drop_no_broadcast"` // LogonID 빈값 + 등록 conn 0
 	SendFailed      uint64 `json:"send_failed"`       // fan-out 내 일부 conn send 실패 (slow/closed)
+	// Phase-1 PoC — source 별 분리.
+	RecvBroker     uint64 `json:"recv_broker"`      // broker subscribe 로 받은 수
+	RecvHTTP       uint64 `json:"recv_http"`        // HTTP /v1/internal/push 로 받은 수
+	DropInjectFull uint64 `json:"drop_inject_full"` // HTTP inject channel full — drop
 }
 
 // Stats 는 dispatcher 의 누적 카운터.
@@ -190,6 +228,9 @@ func (d *Dispatcher) Stats() Stats {
 		DropUnknownUser: d.dropUnknownUser.Load(),
 		DropNoBroadcast: d.dropNoBroadcast.Load(),
 		SendFailed:      d.sendFailed.Load(),
+		RecvBroker:      d.recvBroker.Load(),
+		RecvHTTP:        d.recvHTTP.Load(),
+		DropInjectFull:  d.dropInjectFull.Load(),
 	}
 }
 

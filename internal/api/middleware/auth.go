@@ -149,6 +149,12 @@ func isPublicPath(path string) bool {
 	case "/v1/ping", "/healthz", "/readyz", "/metrics", "/v1/login", "/v1/refresh":
 		return true
 	}
+	// Phase-1 PoC — internal endpoint (운영 svc → mci-push 의 HTTP push 등) 는
+	// JWT/DevMode 인증 우회. PushSecret 같은 별도 인증 메커니즘이 핸들러 안에서
+	// 처리.
+	if strings.HasPrefix(path, "/v1/internal/") {
+		return true
+	}
 	return false
 }
 

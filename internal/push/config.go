@@ -28,6 +28,10 @@ type Config struct {
 	BrokerHost string
 	BrokerPort int
 
+	// Phase-1 PoC — broker 우회 HTTP push endpoint (POST /v1/internal/push) 의 인증
+	// shared secret. 빈값 = 인증 disable (dev 전용). 운영은 명시 설정 + mTLS 같이.
+	PushSecret string
+
 	// ApplName / Instance.
 	ApplName string
 	Instance int
@@ -167,6 +171,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.GRPCBufSize, "grpc-buf", cfg.GRPCBufSize, "gRPC 구독자별 큐 크기")
 	fs.StringVar(&cfg.BrokerHost, "broker-host", cfg.BrokerHost, "mymqd 호스트")
 	fs.IntVar(&cfg.BrokerPort, "broker-port", cfg.BrokerPort, "mymqd 포트")
+	fs.StringVar(&cfg.PushSecret, "push-secret", cfg.PushSecret,
+		"POST /v1/internal/push 의 X-Push-Secret 헤더 인증. 빈값 = 인증 disable (dev only)")
 	fs.StringVar(&cfg.ApplName, "appl", cfg.ApplName, "ApplName")
 	fs.IntVar(&cfg.Instance, "instance", cfg.Instance, "다중 인스턴스 일련번호")
 	fs.StringVar(&cfg.QueueName, "queue", cfg.QueueName, "broker 측 큐 이름 (mymqd.cfg 와 일치)")

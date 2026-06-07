@@ -54,7 +54,7 @@ func grpcErrToHTTP(err error) int {
 // 정도지만 protojson + engine_id 등 포함 여유 잡아 256KB.
 const HTTPMaxBodyBytes = 256 * 1024
 
-// RegisterQuoteValidationHTTP — mux 에 4개 라우트 등록.
+// RegisterQuoteValidationHTTP — mux 에 6개 라우트 등록.
 func RegisterQuoteValidationHTTP(mux *http.ServeMux, srv *QuoteValidationServer, logger *slog.Logger) {
 	h := &quoteValidationHTTP{srv: srv, logger: logger}
 	mux.HandleFunc("POST /v1/quoteid/validate", h.handleValidate)

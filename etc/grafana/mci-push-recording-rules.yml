@@ -1,0 +1,47 @@
+# Prometheus recording rules — WTG mci-push (Phase 2.5).
+#
+# 자주 쓰는 표현식을 미리 계산. Grafana 대시보드 / Alert 양쪽에서 공유.
+#
+# 명명: `wtg:push:<resource>:<aggregation>`
+#
+# 설치 (Prometheus rule_files):
+#   rule_files:
+#     - "/etc/prometheus/rules/mci-push-recording-rules.yml"
+
+groups:
+  - name: wtg-mci-push-rates
+    interval: 30s
+    rules:
+      # broker subscribe 수신 rate (5m)
+      - record: wtg:push:recv_broker:rate5m
+        expr: rate(mci_push_dispatcher_recv_broker_total[5m])
+
+      # HTTP inject 수신 rate (5m)
+      - record: wtg:push:recv_http:rate5m
+        expr: rate(mci_push_dispatcher_recv_http_total[5m])
+
+      # broker 이행 진척률 — http / (http + broker). 100% 도달 시 Phase 2.7 가능.
+      - record: wtg:push:http_ratio:5m
+        expr: |
+          wtg:push:recv_http:rate5m
+            / clamp_min(wtg:push:recv_http:rate5m + wtg:push:recv_broker:rate5m, 0.01)
+
+      # 전체 fan-out 결과 — delivered / dropped / send_failed (5m)
+      - record: wtg:push:delivered:rate5m
+        expr: rate(mci_push_dispatcher_delivered_total[5m])
+      - record: wtg:push:dropped:rate5m
+        expr: rate(mci_push_dispatcher_dropped_total[5m])
+      - record: wtg:push:send_failed:rate5m
+        expr: rate(mci_push_dispatcher_send_failed_total[5m])
+
+      # HTTP inject 채널 full drop (백프레셔 — 0 유지가 정상)
+      - record: wtg:push:drop_inject_full:rate5m
+        expr: rate(mci_push_dispatcher_drop_inject_full_total[5m])
+
+      # CN 별 ok rate (운영 svc 호출량)
+      - record: wtg:push:http_inject_ok:rate5m_by_cn
+        expr: sum(rate(mci_push_http_inject_total{result="ok"}[5m])) by (cn)
+
+      # 인증 실패 rate (cn 별)
+      - record: wtg:push:http_inject_unauth:rate5m_by_cn
+        expr: sum(rate(mci_push_http_inject_total{result="unauthorized"}[5m])) by (cn)

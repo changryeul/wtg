@@ -1,0 +1,257 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "WTG mci-push 모니터링 — broker subscribe vs HTTP inject source 비교, CN 별 운영 svc 호출량, dispatcher fan-out 결과. Phase 2.5 (broker 독립 이행 가시화).",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["wtg", "mci-push", "phase-2"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "prometheus"},
+        "label": "Data source",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"selected": false, "text": "5m", "value": "5m"},
+        "label": "Rate window",
+        "name": "rate_window",
+        "options": [
+          {"selected": false, "text": "1m", "value": "1m"},
+          {"selected": true,  "text": "5m", "value": "5m"},
+          {"selected": false, "text": "15m", "value": "15m"},
+          {"selected": false, "text": "1h", "value": "1h"}
+        ],
+        "query": "1m,5m,15m,1h",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "definition": "label_values(mci_push_http_inject_total, cn)",
+        "label": "Client CN",
+        "name": "cn",
+        "options": [],
+        "includeAll": true,
+        "multi": true,
+        "query": {
+          "query": "label_values(mci_push_http_inject_total, cn)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Source 비교 — broker → HTTP 이행 추세",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Inject rate by source (broker vs HTTP)",
+      "description": "Phase 2 핵심 KPI — HTTP 비중이 시간이 갈수록 ↑, broker ↓ 이행 추세.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(mci_push_dispatcher_recv_broker_total[$rate_window])",
+          "legendFormat": "broker"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(mci_push_dispatcher_recv_http_total[$rate_window])",
+          "legendFormat": "http"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}}
+    },
+    {
+      "type": "stat",
+      "title": "HTTP 비중 (broker 이행 진척률)",
+      "description": "100% 도달 시 broker subscribe 제거 가능 (Phase 2.7).",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 1},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(mci_push_dispatcher_recv_http_total[$rate_window]) / clamp_min(rate(mci_push_dispatcher_recv_http_total[$rate_window]) + rate(mci_push_dispatcher_recv_broker_total[$rate_window]), 1)",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.3},
+              {"color": "green", "value": 0.8}
+            ]
+          }
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "background"}
+    },
+    {
+      "type": "stat",
+      "title": "HTTP inject 채널 full drop (Phase 2.5 백프레셔)",
+      "description": "0 유지가 정상. 1+ → dispatcher inject buffer 크기 조정 필요.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 1},
+      "targets": [
+        {"refId": "A", "expr": "rate(mci_push_dispatcher_drop_inject_full_total[$rate_window])"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 0.01}
+            ]
+          }
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"}
+    },
+
+    {
+      "type": "row",
+      "title": "CN 별 운영 svc 호출 (mTLS audit)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Inject rate by CN (운영 svc 별)",
+      "description": "각 운영 svc 의 push 호출 빈도. 새 svc 가 mTLS 로 등장하면 자동으로 새 라인 추가.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(mci_push_http_inject_total{cn=~\"$cn\", result=\"ok\"}[$rate_window])) by (cn)",
+          "legendFormat": "{{cn}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Result 분포 (ok / unauthorized / bad_json / inject_full)",
+      "description": "unauthorized ↑ → mTLS / secret 설정 오류 의심. inject_full ↑ → 백프레셔.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(mci_push_http_inject_total{cn=~\"$cn\"}[$rate_window])) by (result)",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["sum"]}}
+    },
+
+    {
+      "type": "row",
+      "title": "Dispatcher fan-out 결과",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Delivered vs Dropped",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
+      "targets": [
+        {"refId": "A", "expr": "rate(mci_push_dispatcher_delivered_total[$rate_window])", "legendFormat": "delivered"},
+        {"refId": "B", "expr": "rate(mci_push_dispatcher_dropped_total[$rate_window])",   "legendFormat": "dropped"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Drop 사유별 stack",
+      "description": "drop_unknown_user / drop_no_broadcast / drop_unsupp / drop_envelope — 운영 가설 진단.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
+      "targets": [
+        {"refId": "A", "expr": "rate(mci_push_dispatcher_drop_unknown_user_total[$rate_window])", "legendFormat": "unknown_user"},
+        {"refId": "B", "expr": "rate(mci_push_dispatcher_drop_no_broadcast_total[$rate_window])", "legendFormat": "no_broadcast"},
+        {"refId": "C", "expr": "rate(mci_push_dispatcher_drop_unsupp_total[$rate_window])",       "legendFormat": "unsupp_func"},
+        {"refId": "D", "expr": "rate(mci_push_dispatcher_drop_envelope_total[$rate_window])",     "legendFormat": "envelope_err"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"stacking": {"mode": "normal", "group": "A"}}}}
+    },
+
+    {
+      "type": "timeseries",
+      "title": "WS send_failed (slow/closed consumer)",
+      "description": "↑ 추세 시 SendQueueSize 조정 / slow ws 진단 필요.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 27},
+      "targets": [
+        {"refId": "A", "expr": "rate(mci_push_dispatcher_send_failed_total[$rate_window])", "legendFormat": "send_failed"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Broker disconnect / reconnect (Phase 2.6 이행 완료 시 0 유지 가능)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 27},
+      "targets": [
+        {"refId": "A", "expr": "rate(wtg_broker_disconnect_total{service=\"mci-push\"}[$rate_window])", "legendFormat": "disconnect"},
+        {"refId": "B", "expr": "rate(wtg_broker_reconnect_total{service=\"mci-push\"}[$rate_window])",  "legendFormat": "reconnect"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    }
+  ],
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "WTG mci-push — Phase 2 broker 독립",
+  "uid": "wtg-mci-push-phase2",
+  "version": 1,
+  "weekStart": ""
+}

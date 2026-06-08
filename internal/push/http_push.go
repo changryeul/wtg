@@ -61,11 +61,43 @@ func HTTPPushHandler(disp *Dispatcher, secret string) http.HandlerFunc {
 // HTTPPushHandlerWithLogger — HTTPPushHandler + audit logger.
 // logger != nil 이면 mTLS client cert 의 CN/SAN 을 INFO log 로 audit.
 func HTTPPushHandlerWithLogger(disp *Dispatcher, secret string, logger *slog.Logger) http.HandlerFunc {
+	return HTTPPushHandlerDeps(HTTPPushDeps{
+		Dispatcher: disp,
+		Secret:     secret,
+		Logger:     logger,
+	})
+}
+
+// HTTPPushDeps — HTTPPushHandlerDeps 의 의존성. Phase 2.5 metrics hook 포함.
+type HTTPPushDeps struct {
+	Dispatcher *Dispatcher
+	Secret     string
+	Logger     *slog.Logger
+	// OnInject — 각 요청 후 호출 (cn, result) — metrics hook. nil OK.
+	// cn   — mTLS client CN (없으면 "anonymous")
+	// result — "ok" | "unauthorized" | "bad_json" | "inject_full"
+	OnInject func(cn, result string)
+}
+
+// HTTPPushHandlerDeps — POST /v1/internal/push 의 통합 entry point.
+// metrics hook 으로 CN 별 inject counter / 인증 실패 / 채널 full 등을 집계 가능.
+func HTTPPushHandlerDeps(deps HTTPPushDeps) http.HandlerFunc {
+	disp := deps.Dispatcher
+	secret := deps.Secret
+	logger := deps.Logger
+	emit := func(cn, result string) {
+		if deps.OnInject != nil {
+			deps.OnInject(cn, result)
+		}
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		// mTLS audit (logger 있고 client cert 가 있으면 CN log).
-		var peerCN string
+		// mTLS audit + CN 추출 (cardinality 보호 — CN 없으면 "anonymous").
+		peerCN := "anonymous"
 		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 			peerCN = r.TLS.PeerCertificates[0].Subject.CommonName
+			if peerCN == "" {
+				peerCN = "unknown"
+			}
 			if logger != nil {
 				logger.Info("push: mTLS client",
 					slog.String("cn", peerCN),
@@ -76,6 +108,7 @@ func HTTPPushHandlerWithLogger(disp *Dispatcher, secret string, logger *slog.Log
 		if secret != "" {
 			got := r.Header.Get("X-Push-Secret")
 			if subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {
+				emit(peerCN, "unauthorized")
 				writePushJSONErr(w, http.StatusUnauthorized, "unauthorized",
 					"X-Push-Secret 헤더 누락 또는 불일치")
 				return
@@ -83,6 +116,7 @@ func HTTPPushHandlerWithLogger(disp *Dispatcher, secret string, logger *slog.Log
 		}
 		var req HTTPPushRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			emit(peerCN, "bad_json")
 			writePushJSONErr(w, http.StatusBadRequest, "bad_json", err.Error())
 			return
 		}
@@ -127,11 +161,13 @@ func HTTPPushHandlerWithLogger(disp *Dispatcher, secret string, logger *slog.Log
 		}
 
 		if !disp.Inject(msg) {
+			emit(peerCN, "inject_full")
 			writePushJSONErr(w, http.StatusServiceUnavailable, "inject_full",
 				"dispatcher inject channel full — 잠시 후 재시도")
 			return
 		}
 
+		emit(peerCN, "ok")
 		_ = json.NewEncoder(w).Encode(HTTPPushResponse{
 			Injected: true,
 			Func:     fn,

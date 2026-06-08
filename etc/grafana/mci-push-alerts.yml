@@ -1,0 +1,53 @@
+# Prometheus alert rules — WTG mci-push (Phase 2.5).
+#
+# 설치: Prometheus rule_files 에 추가 + Alertmanager 통해 Slack/PagerDuty.
+
+groups:
+  - name: wtg-mci-push-alerts
+    interval: 30s
+    rules:
+      # HTTP inject 채널 full — dispatcher 백프레셔. 0 유지가 정상.
+      - alert: PushInjectChannelFull
+        expr: wtg:push:drop_inject_full:rate5m > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: mci-push
+        annotations:
+          summary: "mci-push dispatcher inject 채널 full → push drop"
+          description: "HTTP push 가 5m 평균 {{ $value | humanize }}/s 로 drop. dispatcher buffer 크기 또는 ws 처리 속도 점검 필요."
+          runbook_url: "docs/push-monitoring.md#inject-full"
+
+      # 인증 실패 — mTLS / secret 설정 오류 의심.
+      - alert: PushAuthFailureSurge
+        expr: sum(wtg:push:http_inject_unauth:rate5m_by_cn) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          service: mci-push
+        annotations:
+          summary: "mci-push HTTP push 인증 실패율 증가"
+          description: "5m 평균 {{ $value | humanize }}/s 의 401. mTLS client cert 또는 X-Push-Secret 불일치. {{ $labels.cn }} 인증서 점검."
+          runbook_url: "docs/push-monitoring.md#auth-failure"
+
+      # WS send_failed 지속 ↑ — slow consumer 또는 SendQueue 부족.
+      - alert: PushSlowConsumer
+        expr: wtg:push:send_failed:rate5m > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: mci-push
+        annotations:
+          summary: "mci-push ws fan-out send_failed 지속"
+          description: "5m 평균 {{ $value | humanize }}/s 의 send 실패. slow consumer 진단 또는 SendQueueSize 상향."
+
+      # broker disconnect 지속 — Phase 2.6 이행 완료 전엔 위험.
+      - alert: PushBrokerDisconnected
+        expr: rate(wtg:push:recv_broker:rate5m[10m]) < 0.001 and wtg:push:http_ratio:5m < 0.95
+        for: 10m
+        labels:
+          severity: critical
+          service: mci-push
+        annotations:
+          summary: "mci-push broker subscribe 무수신 + HTTP 미이행"
+          description: "broker 에서 push 없고 HTTP 비중 < 95%. broker 연결 또는 publisher 측 점검 필요."

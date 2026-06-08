@@ -22,6 +22,9 @@ import (
 //	mci_push_dispatcher_drop_unknown_user_total  LogonID 명시인데 conn 없음
 //	mci_push_dispatcher_drop_no_broadcast_total  LogonID 빈값 + conn 0
 //	mci_push_dispatcher_send_failed_total    fan-out 안 일부 conn send 실패
+//	mci_push_dispatcher_recv_broker_total    broker subscribe 로 받은 unsolicited 수 (Phase 2.5)
+//	mci_push_dispatcher_recv_http_total      POST /v1/internal/push (HTTP) 로 받은 수 (Phase 2.5)
+//	mci_push_dispatcher_drop_inject_full_total  HTTP inject channel full → drop (Phase 2.5)
 func registerDispatcherMetrics(reg *metrics.Registry, d *Dispatcher) {
 	if reg == nil || d == nil {
 		return
@@ -50,4 +53,11 @@ func registerDispatcherMetrics(reg *metrics.Registry, d *Dispatcher) {
 		func(s Stats) uint64 { return s.DropNoBroadcast })
 	register("mci_push_dispatcher_send_failed_total", "fan-out 안 일부 conn send 실패 (slow/closed)",
 		func(s Stats) uint64 { return s.SendFailed })
+	// Phase 2.5 — source 비교 + HTTP inject 백프레셔 가시화.
+	register("mci_push_dispatcher_recv_broker_total", "broker subscribe 로 받은 unsolicited 수",
+		func(s Stats) uint64 { return s.RecvBroker })
+	register("mci_push_dispatcher_recv_http_total", "POST /v1/internal/push (HTTP) 로 받은 수",
+		func(s Stats) uint64 { return s.RecvHTTP })
+	register("mci_push_dispatcher_drop_inject_full_total", "HTTP inject channel full 로 drop 된 수",
+		func(s Stats) uint64 { return s.DropInjectFull })
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -149,13 +150,32 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/push-stats", StatsHandler(deps))
 	mux.HandleFunc("GET /v1/subscribe", SubscribeHandler(deps))
 	// Phase-1 PoC — broker 없이 unsolicited 주입 받는 internal endpoint.
-	// Phase 2.4 — mTLS audit log + secret 이중 검증 (HTTPPushHandlerWithLogger).
+	// Phase 2.4 — mTLS audit log + secret 이중 검증.
+	// Phase 2.5 — CN 별 inject counter (mci_push_http_inject_total{cn, result}).
 	// 운영 svc 가 점차 broker 의존 줄이도록. mTLS (HTTPTLSClientCAFile) 또는 PushSecret
 	// (X-Push-Secret 헤더) 또는 둘 다 활성 — 둘 다 비면 wide-open (dev 전용, warn log).
 	if s.cfg.PushSecret == "" && s.cfg.HTTPTLSClientCAFile == "" {
 		s.logger.Warn("POST /v1/internal/push 인증 wide-open — dev 전용. 운영은 --push-secret 또는 --http-tls-client-ca 설정 권장")
 	}
-	mux.HandleFunc("POST /v1/internal/push", HTTPPushHandlerWithLogger(s.dispatcher, s.cfg.PushSecret, s.logger))
+	httpInjectCounter := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "mci_push_http_inject_total",
+			Help: "POST /v1/internal/push 처리 결과 (cn = mTLS client CN 또는 'anonymous', " +
+				"result = ok|unauthorized|bad_json|inject_full). Phase 2.5",
+		},
+		[]string{"cn", "result"},
+	)
+	if err := s.metrics.Register(httpInjectCounter); err != nil {
+		s.logger.Warn("mci_push_http_inject_total 등록 실패", slog.Any("error", err))
+	}
+	mux.HandleFunc("POST /v1/internal/push", HTTPPushHandlerDeps(HTTPPushDeps{
+		Dispatcher: s.dispatcher,
+		Secret:     s.cfg.PushSecret,
+		Logger:     s.logger,
+		OnInject: func(cn, result string) {
+			httpInjectCounter.WithLabelValues(cn, result).Inc()
+		},
+	}))
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	authMW := middleware.Auth(middleware.AuthConfig{

@@ -28,6 +28,8 @@ type MultiClient struct {
 	clients []*Client // 인스턴스 순서 보장 — consistent hash 결정성 위해.
 	// errCount — 인스턴스별 누적 실패 카운트 (관측용, atomic).
 	errCount []atomic.Uint64
+	// ring — consistent hash ring (virtual node). nil 이면 hash mod N (기존 동작).
+	ring *HashRing
 }
 
 // MultiClientOptions — MultiClient 생성 의존성.
@@ -42,6 +44,13 @@ type MultiClientOptions struct {
 
 	// PerEndpointSecrets — Endpoints 와 같은 길이. 인덱스별 secret. nil 이면 Secret 사용.
 	PerEndpointSecrets []string
+
+	// VirtualNodes — > 0 이면 consistent hash ring 사용 (각 인스턴스를 N 개 v-node 로 ring 에 배치).
+	// 0 이면 hash mod N (기존 Phase 2.2 동작). 운영 권장 100~200.
+	//
+	// ring 의 이점: 인스턴스 추가/제거 시 sticky 유지율 ~85% (mod 는 ~20%).
+	// — broker session 끊김 / cache 재구축 / dispatcher fan-out 누락 최소화.
+	VirtualNodes int
 }
 
 // NewMultiClient — 다중 endpoint MultiClient 생성. Endpoints 빈값이면 error.
@@ -60,10 +69,14 @@ func NewMultiClient(opts MultiClientOptions) (*MultiClient, error) {
 			Secret:  secret,
 		})
 	}
-	return &MultiClient{
+	mc := &MultiClient{
 		clients:  clients,
 		errCount: make([]atomic.Uint64, len(clients)),
-	}, nil
+	}
+	if opts.VirtualNodes > 0 {
+		mc.ring = NewRing(opts.Endpoints, opts.VirtualNodes)
+	}
+	return mc, nil
 }
 
 // Push — user 명시 시 consistent hash 라우팅, 빈 시 broadcast (모든 인스턴스 fan-out).
@@ -92,8 +105,8 @@ func (m *MultiClient) Push(ctx context.Context, msg Message) (*Result, error) {
 		}
 		return &Result{Injected: true, User: ""}, nil
 	}
-	// user 명시 — consistent hash mod N.
-	idx := userIndex(msg.User, len(m.clients))
+	// user 명시 — ring 우선 (있으면), 아니면 hash mod N.
+	idx := m.IndexForUser(msg.User)
 	res, err := m.clients[idx].Push(ctx, msg)
 	if err != nil {
 		m.errCount[idx].Add(1)
@@ -103,8 +116,17 @@ func (m *MultiClient) Push(ctx context.Context, msg Message) (*Result, error) {
 
 // IndexForUser — 사용자가 어느 인스턴스에 매핑되는지 노출 (LB 설정 / 디버깅용).
 // ws LB 도 같은 hash 로 사용자 → 인스턴스 sticky 매핑해야 정상 동작.
+// ring (consistent hash) 활성 시 ring lookup, 아니면 hash mod N.
 func (m *MultiClient) IndexForUser(user string) int {
+	if m.ring != nil {
+		return m.ring.Lookup(user)
+	}
 	return userIndex(user, len(m.clients))
+}
+
+// HasRing — consistent hash ring 활성 여부 (admin UI / 디버깅용).
+func (m *MultiClient) HasRing() bool {
+	return m.ring != nil
 }
 
 // Endpoints — 등록된 인스턴스 base URL 목록 (debug / admin UI 표시용).

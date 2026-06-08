@@ -157,6 +157,73 @@ func TestUserIndex_Distribution(t *testing.T) {
 	}
 }
 
+// TestMultiClient_WithRing — VirtualNodes>0 → ring 라우팅 사용.
+// 같은 user 는 같은 인스턴스로, ring 활성 시 mod 와 다른 인스턴스에 매핑될 수 있음.
+func TestMultiClient_WithRing(t *testing.T) {
+	var hits [4]atomic.Uint64
+	servers := make([]*httptest.Server, 4)
+	for i := 0; i < 4; i++ {
+		idx := i
+		servers[i] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits[idx].Add(1)
+			_ = json.NewEncoder(w).Encode(Result{Injected: true})
+		}))
+		defer servers[i].Close()
+	}
+	endpoints := []string{servers[0].URL, servers[1].URL, servers[2].URL, servers[3].URL}
+	mc, err := NewMultiClient(MultiClientOptions{
+		Endpoints:    endpoints,
+		VirtualNodes: 100,
+	})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	defer mc.Close()
+	if !mc.HasRing() {
+		t.Fatal("VirtualNodes=100 이면 HasRing() true 기대")
+	}
+
+	// 같은 user 10 회 push — 정확히 한 인스턴스만 hit.
+	for i := 0; i < 10; i++ {
+		if _, err := mc.Push(context.Background(), Message{User: "dealer01", Data: json.RawMessage(`"x"`)}); err != nil {
+			t.Fatalf("Push: %v", err)
+		}
+	}
+	expectedIdx := mc.IndexForUser("dealer01")
+	if hits[expectedIdx].Load() != 10 {
+		t.Errorf("ring: dealer01 → idx=%d 만 10회, got %d", expectedIdx, hits[expectedIdx].Load())
+	}
+	totalOther := uint64(0)
+	for i, h := range hits {
+		if i != expectedIdx {
+			totalOther += h.Load()
+		}
+	}
+	if totalOther != 0 {
+		t.Errorf("ring sticky 깨짐: 다른 인스턴스 hit=%d", totalOther)
+	}
+}
+
+// TestMultiClient_RingBackwardCompat — VirtualNodes=0 (default) → 기존 mod 동작.
+func TestMultiClient_RingBackwardCompat(t *testing.T) {
+	mc, err := NewMultiClient(MultiClientOptions{
+		Endpoints: []string{"http://a", "http://b", "http://c"},
+	})
+	if err != nil {
+		t.Fatalf("NewMultiClient: %v", err)
+	}
+	defer mc.Close()
+	if mc.HasRing() {
+		t.Error("VirtualNodes=0 (default) 면 HasRing() false 기대 — backward compat")
+	}
+	// mod 와 동일 결과.
+	for _, u := range []string{"u1", "u2", "u3", "dealer01"} {
+		if mc.IndexForUser(u) != userIndex(u, 3) {
+			t.Errorf("ring 없을 때 IndexForUser(%q) != userIndex (mod) — backward compat 깨짐", u)
+		}
+	}
+}
+
 // itoa — strconv.Itoa 의존 회피 (test 의존 최소).
 func itoa(n int) string {
 	if n == 0 {

@@ -22,6 +22,7 @@ import (
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/policy"
+	pushsdk "github.com/winwaysystems/wtg/pkg/push"
 	"github.com/winwaysystems/wtg/pkg/routing"
 	"github.com/winwaysystems/wtg/pkg/svcio"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
@@ -507,7 +508,17 @@ func (s *Server) Start(ctx context.Context) error {
 	// Push 테스터 — mci-admin 의 broker connection 으로 user-targeted unsolicited
 	// 메시지(FC_PUSH/SubPush) 를 발사한다. mci-push 띄워둔 상태에서 ws 로 흘러오는지
 	// 시각 검증용. NoBroker 모드면 503.
-	mux.HandleFunc("POST /v1/admin/push-test", PushTestHandler(s.mq, s.logger))
+	// Phase-2: push-test 가 broker (legacy) + HTTP (mci-push 직접) 양쪽 source 지원.
+	pushHTTPCli := pushsdk.NewClient(pushsdk.ClientOptions{
+		BaseURL: s.cfg.PushURL,
+		Secret:  s.cfg.PushSecret,
+		Timeout: 3 * time.Second,
+	})
+	mux.HandleFunc("POST /v1/admin/push-test", PushTestHandler(&PushTestDeps{
+		BrokerClient: s.mq,
+		HTTPClient:   pushHTTPCli,
+		Logger:       s.logger,
+	}))
 	// Broadcast 테스터 — mci-admin 의 broker connection 으로 FC_CAST/SubBroadcast
 	// 발사. broker 가 exchange 매칭된 모든 subscriber 에 fan-out. NoBroker 모드면 503.
 	mux.HandleFunc("POST /v1/admin/broadcast-test", BroadcastTestHandler(s.mq, s.logger))

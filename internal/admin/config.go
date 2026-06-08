@@ -144,6 +144,14 @@ type Config struct {
 	// /v1/chart-stats 를 same-origin proxy 로 조회.
 	ChartURL string
 
+	// PushURL — mci-push 의 HTTP base URL (Phase-2 broker 우회 push 발사용).
+	// 비면 default http://127.0.0.1:8081. admin push-test 가 source=http 시 사용.
+	PushURL string
+
+	// PushSecret — mci-push 의 X-Push-Secret 헤더 값. mci-push 의 --push-secret
+	// 와 일치해야 함. 빈값 = 인증 disable (dev 전용).
+	PushSecret string
+
 	// DevRoutesFile — DevMode 시 라우팅 룰 시드 cfg 파일 (JSON).
 	// 비면 hardcode default (TSTSVC_PING + WECHO_*) 사용. 운영에선 etcd 가
 	// source of truth 라 무시. 권장 위치: ~/mymq/etc/wtg-routes.json.
@@ -197,6 +205,7 @@ func DefaultConfig() Config {
 		LogLevel:          "info",
 		PriceURL:          "http://127.0.0.1:8082",
 		ChartURL:          "http://127.0.0.1:8086",
+		PushURL:           "http://127.0.0.1:8081",
 	}
 }
 
@@ -384,6 +393,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.UpstreamAPIURL, "upstream-api", cfg.UpstreamAPIURL, "mci-api base URL — Tx 테스터용 reverse proxy. 예: http://127.0.0.1:8080. 비면 비활성")
 	fs.StringVar(&cfg.PriceURL, "price-url", cfg.PriceURL, "mci-price HTTP base URL — 시세 통계 proxy. 기본 http://127.0.0.1:8082")
 	fs.StringVar(&cfg.ChartURL, "chart-url", cfg.ChartURL, "mci-chart HTTP base URL — 차트 통계 proxy. 기본 http://127.0.0.1:8086")
+	fs.StringVar(&cfg.PushURL, "push-url", cfg.PushURL, "mci-push HTTP base URL — push-test source=http 시 사용. 기본 http://127.0.0.1:8081")
+	fs.StringVar(&cfg.PushSecret, "push-secret", cfg.PushSecret, "mci-push 의 X-Push-Secret 헤더 값. 빈값=인증 disable (dev only)")
 	fs.StringVar(&cfg.DevRoutesFile, "dev-routes-file", cfg.DevRoutesFile, "DevMode 라우팅 룰 시드 JSON 경로 (예: ~/mymq/etc/wtg-routes.json). 비면 hardcode default")
 	fs.StringVar(&cfg.DevRoutesPolicy, "dev-routes-policy", cfg.DevRoutesPolicy, "cfg ↔ in-memory 동기화 정책. additive(default) | sync. sync 는 cfg 가 진실의 원천 (cfg 삭제 alias 가 in-memory 에서도 제거)")
 	fs.StringVar(&cfg.SvcIncDir, "svc-inc-dir", cfg.SvcIncDir, "매매 svc 헤더 디렉터리 (콤마 구분 다중 path). 부팅 시 일괄 파싱 → /v1/admin/svc-io 노출")

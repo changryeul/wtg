@@ -4792,8 +4792,11 @@ const TESTER_PRESETS = [
   { label: "Tx echo",         method: "POST", path: "/v1/admin/tx-test",
     body: { exchange: "TSTSVC", routing_key: "PING", data: { hello: "ui-test" } } },
   // Push 발사 — mci-admin 의 broker connection 으로 user-targeted unsolicited 발사.
-  { label: "Push 발사",       method: "POST", path: "/v1/admin/push-test",
-    body: { user: "tester01", data: { event: "alert", text: "hello via push" } } },
+  // source 토글: "broker" (default) 또는 "http" (Phase-2 신규, broker 우회).
+  { label: "Push 발사 (broker)", method: "POST", path: "/v1/admin/push-test",
+    body: { user: "tester01", source: "broker", data: { event: "alert", text: "hello via broker" } } },
+  { label: "Push 발사 (http)",   method: "POST", path: "/v1/admin/push-test",
+    body: { user: "tester01", source: "http", data: { event: "alert", text: "hello via http" } } },
   // Broadcast 발사 — FC_CAST/SubBroadcast. exchange 매칭된 모든 subscriber 에 fan-out.
   // (mci-push / mci-price / mci-edge-* / 운영 svc 가 같이 받음).
   { label: "Broadcast 발사",  method: "POST", path: "/v1/admin/broadcast-test",

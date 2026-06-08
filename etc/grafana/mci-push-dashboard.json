@@ -129,10 +129,36 @@
     },
     {
       "type": "stat",
-      "title": "HTTP inject 채널 full drop (Phase 2.5 백프레셔)",
+      "title": "Phase 2.7 readiness (30d HTTP 비중)",
+      "description": "30일 평균 HTTP 비중. 99%+ 도달 시 broker subscribe 제거 가능 — docs/phase-2.7-rollout.md.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "targets": [
+        {"refId": "A", "expr": "wtg:push:http_ratio:30d"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.9},
+              {"color": "green", "value": 0.99}
+            ]
+          }
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"}
+    },
+    {
+      "type": "stat",
+      "title": "HTTP inject 채널 full drop",
       "description": "0 유지가 정상. 1+ → dispatcher inject buffer 크기 조정 필요.",
       "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 1},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 5},
       "targets": [
         {"refId": "A", "expr": "rate(mci_push_dispatcher_drop_inject_full_total[$rate_window])"}
       ],

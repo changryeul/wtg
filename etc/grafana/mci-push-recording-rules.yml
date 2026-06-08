@@ -45,3 +45,11 @@ groups:
       # 인증 실패 rate (cn 별)
       - record: wtg:push:http_inject_unauth:rate5m_by_cn
         expr: sum(rate(mci_push_http_inject_total{result="unauthorized"}[5m])) by (cn)
+
+      # ─── Phase 2.7 readiness ──────────────────────────────────────────────
+      # 30일 평균 HTTP 비중 — 99% 이상 + broker 잔여 rate 거의 0 이면 broker 제거 가능.
+      - record: wtg:push:http_ratio:30d
+        expr: |
+          avg_over_time(wtg:push:http_ratio:5m[30d])
+      - record: wtg:push:recv_broker:rate30d
+        expr: avg_over_time(wtg:push:recv_broker:rate5m[30d])

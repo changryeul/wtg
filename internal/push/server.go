@@ -149,8 +149,13 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/push-stats", StatsHandler(deps))
 	mux.HandleFunc("GET /v1/subscribe", SubscribeHandler(deps))
 	// Phase-1 PoC — broker 없이 unsolicited 주입 받는 internal endpoint.
-	// 운영 svc 가 점차 broker 의존 줄이도록. cfg.PushSecret 으로 인증 (X-Push-Secret 헤더).
-	mux.HandleFunc("POST /v1/internal/push", HTTPPushHandler(s.dispatcher, s.cfg.PushSecret))
+	// Phase 2.4 — mTLS audit log + secret 이중 검증 (HTTPPushHandlerWithLogger).
+	// 운영 svc 가 점차 broker 의존 줄이도록. mTLS (HTTPTLSClientCAFile) 또는 PushSecret
+	// (X-Push-Secret 헤더) 또는 둘 다 활성 — 둘 다 비면 wide-open (dev 전용, warn log).
+	if s.cfg.PushSecret == "" && s.cfg.HTTPTLSClientCAFile == "" {
+		s.logger.Warn("POST /v1/internal/push 인증 wide-open — dev 전용. 운영은 --push-secret 또는 --http-tls-client-ca 설정 권장")
+	}
+	mux.HandleFunc("POST /v1/internal/push", HTTPPushHandlerWithLogger(s.dispatcher, s.cfg.PushSecret, s.logger))
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	authMW := middleware.Auth(middleware.AuthConfig{
@@ -170,6 +175,12 @@ func (s *Server) Start(ctx context.Context) error {
 		middleware.Recover(s.logger),
 	)
 
+	// HTTP TLS (Phase 2.4) — HTTPTLSCertFile/KeyFile 있으면 HTTPS, ClientCAFile 도 있으면 mTLS.
+	httpTLSCfg, err := loadHTTPTLS(&s.cfg)
+	if err != nil {
+		return fmt.Errorf("HTTP TLS 구성: %w", err)
+	}
+
 	s.http = &http.Server{
 		Addr:         s.cfg.ListenAddr,
 		Handler:      chain,
@@ -177,18 +188,29 @@ func (s *Server) Start(ctx context.Context) error {
 		WriteTimeout: s.cfg.WriteTimeout,
 		IdleTimeout:  s.cfg.IdleTimeout,
 		BaseContext:  func(_ net.Listener) context.Context { return ctx },
+		TLSConfig:    httpTLSCfg,
 	}
 
+	httpsActive := httpTLSCfg != nil
+	mtlsActive := httpsActive && s.cfg.HTTPTLSClientCAFile != ""
 	s.logger.Info("HTTP/WS listen 시작",
 		slog.String("addr", s.cfg.ListenAddr),
 		slog.String("broker", fmt.Sprintf("%s:%d", s.cfg.BrokerHost, s.cfg.BrokerPort)),
 		slog.String("queue", s.cfg.QueueName),
 		slog.Bool("dev_mode", s.cfg.DevMode),
+		slog.Bool("https", httpsActive),
+		slog.Bool("mtls", mtlsActive),
 	)
 
 	errCh := make(chan error, 1)
 	go func() {
-		err := s.http.ListenAndServe()
+		var err error
+		if httpsActive {
+			// cert/key 는 TLSConfig 에 이미 로딩됨 — 빈 인자 OK.
+			err = s.http.ListenAndServeTLS("", "")
+		} else {
+			err = s.http.ListenAndServe()
+		}
 		if errors.Is(err, http.ErrServerClosed) {
 			err = nil
 		}
@@ -234,5 +256,19 @@ func loadBrokerTLS(cfg *Config) (*tls.Config, error) {
 		KeyFile:      cfg.BrokerTLSKeyFile,
 		ServerCAFile: cfg.BrokerTLSCAFile,
 		ServerName:   cfg.BrokerTLSSNI,
+	})
+}
+
+// loadHTTPTLS — Config 의 HTTP TLS 옵션이 있으면 *tls.Config (서버), 아니면 nil.
+// CertFile/KeyFile 필수, ClientCAFile 추가 시 mTLS (client cert 검증).
+// Phase 2.4 — POST /v1/internal/push 의 운영 svc 인증 (CN/SAN 기반).
+func loadHTTPTLS(cfg *Config) (*tls.Config, error) {
+	if cfg.HTTPTLSCertFile == "" && cfg.HTTPTLSKeyFile == "" {
+		return nil, nil
+	}
+	return tlsutil.LoadServer(tlsutil.ServerOptions{
+		CertFile:     cfg.HTTPTLSCertFile,
+		KeyFile:      cfg.HTTPTLSKeyFile,
+		ClientCAFile: cfg.HTTPTLSClientCAFile,
 	})
 }

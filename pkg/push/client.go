@@ -32,6 +32,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
 
 // Message — 발사할 push 한 건. 핸들러의 HTTPPushRequest 와 1:1 호환.
@@ -59,6 +61,7 @@ type Client struct {
 	baseURL string
 	secret  string
 	http    *http.Client
+	initErr error // NewClient 의 TLS 구성 실패 — Push 시 반환.
 }
 
 // ClientOptions — Client 생성 의존성.
@@ -74,30 +77,95 @@ type ClientOptions struct {
 	// Timeout — HTTP 요청 timeout. 0 면 default 5s.
 	Timeout time.Duration
 
-	// HTTPClient — 직접 제공 시 사용 (mTLS / 사용자 정의 transport). nil 이면 default.
+	// HTTPClient — 직접 제공 시 사용 (사용자 정의 transport). nil 이면 default.
+	// HTTPClient 채우면 TLS* 옵션은 무시 (사용자 책임).
 	HTTPClient *http.Client
+
+	// TLS — Phase 2.4 mTLS 옵션. ClientCertFile/KeyFile 채우면 client cert 첨부,
+	// ServerCAFile 채우면 서버 인증서 검증 CA. 비면 시스템 trust store + HTTPS 면
+	// 서버 cert 표준 검증.
+	//
+	// 운영 권장: 운영 svc 가 mci-push 와 mTLS 인증서 교환 (CN/SAN 기반 svc 식별).
+	// 단일 secret 보다 인증서 폐기 / rotate 가 운영적으로 안전.
+	TLSClientCertFile string
+	TLSClientKeyFile  string
+	TLSServerCAFile   string
+	TLSServerName     string // SNI / hostname 검증. BaseURL 의 host 와 다르면 명시.
+	TLSInsecure       bool   // 검증 skip — dev 자체발급용. **운영 금지**.
 }
 
-// NewClient — Client 생성.
+// NewClient — Client 생성. TLS 옵션 충돌 시 (cert 만 또는 key 만) panic 대신
+// nil/error 가 아닌 silent fallback — 운영자가 set 했는데 동작 안 하면 안 되므로
+// MustNewClient 와 분리.
+//
+// HTTPClient 가 nil 이고 TLS* 옵션이 있으면 자동으로 *http.Transport 구성.
 func NewClient(opts ClientOptions) *Client {
+	c, err := newClient(opts)
+	if err != nil {
+		// TLS 옵션 잘못된 경우 — fallback 으로 일반 client 만들고 다음 호출 시 fail 하도록.
+		// 패키지 API 호환 위해 panic 대신 secret/baseURL 만 보존.
+		return &Client{
+			baseURL: strings.TrimRight(opts.BaseURL, "/"),
+			secret:  opts.Secret,
+			http:    &http.Client{Timeout: defaultTimeout(opts.Timeout)},
+			initErr: err,
+		}
+	}
+	return c
+}
+
+// MustNewClient — TLS 옵션 잘못 시 panic. 운영 svc 부팅 시 명시적으로 에러 노출.
+func MustNewClient(opts ClientOptions) *Client {
+	c, err := newClient(opts)
+	if err != nil {
+		panic(fmt.Sprintf("push.MustNewClient: %v", err))
+	}
+	return c
+}
+
+func newClient(opts ClientOptions) (*Client, error) {
 	cli := opts.HTTPClient
 	if cli == nil {
-		to := opts.Timeout
-		if to <= 0 {
-			to = 5 * time.Second
+		// TLS 옵션 있으면 *http.Transport 자동 구성.
+		var transport *http.Transport
+		if opts.TLSClientCertFile != "" || opts.TLSServerCAFile != "" || opts.TLSInsecure {
+			tlsCfg, err := tlsutil.LoadClient(tlsutil.ClientOptions{
+				CertFile:           opts.TLSClientCertFile,
+				KeyFile:            opts.TLSClientKeyFile,
+				ServerCAFile:       opts.TLSServerCAFile,
+				ServerName:         opts.TLSServerName,
+				InsecureSkipVerify: opts.TLSInsecure,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("push: TLS 구성: %w", err)
+			}
+			transport = &http.Transport{TLSClientConfig: tlsCfg}
 		}
-		cli = &http.Client{Timeout: to}
+		cli = &http.Client{Timeout: defaultTimeout(opts.Timeout)}
+		if transport != nil {
+			cli.Transport = transport
+		}
 	}
 	return &Client{
 		baseURL: strings.TrimRight(opts.BaseURL, "/"),
 		secret:  opts.Secret,
 		http:    cli,
+	}, nil
+}
+
+func defaultTimeout(t time.Duration) time.Duration {
+	if t <= 0 {
+		return 5 * time.Second
 	}
+	return t
 }
 
 // Push — 단건 발사. context cancel / timeout 시 immediate return.
 // Result 가 nil 이라도 error 가 nil 이면 server 가 200 응답한 것.
 func (c *Client) Push(ctx context.Context, msg Message) (*Result, error) {
+	if c.initErr != nil {
+		return nil, c.initErr
+	}
 	if c.baseURL == "" {
 		return nil, errors.New("push: BaseURL 미설정")
 	}

@@ -65,6 +65,14 @@ type Config struct {
 	GRPCTLSKeyFile      string
 	GRPCTLSClientCAFile string
 
+	// HTTP TLS — HTTP/WS listener (ListenAddr) 에 TLS 적용.
+	// CertFile/KeyFile 채우면 HTTPS, ClientCAFile 도 채우면 mTLS (운영 svc → mci-push).
+	// Phase 2.4: POST /v1/internal/push 의 인증을 secret 대신/추가로 client cert 로.
+	// mTLS 와 PushSecret 은 독립 — 둘 다 활성 시 이중 검증.
+	HTTPTLSCertFile     string
+	HTTPTLSKeyFile      string
+	HTTPTLSClientCAFile string
+
 	// Broker TLS — docs/broker-tls.md 참조.
 	BrokerTLSCertFile string
 	BrokerTLSKeyFile  string
@@ -152,6 +160,15 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PUSH_GRPC_TLS_CLIENT_CA"); v != "" {
 		cfg.GRPCTLSClientCAFile = v
 	}
+	if v := os.Getenv("WTG_PUSH_HTTP_TLS_CERT"); v != "" {
+		cfg.HTTPTLSCertFile = v
+	}
+	if v := os.Getenv("WTG_PUSH_HTTP_TLS_KEY"); v != "" {
+		cfg.HTTPTLSKeyFile = v
+	}
+	if v := os.Getenv("WTG_PUSH_HTTP_TLS_CLIENT_CA"); v != "" {
+		cfg.HTTPTLSClientCAFile = v
+	}
 	if v := os.Getenv("WTG_PUSH_BROKER_TLS_CERT"); v != "" {
 		cfg.BrokerTLSCertFile = v
 	}
@@ -184,6 +201,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.GRPCTLSCertFile, "grpc-tls-cert", cfg.GRPCTLSCertFile, "gRPC TLS 서버 cert PEM")
 	fs.StringVar(&cfg.GRPCTLSKeyFile, "grpc-tls-key", cfg.GRPCTLSKeyFile, "gRPC TLS 서버 key PEM")
 	fs.StringVar(&cfg.GRPCTLSClientCAFile, "grpc-tls-client-ca", cfg.GRPCTLSClientCAFile, "gRPC mTLS 클라이언트 CA bundle")
+	fs.StringVar(&cfg.HTTPTLSCertFile, "http-tls-cert", cfg.HTTPTLSCertFile, "HTTP TLS 서버 cert PEM (HTTPS 활성)")
+	fs.StringVar(&cfg.HTTPTLSKeyFile, "http-tls-key", cfg.HTTPTLSKeyFile, "HTTP TLS 서버 key PEM")
+	fs.StringVar(&cfg.HTTPTLSClientCAFile, "http-tls-client-ca", cfg.HTTPTLSClientCAFile,
+		"HTTP mTLS 클라이언트 CA bundle (POST /v1/internal/push 의 client cert 검증)")
 	fs.StringVar(&cfg.BrokerTLSCertFile, "broker-tls-cert", cfg.BrokerTLSCertFile, "broker TLS 클라이언트 cert PEM")
 	fs.StringVar(&cfg.BrokerTLSKeyFile, "broker-tls-key", cfg.BrokerTLSKeyFile, "broker TLS 클라이언트 key PEM")
 	fs.StringVar(&cfg.BrokerTLSCAFile, "broker-tls-ca", cfg.BrokerTLSCAFile, "broker TLS 서버 검증용 CA bundle")

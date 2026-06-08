@@ -8,6 +8,7 @@ package push
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/winwaysystems/wtg/pkg/mymq"
@@ -38,8 +39,14 @@ type HTTPPushResponse struct {
 
 // HTTPPushHandler — POST /v1/internal/push.
 //
-// 인증: 헤더 `X-Push-Secret` 가 cfg.PushSecret 과 일치해야 함. secret 빈값이면
-// 인증 disable (dev 전용). subtle.ConstantTimeCompare 로 timing-safe.
+// 인증 (두 계층 독립 — 운영자가 하나 이상 활성하면 됨):
+//  1. mTLS — server cfg 의 HTTPTLSClientCAFile 활성 시 TLS handshake 단계에서
+//     자동 검증. 핸들러는 r.TLS.PeerCertificates 의 CN 을 audit log 에 기록만.
+//  2. shared secret — `X-Push-Secret` 헤더가 secret 과 일치해야. secret 빈값이면
+//     이 계층 비활성. subtle.ConstantTimeCompare 로 timing-safe.
+//
+// 둘 다 비활성 시 (secret 빈 + mTLS 없음) 인증 wide-open — dev 전용 (서버 부팅 시
+// warn log). 운영은 둘 중 하나 (또는 둘 다) 활성 권장.
 //
 // 동작:
 //  1. body decode
@@ -48,7 +55,24 @@ type HTTPPushResponse struct {
 //
 // 호출자 (운영 svc 또는 admin tester) 는 broker 우회 path 로 동일 fan-out 결과.
 func HTTPPushHandler(disp *Dispatcher, secret string) http.HandlerFunc {
+	return HTTPPushHandlerWithLogger(disp, secret, nil)
+}
+
+// HTTPPushHandlerWithLogger — HTTPPushHandler + audit logger.
+// logger != nil 이면 mTLS client cert 의 CN/SAN 을 INFO log 로 audit.
+func HTTPPushHandlerWithLogger(disp *Dispatcher, secret string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// mTLS audit (logger 있고 client cert 가 있으면 CN log).
+		var peerCN string
+		if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+			peerCN = r.TLS.PeerCertificates[0].Subject.CommonName
+			if logger != nil {
+				logger.Info("push: mTLS client",
+					slog.String("cn", peerCN),
+					slog.String("remote", r.RemoteAddr),
+				)
+			}
+		}
 		if secret != "" {
 			got := r.Header.Get("X-Push-Secret")
 			if subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {

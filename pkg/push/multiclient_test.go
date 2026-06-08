@@ -42,9 +42,9 @@ func TestMultiClient_UserStickyRouting(t *testing.T) {
 		t.Errorf("dealer01 → idx=%d 만 10회 받아야, 실제 %d", expectedIdx, hits[expectedIdx].Load())
 	}
 	totalOther := uint64(0)
-	for i, h := range hits {
+	for i := range hits {
 		if i != expectedIdx {
-			totalOther += h.Load()
+			totalOther += hits[i].Load()
 		}
 	}
 	if totalOther != 0 {
@@ -76,9 +76,9 @@ func TestMultiClient_BroadcastFanout(t *testing.T) {
 	if _, err := mc.Push(context.Background(), Message{User: "", Data: json.RawMessage(`"halt"`)}); err != nil {
 		t.Fatalf("Push: %v", err)
 	}
-	for i, h := range hits {
-		if h.Load() != 1 {
-			t.Errorf("인스턴스 %d hit=%d, 기대 1", i, h.Load())
+	for i := range hits {
+		if hits[i].Load() != 1 {
+			t.Errorf("인스턴스 %d hit=%d, 기대 1", i, hits[i].Load())
 		}
 	}
 }
@@ -194,9 +194,9 @@ func TestMultiClient_WithRing(t *testing.T) {
 		t.Errorf("ring: dealer01 → idx=%d 만 10회, got %d", expectedIdx, hits[expectedIdx].Load())
 	}
 	totalOther := uint64(0)
-	for i, h := range hits {
+	for i := range hits {
 		if i != expectedIdx {
-			totalOther += h.Load()
+			totalOther += hits[i].Load()
 		}
 	}
 	if totalOther != 0 {

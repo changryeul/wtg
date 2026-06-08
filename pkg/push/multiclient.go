@@ -51,6 +51,14 @@ type MultiClientOptions struct {
 	// ring 의 이점: 인스턴스 추가/제거 시 sticky 유지율 ~85% (mod 는 ~20%).
 	// — broker session 끊김 / cache 재구축 / dispatcher fan-out 누락 최소화.
 	VirtualNodes int
+
+	// TLS — Phase 2.4 mTLS. 모든 인스턴스에 동일 client cert 적용 (단일 svc identity).
+	// 인스턴스마다 다른 cert 가 필요한 시나리오는 거의 없음 (mci-push 들은 동일 trust pool).
+	TLSClientCertFile string
+	TLSClientKeyFile  string
+	TLSServerCAFile   string
+	TLSServerName     string
+	TLSInsecure       bool
 }
 
 // NewMultiClient — 다중 endpoint MultiClient 생성. Endpoints 빈값이면 error.
@@ -64,10 +72,19 @@ func NewMultiClient(opts MultiClientOptions) (*MultiClient, error) {
 		if i < len(opts.PerEndpointSecrets) && opts.PerEndpointSecrets[i] != "" {
 			secret = opts.PerEndpointSecrets[i]
 		}
-		clients[i] = NewClient(ClientOptions{
-			BaseURL: ep,
-			Secret:  secret,
+		cli, err := newClient(ClientOptions{
+			BaseURL:           ep,
+			Secret:            secret,
+			TLSClientCertFile: opts.TLSClientCertFile,
+			TLSClientKeyFile:  opts.TLSClientKeyFile,
+			TLSServerCAFile:   opts.TLSServerCAFile,
+			TLSServerName:     opts.TLSServerName,
+			TLSInsecure:       opts.TLSInsecure,
 		})
+		if err != nil {
+			return nil, fmt.Errorf("push: MultiClient — endpoint[%d] %q TLS: %w", i, ep, err)
+		}
+		clients[i] = cli
 	}
 	mc := &MultiClient{
 		clients:  clients,

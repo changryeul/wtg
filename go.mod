@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/jackc/pgx/v5 v5.9.2
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/testcontainers/testcontainers-go v0.42.0

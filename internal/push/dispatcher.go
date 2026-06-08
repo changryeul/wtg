@@ -114,13 +114,21 @@ func (d *Dispatcher) AddHook(h UnsolicitedHook) {
 // Run 은 Subscribe 채널을 소비하면서 fan-out 한다. ctx 취소 또는 채널 close 시 반환.
 //
 // 단일 goroutine 으로 호출하면 된다 — 내부에서 별도 goroutine 분기 없음.
+//
+// sub == nil (broker 없이 부팅) 이면 broker case 비활성 — injectCh 만 소비.
+// Phase 2.7 사전 옵션 (--no-broker) 또는 dev/test 시나리오.
 func (d *Dispatcher) Run(ctx context.Context) {
-	ch := d.sub.Subscribe()
+	var ch <-chan *mymq.Unsolicited
+	if d.sub != nil {
+		ch = d.sub.Subscribe()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case msg, ok := <-ch:
+			// ch == nil 이면 이 case 는 영원히 fire 안 됨 (Go nil-channel semantics).
+			// → broker 없는 모드에서 자연스럽게 broker subscribe 비활성.
 			if !ok {
 				d.logger.Info("subscribe 채널 종료 — Dispatcher 종료")
 				return

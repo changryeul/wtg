@@ -44,52 +44,64 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 }
 
 // Start 는 broker 연결 + Dispatcher 시작 + HTTP 서버 가동 (블로킹).
+//
+// NoBroker=true 면 broker 연결 skip — dispatcher 는 HTTP inject 만 소비.
+// Phase 2.7 사전 옵션 / dev / test / 장애 대응.
 func (s *Server) Start(ctx context.Context) error {
-	brokerTLS, err := loadBrokerTLS(&s.cfg)
-	if err != nil {
-		return fmt.Errorf("broker TLS 구성: %w", err)
+	var mq *mymq.Client
+	if !s.cfg.NoBroker {
+		brokerTLS, err := loadBrokerTLS(&s.cfg)
+		if err != nil {
+			return fmt.Errorf("broker TLS 구성: %w", err)
+		}
+		mq, err = mymq.Open(ctx, s.cfg.BrokerHost, s.cfg.BrokerPort, mymq.Options{
+			ApplName:         s.cfg.ApplName,
+			Instance:         s.cfg.Instance,
+			Channel:          mymq.ChannelWeb,
+			DialTimeout:      s.cfg.DialTimeout,
+			HandshakeTimeout: s.cfg.HandshakeTimeout,
+			Logger:           s.logger,
+			TLS:              brokerTLS,
+			Queue: &mymq.QueueOptions{
+				Name: s.cfg.QueueName,
+				Attr: mymq.QtClient,
+				// QfUnsolRep 가 핵심: broker 가 이 client 를 `대표 unsolicited 수신자`
+				// (representative receiver) 로 등록해서 user 매칭 없이 모든 publish 를
+				// 흘려준다. broker 의 publish.c 가 _REPRESENTATIVE_UNSOL_RECVER_ flag 를
+				// 보고 user 매칭을 skip 하기 때문 (umap_chk 우회). mci-push 는 그 다음에
+				// broadcast prefix.LogonID 로 ws Registry fan-out 한다.
+				Flags: mymq.QfUnsolMsg | mymq.QfUnsolHdr | mymq.QfUnsolRep,
+			},
+			Reconnect: &mymq.ReconnectOptions{
+				InitialBackoff: 1 * time.Second,
+				MaxBackoff:     30 * time.Second,
+				BackoffFactor:  2.0,
+			},
+			Metrics: mymq.MetricsHook{
+				OnDisconnect:       func(_ error) { s.metrics.IncBrokerDisconnect("mci-push") },
+				OnReconnect:        func(_ int, d time.Duration) { s.metrics.IncBrokerReconnect("mci-push", d) },
+				OnInflightAborted:  func(n int) { s.metrics.IncBrokerInflightAborted("mci-push", n) },
+				OnHeartbeatTimeout: func() { s.metrics.IncBrokerHeartbeatTimeout("mci-push") },
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("mymq.Open: %w", err)
+		}
+		s.mq = mq
+	} else {
+		s.logger.Warn("mci-push: broker 비활성 모드 (--no-broker) — HTTP push only")
 	}
-	mq, err := mymq.Open(ctx, s.cfg.BrokerHost, s.cfg.BrokerPort, mymq.Options{
-		ApplName:         s.cfg.ApplName,
-		Instance:         s.cfg.Instance,
-		Channel:          mymq.ChannelWeb,
-		DialTimeout:      s.cfg.DialTimeout,
-		HandshakeTimeout: s.cfg.HandshakeTimeout,
-		Logger:           s.logger,
-		TLS:              brokerTLS,
-		Queue: &mymq.QueueOptions{
-			Name: s.cfg.QueueName,
-			Attr: mymq.QtClient,
-			// QfUnsolRep 가 핵심: broker 가 이 client 를 `대표 unsolicited 수신자`
-			// (representative receiver) 로 등록해서 user 매칭 없이 모든 publish 를
-			// 흘려준다. broker 의 publish.c 가 _REPRESENTATIVE_UNSOL_RECVER_ flag 를
-			// 보고 user 매칭을 skip 하기 때문 (umap_chk 우회). mci-push 는 그 다음에
-			// broadcast prefix.LogonID 로 ws Registry fan-out 한다.
-			Flags: mymq.QfUnsolMsg | mymq.QfUnsolHdr | mymq.QfUnsolRep,
-		},
-		Reconnect: &mymq.ReconnectOptions{
-			InitialBackoff: 1 * time.Second,
-			MaxBackoff:     30 * time.Second,
-			BackoffFactor:  2.0,
-		},
-		Metrics: mymq.MetricsHook{
-			OnDisconnect:       func(_ error) { s.metrics.IncBrokerDisconnect("mci-push") },
-			OnReconnect:        func(_ int, d time.Duration) { s.metrics.IncBrokerReconnect("mci-push", d) },
-			OnInflightAborted:  func(n int) { s.metrics.IncBrokerInflightAborted("mci-push", n) },
-			OnHeartbeatTimeout: func() { s.metrics.IncBrokerHeartbeatTimeout("mci-push") },
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("mymq.Open: %w", err)
-	}
-	s.mq = mq
 
 	s.registry = NewRegistry(s.logger)
-	s.dispatcher = NewDispatcher(DispatcherOptions{
-		Sub:      mq,
+	// Sub == nil 이면 Dispatcher.Run 이 자동으로 broker case 비활성 (nil-channel select).
+	dispOpts := DispatcherOptions{
 		Registry: s.registry,
 		Logger:   s.logger,
-	})
+	}
+	if mq != nil {
+		dispOpts.Sub = mq
+	}
+	s.dispatcher = NewDispatcher(dispOpts)
 
 	dispCtx, dispCancel := context.WithCancel(ctx)
 	defer dispCancel()

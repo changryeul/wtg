@@ -28,6 +28,15 @@ type Config struct {
 	BrokerHost string
 	BrokerPort int
 
+	// NoBroker — broker 연결 자체를 시도 안 함 (HTTP push only 모드).
+	// Phase 2.7 사전 옵션 또는 dev/test 시나리오 (broker 없이 mci-push 단독 부팅).
+	// 활성 시:
+	//   - mymq.Open 호출 skip → broker subscribe 비활성
+	//   - dispatcher 는 HTTP inject 만 소비 (recvHTTP 카운터)
+	//   - ws fan-out / gRPC PushService 정상 동작 (broker 무관)
+	//   - 부팅 로그에 "broker 비활성" 명시
+	NoBroker bool
+
 	// Phase-1 PoC — broker 우회 HTTP push endpoint (POST /v1/internal/push) 의 인증
 	// shared secret. 빈값 = 인증 disable (dev 전용). 운영은 명시 설정 + mTLS 같이.
 	PushSecret string
@@ -148,6 +157,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PUSH_DEV_MODE"); v == "1" || v == "true" {
 		cfg.DevMode = true
 	}
+	if v := os.Getenv("WTG_PUSH_NO_BROKER"); v == "1" || v == "true" {
+		cfg.NoBroker = true
+	}
 	if v := os.Getenv("WTG_PUSH_LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
 	}
@@ -194,6 +206,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.Instance, "instance", cfg.Instance, "다중 인스턴스 일련번호")
 	fs.StringVar(&cfg.QueueName, "queue", cfg.QueueName, "broker 측 큐 이름 (mymqd.cfg 와 일치)")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드 — JWT 검증 우회")
+	fs.BoolVar(&cfg.NoBroker, "no-broker", cfg.NoBroker,
+		"broker 연결 skip — HTTP push only 모드 (dev/test 또는 Phase 2.7 사전 옵션)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.IntVar(&cfg.SendQueueSize, "send-queue", cfg.SendQueueSize, "사용자별 send queue 크기")
 	fs.DurationVar(&cfg.WsPingInterval, "ws-ping", cfg.WsPingInterval, "WebSocket ping 간격")

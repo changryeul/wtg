@@ -54,6 +54,29 @@ rule_files:
   - "/etc/prometheus/rules/mci-push-alerts.yml"
 ```
 
+## 운영 모드
+
+### Standalone (broker 없음) — `--no-broker`
+
+mci-push 를 broker 연결 없이 HTTP push only 모드로 부팅.
+
+```bash
+mci-push --listen=:8081 --push-secret=$WTG_PUSH_SECRET --no-broker
+```
+
+용도:
+- **dev / 통합 test** — broker 띄울 필요 없이 mci-push 단독 실행
+- **장애 대응** — broker 사고 중에도 HTTP push 만으로 ws fan-out 유지
+- **Phase 2.7 사전 검증** — 운영 환경에서 broker 의존 없는 시나리오 실험 (staging)
+
+동작:
+- broker subscribe 비활성 (`mci_push_dispatcher_recv_broker_total` 0 유지)
+- HTTP inject 정상 (`recv_http_total` 증가)
+- ws fan-out / gRPC PushService 정상 (broker 무관)
+- 부팅 로그: `mci-push: broker 비활성 모드 (--no-broker) — HTTP push only`
+
+env 대체: `WTG_PUSH_NO_BROKER=1`
+
 ## 운영 시나리오
 
 ### Phase 2 이행 진척 모니터링

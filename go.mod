@@ -10,7 +10,7 @@ require (
 	github.com/redis/go-redis/v9 v9.19.0
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
-	go.etcd.io/etcd/client/v3 v3.6.11
+	go.etcd.io/etcd/client/v3 v3.6.12
 	go.etcd.io/etcd/server/v3 v3.6.11
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0
 	go.opentelemetry.io/otel v1.44.0
@@ -94,8 +94,8 @@ require (
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.etcd.io/bbolt v1.4.3 // indirect
-	go.etcd.io/etcd/api/v3 v3.6.11 // indirect
-	go.etcd.io/etcd/client/pkg/v3 v3.6.11 // indirect
+	go.etcd.io/etcd/api/v3 v3.6.12 // indirect
+	go.etcd.io/etcd/client/pkg/v3 v3.6.12 // indirect
 	go.etcd.io/etcd/pkg/v3 v3.6.11 // indirect
 	go.etcd.io/raft/v3 v3.6.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

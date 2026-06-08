@@ -256,58 +256,63 @@ func (s *Server) Send(in *mymq.FrameInput) error {
 
 // Start 는 broker 연결 + 구독 + HTTP 서버를 가동한다 (블로킹).
 func (s *Server) Start(ctx context.Context) error {
-	brokerTLS, err := loadBrokerTLS(&s.cfg)
-	if err != nil {
-		return fmt.Errorf("broker TLS 구성: %w", err)
-	}
-	mq, err := mymq.Open(ctx, s.cfg.BrokerHost, s.cfg.BrokerPort, mymq.Options{
-		ApplName:         s.cfg.ApplName,
-		Instance:         s.cfg.Instance,
-		Channel:          mymq.ChannelWeb,
-		DialTimeout:      s.cfg.DialTimeout,
-		HandshakeTimeout: s.cfg.HandshakeTimeout,
-		Logger:           s.logger,
-		TLS:              brokerTLS,
-		// SubBufferSize — broker → mci-price unsolicited 채널 깊이. 0 이면
-		// pkg/mymq default 256. 부하 테스트 (cmd/load-gen) 에서 broker→client
-		// drop 이 보이면 이 값을 올리고 SubDrops() 가 0 으로 떨어지는지 재측정.
-		SubBufferSize: s.cfg.SubBufferSize,
-		Queue: &mymq.QueueOptions{
-			Name: s.cfg.QueueName,
-			Attr: mymq.QtClient,
-			// QfUnsolRep 가 핵심 — broker 의 representative receiver 로 등록되어
-			// LogonID 매칭 없이 모든 broadcast (forwarder/cooker 의 raw 시세) 를 수신.
-			// 빠지면 broker 가 broadcast 를 보내주지 않아 recv 가 0 으로 막힌다.
-			// mci-push 와 동일 패턴 (internal/push/server.go).
-			Flags: mymq.QfUnsolMsg | mymq.QfUnsolHdr | mymq.QfUnsolRep,
-			// Exchange declare — broker 의 publish_packet 이 TO_EXCH 매칭 시
-			// client->xchg 와 strcasecmp 한다 (publish.c:223). 빈값이면 publish
-			// 마다 0/N 으로 skip 되어 recv 가 영원히 0. cfg.ExchangeName 을
-			// declare 해서 그 exchange 의 broadcast 만 받게 한다 (FANOUT).
-			ExchangeName: s.cfg.ExchangeName,
-			ExchangeType: mymq.ExchangeFanout,
-		},
-		Reconnect: &mymq.ReconnectOptions{
-			InitialBackoff: 1 * time.Second,
-			MaxBackoff:     30 * time.Second,
-			BackoffFactor:  2.0,
-		},
-		Metrics: mymq.MetricsHook{
-			OnDisconnect:       func(_ error) { s.metrics.IncBrokerDisconnect("mci-price") },
-			OnReconnect:        func(_ int, d time.Duration) { s.metrics.IncBrokerReconnect("mci-price", d) },
-			OnInflightAborted:  func(n int) { s.metrics.IncBrokerInflightAborted("mci-price", n) },
-			OnHeartbeatTimeout: func() { s.metrics.IncBrokerHeartbeatTimeout("mci-price") },
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("mymq.Open: %w", err)
-	}
-	s.mq = mq
-
-	// 구독 goroutine.
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
-	go s.subscribeLoop(subCtx, mq)
+
+	if !s.cfg.NoBroker {
+		brokerTLS, err := loadBrokerTLS(&s.cfg)
+		if err != nil {
+			return fmt.Errorf("broker TLS 구성: %w", err)
+		}
+		mq, err := mymq.Open(ctx, s.cfg.BrokerHost, s.cfg.BrokerPort, mymq.Options{
+			ApplName:         s.cfg.ApplName,
+			Instance:         s.cfg.Instance,
+			Channel:          mymq.ChannelWeb,
+			DialTimeout:      s.cfg.DialTimeout,
+			HandshakeTimeout: s.cfg.HandshakeTimeout,
+			Logger:           s.logger,
+			TLS:              brokerTLS,
+			// SubBufferSize — broker → mci-price unsolicited 채널 깊이. 0 이면
+			// pkg/mymq default 256. 부하 테스트 (cmd/load-gen) 에서 broker→client
+			// drop 이 보이면 이 값을 올리고 SubDrops() 가 0 으로 떨어지는지 재측정.
+			SubBufferSize: s.cfg.SubBufferSize,
+			Queue: &mymq.QueueOptions{
+				Name: s.cfg.QueueName,
+				Attr: mymq.QtClient,
+				// QfUnsolRep 가 핵심 — broker 의 representative receiver 로 등록되어
+				// LogonID 매칭 없이 모든 broadcast (forwarder/cooker 의 raw 시세) 를 수신.
+				// 빠지면 broker 가 broadcast 를 보내주지 않아 recv 가 0 으로 막힌다.
+				// mci-push 와 동일 패턴 (internal/push/server.go).
+				Flags: mymq.QfUnsolMsg | mymq.QfUnsolHdr | mymq.QfUnsolRep,
+				// Exchange declare — broker 의 publish_packet 이 TO_EXCH 매칭 시
+				// client->xchg 와 strcasecmp 한다 (publish.c:223). 빈값이면 publish
+				// 마다 0/N 으로 skip 되어 recv 가 영원히 0. cfg.ExchangeName 을
+				// declare 해서 그 exchange 의 broadcast 만 받게 한다 (FANOUT).
+				ExchangeName: s.cfg.ExchangeName,
+				ExchangeType: mymq.ExchangeFanout,
+			},
+			Reconnect: &mymq.ReconnectOptions{
+				InitialBackoff: 1 * time.Second,
+				MaxBackoff:     30 * time.Second,
+				BackoffFactor:  2.0,
+			},
+			Metrics: mymq.MetricsHook{
+				OnDisconnect:       func(_ error) { s.metrics.IncBrokerDisconnect("mci-price") },
+				OnReconnect:        func(_ int, d time.Duration) { s.metrics.IncBrokerReconnect("mci-price", d) },
+				OnInflightAborted:  func(n int) { s.metrics.IncBrokerInflightAborted("mci-price", n) },
+				OnHeartbeatTimeout: func() { s.metrics.IncBrokerHeartbeatTimeout("mci-price") },
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("mymq.Open: %w", err)
+		}
+		s.mq = mq
+
+		// 구독 goroutine — broker subscribe path.
+		go s.subscribeLoop(subCtx, mq)
+	} else {
+		s.logger.Warn("mci-price: broker 비활성 모드 (--no-broker) — 입력 source = gRPC PublishTick + HTTP DevTick only")
+	}
 
 	// 통계 출력 goroutine.
 	if s.cfg.StatsInterval > 0 {

@@ -58,7 +58,10 @@ rule_files:
 
 ### Standalone (broker 없음) — `--no-broker`
 
-mci-push 를 broker 연결 없이 HTTP push only 모드로 부팅.
+mci-push **및 mci-price** 둘 다 동일 옵션 지원 — broker 연결 없이 부팅.
+
+#### mci-push
+HTTP push only 모드.
 
 ```bash
 mci-push --listen=:8081 --push-secret=$WTG_PUSH_SECRET --no-broker
@@ -76,6 +79,30 @@ mci-push --listen=:8081 --push-secret=$WTG_PUSH_SECRET --no-broker
 - 부팅 로그: `mci-push: broker 비활성 모드 (--no-broker) — HTTP push only`
 
 env 대체: `WTG_PUSH_NO_BROKER=1`
+
+#### mci-price
+gRPC PublishTick + HTTP DevTick only 모드.
+
+```bash
+mci-price --listen=:8082 --grpc=:50051 --no-broker
+```
+
+용도:
+- **dev / 통합 test** — broker 없이 mci-price 단독 부팅
+- **운영 시세 broker bypass** — quote-forwarder 가 mci-price 의 gRPC PublishTick
+  직접 호출 (broker 시세 부하 완전 분리)
+
+동작:
+- broker subscribe 비활성 → raw tick 입력 source = `PublishTick` gRPC + `POST /v1/dev/tick`
+- **자동으로 `QuotePublishBroker=false` 강제** (broker 없는데 publish 시도 차단)
+- SubscribeQuote / SubscribeBar / QuoteValidationService 모두 정상
+- 부팅 로그: `mci-price: broker 비활성 모드 (--no-broker) — gRPC PublishTick + HTTP DevTick only`
+
+env 대체: `WTG_PRICE_NO_BROKER=1`
+
+#### 공통 — Phase 2.7 사전 검증
+mci-push 와 mci-price 모두 `--no-broker` 로 staging 운영 → broker 의존 없는
+시나리오 사전 검증 → Phase 2.7 본 작업 (broker subscribe 코드 제거) 안전 진행.
 
 ## 운영 시나리오
 

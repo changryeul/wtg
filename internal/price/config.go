@@ -70,6 +70,16 @@ type Config struct {
 	// 개발 모드.
 	DevMode bool
 
+	// NoBroker — broker 연결 자체를 시도 안 함 (gRPC PublishTick + HTTP DevTick only).
+	// 활성 시:
+	//   - mymq.Open 호출 skip → broker subscribe 비활성 (raw tick 입력 source 0)
+	//   - quote-forwarder 가 mci-price gRPC PublishTick 직접 호출하는 운영
+	//     시나리오 또는 dev/test 에서 사용
+	//   - SubscribeQuote / SubscribeBar / quoteid 모두 정상 동작 (broker 무관)
+	//   - 부팅 로그에 "broker 비활성" 명시
+	// (mci-push 의 동등 옵션과 같은 패턴 — 자세히는 docs/push-monitoring.md 참조)
+	NoBroker bool
+
 	LogLevel string
 
 	// gRPC TLS — Internal mci-price 의 PriceService 가 mTLS 요구하도록.
@@ -343,6 +353,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_PRICE_EXCHANGE"); v != "" {
 		cfg.ExchangeName = v
 	}
+	if v := os.Getenv("WTG_PRICE_NO_BROKER"); v == "1" || v == "true" {
+		cfg.NoBroker = true
+	}
 	if v := os.Getenv("WTG_PRICE_DEV_MODE"); v == "1" || v == "true" {
 		cfg.DevMode = true
 	}
@@ -496,6 +509,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.PrintFirstN, "print", cfg.PrintFirstN, "처음 N 개 tick 을 stdout 에 dump (0 = 비활성)")
 	fs.DurationVar(&cfg.StatsInterval, "stats", cfg.StatsInterval, "통계 출력 주기")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드")
+	fs.BoolVar(&cfg.NoBroker, "no-broker", cfg.NoBroker,
+		"broker 연결 skip — gRPC PublishTick + DevTick 만 입력 source 로 사용 (dev/test 또는 운영 broker bypass 전환)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.GRPCTLSCertFile, "grpc-tls-cert", cfg.GRPCTLSCertFile, "gRPC TLS 서버 cert PEM")
 	fs.StringVar(&cfg.GRPCTLSKeyFile, "grpc-tls-key", cfg.GRPCTLSKeyFile, "gRPC TLS 서버 key PEM")
@@ -577,6 +592,11 @@ func LoadConfig(args []string) (Config, error) {
 	}
 	if enginesStr != "" {
 		cfg.QuoteIDEnginesAllowlist = splitCSV(enginesStr)
+	}
+	// NoBroker + QuotePublishBroker 동시 활성 시 — broker 없는데 broker 로 publish
+	// 시도는 의미 X. 자동 false 강제 (silent X — 부팅 시 main 이 log).
+	if cfg.NoBroker {
+		cfg.QuotePublishBroker = false
 	}
 	return cfg, nil
 }

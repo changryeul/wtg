@@ -23,7 +23,7 @@ endif
 CMDS := $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard cmd/*/*.go)))))
 
 .PHONY: all build test test-v test-race test-integration vet fmt fmt-check tidy clean install \
-        lint staticcheck vulncheck ci coverage ckey-echo proto $(CMDS)
+        lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside $(CMDS)
 
 all: build
 
@@ -47,6 +47,19 @@ test-race:
 # embedded etcd 통합 테스트 — build tag integration 활성, 시간 더 길게.
 test-integration:
 	$(GO) test $(GOFLAGS) -tags=integration -timeout=120s ./...
+
+# Phase 2.6 — C SDK (cside/wtgpush) 빌드 + Go side e2e test.
+# sample 바이너리 빌드 (외부 의존 0 — POSIX socket / make).
+cside:
+	$(MAKE) -C cside/wtgpush
+
+cside-clean:
+	$(MAKE) -C cside/wtgpush clean
+
+# C SDK ↔ mci-push 핸들러 wire 호환성 검증 (build tag=cside).
+# 선결: cside 타겟 먼저 빌드 필요.
+test-cside: cside
+	$(GO) test $(GOFLAGS) -tags=cside -run CSide ./pkg/push/...
 
 # coverage HTML 리포트.
 coverage: test-race

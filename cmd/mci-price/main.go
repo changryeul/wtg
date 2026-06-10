@@ -337,6 +337,20 @@ func main() {
 		slog.Duration("sweep", cfg.AggregatorSweepInterval),
 		slog.Int("symbols", symbols.Size()),
 	)
+	// SymbolMap 비어있음 = Aggregator 가 silent drop — INFO 로는 함정.
+	// 운영 alert path 에 잡히도록 WARN 으로 올린다.
+	if symbols.Size() == 0 {
+		mode := "정적 파일 (--symbols)"
+		hint := "etc/symbols.json 같은 파일 경로 확인"
+		if len(cfg.EtcdEndpoints) > 0 {
+			mode = "etcd watch"
+			hint = "fx-sync --table=pair --source-dir=./etc/db-mirror 또는 mci-admin UI 로 wtg/pair/ 시드"
+		}
+		logger.Warn("SymbolMap 비어있음 — Aggregator 가 모든 tick silent drop, quote_bars INSERT 0건",
+			slog.String("mode", mode),
+			slog.String("조치", hint),
+		)
+	}
 
 	// 6) PricingConsumer — etcd watch 또는 정적 파일 둘 다 지원.
 	//    broker tick → PricingTable.Apply (Profile 별) → MultiQuotePublisher

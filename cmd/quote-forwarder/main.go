@@ -122,6 +122,7 @@ var (
 	// fastExtractV1 reject 카운터 — /stats JSON 에 reason 별 노출. Prometheus
 	// 의 invalidQuote{feed,reason} 과 병행 (operator 가 단일 endpoint 로 즉시 확인).
 	totalInvalidMissingSymbol atomic.Uint64
+	totalInvalidNotAQuote     atomic.Uint64
 	totalInvalidNonPositive   atomic.Uint64
 	totalInvalidCrossed       atomic.Uint64
 	totalInvalidOther         atomic.Uint64
@@ -132,7 +133,10 @@ var (
 // 카운터 증가. label string 은 Prometheus reason label 로 그대로 사용.
 //
 //   - missing_symbol     : 55= (Symbol) 누락
-//   - non_positive_price : bid<=0 또는 ask<=0 (cooker drift → 음수, scale 오류)
+//   - not_a_quote        : bid/ask 둘 다 미할당 (35=X trade message 등 — v1 envelope
+//                          path 는 snapshot 만 처리, trade 는 silent skip 의도)
+//   - non_positive_price : bid<=0 또는 ask<=0 — 한쪽은 있지만 비정상 (cooker drift →
+//                          음수, scale 오류). 운영 alert 대상.
 //   - crossed_spread     : ask < bid (cooker 의 spread 계산 오류 또는 stale pair)
 //   - other              : 위에 해당 안 되는 케이스 (보호용 fallback)
 func classifyInvalid(sym string, bid, ask float64) string {
@@ -140,6 +144,12 @@ func classifyInvalid(sym string, bid, ask float64) string {
 	case sym == "":
 		totalInvalidMissingSymbol.Add(1)
 		return "missing_symbol"
+	case bid == 0 && ask == 0:
+		// 둘 다 미할당 = quote 가 아닌 message type (대부분 35=X trade with 269=2).
+		// v1 envelope path 는 35=W snapshot 만 처리 — 이 silent skip 은 의도된 동작.
+		// non_positive_price 와 분리해야 운영 alert 가 진짜 cooker anomaly 만 가리킴.
+		totalInvalidNotAQuote.Add(1)
+		return "not_a_quote"
 	case bid <= 0 || ask <= 0:
 		totalInvalidNonPositive.Add(1)
 		return "non_positive_price"
@@ -962,6 +972,7 @@ func startMetricsServer(ctx context.Context, logger *slog.Logger, addr string,
 			// quote_forwarder_invalid_quote_total{feed,reason} 과 같은 데이터.
 			"invalid_quotes": map[string]uint64{
 				"missing_symbol":     totalInvalidMissingSymbol.Load(),
+				"not_a_quote":        totalInvalidNotAQuote.Load(),
 				"non_positive_price": totalInvalidNonPositive.Load(),
 				"crossed_spread":     totalInvalidCrossed.Load(),
 				"other":              totalInvalidOther.Load(),

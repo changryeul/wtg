@@ -426,6 +426,52 @@ func (r *Registry) Stats() RegistryStats {
 	}
 }
 
+// ─── 운영 진단 (/v1/connections) ─────────────────────────────────────────
+
+// SubscriberInfo — 단일 ws 클라이언트의 sanitized 정보. 운영자가
+// "지금 누가 연결되어 있나" 진단 목적. 큐 깊이 = backpressure 신호.
+type SubscriberInfo struct {
+	ID         uint64   `json:"id"`
+	ProfileKey string   `json:"profile_key"` // 빈값 = quote 미구독 (raw tick only)
+	CustomerID string   `json:"customer_id"` // 빈값 = customer-quote 미구독
+	RemoteAddr string   `json:"remote_addr"` // ws upgrade 시점의 원격 IP:port
+	QueueDepth int      `json:"queue_depth"` // send chan 의 len
+	QueueCap   int      `json:"queue_cap"`   // send chan 의 cap
+	Pairs      []string `json:"pairs"`       // nil = all 모드 (Phase 1 default)
+	Closed     bool     `json:"closed"`
+}
+
+// SnapshotInfo — 자신의 진단 dump. registry 에서 호출.
+func (s *Subscriber) SnapshotInfo() SubscriberInfo {
+	addr := ""
+	if s.conn != nil {
+		if ra := s.conn.RemoteAddr(); ra != nil {
+			addr = ra.String()
+		}
+	}
+	return SubscriberInfo{
+		ID:         s.id,
+		ProfileKey: s.profileKey,
+		CustomerID: s.customerID,
+		RemoteAddr: addr,
+		QueueDepth: len(s.send),
+		QueueCap:   cap(s.send),
+		Pairs:      s.SubscribedPairs(),
+		Closed:     s.closed.Load(),
+	}
+}
+
+// Snapshot — 현재 등록된 모든 subscriber 의 진단 dump. hot path 아님.
+func (r *Registry) Snapshot() []SubscriberInfo {
+	r.mu.RLock()
+	out := make([]SubscriberInfo, 0, len(r.subs))
+	for _, s := range r.subs {
+		out = append(out, s.SnapshotInfo())
+	}
+	r.mu.RUnlock()
+	return out
+}
+
 // CloseAll 은 모든 subscriber 일괄 종료 (서버 셧다운 시).
 func (r *Registry) CloseAll() {
 	r.mu.RLock()

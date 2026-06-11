@@ -604,6 +604,23 @@ func (s *Server) BuildHandler() http.Handler {
 		writeJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("GET /v1/subscribe", s.subscribeHandler(upgrader))
+	// 운영 진단 — 현재 연결된 모든 ws 클라이언트의 detail. mci-price /v1/subscribers
+	// 가 internal gRPC layer (어느 edge 가 어느 Profile 받는지) 를 노출한 것과
+	// 짝 — 본 endpoint 는 external ws layer (어떤 customer / remote_addr 가 본
+	// edge instance 에 붙어있는지) 노출. 양 layer 합쳐서 end-to-end 가시화.
+	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
+		snap := s.registry.Snapshot()
+		// by_profile 집계 — sample 없이도 분포 즉시 확인.
+		byProfile := map[string]int{}
+		for _, sub := range snap {
+			byProfile[sub.ProfileKey]++
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":       len(snap),
+			"by_profile":  byProfile,
+			"connections": snap,
+		})
+	})
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	// Phase 4b admin endpoint — 별도 IP allowlist 가드. cfg.AdminAllowCIDRs

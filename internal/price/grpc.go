@@ -815,3 +815,110 @@ func customerQuoteToProto(profile session.Profile, cq pricing.CustomerQuote) *wt
 	}
 	return pb
 }
+
+// ─── 운영 진단 (/v1/subscribers) ────────────────────────────────────────
+
+// TickSubscriberInfo / QuoteSubscriberInfo / BarSubscriberInfo /
+// CustomerQSubscriberInfo — 4개 gRPC stream 카탈로그의 sanitized 단위.
+// 운영자가 "지금 누가 구독 중인가" 진단 목적. 큐 깊이 = backpressure 가시화.
+type TickSubscriberInfo struct {
+	ID         uint64   `json:"id"`
+	Symbols    []string `json:"symbols"` // 빈 슬라이스 = 모두 통과
+	SrvID      string   `json:"srv_id"`
+	QueueDepth int      `json:"queue_depth"`
+	QueueCap   int      `json:"queue_cap"`
+}
+
+type QuoteSubscriberInfo struct {
+	ID         uint64   `json:"id"`
+	Profiles   []string `json:"profiles"`
+	Pairs      []string `json:"pairs"`
+	SrvID      string   `json:"srv_id"`
+	QueueDepth int      `json:"queue_depth"`
+	QueueCap   int      `json:"queue_cap"`
+}
+
+type BarSubscriberInfo struct {
+	ID         uint64   `json:"id"`
+	Timeframes []string `json:"timeframes"`
+	Pairs      []string `json:"pairs"`
+	SrvID      string   `json:"srv_id"`
+	QueueDepth int      `json:"queue_depth"`
+	QueueCap   int      `json:"queue_cap"`
+}
+
+type CustomerQSubscriberInfo struct {
+	ID            uint64 `json:"id"`
+	SubscriberID  string `json:"subscriber_id"`
+	CustomerCount int    `json:"customer_count"`
+	QueueDepth    int    `json:"queue_depth"`
+	QueueCap      int    `json:"queue_cap"`
+}
+
+// SubscribersSnapshot — 4개 stream 카탈로그의 한 번 호출 진단 dump.
+type SubscribersSnapshot struct {
+	Tick      []TickSubscriberInfo      `json:"tick_subscribers"`
+	Quote     []QuoteSubscriberInfo     `json:"quote_subscribers"`
+	Bar       []BarSubscriberInfo       `json:"bar_subscribers"`
+	CustomerQ []CustomerQSubscriberInfo `json:"customer_quote_subscribers"`
+}
+
+func mapKeys(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// SubscribersSnapshot 는 4개 gRPC stream 카탈로그의 진단용 snapshot.
+// hot path 가 아니라 동시 RLock 으로 4개 map 일관성 약간 깨질 수 있음 — 운영
+// 진단 시점의 근사값. 큐 깊이는 len(channel) — backpressure 신호로 활용.
+func (g *GRPCServer) SubscribersSnapshot() SubscribersSnapshot {
+	// 빈 슬라이스로 초기화 — JSON 에서 null 대신 [] 로 직렬화돼 jq / dashboard 가
+	// 일관된 type 처리.
+	out := SubscribersSnapshot{
+		Tick:      []TickSubscriberInfo{},
+		Quote:     []QuoteSubscriberInfo{},
+		Bar:       []BarSubscriberInfo{},
+		CustomerQ: []CustomerQSubscriberInfo{},
+	}
+
+	g.mu.RLock()
+	for _, s := range g.subscribers {
+		out.Tick = append(out.Tick, TickSubscriberInfo{
+			ID: s.id, Symbols: mapKeys(s.symbols), SrvID: s.srvID,
+			QueueDepth: len(s.out), QueueCap: cap(s.out),
+		})
+	}
+	g.mu.RUnlock()
+
+	g.qmu.RLock()
+	for _, s := range g.quoteSubscribers {
+		out.Quote = append(out.Quote, QuoteSubscriberInfo{
+			ID: s.id, Profiles: mapKeys(s.profiles), Pairs: mapKeys(s.pairs), SrvID: s.srvID,
+			QueueDepth: len(s.out), QueueCap: cap(s.out),
+		})
+	}
+	g.qmu.RUnlock()
+
+	g.bmu.RLock()
+	for _, s := range g.barSubscribers {
+		out.Bar = append(out.Bar, BarSubscriberInfo{
+			ID: s.id, Timeframes: mapKeys(s.tfs), Pairs: mapKeys(s.pairs), SrvID: s.srvID,
+			QueueDepth: len(s.out), QueueCap: cap(s.out),
+		})
+	}
+	g.bmu.RUnlock()
+
+	g.cqmu.RLock()
+	for _, s := range g.customerQSubscribers {
+		out.CustomerQ = append(out.CustomerQ, CustomerQSubscriberInfo{
+			ID: s.id, SubscriberID: s.subscriberID, CustomerCount: len(s.customerIDs),
+			QueueDepth: len(s.out), QueueCap: cap(s.out),
+		})
+	}
+	g.cqmu.RUnlock()
+
+	return out
+}

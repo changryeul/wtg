@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"runtime"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -659,6 +660,55 @@ func (s *Server) startHTTP(ctx context.Context) error {
 		s.logger.Info("Forward quote-lock endpoint 활성 — POST /v1/quote/forward/lock",
 			slog.Duration("validity", s.quoteIDValidity))
 	}
+	// 운영 진단 — gRPC stream 카탈로그 (누가 구독 중인가). grpcSrv 가 주입된
+	// 경우에만 노출. 큐 깊이 = backpressure 가시화. operator 가 "지금 edge-A 가
+	// VIP profile 받고 있나" 같은 질문에 즉시 답하기 위한 endpoint.
+	if s.grpcSrv != nil {
+		mux.HandleFunc("GET /v1/subscribers", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			writeJSON(w, http.StatusOK, s.grpcSrv.SubscribersSnapshot())
+		})
+		// CustomerRegistry digest — count + Profile 별 breakdown + 옵션 sample.
+		// 수만 customer 일 수도 있어 default 는 by-profile 분포만, ?include_sample=true
+		// 면 처음 limit (default 100) 명의 detail 도 포함.
+		mux.HandleFunc("GET /v1/customers", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			reg := s.grpcSrv.CustomerRegistry()
+			if reg == nil {
+				writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+				return
+			}
+			snap := reg.Snapshot()
+			byProfile := map[string]int{}
+			for _, e := range snap {
+				byProfile[e.Profile.Key()]++
+			}
+			resp := map[string]any{
+				"count":      len(snap),
+				"by_profile": byProfile,
+			}
+			if r.URL.Query().Get("include_sample") == "true" {
+				limit := 100
+				if v := r.URL.Query().Get("limit"); v != "" {
+					if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 10000 {
+						limit = n
+					}
+				}
+				if len(snap) > limit {
+					snap = snap[:limit]
+				}
+				resp["sample"] = snap
+				resp["sample_limit"] = limit
+			}
+			writeJSON(w, http.StatusOK, resp)
+		})
+		s.logger.Info("운영 진단 endpoint 활성 — GET /v1/subscribers, GET /v1/customers")
+	}
+
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	// DevMode 우회 tick 주입 — broker broadcast 를 못 받는 dev 환경에서

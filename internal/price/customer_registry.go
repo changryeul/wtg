@@ -66,6 +66,19 @@ func (r *CustomerRegistry) Count() int {
 	return int(r.count.Load())
 }
 
+// Lookup — 단일 customerID 의 Profile 조회. /v1/customers/{id} 운영 진단용.
+// not registered 면 ok=false.
+func (r *CustomerRegistry) Lookup(customerID string) (session.Profile, bool) {
+	if customerID == "" {
+		return session.Profile{}, false
+	}
+	v, ok := r.entries.Load(customerID)
+	if !ok {
+		return session.Profile{}, false
+	}
+	return v.(session.Profile), true
+}
+
 // CustomerEntry — Snapshot 결과의 단위. publisher 가 (customerID, profile) 쌍
 // 으로 ApplyForCustomer 호출.
 type CustomerEntry struct {

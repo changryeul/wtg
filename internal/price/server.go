@@ -706,7 +706,34 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			}
 			writeJSON(w, http.StatusOK, resp)
 		})
-		s.logger.Info("운영 진단 endpoint 활성 — GET /v1/subscribers, GET /v1/customers")
+		// 단일 customer 검색 — support 시나리오: customer_id 받으면 즉시 등록
+		// 상태 + Profile 확인. 미등록이면 404.
+		mux.HandleFunc("GET /v1/customers/{customerID}", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			reg := s.grpcSrv.CustomerRegistry()
+			if reg == nil {
+				writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+				return
+			}
+			id := r.PathValue("customerID")
+			prof, ok := reg.Lookup(id)
+			if !ok {
+				writeJSON(w, http.StatusNotFound, map[string]any{
+					"error":       "not_registered",
+					"customer_id": id,
+				})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"customer_id": id,
+				"profile":     prof,
+				"profile_key": prof.Key(),
+				"registered":  true,
+			})
+		})
+		s.logger.Info("운영 진단 endpoint 활성 — GET /v1/subscribers, GET /v1/customers, GET /v1/customers/{customerID}")
 	}
 
 	mux.Handle("GET /metrics", s.metrics.Handler())

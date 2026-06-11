@@ -610,14 +610,35 @@ func (s *Server) BuildHandler() http.Handler {
 	// edge instance 에 붙어있는지) 노출. 양 layer 합쳐서 end-to-end 가시화.
 	mux.HandleFunc("GET /v1/connections", func(w http.ResponseWriter, r *http.Request) {
 		snap := s.registry.Snapshot()
-		// by_profile 집계 — sample 없이도 분포 즉시 확인.
+		// by_profile 집계 (필터 적용 전 — 전체 분포).
 		byProfile := map[string]int{}
 		for _, sub := range snap {
 			byProfile[sub.ProfileKey]++
 		}
+		// optional 필터 — 운영 시나리오:
+		//   - ?customer_id=X : support 티켓의 customer 가 이 instance 에 붙어있나
+		//   - ?profile=X    : 특정 Profile 만 분리해서 보기
+		if cid := r.URL.Query().Get("customer_id"); cid != "" {
+			filtered := snap[:0:0]
+			for _, sub := range snap {
+				if sub.CustomerID == cid {
+					filtered = append(filtered, sub)
+				}
+			}
+			snap = filtered
+		}
+		if prof := r.URL.Query().Get("profile"); prof != "" {
+			filtered := snap[:0:0]
+			for _, sub := range snap {
+				if sub.ProfileKey == prof {
+					filtered = append(filtered, sub)
+				}
+			}
+			snap = filtered
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"count":       len(snap),
-			"by_profile":  byProfile,
+			"by_profile":  byProfile, // 필터 무관 전체 분포 — 컨텍스트 유지
 			"connections": snap,
 		})
 	})

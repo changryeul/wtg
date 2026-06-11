@@ -18,6 +18,8 @@ import (
 var pricePathAllowlist = map[string]string{
 	"price-stats": "/v1/price-stats",
 	"best-stats":  "/v1/best-stats",
+	"subscribers": "/v1/subscribers", // gRPC stream 카탈로그 (UI 통합 N4)
+	"customers":   "/v1/customers",   // 등록된 customer digest
 }
 
 // PriceStatsProxy — GET /v1/admin/price/{kind} — kind ∈ {price-stats, best-stats}.
@@ -41,6 +43,40 @@ func PriceStatsProxy(priceURL string) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "build_req", err.Error())
+			return
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			writeJSONError(w, http.StatusBadGateway, "upstream", err.Error())
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+// PriceCustomerLookupProxy — GET /v1/admin/price/customers/{customerID}
+// → mci-price /v1/customers/{customerID}. path param 만 검증, query 그대로.
+func PriceCustomerLookupProxy(priceURL string) http.HandlerFunc {
+	base := strings.TrimSuffix(priceURL, "/")
+	if base == "" {
+		base = "http://127.0.0.1:8082"
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	return func(w http.ResponseWriter, r *http.Request) {
+		cid := r.PathValue("customerID")
+		if cid == "" || strings.ContainsAny(cid, "/?#") {
+			writeJSONError(w, http.StatusBadRequest, "invalid_customer_id",
+				"customer_id 는 비어있지 않은 단일 path 세그먼트")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/customers/"+cid, nil)
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "build_req", err.Error())
 			return

@@ -345,6 +345,9 @@
           <button data-page="chartstats" class="nav-btn nav-item"><span class="nav-ico">📈</span>차트 통계 (mci-chart)</button>
           <button data-page="recenttx"   class="nav-btn nav-item"><span class="nav-ico">📜</span>매매 감사 (최근 N건)</button>
           <button data-page="audit"      class="nav-btn nav-item"><span class="nav-ico">📜</span>감사 로그</button>
+          <button data-page="subscribers" class="nav-btn nav-item"><span class="nav-ico">🔌</span>구독자 (gRPC)</button>
+          <button data-page="connections" class="nav-btn nav-item"><span class="nav-ico">🔗</span>연결 (ws)</button>
+          <button data-page="customer-search" class="nav-btn nav-item"><span class="nav-ico">🔍</span>Customer 검색</button>
         </div>
 
         <!-- 7. 외부 도구 — chart 별도 탭 열기 (SPA 전환 아님) -->
@@ -2904,6 +2907,49 @@ WEB.HQ.VIP</textarea>
           <p class="text-[11px] text-slate-500">운영에서는 immutable 외부 sink(7년 보관)가 single source — 본 화면은 즉시 표시용 sliding window 입니다.</p>
         </div>
 
+        <!-- ───── 구독자 (gRPC) — mci-price /v1/subscribers ─────
+             4 stream 카테고리 (tick / quote / bar / customer-quote) 의 카탈로그.
+             큐 깊이 / 큐 cap 으로 backpressure 가시화. operator 가 "지금 edge-A
+             가 어느 Profile 구독 중" 답하는 용도. -->
+        <div id="page-subscribers" class="page hidden space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="text-lg font-semibold">gRPC 구독자</h3>
+            <label class="text-xs"><input type="checkbox" id="sub-auto" checked> 자동 새로고침 (2s)</label>
+            <button id="sub-refresh" class="px-2 py-1 text-xs border rounded">새로고침</button>
+            <span id="sub-updated" class="text-xs text-slate-500"></span>
+          </div>
+          <div id="sub-tables" class="space-y-3 text-sm"></div>
+        </div>
+
+        <!-- ───── 연결 (ws) — mci-edge-price /v1/connections ─────
+             external ws 클라이언트 list. customer_id / profile 로 필터. -->
+        <div id="page-connections" class="page hidden space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h3 class="text-lg font-semibold">ws 연결</h3>
+            <label class="text-xs"><input type="checkbox" id="conn-auto" checked> 자동 새로고침 (2s)</label>
+            <button id="conn-refresh" class="px-2 py-1 text-xs border rounded">새로고침</button>
+            <span class="text-xs text-slate-400">필터:</span>
+            <input id="conn-customer" placeholder="customer_id" class="px-2 py-1 text-xs border rounded w-40">
+            <input id="conn-profile"  placeholder="profile (예: WEB.BRANCH.VIP)" class="px-2 py-1 text-xs border rounded w-56">
+            <button id="conn-apply" class="px-2 py-1 text-xs border rounded">적용</button>
+            <button id="conn-clear" class="px-2 py-1 text-xs border rounded">초기화</button>
+            <span id="conn-updated" class="text-xs text-slate-500"></span>
+          </div>
+          <div id="conn-summary" class="text-sm"></div>
+          <div id="conn-table" class="text-sm"></div>
+        </div>
+
+        <!-- ───── Customer 검색 — mci-price /v1/customers/{id} + edge /v1/connections?customer_id= -->
+        <div id="page-customer-search" class="page hidden space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h3 class="text-lg font-semibold">Customer 검색</h3>
+            <input id="cs-id" placeholder="customer_id 입력 후 Enter" class="px-2 py-1 text-sm border rounded w-72">
+            <button id="cs-go" class="px-2 py-1 text-sm border rounded">검색</button>
+            <span id="cs-status" class="text-xs text-slate-500"></span>
+          </div>
+          <div id="cs-result" class="space-y-3 text-sm"></div>
+        </div>
+
         <!-- ───── 운영 가이드 (Operations Guide) ─────
              docs/operations.md §A.7 ~ §A.11 의 정보성 표를 SPA 안에 직접 노출.
              동적 로딩 없음 — 운영자가 한 화면에서 "이 값은 어디서 바뀌나 / 무엇을
@@ -3358,6 +3404,11 @@ function goPage(name) {
   if (name === "policy")    loadPolicy();
   if (name !== "monitoring") stopMonPoller();
   if (name === "monitoring") initMonitoring();
+  if (name !== "subscribers") stopSubPoller();
+  if (name === "subscribers") initSubscribers();
+  if (name !== "connections") stopConnPoller();
+  if (name === "connections") initConnections();
+  if (name === "customer-search") initCustomerSearch();
 }
 
 // ───────── Dashboard ─────────
@@ -8849,6 +8900,201 @@ function startPriceStatsPoller() {
 }
 function stopPriceStatsPoller() {
   if (psState.poller) { clearInterval(psState.poller); psState.poller = null; }
+}
+
+// ─── N4. 구독자 / 연결 / Customer 검색 ───────────────────────────────────
+
+// HTML escape — customer_id / profile_key / remote_addr 같은 user-controlled
+// 값이 templated HTML 로 들어갈 때 XSS 방어. 모든 동적 string 은 esc() 경유.
+function esc(s) {
+  if (s == null) return "";
+  return String(s).replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);
+}
+
+const subState = { wired: false, poller: null };
+const connState = { wired: false, poller: null };
+
+function initSubscribers() {
+  if (!subState.wired) {
+    subState.wired = true;
+    $("#sub-refresh").onclick = loadSubscribers;
+    $("#sub-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startSubPoller(); else stopSubPoller();
+    });
+  }
+  loadSubscribers();
+  if ($("#sub-auto").checked) startSubPoller();
+}
+function startSubPoller() { if (!subState.poller) subState.poller = setInterval(loadSubscribers, 2000); }
+function stopSubPoller()  { if (subState.poller) { clearInterval(subState.poller); subState.poller = null; } }
+
+async function loadSubscribers() {
+  try {
+    const d = await api("/v1/admin/price/subscribers");
+    renderSubscribers(d);
+    $("#sub-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    $("#sub-updated").textContent = "로드 실패: " + e.message;
+  }
+}
+
+function renderSubscribers(d) {
+  const sections = [
+    { key: "tick_subscribers",          title: "Tick (raw)",      cols: ["id", "symbols", "srv_id"] },
+    { key: "quote_subscribers",         title: "Quote (마진 적용)", cols: ["id", "profiles", "pairs", "srv_id"] },
+    { key: "bar_subscribers",           title: "Bar (봉)",         cols: ["id", "timeframes", "pairs", "srv_id"] },
+    { key: "customer_quote_subscribers", title: "Customer Quote",   cols: ["id", "subscriber_id", "customer_count"] },
+  ];
+  const html = sections.map(sec => {
+    const items = (d && d[sec.key]) || [];
+    const rows = items.map(it => {
+      const tds = sec.cols.map(c => {
+        const v = it[c];
+        if (Array.isArray(v)) {
+          return `<td class="px-2 py-1 border-t border-slate-700/40">${v.length ? esc(v.join(", ")) : "<span class='text-slate-500'>(all)</span>"}</td>`;
+        }
+        return `<td class="px-2 py-1 border-t border-slate-700/40">${esc(v ?? "")}</td>`;
+      }).join("");
+      const pct = it.queue_cap ? Math.round(100 * it.queue_depth / it.queue_cap) : 0;
+      const pctColor = pct >= 80 ? "text-red-400" : pct >= 50 ? "text-amber-400" : "text-slate-400";
+      return `<tr>${tds}<td class="px-2 py-1 border-t border-slate-700/40 ${pctColor}">${esc(it.queue_depth)}/${esc(it.queue_cap)} (${pct}%)</td></tr>`;
+    }).join("");
+    return `
+      <div class="border border-slate-700/40 rounded">
+        <div class="px-2 py-1 bg-slate-800/40 font-semibold flex justify-between">
+          <span>${esc(sec.title)}</span>
+          <span class="text-xs text-slate-400">${items.length}개</span>
+        </div>
+        <table class="w-full text-xs">
+          <thead><tr class="text-left text-slate-400">
+            ${sec.cols.map(c => `<th class="px-2 py-1">${esc(c)}</th>`).join("")}
+            <th class="px-2 py-1">queue</th>
+          </tr></thead>
+          <tbody>${rows || `<tr><td class="px-2 py-2 text-slate-500" colspan="${sec.cols.length+1}">없음</td></tr>`}</tbody>
+        </table>
+      </div>`;
+  }).join("");
+  $("#sub-tables").innerHTML = html;
+}
+
+function initConnections() {
+  if (!connState.wired) {
+    connState.wired = true;
+    $("#conn-refresh").onclick = loadConnections;
+    $("#conn-apply").onclick = loadConnections;
+    $("#conn-clear").onclick = () => { $("#conn-customer").value=""; $("#conn-profile").value=""; loadConnections(); };
+    $("#conn-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startConnPoller(); else stopConnPoller();
+    });
+  }
+  loadConnections();
+  if ($("#conn-auto").checked) startConnPoller();
+}
+function startConnPoller() { if (!connState.poller) connState.poller = setInterval(loadConnections, 2000); }
+function stopConnPoller()  { if (connState.poller) { clearInterval(connState.poller); connState.poller = null; } }
+
+async function loadConnections() {
+  const q = new URLSearchParams();
+  const cid = $("#conn-customer").value.trim();
+  const prof = $("#conn-profile").value.trim();
+  if (cid) q.set("customer_id", cid);
+  if (prof) q.set("profile", prof);
+  const url = "/v1/admin/edge/connections" + (q.toString() ? "?" + q.toString() : "");
+  try {
+    const d = await api(url);
+    renderConnections(d);
+    $("#conn-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    $("#conn-updated").textContent = "로드 실패: " + e.message;
+  }
+}
+
+function renderConnections(d) {
+  const byProf = d.by_profile || {};
+  const profEntries = Object.entries(byProf).sort((a,b) => b[1]-a[1]);
+  const profHTML = profEntries.length
+    ? profEntries.map(([k,v]) => `<span class="inline-block mr-2 px-2 py-0.5 bg-slate-800/60 rounded text-xs">${esc(k || "(빈)")} : ${esc(v)}</span>`).join("")
+    : '<span class="text-slate-500 text-xs">없음</span>';
+  $("#conn-summary").innerHTML = `
+    <div class="flex items-center gap-3">
+      <span><span class="font-semibold">${esc(d.count ?? 0)}</span> 연결 (필터 적용 후)</span>
+      <span class="text-xs text-slate-400">by_profile 전체 분포:</span>
+      ${profHTML}
+    </div>`;
+  const conns = d.connections || [];
+  const rows = conns.map(c => {
+    const pct = c.queue_cap ? Math.round(100 * c.queue_depth / c.queue_cap) : 0;
+    const pctColor = pct >= 80 ? "text-red-400" : pct >= 50 ? "text-amber-400" : "text-slate-400";
+    const pairs = (c.pairs && c.pairs.length) ? esc(c.pairs.join(", ")) : "<span class='text-slate-500'>(all)</span>";
+    return `<tr>
+      <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.id)}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.profile_key) || "<span class='text-slate-500'>(빈)</span>"}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.customer_id) || "<span class='text-slate-500'>(빈)</span>"}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40 text-xs">${esc(c.remote_addr)}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40">${pairs}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40 ${pctColor}">${esc(c.queue_depth)}/${esc(c.queue_cap)} (${pct}%)</td>
+      <td class="px-2 py-1 border-t border-slate-700/40">${c.closed ? "closed" : "open"}</td>
+    </tr>`;
+  }).join("");
+  $("#conn-table").innerHTML = `
+    <div class="border border-slate-700/40 rounded">
+      <table class="w-full text-xs">
+        <thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">id</th><th class="px-2 py-1">profile</th><th class="px-2 py-1">customer</th>
+          <th class="px-2 py-1">remote</th><th class="px-2 py-1">pairs</th>
+          <th class="px-2 py-1">queue</th><th class="px-2 py-1">state</th>
+        </tr></thead>
+        <tbody>${rows || `<tr><td class="px-2 py-2 text-slate-500" colspan="7">매칭 연결 없음</td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+function initCustomerSearch() {
+  $("#cs-go").onclick = doCustomerSearch;
+  $("#cs-id").onkeydown = (e) => { if (e.key === "Enter") doCustomerSearch(); };
+}
+
+async function doCustomerSearch() {
+  const id = $("#cs-id").value.trim();
+  if (!id) { $("#cs-status").textContent = "ID 입력 필요"; return; }
+  $("#cs-status").textContent = "검색 중...";
+  $("#cs-result").textContent = "";
+  // 두 backend 병렬 조회 — mci-price 등록 + edge 연결.
+  const [regResp, connResp] = await Promise.allSettled([
+    api(`/v1/admin/price/customers/${encodeURIComponent(id)}`),
+    api(`/v1/admin/edge/connections?customer_id=${encodeURIComponent(id)}`),
+  ]);
+  const regOK = regResp.status === "fulfilled" && regResp.value && regResp.value.registered;
+  const regHTML = regOK
+    ? `<div class="border border-emerald-700/40 rounded p-3">
+         <div class="font-semibold text-emerald-300">mci-price 등록 ✓</div>
+         <div class="text-xs mt-1">profile_key = <span class="font-mono">${esc(regResp.value.profile_key)}</span></div>
+       </div>`
+    : `<div class="border border-red-700/40 rounded p-3 text-red-300">mci-price 미등록</div>`;
+  const conns = (connResp.status === "fulfilled" ? (connResp.value.connections || []) : []);
+  const connHTML = conns.length
+    ? `<div class="border border-slate-700/40 rounded">
+        <div class="px-2 py-1 bg-slate-800/40 font-semibold">edge ws 연결 ${conns.length}개</div>
+        <table class="w-full text-xs"><thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">id</th><th class="px-2 py-1">profile</th>
+          <th class="px-2 py-1">remote</th><th class="px-2 py-1">queue</th><th class="px-2 py-1">state</th>
+        </tr></thead><tbody>
+        ${conns.map(c => {
+          const pct = c.queue_cap ? Math.round(100*c.queue_depth/c.queue_cap) : 0;
+          return `<tr>
+            <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.id)}</td>
+            <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.profile_key) || "(빈)"}</td>
+            <td class="px-2 py-1 border-t border-slate-700/40 text-xs">${esc(c.remote_addr)}</td>
+            <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.queue_depth)}/${esc(c.queue_cap)} (${pct}%)</td>
+            <td class="px-2 py-1 border-t border-slate-700/40">${c.closed ? "closed" : "open"}</td>
+          </tr>`;
+        }).join("")}
+        </tbody></table>
+      </div>`
+    : `<div class="border border-slate-700/40 rounded p-3 text-slate-400">edge ws 연결 없음</div>`;
+  $("#cs-result").innerHTML = regHTML + connHTML;
+  $("#cs-status").textContent = "완료";
 }
 
 async function loadPriceStats() {

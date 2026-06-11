@@ -31,6 +31,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -128,6 +129,31 @@ var (
 	totalInvalidOther         atomic.Uint64
 	startedAt                 = time.Now()
 )
+
+// rejectSampleGate — (feed, reason) 별 마지막 sample 로그 시각 (unix nano).
+// 같은 키의 재로깅을 rejectSampleInterval 에 1회로 rate-limit. 음수 가격이
+// cooker drift 로 매 tick 발생할 때 log 폭주 차단.
+var rejectSampleGate sync.Map // map[string]*atomic.Int64
+
+const rejectSampleInterval = 60 * time.Second
+
+// shouldLogRejectSample — (feed, reason) key 에 대해 마지막 로그 이후
+// rejectSampleInterval 이상 지났으면 true + 시각 갱신. concurrent-safe.
+func shouldLogRejectSample(key string, now time.Time) bool {
+	actual, loaded := rejectSampleGate.LoadOrStore(key, &atomic.Int64{})
+	p := actual.(*atomic.Int64)
+	if !loaded {
+		// 첫 등장 — 즉시 로그 + 시각 기록.
+		p.Store(now.UnixNano())
+		return true
+	}
+	last := p.Load()
+	if now.UnixNano()-last < rejectSampleInterval.Nanoseconds() {
+		return false
+	}
+	// CAS 로 slot 점유. 동시에 두 goroutine 이 진입해도 한 쪽만 로그.
+	return p.CompareAndSwap(last, now.UnixNano())
+}
 
 // classifyInvalid — fastExtractV1 가 ok=false 일 때 reject 이유 분류 + atomic
 // 카운터 증가. label string 은 Prometheus reason label 로 그대로 사용.
@@ -553,6 +579,19 @@ func feedLoop(ctx context.Context, logger *slog.Logger, pub Publisher, conn *net
 				reason := classifyInvalid(sym, bid, ask)
 				qm.invalidQuote.WithLabelValues(label, reason).Inc()
 				qm.parseErrors.WithLabelValues(label).Inc() // 기존 호환성 유지
+				// per (feed, reason) 1분 1회 raw FIX sample 로그 — 카운터만 보고 어떤
+				// 가격/symbol 이 깨졌는지 알 수 없는 함정 해소. SOH 는 '|' 로 치환해
+				// 가독화. rate-limit 로 매 tick reject 시에도 log 폭주 X.
+				if shouldLogRejectSample(label+":"+reason, time.Now()) {
+					logger.Warn("reject sample",
+						slog.String("feed", label),
+						slog.String("reason", reason),
+						slog.String("sym", sym),
+						slog.Float64("bid", bid),
+						slog.Float64("ask", ask),
+						slog.String("fix", strings.ReplaceAll(string(pkt.data), "\x01", "|")),
+					)
+				}
 				continue
 			}
 

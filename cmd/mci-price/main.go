@@ -368,6 +368,22 @@ func main() {
 		etcdTblWatch = tblW
 		etcdProfileSrc = profSrc
 		srv.AddConsumer(price.TickConsumerFunc(pc.OnTick))
+		// ProfileSource 비어있음 = PricingConsumer 가 fan-out 대상 0 → 모든 quote silent drop.
+		// SymbolMap WARN 과 같은 silent 함정. 운영 alert path 에 잡히도록 WARN.
+		if len(profSrc.ActiveProfiles()) == 0 {
+			logger.Warn("ProfileSource 비어있음 — PricingConsumer 가 fan-out 대상 0, 모든 마진 적용 quote silent drop",
+				slog.String("prefix", cfg.EtcdPrefix+"price/profiles/"),
+				slog.String("조치", "etcdctl put 또는 mci-admin UI 로 wtg/price/profiles/ 시드 (channel/site/tier 조합)"),
+			)
+		}
+		// PricingTable 비어있음 = SwapPoint/HQMargin/SiteMargin 모두 0 → 마진 0 으로 raw 가격
+		// 그대로 publish. silent drop 은 아니지만 운영 실수 (margin 미반영 quote) 가능.
+		if tbl := pcInst.Store().Load(); tbl == nil || (len(tbl.SwapPoint) == 0 && len(tbl.HQMargin) == 0 && len(tbl.SiteMargin) == 0) {
+			logger.Warn("PricingTable 비어있음 — 모든 마진 0 으로 raw 가격 publish (고객 quote 와 시장 best 동일)",
+				slog.String("key", cfg.EtcdPrefix+"pricing/table"),
+				slog.String("조치", "fx-sync --table=hq_margin,site_margin,swap 으로 시드 또는 mci-admin UI"),
+			)
+		}
 	case cfg.PricingFile != "" && cfg.ProfilesFile != "":
 		pcInst, err := wirePricingConsumer(cfg, symbols, srv, grpcSrv, quoteIDGen, quoteIDReg, logger)
 		if err != nil {

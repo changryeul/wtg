@@ -56,6 +56,10 @@ type quoteMetrics struct {
 	published     *prometheus.CounterVec
 	publishErrors *prometheus.CounterVec
 	parseErrors   *prometheus.CounterVec
+	// invalidQuote — fastExtractV1 가 ok=false 로 reject 한 envelope.
+	// reason label: "missing_symbol" | "non_positive_price" | "crossed_spread" | "other".
+	// 음수 가격(cooker random walk drift) 같은 운영 anomaly 를 alert 로 즉시 잡기 위함.
+	invalidQuote  *prometheus.CounterVec
 	bytes         *prometheus.CounterVec
 	rcvBuf        *prometheus.GaugeVec
 	batchSize     *prometheus.HistogramVec
@@ -80,6 +84,10 @@ func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
 			prometheus.CounterOpts{Name: "quote_forwarder_parse_errors_total", Help: "FIX 파싱 실패 횟수"},
 			[]string{"feed"},
 		),
+		invalidQuote: prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "quote_forwarder_invalid_quote_total", Help: "fastExtractV1 reject 횟수 (reason 별 — cooker anomaly 진단)"},
+			[]string{"feed", "reason"},
+		),
 		bytes: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "quote_forwarder_bytes_total", Help: "UDP 페이로드 바이트 합"},
 			[]string{"feed"},
@@ -101,7 +109,7 @@ func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
 			[]string{"feed"},
 		),
 	}
-	for _, c := range []prometheus.Collector{m.received, m.published, m.publishErrors, m.parseErrors, m.bytes, m.rcvBuf, m.batchSize, m.queueDrops} {
+	for _, c := range []prometheus.Collector{m.received, m.published, m.publishErrors, m.parseErrors, m.invalidQuote, m.bytes, m.rcvBuf, m.batchSize, m.queueDrops} {
 		_ = reg.Register(c)
 	}
 	return m
@@ -111,8 +119,38 @@ var (
 	totalReceived atomic.Uint64
 	totalPubOK    atomic.Uint64
 	totalPubErr   atomic.Uint64
-	startedAt     = time.Now()
+	// fastExtractV1 reject 카운터 — /stats JSON 에 reason 별 노출. Prometheus
+	// 의 invalidQuote{feed,reason} 과 병행 (operator 가 단일 endpoint 로 즉시 확인).
+	totalInvalidMissingSymbol atomic.Uint64
+	totalInvalidNonPositive   atomic.Uint64
+	totalInvalidCrossed       atomic.Uint64
+	totalInvalidOther         atomic.Uint64
+	startedAt                 = time.Now()
 )
+
+// classifyInvalid — fastExtractV1 가 ok=false 일 때 reject 이유 분류 + atomic
+// 카운터 증가. label string 은 Prometheus reason label 로 그대로 사용.
+//
+//   - missing_symbol     : 55= (Symbol) 누락
+//   - non_positive_price : bid<=0 또는 ask<=0 (cooker drift → 음수, scale 오류)
+//   - crossed_spread     : ask < bid (cooker 의 spread 계산 오류 또는 stale pair)
+//   - other              : 위에 해당 안 되는 케이스 (보호용 fallback)
+func classifyInvalid(sym string, bid, ask float64) string {
+	switch {
+	case sym == "":
+		totalInvalidMissingSymbol.Add(1)
+		return "missing_symbol"
+	case bid <= 0 || ask <= 0:
+		totalInvalidNonPositive.Add(1)
+		return "non_positive_price"
+	case ask < bid:
+		totalInvalidCrossed.Add(1)
+		return "crossed_spread"
+	default:
+		totalInvalidOther.Add(1)
+		return "other"
+	}
+}
 
 func main() {
 	var (
@@ -501,7 +539,10 @@ func feedLoop(ctx context.Context, logger *slog.Logger, pub Publisher, conn *net
 			// 별도 parseQuote 호출 — hot path 에선 fastExtractV1 만 사용.
 			sym, bid, ask, v1ok := fastExtractV1(pkt.data)
 			if !v1ok {
-				qm.parseErrors.WithLabelValues(label).Inc()
+				// reject 이유 분류 — 음수 가격(cooker drift) 등 운영 anomaly 를 alert 로 즉시 잡기 위함.
+				reason := classifyInvalid(sym, bid, ask)
+				qm.invalidQuote.WithLabelValues(label, reason).Inc()
+				qm.parseErrors.WithLabelValues(label).Inc() // 기존 호환성 유지
 				continue
 			}
 
@@ -917,6 +958,14 @@ func startMetricsServer(ctx context.Context, logger *slog.Logger, addr string,
 			"publish_errors":  totalPubErr.Load(),
 			"feeds":           feeds,
 			"broker":          fmt.Sprintf("%s:%d", brokerHost, brokerPort),
+			// reject reason 별 — 운영 alert 의 사람용 dashboard. Prometheus
+			// quote_forwarder_invalid_quote_total{feed,reason} 과 같은 데이터.
+			"invalid_quotes": map[string]uint64{
+				"missing_symbol":     totalInvalidMissingSymbol.Load(),
+				"non_positive_price": totalInvalidNonPositive.Load(),
+				"crossed_spread":     totalInvalidCrossed.Load(),
+				"other":              totalInvalidOther.Load(),
+			},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(stat)

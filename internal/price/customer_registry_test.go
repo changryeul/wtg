@@ -107,3 +107,30 @@ func TestCustomerRegistry_ConcurrentAccess(t *testing.T) {
 		t.Errorf("after concurrent reg/unreg: count = %d, want 0", r.Count())
 	}
 }
+
+func TestCustomerRegistry_Lookup_Found(t *testing.T) {
+	r := NewCustomerRegistry()
+	want := session.Profile{Channel: "WEB", Site: "BRANCH", Tier: "VIP"}
+	r.Register("cust_001", want)
+	got, ok := r.Lookup("cust_001")
+	if !ok {
+		t.Fatal("등록된 customer 인데 Lookup ok=false")
+	}
+	if got != want {
+		t.Errorf("Lookup profile = %+v, want %+v", got, want)
+	}
+}
+
+func TestCustomerRegistry_Lookup_NotFound(t *testing.T) {
+	r := NewCustomerRegistry()
+	if _, ok := r.Lookup("nonexistent"); ok {
+		t.Error("미등록 customer 인데 Lookup ok=true")
+	}
+}
+
+func TestCustomerRegistry_Lookup_EmptyID(t *testing.T) {
+	r := NewCustomerRegistry()
+	if _, ok := r.Lookup(""); ok {
+		t.Error("빈 ID Lookup 은 항상 false 여야")
+	}
+}

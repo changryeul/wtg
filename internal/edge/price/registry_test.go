@@ -125,3 +125,72 @@ func TestRegistryCloseAll(t *testing.T) {
 		t.Error("CloseAll 후 모두 close 여야 함")
 	}
 }
+
+// 진단 — Snapshot 빈 registry.
+func TestRegistrySnapshot_Empty(t *testing.T) {
+	r := NewRegistry(discardLogger())
+	snap := r.Snapshot()
+	if snap == nil {
+		t.Fatal("Snapshot 빈 registry 에 nil 반환 — JSON null 위험")
+	}
+	if len(snap) != 0 {
+		t.Errorf("len = %d, want 0", len(snap))
+	}
+}
+
+// Subscriber.SnapshotInfo — 모든 필드 검증.
+func TestSubscriberSnapshotInfo(t *testing.T) {
+	s := mkSubMock(64)
+	s.profileKey = "WEB.BRANCH.VIP"
+	s.customerID = "cust_001"
+	// queue 에 3개 enqueue → QueueDepth=3.
+	for i := 0; i < 3; i++ {
+		s.send <- []byte("payload")
+	}
+	info := s.SnapshotInfo()
+	if info.ID != s.id {
+		t.Errorf("ID = %d, want %d", info.ID, s.id)
+	}
+	if info.ProfileKey != "WEB.BRANCH.VIP" {
+		t.Errorf("ProfileKey = %q", info.ProfileKey)
+	}
+	if info.CustomerID != "cust_001" {
+		t.Errorf("CustomerID = %q", info.CustomerID)
+	}
+	if info.QueueDepth != 3 || info.QueueCap != 64 {
+		t.Errorf("Queue = %d/%d, want 3/64", info.QueueDepth, info.QueueCap)
+	}
+	if info.Pairs != nil {
+		t.Errorf("초기 Pairs 는 nil (all 모드) 여야 — got %+v", info.Pairs)
+	}
+	if info.Closed {
+		t.Error("새 Subscriber 가 Closed=true")
+	}
+}
+
+// Registry.Snapshot 가 등록된 각 Subscriber 의 SnapshotInfo 반환.
+func TestRegistrySnapshot_Populated(t *testing.T) {
+	r := NewRegistry(discardLogger())
+	s1 := mkSubMock(32)
+	s1.profileKey = "WEB.HQ.VIP"
+	s1.customerID = "cust_A"
+	s2 := mkSubMock(32)
+	s2.profileKey = "MOB.BRANCH.STD"
+	r.Add(s1)
+	r.Add(s2)
+	snap := r.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("len = %d, want 2", len(snap))
+	}
+	// id → info map 으로 검증 (순서 보장 X).
+	byID := map[uint64]SubscriberInfo{}
+	for _, info := range snap {
+		byID[info.ID] = info
+	}
+	if byID[s1.id].ProfileKey != "WEB.HQ.VIP" || byID[s1.id].CustomerID != "cust_A" {
+		t.Errorf("s1 정보 미반영: %+v", byID[s1.id])
+	}
+	if byID[s2.id].ProfileKey != "MOB.BRANCH.STD" || byID[s2.id].CustomerID != "" {
+		t.Errorf("s2 정보 미반영: %+v", byID[s2.id])
+	}
+}

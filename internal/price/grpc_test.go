@@ -237,3 +237,51 @@ func TestTickToProto(t *testing.T) {
 		t.Errorf("ReceivedUnixNano: %d", out.GetReceivedUnixNano())
 	}
 }
+
+// 빈 GRPCServer 의 SubscribersSnapshot — 4개 슬라이스 모두 nil 아닌 []
+// (JSON null 회피).
+func TestSubscribersSnapshot_EmptyServer(t *testing.T) {
+	g := NewGRPCServer(quietLogger(), 1024)
+	snap := g.SubscribersSnapshot()
+	if snap.Tick == nil || snap.Quote == nil || snap.Bar == nil || snap.CustomerQ == nil {
+		t.Errorf("빈 slice 가 nil — null 직렬화 위험: %+v", snap)
+	}
+	if len(snap.Tick) != 0 || len(snap.Quote) != 0 || len(snap.Bar) != 0 || len(snap.CustomerQ) != 0 {
+		t.Errorf("빈 서버인데 len 비-0: %+v", snap)
+	}
+}
+
+// 1 tick + 1 quote subscriber 등록 후 Snapshot.
+// gRPC Serve 없이 map 직접 채움 — Snapshot 의 read-only 검증에 집중.
+func TestSubscribersSnapshot_Populated(t *testing.T) {
+	g := NewGRPCServer(quietLogger(), 256)
+	g.mu.Lock()
+	g.subscribers[101] = &subscriber{
+		id:      101,
+		symbols: map[string]struct{}{"USDKRW": {}},
+		out:     make(chan *wtgpb.Tick, 256),
+		srvID:   "edge-A",
+	}
+	g.mu.Unlock()
+	g.qmu.Lock()
+	g.quoteSubscribers[202] = &quoteSubscriber{
+		id:       202,
+		profiles: map[string]struct{}{"WEB.BRANCH.VIP": {}},
+		pairs:    map[string]struct{}{"USD/KRW": {}},
+		out:      make(chan *wtgpb.CustomerQuote, 256),
+		srvID:    "edge-B",
+	}
+	g.qmu.Unlock()
+
+	snap := g.SubscribersSnapshot()
+	if len(snap.Tick) != 1 || snap.Tick[0].ID != 101 || snap.Tick[0].SrvID != "edge-A" {
+		t.Errorf("Tick subscriber 미반영: %+v", snap.Tick)
+	}
+	if len(snap.Quote) != 1 || snap.Quote[0].ID != 202 ||
+		len(snap.Quote[0].Profiles) != 1 || snap.Quote[0].Profiles[0] != "WEB.BRANCH.VIP" {
+		t.Errorf("Quote subscriber 필터 미반영: %+v", snap.Quote)
+	}
+	if snap.Quote[0].QueueCap != 256 {
+		t.Errorf("QueueCap = %d, want 256", snap.Quote[0].QueueCap)
+	}
+}

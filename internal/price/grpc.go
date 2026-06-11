@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -177,6 +178,7 @@ func (g *GRPCServer) OnTick(t *Tick) {
 		// non-blocking enqueue — slow consumer 는 stream 종료로 격리.
 		select {
 		case s.out <- pb:
+			checkBackpressure(g.logger, len(s.out), cap(s.out), s.id, s.srvID, "tick")
 		default:
 			g.logger.Warn("gRPC subscriber slow — stream 종료",
 				slog.Uint64("sub_id", s.id),
@@ -283,6 +285,7 @@ func (g *GRPCServer) PublishQuote(profile session.Profile, cq pricing.CustomerQu
 		}
 		select {
 		case s.out <- pb:
+			checkBackpressure(g.logger, len(s.out), cap(s.out), s.id, s.srvID, "quote")
 		default:
 			g.logger.Warn("gRPC quote subscriber slow — stream 종료",
 				slog.Uint64("sub_id", s.id),
@@ -540,6 +543,7 @@ func (g *GRPCServer) PublishCustomerQuote(customerID string, profile session.Pro
 		}
 		select {
 		case s.out <- pb:
+			checkBackpressure(g.logger, len(s.out), cap(s.out), s.id, s.subscriberID, "customer_quote")
 		default:
 			g.logger.Warn("gRPC customer-quote subscriber slow — stream 종료",
 				slog.Uint64("sub_id", s.id),
@@ -584,6 +588,7 @@ func (g *GRPCServer) PublishBar(b *quote.Bar) {
 		}
 		select {
 		case s.out <- pb:
+			checkBackpressure(g.logger, len(s.out), cap(s.out), s.id, s.srvID, "bar")
 		default:
 			g.logger.Warn("gRPC bar subscriber slow — stream 종료",
 				slog.Uint64("sub_id", s.id),
@@ -814,6 +819,55 @@ func customerQuoteToProto(profile session.Profile, cq pricing.CustomerQuote) *wt
 		pb.ValidUntilUnixNano = cq.ValidUntil.UnixNano()
 	}
 	return pb
+}
+
+// ─── Backpressure 자동 alert ─────────────────────────────────────────────
+//
+// 4개 publish path (OnTick / PublishQuote / PublishBar / PublishCustomerQuote)
+// 가 enqueue 성공 직후 큐 점유율을 검사. 80% 넘으면 1분당 1회 WARN —
+// drop 직전 단계 (slow consumer 격리 전) 에 발견할 수 있도록.
+
+const backpressureRatio = 0.8
+
+const backpressureInterval = 60 * time.Second
+
+// backpressureGate — (sub_id, kind) 별 마지막 WARN 시각. 1분당 1회 rate-limit.
+var backpressureGate sync.Map // map[string]*atomic.Int64
+
+// checkBackpressure — 큐 점유율 (len/cap) 이 80% 이상이면 rate-limited WARN.
+// hot path 에서 매 enqueue 직후 호출. ratio 미달 시 즉시 return — fast path.
+func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64, srvID, kind string) {
+	if queueCap == 0 || float64(queueLen) < backpressureRatio*float64(queueCap) {
+		return
+	}
+	now := time.Now()
+	key := kind + ":" + strconv.FormatUint(subID, 10)
+	actual, loaded := backpressureGate.LoadOrStore(key, &atomic.Int64{})
+	p := actual.(*atomic.Int64)
+	if !loaded {
+		p.Store(now.UnixNano())
+		logger.Warn("backpressure 감지 — 큐 80% 도달",
+			slog.Uint64("sub_id", subID),
+			slog.String("srv_id", srvID),
+			slog.String("kind", kind),
+			slog.Int("queue_depth", queueLen),
+			slog.Int("queue_cap", queueCap),
+		)
+		return
+	}
+	last := p.Load()
+	if now.UnixNano()-last < backpressureInterval.Nanoseconds() {
+		return
+	}
+	if p.CompareAndSwap(last, now.UnixNano()) {
+		logger.Warn("backpressure 감지 — 큐 80% 도달",
+			slog.Uint64("sub_id", subID),
+			slog.String("srv_id", srvID),
+			slog.String("kind", kind),
+			slog.Int("queue_depth", queueLen),
+			slog.Int("queue_cap", queueCap),
+		)
+	}
 }
 
 // ─── 운영 진단 (/v1/subscribers) ────────────────────────────────────────

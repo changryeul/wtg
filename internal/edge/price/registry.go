@@ -3,11 +3,58 @@ package price
 import (
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// ─── Backpressure 자동 alert ─────────────────────────────────────────────
+//
+// Subscriber.Send 가 enqueue 성공 직후 큐 점유율을 검사. 80% 넘으면 1분당
+// 1회 WARN — drop 직전 단계 (ErrSendQueueFull → slow consumer 격리 전) 에
+// 발견할 수 있도록. mci-price 의 checkBackpressure 와 같은 패턴.
+
+const backpressureRatio = 0.8
+const backpressureInterval = 60 * time.Second
+
+var backpressureGate sync.Map // map[string]*atomic.Int64
+
+func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64, profileKey, kind string) {
+	if queueCap == 0 || float64(queueLen) < backpressureRatio*float64(queueCap) {
+		return
+	}
+	now := time.Now()
+	key := kind + ":" + strconv.FormatUint(subID, 10)
+	actual, loaded := backpressureGate.LoadOrStore(key, &atomic.Int64{})
+	p := actual.(*atomic.Int64)
+	if !loaded {
+		p.Store(now.UnixNano())
+		logger.Warn("backpressure 감지 — 큐 80% 도달",
+			slog.Uint64("sub_id", subID),
+			slog.String("profile", profileKey),
+			slog.String("kind", kind),
+			slog.Int("queue_depth", queueLen),
+			slog.Int("queue_cap", queueCap),
+		)
+		return
+	}
+	last := p.Load()
+	if now.UnixNano()-last < backpressureInterval.Nanoseconds() {
+		return
+	}
+	if p.CompareAndSwap(last, now.UnixNano()) {
+		logger.Warn("backpressure 감지 — 큐 80% 도달",
+			slog.Uint64("sub_id", subID),
+			slog.String("profile", profileKey),
+			slog.String("kind", kind),
+			slog.Int("queue_depth", queueLen),
+			slog.Int("queue_cap", queueCap),
+		)
+	}
+}
 
 // Subscriber 는 단일 ws 클라이언트의 fan-out 큐 + lifecycle.
 //
@@ -173,6 +220,7 @@ func (s *Subscriber) Send(p []byte) error {
 	}
 	select {
 	case s.send <- p:
+		checkBackpressure(s.logger, len(s.send), cap(s.send), s.id, s.profileKey, "ws")
 		return nil
 	default:
 		return ErrSendQueueFull

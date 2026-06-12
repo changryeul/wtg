@@ -186,11 +186,11 @@ mci-admin 의 어떤 endpoint 든 임의 호출. Postman 미니 버전.
 
 quote-forwarder 가 시세를 mci-price 로 어떻게 보내는가:
 
-| mode | 설명 | 환경변수 |
-|------|------|---------|
+| mode                 | 설명                                                                                                               | 환경변수                                  |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | **`grpc`** (default) | mci-price 의 `PriceService.PublishTick` gRPC stream 으로 직접 push. broker 의 시세 fan-out 부하 0 → broker 가 매매 RPC 에만 집중. | `WTG_FWD_PUBLISH_MODE=grpc` (default) |
-| `broker` | legacy 동작. broker `PRICE` exchange 로 publish → mci-price 가 subscribe. broker 가 1:N broadcast 책임. | `WTG_FWD_PUBLISH_MODE=broker` |
-| `both` | dual-write — broker + grpc 둘 다. 마이그레이션 진단용. | `WTG_FWD_PUBLISH_MODE=both` |
+| `broker`             | legacy 동작. broker `PRICE` exchange 로 publish → mci-price 가 subscribe. broker 가 1:N broadcast 책임.                 | `WTG_FWD_PUBLISH_MODE=broker`         |
+| `both`               | dual-write — broker + grpc 둘 다. 마이그레이션 진단용.                                                                      | `WTG_FWD_PUBLISH_MODE=both`           |
 
 **확인** — `curl -sS http://127.0.0.1:8082/v1/price-stats` 에서 `received` (broker path) vs `ticks` (envelope hot path) 비교:
 - grpc 모드: `received=0`, `ticks=N` (grpc 로만 도달)
@@ -464,6 +464,75 @@ E2E 흐름 검증용 — 운영 배포 직후 5분 안에 핵심 path 모두 확
 
 ---
 
+## 17 ~ 21. 운영 진단 페이지 (N4 / N6 / N7 / N8 / N9 통합)
+
+오늘 추가된 신규 5 페이지. 자세한 가이드는 `docs/observability.md` 참조.
+
+### 17. 구독자 (gRPC) — `page-subscribers`
+
+**무엇을 하는가**: mci-price 의 4 gRPC stream 카테고리 카탈로그.
+
+- Tick / Quote / Bar / Customer Quote
+- 각 행: id / srv_id / 필터 (symbols 또는 profiles + pairs) / queue (depth/cap)
+- ⚠️ 행에 있는 id 는 모두 **internal service** (edge-price, chart 등) —
+  사용자 (고객) 가 아님.
+
+**테스트**: 시드 정상 환경에서 Tick 에 mci-edge-price, Bar 에 mci-chart
+가 보여야 함. queue% 50%+ 노랑 / 80%+ 빨강.
+
+### 18. 연결 (ws) — `page-connections`
+
+**무엇을 하는가**: mci-edge-price (N 인스턴스) 의 외부 ws 연결 통합 view.
+
+- count + by_instance + by_profile + connections 표
+- 표 칼럼: instance / id / profile / customer / remote / pairs / queue / state
+- 필터: `?customer_id=` / `?profile=`
+- `instance_errors` 가 있으면 빨간 경고 (instance down)
+
+**테스트**: `--customer-stream` 활성 edge 에 ws 클라이언트 1개 연결 후
+페이지 새로고침 → 본인 row 보여야 함. profile_key = JWT 의 ProfileKey()
+또는 DevMode 매핑, customer_id = Principal.Usid.
+
+### 19. Customer 검색 — `page-customer-search`
+
+**무엇을 하는가**: customer_id 입력 → mci-price 등록 + edge ws 연결 동시 조회.
+
+- 등록 ✓/✗ + Profile
+- edge ws 연결 표 (다중 instance 통합 — instance 칼럼 포함)
+
+**테스트**:
+- 등록 ✓ + edge 1개+ : 정상
+- 등록 ✓ + edge 0개 : 사용자 ws 끊김
+- 등록 ✗ + edge 1개+ : edge 의 RegisterCustomer 실패 (Phase 4c 비활성?)
+- 둘 다 0 : 한 번도 연결 안 했거나 존재 안 함
+
+### 20. forwarder 통계 — `page-fwdstats`
+
+**무엇을 하는가**: quote-forwarder 의 `/stats` (invalid_quote breakdown 시각화).
+
+- 4 카드: received / published / **reject% (5%↑ 노랑, 10%↑ 빨강)** / uptime
+- invalid_quotes 표 (reason 별 누적 + Δ 2s)
+  - non_positive_price (빨강) — cooker drift alert 대상
+  - crossed_spread (노랑)
+  - not_a_quote (회색, silent skip 의도)
+- UDP feeds 표
+
+**테스트**: 정상 운영에서 not_a_quote 외 다른 reason 은 모두 0. 음수
+가격 cooker 가 잠시 들어오면 non_positive_price 가 증가 → reject% 색상 변화.
+
+### 21. Backpressure 이력 — `page-backpressure`
+
+**무엇을 하는가**: 큐 80% 도달 WARN 의 누적 카운트 + 최근 100건 이력.
+
+- 4 카드: price total / edge total / 전체 정상 여부 / ring cap
+- mci-price 표 (시각/kind/sub_id/srv_id/queue)
+- mci-edge-price 표 (시각/**instance**/kind/sub_id/profile/queue)
+
+**테스트**: 정상 운영에서 total=0. slow consumer 시나리오 발생 시 ring
+에 누적 (최신순). ring cap (100) 초과하면 oldest drop.
+
+---
+
 ## 부록 A. 백엔드 endpoint 매핑 (UI ↔ HTTP)
 
 | UI 페이지 | HTTP path |
@@ -481,6 +550,11 @@ E2E 흐름 검증용 — 운영 배포 직후 5분 안에 핵심 path 모두 확
 | svcio | `GET /v1/admin/svc-io/...`, `PUT /v1/admin/svc-io/{code}/source` |
 | audit | `GET /v1/admin/audit?limit=N` |
 | (stream) | `GET /v1/admin/stream` (ws) |
+| subscribers (신규) | `GET /v1/admin/price/subscribers` |
+| customers (신규) | `GET /v1/admin/price/customers`, `GET /v1/admin/price/customers/{customerID}` |
+| connections (신규) | `GET /v1/admin/edge/connections` (다중 instance fan-out), `GET /v1/admin/edge/ping` |
+| fwdstats (신규) | `GET /v1/admin/forwarder/stats` |
+| backpressure (신규) | `GET /v1/admin/price/backpressure`, `GET /v1/admin/edge/backpressure` |
 
 ## 부록 B. 트러블슈팅
 

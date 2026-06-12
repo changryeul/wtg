@@ -148,11 +148,12 @@ type Config struct {
 	// 비면 default http://127.0.0.1:8081. admin push-test 가 source=http 시 사용.
 	PushURL string
 
-	// EdgeURL — mci-edge-price 의 HTTP base URL (진단 endpoint 용).
-	// 비면 default http://127.0.0.1:8083. admin UI 의 "연결" / "Customer 검색"
-	// 페이지가 /v1/connections 를 same-origin proxy 로 조회. 다중 edge 인스턴스
-	// 운영에서는 첫 번째 instance 만 — 후일 list 로 확장 가능.
-	EdgeURL string
+	// EdgeURLs — mci-edge-price 인스턴스들의 HTTP base URL 목록.
+	// 다중 인스턴스 운영 지원 (N6). admin UI 의 "연결" / "Customer 검색"
+	// 페이지가 모든 인스턴스를 병렬 호출 → 통합 결과 반환.
+	// 각 응답 entry 에 instance label (host:port 자동 derive) 부착.
+	// 한 인스턴스 실패는 instance_errors 로 노출, 나머지는 정상 forward.
+	EdgeURLs []string
 
 	// FwdURL — quote-forwarder 의 HTTP metrics base URL (진단 endpoint 용).
 	// 비면 default http://127.0.0.1:9091. admin UI 의 "forwarder 통계" 페이지가
@@ -217,7 +218,7 @@ func DefaultConfig() Config {
 		PriceURL:          "http://127.0.0.1:8082",
 		ChartURL:          "http://127.0.0.1:8086",
 		PushURL:           "http://127.0.0.1:8081",
-		EdgeURL:           "http://127.0.0.1:8083",
+		EdgeURLs:          []string{"http://127.0.0.1:8083"},
 		FwdURL:            "http://127.0.0.1:9091",
 	}
 }
@@ -407,7 +408,19 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.PriceURL, "price-url", cfg.PriceURL, "mci-price HTTP base URL — 시세 통계 proxy. 기본 http://127.0.0.1:8082")
 	fs.StringVar(&cfg.ChartURL, "chart-url", cfg.ChartURL, "mci-chart HTTP base URL — 차트 통계 proxy. 기본 http://127.0.0.1:8086")
 	fs.StringVar(&cfg.PushURL, "push-url", cfg.PushURL, "mci-push HTTP base URL — push-test source=http 시 사용. 기본 http://127.0.0.1:8081")
-	fs.StringVar(&cfg.EdgeURL, "edge-url", cfg.EdgeURL, "mci-edge-price HTTP base URL — 연결 진단 proxy. 기본 http://127.0.0.1:8083")
+	// EdgeURLs — comma-separated list. 단일 인스턴스 운영도 같은 flag 사용.
+	var edgeURLsStr string
+	if len(cfg.EdgeURLs) > 0 {
+		edgeURLsStr = strings.Join(cfg.EdgeURLs, ",")
+	}
+	fs.StringVar(&edgeURLsStr, "edge-urls", edgeURLsStr,
+		"mci-edge-price HTTP base URL 목록 (콤마 구분, 다중 인스턴스 지원). 기본 http://127.0.0.1:8083")
+	// 호환성 — 단수형 alias 도 받아들임 (스크립트 호환). 둘 다 지정 시 --edge-urls 우선.
+	var edgeURLSingle string
+	fs.StringVar(&edgeURLSingle, "edge-url", "",
+		"mci-edge-price HTTP base URL (단수형 호환 — 신규는 --edge-urls 사용 권장)")
+	// flag 파싱 후 둘을 합치는 처리는 Parse 호출 직후 별도 단계에서 함.
+	// 여기서는 StringVar 만 등록 — main.go 가 ParseAndValidate 호출 흐름.
 	fs.StringVar(&cfg.FwdURL, "fwd-url", cfg.FwdURL, "quote-forwarder HTTP metrics base URL — invalid_quote breakdown proxy. 기본 http://127.0.0.1:9091")
 	fs.StringVar(&cfg.PushSecret, "push-secret", cfg.PushSecret, "mci-push 의 X-Push-Secret 헤더 값. 빈값=인증 disable (dev only)")
 	fs.StringVar(&cfg.DevRoutesFile, "dev-routes-file", cfg.DevRoutesFile, "DevMode 라우팅 룰 시드 JSON 경로 (예: ~/mymq/etc/wtg-routes.json). 비면 hardcode default")
@@ -429,6 +442,19 @@ func LoadConfig(args []string) (Config, error) {
 			return cfg, err
 		}
 		cfg.AllowCIDRs = nets
+	}
+	// EdgeURLs 후처리 — --edge-urls (콤마) 또는 --edge-url (단수, 호환).
+	// 단수형은 명시적으로 입력했을 때만 우선 적용 (빈값이면 무시).
+	if strings.TrimSpace(edgeURLSingle) != "" {
+		cfg.EdgeURLs = []string{strings.TrimSpace(edgeURLSingle)}
+	} else if strings.TrimSpace(edgeURLsStr) != "" {
+		parts := strings.Split(edgeURLsStr, ",")
+		cfg.EdgeURLs = cfg.EdgeURLs[:0]
+		for _, p := range parts {
+			if t := strings.TrimSpace(p); t != "" {
+				cfg.EdgeURLs = append(cfg.EdgeURLs, t)
+			}
+		}
 	}
 	if _, err := routing.ParseSeedPolicy(cfg.DevRoutesPolicy); err != nil {
 		return cfg, err

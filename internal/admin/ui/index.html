@@ -9093,11 +9093,28 @@ function renderConnections(d) {
   const profHTML = profEntries.length
     ? profEntries.map(([k,v]) => `<span class="inline-block mr-2 px-2 py-0.5 bg-slate-800/60 rounded text-xs">${esc(k || "(빈)")} : ${esc(v)}</span>`).join("")
     : '<span class="text-slate-500 text-xs">없음</span>';
+  // N6 — by_instance 분포 + instance_errors.
+  const byInst = d.by_instance || {};
+  const instEntries = Object.entries(byInst).sort((a,b) => b[1]-a[1]);
+  const instHTML = instEntries.length
+    ? instEntries.map(([k,v]) => `<span class="inline-block mr-2 px-2 py-0.5 bg-emerald-900/40 border border-emerald-700/40 rounded text-xs">${esc(k)} : ${esc(v)}</span>`).join("")
+    : '<span class="text-slate-500 text-xs">없음</span>';
+  const instErrs = d.instance_errors || [];
+  const errHTML = instErrs.length
+    ? `<div class="text-xs text-red-400 mt-1">⚠️ instance 응답 실패: ${instErrs.map(e => `${esc(e.instance)} (${esc(e.error)})`).join(", ")}</div>`
+    : "";
   $("#conn-summary").innerHTML = `
-    <div class="flex items-center gap-3">
-      <span><span class="font-semibold">${esc(d.count ?? 0)}</span> 연결 (필터 적용 후)</span>
-      <span class="text-xs text-slate-400">by_profile 전체 분포:</span>
-      ${profHTML}
+    <div class="space-y-1">
+      <div class="flex items-center gap-3 flex-wrap">
+        <span><span class="font-semibold">${esc(d.count ?? 0)}</span> 연결 (필터 적용 후, ${instEntries.length} instance)</span>
+        <span class="text-xs text-slate-400">by_instance:</span>
+        ${instHTML}
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class="text-xs text-slate-400">by_profile 전체 분포:</span>
+        ${profHTML}
+      </div>
+      ${errHTML}
     </div>`;
   const conns = d.connections || [];
   const rows = conns.map(c => {
@@ -9105,6 +9122,7 @@ function renderConnections(d) {
     const pctColor = pct >= 80 ? "text-red-400" : pct >= 50 ? "text-amber-400" : "text-slate-400";
     const pairs = (c.pairs && c.pairs.length) ? esc(c.pairs.join(", ")) : "<span class='text-slate-500'>(all)</span>";
     return `<tr>
+      <td class="px-2 py-1 border-t border-slate-700/40 text-xs font-mono">${esc(c.instance || "")}</td>
       <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.id)}</td>
       <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.profile_key) || "<span class='text-slate-500'>(빈)</span>"}</td>
       <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.customer_id) || "<span class='text-slate-500'>(빈)</span>"}</td>
@@ -9118,11 +9136,12 @@ function renderConnections(d) {
     <div class="border border-slate-700/40 rounded">
       <table class="w-full text-xs">
         <thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">instance</th>
           <th class="px-2 py-1">id</th><th class="px-2 py-1">profile</th><th class="px-2 py-1">customer</th>
           <th class="px-2 py-1">remote</th><th class="px-2 py-1">pairs</th>
           <th class="px-2 py-1">queue</th><th class="px-2 py-1">state</th>
         </tr></thead>
-        <tbody>${rows || `<tr><td class="px-2 py-2 text-slate-500" colspan="7">매칭 연결 없음</td></tr>`}</tbody>
+        <tbody>${rows || `<tr><td class="px-2 py-2 text-slate-500" colspan="8">매칭 연결 없음</td></tr>`}</tbody>
       </table>
     </div>`;
 }
@@ -9265,12 +9284,14 @@ async function doCustomerSearch() {
     ? `<div class="border border-slate-700/40 rounded">
         <div class="px-2 py-1 bg-slate-800/40 font-semibold">edge ws 연결 ${conns.length}개</div>
         <table class="w-full text-xs"><thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">instance</th>
           <th class="px-2 py-1">id</th><th class="px-2 py-1">profile</th>
           <th class="px-2 py-1">remote</th><th class="px-2 py-1">queue</th><th class="px-2 py-1">state</th>
         </tr></thead><tbody>
         ${conns.map(c => {
           const pct = c.queue_cap ? Math.round(100*c.queue_depth/c.queue_cap) : 0;
           return `<tr>
+            <td class="px-2 py-1 border-t border-slate-700/40 text-xs font-mono">${esc(c.instance || "")}</td>
             <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.id)}</td>
             <td class="px-2 py-1 border-t border-slate-700/40">${esc(c.profile_key) || "(빈)"}</td>
             <td class="px-2 py-1 border-t border-slate-700/40 text-xs">${esc(c.remote_addr)}</td>

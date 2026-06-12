@@ -154,6 +154,11 @@ type Config struct {
 	// 운영에서는 첫 번째 instance 만 — 후일 list 로 확장 가능.
 	EdgeURL string
 
+	// FwdURL — quote-forwarder 의 HTTP metrics base URL (진단 endpoint 용).
+	// 비면 default http://127.0.0.1:9091. admin UI 의 "forwarder 통계" 페이지가
+	// /stats 를 same-origin proxy 로 조회. invalid_quote breakdown 시각화 용.
+	FwdURL string
+
 	// PushSecret — mci-push 의 X-Push-Secret 헤더 값. mci-push 의 --push-secret
 	// 와 일치해야 함. 빈값 = 인증 disable (dev 전용).
 	PushSecret string
@@ -213,6 +218,7 @@ func DefaultConfig() Config {
 		ChartURL:          "http://127.0.0.1:8086",
 		PushURL:           "http://127.0.0.1:8081",
 		EdgeURL:           "http://127.0.0.1:8083",
+		FwdURL:            "http://127.0.0.1:9091",
 	}
 }
 
@@ -402,6 +408,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.ChartURL, "chart-url", cfg.ChartURL, "mci-chart HTTP base URL — 차트 통계 proxy. 기본 http://127.0.0.1:8086")
 	fs.StringVar(&cfg.PushURL, "push-url", cfg.PushURL, "mci-push HTTP base URL — push-test source=http 시 사용. 기본 http://127.0.0.1:8081")
 	fs.StringVar(&cfg.EdgeURL, "edge-url", cfg.EdgeURL, "mci-edge-price HTTP base URL — 연결 진단 proxy. 기본 http://127.0.0.1:8083")
+	fs.StringVar(&cfg.FwdURL, "fwd-url", cfg.FwdURL, "quote-forwarder HTTP metrics base URL — invalid_quote breakdown proxy. 기본 http://127.0.0.1:9091")
 	fs.StringVar(&cfg.PushSecret, "push-secret", cfg.PushSecret, "mci-push 의 X-Push-Secret 헤더 값. 빈값=인증 disable (dev only)")
 	fs.StringVar(&cfg.DevRoutesFile, "dev-routes-file", cfg.DevRoutesFile, "DevMode 라우팅 룰 시드 JSON 경로 (예: ~/mymq/etc/wtg-routes.json). 비면 hardcode default")
 	fs.StringVar(&cfg.DevRoutesPolicy, "dev-routes-policy", cfg.DevRoutesPolicy, "cfg ↔ in-memory 동기화 정책. additive(default) | sync. sync 는 cfg 가 진실의 원천 (cfg 삭제 alias 가 in-memory 에서도 제거)")

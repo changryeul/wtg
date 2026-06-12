@@ -348,6 +348,7 @@
           <button data-page="subscribers" class="nav-btn nav-item"><span class="nav-ico">🔌</span>구독자 (gRPC)</button>
           <button data-page="connections" class="nav-btn nav-item"><span class="nav-ico">🔗</span>연결 (ws)</button>
           <button data-page="customer-search" class="nav-btn nav-item"><span class="nav-ico">🔍</span>Customer 검색</button>
+          <button data-page="fwdstats" class="nav-btn nav-item"><span class="nav-ico">📡</span>forwarder 통계</button>
         </div>
 
         <!-- 7. 외부 도구 — chart 별도 탭 열기 (SPA 전환 아님) -->
@@ -2990,6 +2991,40 @@ WEB.HQ.VIP</textarea>
           <div id="cs-result" class="space-y-3 text-sm"></div>
         </div>
 
+        <!-- ───── forwarder 통계 — quote-forwarder /stats ─────
+             received / published / invalid_quotes breakdown 시각화. 매 reject
+             reason 별 카운터 + 각 feed → broker connection 정보. -->
+        <div id="page-fwdstats" class="page hidden space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h3 class="text-lg font-semibold">quote-forwarder 통계</h3>
+            <label class="text-xs"><input type="checkbox" id="fwd-auto" checked> 자동 새로고침 (2s)</label>
+            <button id="fwd-refresh" class="px-2 py-1 text-xs border rounded">새로고침</button>
+            <span id="fwd-updated" class="text-xs text-slate-500"></span>
+          </div>
+          <details class="text-xs text-slate-400 border border-slate-700/40 rounded p-2">
+            <summary class="cursor-pointer text-slate-300">이 페이지가 무엇을 보여주는가?</summary>
+            <div class="mt-2 space-y-1">
+              <div>📡 <b>quote-forwarder</b> 가 UDP 시세 → broker (또는 mci-price gRPC) 로 forward 하는 통계.</div>
+              <ul class="list-disc pl-5">
+                <li><b>received</b>: UDP 로 받은 누적 envelope. cooker (시세 source) 가 publish 한 양.</li>
+                <li><b>published</b>: 정상 forward 한 누적. received - published ≈ reject 합.</li>
+                <li><b>invalid_quotes</b>: fastExtractV1 가 reject 한 envelope 의 reason 별 분류.
+                  <ul class="list-disc pl-5">
+                    <li><span class="text-red-400">non_positive_price</span>: bid 또는 ask 가 음수/0. <b>cooker drift 또는 scale 오류 alert</b>.</li>
+                    <li><span class="text-amber-400">crossed_spread</span>: ask &lt; bid. cooker 의 spread 계산 오류.</li>
+                    <li>not_a_quote: 35=X trade message 등 — silent skip 의도된 동작.</li>
+                    <li>missing_symbol: 55= 누락. FIX 메시지 깨짐.</li>
+                  </ul>
+                </li>
+              </ul>
+              <div>운영 alert: <span class="text-red-400">non_positive_price &gt; 0</span> 또는 publish_errors 가 빠르게 증가 시 cooker / broker 진단 필요.</div>
+            </div>
+          </details>
+          <div id="fwd-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm"></div>
+          <div id="fwd-invalid" class="text-sm"></div>
+          <div id="fwd-feeds" class="text-sm"></div>
+        </div>
+
         <!-- ───── 운영 가이드 (Operations Guide) ─────
              docs/operations.md §A.7 ~ §A.11 의 정보성 표를 SPA 안에 직접 노출.
              동적 로딩 없음 — 운영자가 한 화면에서 "이 값은 어디서 바뀌나 / 무엇을
@@ -3449,6 +3484,8 @@ function goPage(name) {
   if (name !== "connections") stopConnPoller();
   if (name === "connections") initConnections();
   if (name === "customer-search") initCustomerSearch();
+  if (name !== "fwdstats") stopFwdPoller();
+  if (name === "fwdstats") initFwdStats();
 }
 
 // ───────── Dashboard ─────────
@@ -9093,6 +9130,117 @@ function renderConnections(d) {
 function initCustomerSearch() {
   $("#cs-go").onclick = doCustomerSearch;
   $("#cs-id").onkeydown = (e) => { if (e.key === "Enter") doCustomerSearch(); };
+}
+
+// ─── forwarder 통계 ─────────────────────────────────────────────────────
+
+const fwdState = { wired: false, poller: null, prev: null };
+
+function initFwdStats() {
+  if (!fwdState.wired) {
+    fwdState.wired = true;
+    $("#fwd-refresh").onclick = loadFwdStats;
+    $("#fwd-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startFwdPoller(); else stopFwdPoller();
+    });
+  }
+  loadFwdStats();
+  if ($("#fwd-auto").checked) startFwdPoller();
+}
+function startFwdPoller() { if (!fwdState.poller) fwdState.poller = setInterval(loadFwdStats, 2000); }
+function stopFwdPoller()  { if (fwdState.poller) { clearInterval(fwdState.poller); fwdState.poller = null; } }
+
+async function loadFwdStats() {
+  try {
+    const d = await api("/v1/admin/forwarder/stats");
+    renderFwdStats(d);
+    $("#fwd-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+    fwdState.prev = d;
+  } catch (e) {
+    $("#fwd-updated").textContent = "로드 실패: " + e.message;
+  }
+}
+
+function renderFwdStats(d) {
+  const recv = d.received_total ?? 0;
+  const pub = d.published_total ?? 0;
+  const errs = d.publish_errors ?? 0;
+  const up = Math.round(d.uptime_sec ?? 0);
+  const upStr = up >= 86400 ? Math.floor(up/86400)+"d "+Math.floor((up%86400)/3600)+"h"
+              : up >= 3600 ? Math.floor(up/3600)+"h "+Math.floor((up%3600)/60)+"m"
+              : up >= 60 ? Math.floor(up/60)+"m "+(up%60)+"s"
+              : up+"s";
+  const iv = d.invalid_quotes || {};
+  const totalInvalid = Object.values(iv).reduce((a,b) => a + (b||0), 0);
+  const rejectPct = recv ? (100 * totalInvalid / recv).toFixed(1) : "0.0";
+  // 비율 색상 — 5% 초과면 amber, 10% 초과면 red.
+  const rejectColor = totalInvalid && recv && (totalInvalid/recv > 0.10) ? "text-red-400"
+                    : totalInvalid && recv && (totalInvalid/recv > 0.05) ? "text-amber-400"
+                    : "text-slate-300";
+  const cards = [
+    { label: "received",    value: recv.toLocaleString(),  hint: "UDP 수신 누적" },
+    { label: "published",   value: pub.toLocaleString(),   hint: "정상 forward 누적" },
+    { label: "reject %",    value: `${rejectPct}%`,        hint: `${totalInvalid.toLocaleString()} / ${recv.toLocaleString()}`, color: rejectColor },
+    { label: "uptime",      value: esc(upStr),             hint: esc(d.broker ?? "") },
+  ];
+  $("#fwd-cards").innerHTML = cards.map(c => `
+    <div class="border border-slate-700/40 rounded p-3">
+      <div class="text-xs text-slate-400">${esc(c.label)}</div>
+      <div class="text-xl font-semibold ${c.color || ""}">${c.value}</div>
+      <div class="text-[10px] text-slate-500 mt-1">${c.hint}</div>
+    </div>`).join("");
+
+  // invalid_quotes breakdown 표 (이전과 delta 까지)
+  const order = ["non_positive_price", "crossed_spread", "missing_symbol", "not_a_quote", "other"];
+  const colorOf = {
+    non_positive_price: "text-red-400",
+    crossed_spread:     "text-amber-400",
+    missing_symbol:     "text-amber-400",
+    not_a_quote:        "text-slate-400",
+    other:              "text-slate-400",
+  };
+  const prevIv = (fwdState.prev && fwdState.prev.invalid_quotes) || {};
+  const rows = order.map(k => {
+    const cur = iv[k] || 0;
+    const prev = prevIv[k] || 0;
+    const dlt = cur - prev;
+    const dStr = dlt === 0 ? "—" : (dlt > 0 ? `+${dlt}` : `${dlt}`);
+    const dCol = dlt > 0 ? colorOf[k] : "text-slate-500";
+    return `<tr>
+      <td class="px-2 py-1 border-t border-slate-700/40 ${colorOf[k]||""}">${esc(k)}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40 text-right font-mono">${cur.toLocaleString()}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40 text-right font-mono ${dCol}">${dStr}</td>
+    </tr>`;
+  }).join("");
+  $("#fwd-invalid").innerHTML = `
+    <div class="border border-slate-700/40 rounded">
+      <div class="px-2 py-1 bg-slate-800/40 font-semibold">invalid_quotes (reason 별)</div>
+      <table class="w-full text-xs">
+        <thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">reason</th>
+          <th class="px-2 py-1 text-right">누적</th>
+          <th class="px-2 py-1 text-right">Δ (2s)</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  // feeds 표 (UDP listen)
+  const feeds = d.feeds || [];
+  const feedRows = feeds.map(f => `<tr>
+    <td class="px-2 py-1 border-t border-slate-700/40">${esc(f.label)}</td>
+    <td class="px-2 py-1 border-t border-slate-700/40 text-xs font-mono">${esc(f.addr)}</td>
+  </tr>`).join("");
+  $("#fwd-feeds").innerHTML = `
+    <div class="border border-slate-700/40 rounded">
+      <div class="px-2 py-1 bg-slate-800/40 font-semibold">UDP feeds (${feeds.length})</div>
+      <table class="w-full text-xs">
+        <thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">label</th><th class="px-2 py-1">addr</th>
+        </tr></thead>
+        <tbody>${feedRows || `<tr><td colspan="2" class="px-2 py-2 text-slate-500">없음</td></tr>`}</tbody>
+      </table>
+    </div>`;
 }
 
 async function doCustomerSearch() {

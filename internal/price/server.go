@@ -645,7 +645,13 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			ForwardSnapshotHandler(ForwardSnapshotDeps{
 				Store: s.pricingStore, Best: s.best, Cross: s.crossConsumer,
 			}, s.cfg.DevMode))
-		s.logger.Info("Forward snapshot endpoint 활성 — GET /v1/quote/forward-snapshot")
+		// S2. Spot-only lite endpoint — 매칭 엔진의 spot 거래 hot path 용.
+		// forward tenor 루프 skip → latency 절감. bulk pair 지원.
+		mux.HandleFunc("GET /v1/quote/spot",
+			SpotSnapshotHandler(ForwardSnapshotDeps{
+				Store: s.pricingStore, Best: s.best, Cross: s.crossConsumer,
+			}, s.cfg.DevMode))
+		s.logger.Info("Forward snapshot endpoint 활성 — GET /v1/quote/forward-snapshot, GET /v1/quote/spot")
 	}
 	// Forward quote lock — pricingStore + best + quoteID gen/reg 모두 있을 때.
 	if s.pricingStore != nil && s.best != nil && s.quoteIDGen != nil && s.quoteIDReg != nil {

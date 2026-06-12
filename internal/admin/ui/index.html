@@ -2912,12 +2912,25 @@ WEB.HQ.VIP</textarea>
              큐 깊이 / 큐 cap 으로 backpressure 가시화. operator 가 "지금 edge-A
              가 어느 Profile 구독 중" 답하는 용도. -->
         <div id="page-subscribers" class="page hidden space-y-4">
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-3 flex-wrap">
             <h3 class="text-lg font-semibold">gRPC 구독자</h3>
             <label class="text-xs"><input type="checkbox" id="sub-auto" checked> 자동 새로고침 (2s)</label>
             <button id="sub-refresh" class="px-2 py-1 text-xs border rounded">새로고침</button>
             <span id="sub-updated" class="text-xs text-slate-500"></span>
           </div>
+          <details class="text-xs text-slate-400 border border-slate-700/40 rounded p-2">
+            <summary class="cursor-pointer text-slate-300">이 페이지가 무엇을 보여주는가?</summary>
+            <div class="mt-2 space-y-1">
+              <div>📡 <b>mci-price 서버 입장에서 어떤 internal service 가 시세 stream 을 받아가는지</b> 보여줍니다. <span class="text-amber-400">사용자 (고객) 가 아님</span> — 사용자는 「🔗 연결 (ws)」 페이지에 보입니다.</div>
+              <ul class="list-disc pl-5">
+                <li><b>Tick</b>: 다중시장 BEST 산정 직후 raw 시세 (마진 미적용). 보통 edge-price 가 받아 ws fan-out.</li>
+                <li><b>Quote</b>: Profile (예: WEB.BRANCH.VIP) 별 마진 적용된 가격. edge-price 가 명시 구독 시만.</li>
+                <li><b>Bar</b>: 1초/1분/5분/15분/1시간/1일 봉 close 발사. mci-chart 가 받음.</li>
+                <li><b>Customer Quote</b>: customer 별 별도 마진 (CustomerRule) 적용. Phase 4c (<code>--customer-stream</code>) 활성 인스턴스만.</li>
+              </ul>
+              <div>큐 색상: <span class="text-slate-400">정상</span> / <span class="text-amber-400">50%+ 적체</span> / <span class="text-red-400">80%+ 위험</span> — 80% 이상이면 backpressure WARN 로그도 발생합니다.</div>
+            </div>
+          </details>
           <div id="sub-tables" class="space-y-3 text-sm"></div>
         </div>
 
@@ -2935,6 +2948,20 @@ WEB.HQ.VIP</textarea>
             <button id="conn-clear" class="px-2 py-1 text-xs border rounded">초기화</button>
             <span id="conn-updated" class="text-xs text-slate-500"></span>
           </div>
+          <details class="text-xs text-slate-400 border border-slate-700/40 rounded p-2">
+            <summary class="cursor-pointer text-slate-300">이 페이지가 무엇을 보여주는가?</summary>
+            <div class="mt-2 space-y-1">
+              <div>🔗 <b>mci-edge-price 입장에서 어떤 외부 사용자가 ws 로 붙어있는지</b>. 사용자 본인이 여기 보입니다 (admin UI 「📡 WS 모니터」 / 「💱 시세 라이브 ws」 페이지를 열어두면 그 ws 도 같이 잡힙니다).</div>
+              <ul class="list-disc pl-5">
+                <li><b>profile_key</b>: 어떤 마진이 적용될지 결정 (Channel.Site.Tier). 빈값이면 quote 미수신 (raw 만).</li>
+                <li><b>customer_id</b>: Phase 4c (<code>--customer-stream</code>) 활성 시 채워짐. 빈값이면 Profile-only 모드.</li>
+                <li><b>pairs</b>: 사용자가 명시 구독한 통화쌍. <code>null</code> 이면 모든 통화쌍 수신.</li>
+                <li><b>queue</b>: edge-price → 그 ws 클라이언트로 송신 대기열. 사용자 측이 느리면 적체.</li>
+                <li><b>by_profile</b>: 전체 분포 (필터 무관). 컨텍스트 유지용.</li>
+              </ul>
+              <div>필터 사용: customer_id 입력하면 그 사용자만 / profile 입력하면 그 등급만.</div>
+            </div>
+          </details>
           <div id="conn-summary" class="text-sm"></div>
           <div id="conn-table" class="text-sm"></div>
         </div>
@@ -2947,6 +2974,19 @@ WEB.HQ.VIP</textarea>
             <button id="cs-go" class="px-2 py-1 text-sm border rounded">검색</button>
             <span id="cs-status" class="text-xs text-slate-500"></span>
           </div>
+          <details class="text-xs text-slate-400 border border-slate-700/40 rounded p-2">
+            <summary class="cursor-pointer text-slate-300">이 페이지가 무엇을 보여주는가?</summary>
+            <div class="mt-2 space-y-1">
+              <div>🔍 support 시나리오 — 티켓에 customer_id 받았을 때 <b>mci-price 등록 + edge ws 연결</b> 을 한 번에 확인합니다. 양 layer 를 따로 호출할 필요 없음.</div>
+              <ul class="list-disc pl-5">
+                <li>✓ mci-price 등록 + edge 연결 1개+ → <span class="text-emerald-300">정상</span></li>
+                <li>✓ mci-price 등록 + edge 연결 0개 → 사용자가 ws 끊김 (브라우저 닫음)</li>
+                <li>✗ mci-price 미등록 + edge 연결 1개+ → edge 의 RegisterCustomer 실패 (Phase 4c 비활성?)</li>
+                <li>✗ 둘 다 0개 → 한 번도 연결 안 했거나 존재 안 함</li>
+              </ul>
+              <div>Phase 4c (<code>--customer-stream</code>) 가 활성이어야 customer_id 가 채워집니다. 비활성이면 모든 customer 가 <code>""</code> 라 검색 무의미.</div>
+            </div>
+          </details>
           <div id="cs-result" class="space-y-3 text-sm"></div>
         </div>
 

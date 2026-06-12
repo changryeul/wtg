@@ -349,6 +349,7 @@
           <button data-page="connections" class="nav-btn nav-item"><span class="nav-ico">🔗</span>연결 (ws)</button>
           <button data-page="customer-search" class="nav-btn nav-item"><span class="nav-ico">🔍</span>Customer 검색</button>
           <button data-page="fwdstats" class="nav-btn nav-item"><span class="nav-ico">📡</span>forwarder 통계</button>
+          <button data-page="backpressure" class="nav-btn nav-item"><span class="nav-ico">⚠️</span>Backpressure 이력</button>
         </div>
 
         <!-- 7. 외부 도구 — chart 별도 탭 열기 (SPA 전환 아님) -->
@@ -2991,6 +2992,31 @@ WEB.HQ.VIP</textarea>
           <div id="cs-result" class="space-y-3 text-sm"></div>
         </div>
 
+        <!-- ───── Backpressure 이력 — mci-price + mci-edge-price /v1/backpressure ─────
+             큐 80% 도달 WARN 의 누적 카운트 + 최근 이력 (ring buffer 100건).
+             slow consumer 가 격리되기 직전에 어떤 sub 가 정체됐는지 사후 추적. -->
+        <div id="page-backpressure" class="page hidden space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h3 class="text-lg font-semibold">Backpressure 이력</h3>
+            <label class="text-xs"><input type="checkbox" id="bp-auto" checked> 자동 새로고침 (2s)</label>
+            <button id="bp-refresh" class="px-2 py-1 text-xs border rounded">새로고침</button>
+            <span id="bp-updated" class="text-xs text-slate-500"></span>
+          </div>
+          <details class="text-xs text-slate-400 border border-slate-700/40 rounded p-2">
+            <summary class="cursor-pointer text-slate-300">이 페이지가 무엇을 보여주는가?</summary>
+            <div class="mt-2 space-y-1">
+              <div>⚠️ 큐 점유율이 <b>80% 도달</b> 시 (drop 직전 단계) 발사되는 WARN 의 누적 + 최근 이력 (ring buffer 100건). 1분에 키당 1회 발사.</div>
+              <ul class="list-disc pl-5">
+                <li><b>mci-price</b>: 4 fan-out path (tick/quote/bar/customer_quote). srv_id 가 어느 edge 인스턴스인지 알려줌.</li>
+                <li><b>mci-edge-price</b>: ws Subscriber.Send 단계. profile 라벨 (어느 Profile 사용자가 정체).</li>
+              </ul>
+              <div>운영 흐름: slow consumer 격리 알람 본 후 본 페이지에서 "그 직전 어디서 정체 누적됐나" 확인 → 「🔌 구독자」/「🔗 연결」 페이지에서 현재 상태 cross-check.</div>
+            </div>
+          </details>
+          <div id="bp-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm"></div>
+          <div id="bp-tables" class="space-y-3 text-sm"></div>
+        </div>
+
         <!-- ───── forwarder 통계 — quote-forwarder /stats ─────
              received / published / invalid_quotes breakdown 시각화. 매 reject
              reason 별 카운터 + 각 feed → broker connection 정보. -->
@@ -3486,6 +3512,8 @@ function goPage(name) {
   if (name === "customer-search") initCustomerSearch();
   if (name !== "fwdstats") stopFwdPoller();
   if (name === "fwdstats") initFwdStats();
+  if (name !== "backpressure") stopBpPoller();
+  if (name === "backpressure") initBackpressure();
 }
 
 // ───────── Dashboard ─────────
@@ -9260,6 +9288,96 @@ function renderFwdStats(d) {
         <tbody>${feedRows || `<tr><td colspan="2" class="px-2 py-2 text-slate-500">없음</td></tr>`}</tbody>
       </table>
     </div>`;
+}
+
+// ─── Backpressure 이력 (N7) ─────────────────────────────────────────────
+
+const bpState = { wired: false, poller: null };
+
+function initBackpressure() {
+  if (!bpState.wired) {
+    bpState.wired = true;
+    $("#bp-refresh").onclick = loadBackpressure;
+    $("#bp-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startBpPoller(); else stopBpPoller();
+    });
+  }
+  loadBackpressure();
+  if ($("#bp-auto").checked) startBpPoller();
+}
+function startBpPoller() { if (!bpState.poller) bpState.poller = setInterval(loadBackpressure, 2000); }
+function stopBpPoller()  { if (bpState.poller) { clearInterval(bpState.poller); bpState.poller = null; } }
+
+async function loadBackpressure() {
+  try {
+    const [priceR, edgeR] = await Promise.allSettled([
+      api("/v1/admin/price/backpressure"),
+      api("/v1/admin/edge/backpressure"),
+    ]);
+    renderBackpressure(
+      priceR.status === "fulfilled" ? priceR.value : null,
+      edgeR.status === "fulfilled" ? edgeR.value : null,
+    );
+    $("#bp-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    $("#bp-updated").textContent = "로드 실패: " + e.message;
+  }
+}
+
+function renderBackpressure(price, edge) {
+  const priceTotal = price && price.total_warnings || 0;
+  const edgeTotal = edge && edge.total_warnings || 0;
+  const priceRecent = price && price.recent || [];
+  const edgeRecent = edge && edge.recent || [];
+  const cards = [
+    { label: "mci-price 누적 WARN", value: priceTotal.toLocaleString(), hint: `최근 ${priceRecent.length}건 ring 보관` },
+    { label: "mci-edge-price 누적 WARN", value: edgeTotal.toLocaleString(), hint: `최근 ${edgeRecent.length}건 ring 보관` },
+    { label: "정상 (둘 다 0)", value: (priceTotal + edgeTotal === 0) ? "✓" : `${priceTotal + edgeTotal} 발생`, color: (priceTotal + edgeTotal === 0) ? "text-emerald-300" : "text-amber-400" },
+    { label: "ring cap", value: ((price && price.history_cap) || 100) + " 건", hint: "초과 시 oldest drop" },
+  ];
+  $("#bp-summary").innerHTML = cards.map(c => `
+    <div class="border border-slate-700/40 rounded p-3">
+      <div class="text-xs text-slate-400">${esc(c.label)}</div>
+      <div class="text-xl font-semibold ${c.color || ""}">${c.value}</div>
+      <div class="text-[10px] text-slate-500 mt-1">${esc(c.hint || "")}</div>
+    </div>`).join("");
+
+  const rows = (events, isEdge) => events.map(ev => {
+    const pct = ev.queue_cap ? Math.round(100 * ev.queue_depth / ev.queue_cap) : 0;
+    const ts = ev.ts ? new Date(ev.ts).toLocaleTimeString("ko-KR", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+    return `<tr>
+      <td class="px-2 py-1 border-t border-slate-700/40 text-xs">${esc(ts)}</td>
+      ${isEdge ? `<td class="px-2 py-1 border-t border-slate-700/40 text-xs font-mono">${esc(ev.instance || "")}</td>` : ""}
+      <td class="px-2 py-1 border-t border-slate-700/40">${esc(ev.kind)}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40">${esc(ev.sub_id)}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40">${esc(isEdge ? (ev.profile_key || "(빈)") : (ev.srv_id || ""))}</td>
+      <td class="px-2 py-1 border-t border-slate-700/40 text-red-400">${esc(ev.queue_depth)}/${esc(ev.queue_cap)} (${pct}%)</td>
+    </tr>`;
+  }).join("");
+
+  const priceTable = `
+    <div class="border border-slate-700/40 rounded">
+      <div class="px-2 py-1 bg-slate-800/40 font-semibold">mci-price 최근 ${priceRecent.length}건 (최신순)</div>
+      <table class="w-full text-xs">
+        <thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">시각</th><th class="px-2 py-1">kind</th><th class="px-2 py-1">sub_id</th>
+          <th class="px-2 py-1">srv_id</th><th class="px-2 py-1">queue</th>
+        </tr></thead>
+        <tbody>${priceRecent.length ? rows(priceRecent, false) : `<tr><td colspan="5" class="px-2 py-2 text-slate-500">발생 없음 ✓</td></tr>`}</tbody>
+      </table>
+    </div>`;
+  const edgeTable = `
+    <div class="border border-slate-700/40 rounded">
+      <div class="px-2 py-1 bg-slate-800/40 font-semibold">mci-edge-price 최근 ${edgeRecent.length}건 (최신순, 다중 instance 통합)</div>
+      <table class="w-full text-xs">
+        <thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">시각</th><th class="px-2 py-1">instance</th><th class="px-2 py-1">kind</th>
+          <th class="px-2 py-1">sub_id</th><th class="px-2 py-1">profile</th><th class="px-2 py-1">queue</th>
+        </tr></thead>
+        <tbody>${edgeRecent.length ? rows(edgeRecent, true) : `<tr><td colspan="6" class="px-2 py-2 text-slate-500">발생 없음 ✓</td></tr>`}</tbody>
+      </table>
+    </div>`;
+  $("#bp-tables").innerHTML = priceTable + edgeTable;
 }
 
 async function doCustomerSearch() {

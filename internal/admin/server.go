@@ -464,6 +464,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// N4. UI 통합 — mci-price 의 customer 단일 lookup + mci-edge-price 의 ws 연결.
 	mux.HandleFunc("GET /v1/admin/price/customers/{customerID}", PriceCustomerLookupProxy(s.cfg.PriceURL))
 	mux.HandleFunc("GET /v1/admin/edge/connections", EdgeConnectionsProxy(s.cfg.EdgeURLs))
+	mux.HandleFunc("GET /v1/admin/edge/backpressure", EdgeBackpressureProxy(s.cfg.EdgeURLs))
 	mux.HandleFunc("GET /v1/admin/edge/ping", EdgePingProxy(s.cfg.EdgeURLs))
 	mux.HandleFunc("GET /v1/admin/forwarder/stats", ForwarderStatsProxy(s.cfg.FwdURL))
 	// svc I/O 명세 — 매매 svc 의 input/output 구조 (헤더 파싱 결과) 노출.

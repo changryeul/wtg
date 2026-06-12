@@ -733,7 +733,16 @@ func (s *Server) startHTTP(ctx context.Context) error {
 				"registered":  true,
 			})
 		})
-		s.logger.Info("운영 진단 endpoint 활성 — GET /v1/subscribers, GET /v1/customers, GET /v1/customers/{customerID}")
+		// N7. backpressure history — checkBackpressure 가 WARN 발생 시 ring buffer 에
+		// 기록. 카운터만 보는 게 아니라 "최근 누가 어떤 큐로 정체 시점에 어디까지
+		// 찼었는가" 까지 운영 alert 후 즉시 진단 가능.
+		mux.HandleFunc("GET /v1/backpressure", func(w http.ResponseWriter, r *http.Request) {
+			if s.cfg.DevMode {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			writeJSON(w, http.StatusOK, SnapshotBackpressureStats())
+		})
+		s.logger.Info("운영 진단 endpoint 활성 — GET /v1/subscribers, GET /v1/customers, GET /v1/customers/{customerID}, GET /v1/backpressure")
 	}
 
 	mux.Handle("GET /metrics", s.metrics.Handler())

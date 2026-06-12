@@ -834,6 +834,64 @@ const backpressureInterval = 60 * time.Second
 // backpressureGate — (sub_id, kind) 별 마지막 WARN 시각. 1분당 1회 rate-limit.
 var backpressureGate sync.Map // map[string]*atomic.Int64
 
+// ─── Backpressure 통계 (N7) ─────────────────────────────────────────────
+// 누적 카운터 + 최근 history ring buffer. /v1/backpressure 로 노출.
+
+const backpressureHistoryCap = 100
+
+// BackpressureEvent — WARN 발생 시 ring 에 기록되는 단위.
+type BackpressureEvent struct {
+	TS         time.Time `json:"ts"`
+	SubID      uint64    `json:"sub_id"`
+	SrvID      string    `json:"srv_id"`
+	Kind       string    `json:"kind"`
+	QueueDepth int       `json:"queue_depth"`
+	QueueCap   int       `json:"queue_cap"`
+}
+
+// BackpressureStats — 외부 노출 형태.
+type BackpressureStats struct {
+	TotalWarnings uint64              `json:"total_warnings"`
+	HistoryCap    int                 `json:"history_cap"`
+	Recent        []BackpressureEvent `json:"recent"` // 최신순.
+}
+
+var (
+	backpressureWarnTotal atomic.Uint64
+	backpressureHistMu    sync.Mutex
+	backpressureHist      = make([]BackpressureEvent, 0, backpressureHistoryCap)
+)
+
+// recordBackpressureEvent — WARN 발사 시 호출. ring buffer 에 push (oldest drop).
+func recordBackpressureEvent(ev BackpressureEvent) {
+	backpressureWarnTotal.Add(1)
+	backpressureHistMu.Lock()
+	if len(backpressureHist) < backpressureHistoryCap {
+		backpressureHist = append(backpressureHist, ev)
+	} else {
+		// shift left — O(N) 이지만 N=100 으로 cheap. WARN 자체가 분당 1회 / 키.
+		copy(backpressureHist, backpressureHist[1:])
+		backpressureHist[len(backpressureHist)-1] = ev
+	}
+	backpressureHistMu.Unlock()
+}
+
+// SnapshotBackpressureStats — 외부 endpoint 용 snapshot. 최신 순 정렬.
+func SnapshotBackpressureStats() BackpressureStats {
+	backpressureHistMu.Lock()
+	cp := make([]BackpressureEvent, len(backpressureHist))
+	// 역순 — 가장 최근이 먼저.
+	for i, j := 0, len(backpressureHist)-1; j >= 0; i, j = i+1, j-1 {
+		cp[i] = backpressureHist[j]
+	}
+	backpressureHistMu.Unlock()
+	return BackpressureStats{
+		TotalWarnings: backpressureWarnTotal.Load(),
+		HistoryCap:    backpressureHistoryCap,
+		Recent:        cp,
+	}
+}
+
 // checkBackpressure — 큐 점유율 (len/cap) 이 80% 이상이면 rate-limited WARN.
 // hot path 에서 매 enqueue 직후 호출. ratio 미달 시 즉시 return — fast path.
 func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64, srvID, kind string) {
@@ -853,6 +911,10 @@ func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64
 			slog.Int("queue_depth", queueLen),
 			slog.Int("queue_cap", queueCap),
 		)
+		recordBackpressureEvent(BackpressureEvent{
+			TS: now, SubID: subID, SrvID: srvID, Kind: kind,
+			QueueDepth: queueLen, QueueCap: queueCap,
+		})
 		return
 	}
 	last := p.Load()
@@ -867,6 +929,10 @@ func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64
 			slog.Int("queue_depth", queueLen),
 			slog.Int("queue_cap", queueCap),
 		)
+		recordBackpressureEvent(BackpressureEvent{
+			TS: now, SubID: subID, SrvID: srvID, Kind: kind,
+			QueueDepth: queueLen, QueueCap: queueCap,
+		})
 	}
 }
 

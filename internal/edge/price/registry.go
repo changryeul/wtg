@@ -22,6 +22,59 @@ const backpressureInterval = 60 * time.Second
 
 var backpressureGate sync.Map // map[string]*atomic.Int64
 
+// ─── Backpressure 통계 (N7) ─────────────────────────────────────────────
+// 누적 카운터 + 최근 history. /v1/backpressure 로 노출.
+
+const backpressureHistoryCap = 100
+
+type BackpressureEvent struct {
+	TS         time.Time `json:"ts"`
+	SubID      uint64    `json:"sub_id"`
+	ProfileKey string    `json:"profile_key"`
+	Kind       string    `json:"kind"`
+	QueueDepth int       `json:"queue_depth"`
+	QueueCap   int       `json:"queue_cap"`
+}
+
+type BackpressureStats struct {
+	TotalWarnings uint64              `json:"total_warnings"`
+	HistoryCap    int                 `json:"history_cap"`
+	Recent        []BackpressureEvent `json:"recent"`
+}
+
+var (
+	backpressureWarnTotal atomic.Uint64
+	backpressureHistMu    sync.Mutex
+	backpressureHist      = make([]BackpressureEvent, 0, backpressureHistoryCap)
+)
+
+func recordBackpressureEvent(ev BackpressureEvent) {
+	backpressureWarnTotal.Add(1)
+	backpressureHistMu.Lock()
+	if len(backpressureHist) < backpressureHistoryCap {
+		backpressureHist = append(backpressureHist, ev)
+	} else {
+		copy(backpressureHist, backpressureHist[1:])
+		backpressureHist[len(backpressureHist)-1] = ev
+	}
+	backpressureHistMu.Unlock()
+}
+
+// SnapshotBackpressureStats — 최신순 정렬된 snapshot.
+func SnapshotBackpressureStats() BackpressureStats {
+	backpressureHistMu.Lock()
+	cp := make([]BackpressureEvent, len(backpressureHist))
+	for i, j := 0, len(backpressureHist)-1; j >= 0; i, j = i+1, j-1 {
+		cp[i] = backpressureHist[j]
+	}
+	backpressureHistMu.Unlock()
+	return BackpressureStats{
+		TotalWarnings: backpressureWarnTotal.Load(),
+		HistoryCap:    backpressureHistoryCap,
+		Recent:        cp,
+	}
+}
+
 func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64, profileKey, kind string) {
 	if queueCap == 0 || float64(queueLen) < backpressureRatio*float64(queueCap) {
 		return
@@ -39,6 +92,10 @@ func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64
 			slog.Int("queue_depth", queueLen),
 			slog.Int("queue_cap", queueCap),
 		)
+		recordBackpressureEvent(BackpressureEvent{
+			TS: now, SubID: subID, ProfileKey: profileKey, Kind: kind,
+			QueueDepth: queueLen, QueueCap: queueCap,
+		})
 		return
 	}
 	last := p.Load()
@@ -53,6 +110,10 @@ func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64
 			slog.Int("queue_depth", queueLen),
 			slog.Int("queue_cap", queueCap),
 		)
+		recordBackpressureEvent(BackpressureEvent{
+			TS: now, SubID: subID, ProfileKey: profileKey, Kind: kind,
+			QueueDepth: queueLen, QueueCap: queueCap,
+		})
 	}
 }
 

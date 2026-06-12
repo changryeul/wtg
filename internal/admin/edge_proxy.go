@@ -156,6 +156,113 @@ func EdgeConnectionsProxy(edgeURLs []string) http.HandlerFunc {
 	}
 }
 
+// EdgeBackpressureProxy — GET /v1/admin/edge/backpressure — 모든 instance
+// 의 backpressure history 통합 (각 event 에 instance label 부착).
+func EdgeBackpressureProxy(edgeURLs []string) http.HandlerFunc {
+	bases := make([]string, 0, len(edgeURLs))
+	for _, u := range edgeURLs {
+		t := strings.TrimSuffix(u, "/")
+		if t != "" {
+			bases = append(bases, t)
+		}
+	}
+	if len(bases) == 0 {
+		bases = []string{"http://127.0.0.1:8083"}
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+		defer cancel()
+		type bpResp struct {
+			TotalWarnings uint64                   `json:"total_warnings"`
+			HistoryCap    int                      `json:"history_cap"`
+			Recent        []map[string]interface{} `json:"recent"`
+		}
+		type result struct {
+			label string
+			body  bpResp
+			err   error
+		}
+		ch := make(chan result, len(bases))
+		var wg sync.WaitGroup
+		for _, base := range bases {
+			wg.Add(1)
+			go func(b string) {
+				defer wg.Done()
+				label := instanceLabel(b)
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, b+"/v1/backpressure", nil)
+				if err != nil {
+					ch <- result{label: label, err: err}
+					return
+				}
+				if v := r.Header.Get("X-WTG-User"); v != "" {
+					req.Header.Set("X-WTG-User", v)
+				}
+				resp, err := client.Do(req)
+				if err != nil {
+					ch <- result{label: label, err: err}
+					return
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode >= 400 {
+					b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+					ch <- result{label: label, err: fmt.Errorf("upstream HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))}
+					return
+				}
+				var parsed bpResp
+				if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+					ch <- result{label: label, err: err}
+					return
+				}
+				ch <- result{label: label, body: parsed}
+			}(base)
+		}
+		wg.Wait()
+		close(ch)
+		merged := map[string]interface{}{
+			"total_warnings":  uint64(0),
+			"by_instance":     map[string]uint64{},
+			"recent":          []map[string]interface{}{},
+			"instance_errors": []map[string]string{},
+		}
+		var total uint64
+		byInst := merged["by_instance"].(map[string]uint64)
+		recent := merged["recent"].([]map[string]interface{})
+		errs := merged["instance_errors"].([]map[string]string)
+		for r := range ch {
+			if r.err != nil {
+				errs = append(errs, map[string]string{"instance": r.label, "error": r.err.Error()})
+				continue
+			}
+			total += r.body.TotalWarnings
+			byInst[r.label] = r.body.TotalWarnings
+			for _, ev := range r.body.Recent {
+				ev["instance"] = r.label
+				recent = append(recent, ev)
+			}
+		}
+		// 최근순 정렬 — ts 필드 비교 (string RFC3339).
+		// 단순 string 비교가 RFC3339 에서는 시간순과 일치.
+		for i := 1; i < len(recent); i++ {
+			for j := i; j > 0; j-- {
+				tsi, _ := recent[j-1]["ts"].(string)
+				tsj, _ := recent[j]["ts"].(string)
+				if tsi < tsj { // 최신이 앞에 와야 — i 가 더 최신
+					recent[j-1], recent[j] = recent[j], recent[j-1]
+				} else {
+					break
+				}
+			}
+		}
+		merged["total_warnings"] = total
+		merged["recent"] = recent
+		merged["instance_errors"] = errs
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(merged)
+	}
+}
+
 // EdgePingProxy — GET /v1/admin/edge/ping — 모든 instance health 일괄 조회.
 func EdgePingProxy(edgeURLs []string) http.HandlerFunc {
 	bases := make([]string, 0, len(edgeURLs))

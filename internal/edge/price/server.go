@@ -642,6 +642,10 @@ func (s *Server) BuildHandler() http.Handler {
 			"connections": snap,
 		})
 	})
+	// N7. backpressure history — checkBackpressure 가 WARN 발생 시 ring buffer.
+	mux.HandleFunc("GET /v1/backpressure", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, SnapshotBackpressureStats())
+	})
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	// Phase 4b admin endpoint — 별도 IP allowlist 가드. cfg.AdminAllowCIDRs

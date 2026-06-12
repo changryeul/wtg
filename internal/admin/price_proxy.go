@@ -18,8 +18,9 @@ import (
 var pricePathAllowlist = map[string]string{
 	"price-stats": "/v1/price-stats",
 	"best-stats":  "/v1/best-stats",
-	"subscribers": "/v1/subscribers", // gRPC stream 카탈로그 (UI 통합 N4)
-	"customers":   "/v1/customers",   // 등록된 customer digest
+	"subscribers":  "/v1/subscribers",  // gRPC stream 카탈로그 (UI 통합 N4)
+	"customers":    "/v1/customers",    // 등록된 customer digest
+	"backpressure": "/v1/backpressure", // backpressure WARN history (N7)
 }
 
 // PriceStatsProxy — GET /v1/admin/price/{kind} — kind ∈ {price-stats, best-stats}.

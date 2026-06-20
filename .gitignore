@@ -24,3 +24,22 @@ build/
 /mci-edge-chart
 /quote-forwarder
 /dev-bar-faker
+/load-gen
+/quote-diff
+/fx-sync
+
+# cside C SDK 빌드 산출물 — 소스만 commit, 산출물은 `make cside`/`make wtgprice` 가 재생성
+cside/*/*.a
+cside/*/*.o
+cside/*/sample
+cside/*/sample.dSYM/
+
+# proto / pb.go 의 임시 백업
+*.pb.go.bak
+*.proto.bak
+
+# 한글 발표자료 / 임시 자산 — 정식 위치로 옮길 때까지 commit 안 함
+/WTG_*.html
+/WTG_*.docx
+/WTG_*.pptx
+/watch.sh

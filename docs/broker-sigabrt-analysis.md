@@ -6,16 +6,16 @@
 
 ## 1. 정황
 
-| 측정 | 값 |
-|------|----|
-| broker | docker container `wtg-mymqd:latest` |
-| trigger | quote-forwarder publish (mode=broker) — UDP 시세 → broker PRICE FANOUT |
-| ExitCode | **134** = 128 + 6 = **SIGABRT** |
-| OOMKilled | `false` — 메모리 부족 아님 |
-| broker stderr (docker logs) | 비어있음 — glibc/stack-smash 자동 메시지도 없음 |
+| 측정                              | 값                                                                    |
+| ------------------------------- | -------------------------------------------------------------------- |
+| broker                          | docker container `wtg-mymqd:latest`                                  |
+| trigger                         | quote-forwarder publish (mode=broker) — UDP 시세 → broker PRICE FANOUT |
+| ExitCode                        | **134** = 128 + 6 = **SIGABRT**                                      |
+| OOMKilled                       | `false` — 메모리 부족 아님                                                  |
+| broker stderr (docker logs)     | 비어있음 — glibc/stack-smash 자동 메시지도 없음                                  |
 | broker file log (`mymqd-0.log`) | `Publish broadcasting message : #N to 1f` 직후 abrupt 종료. fatal log 없음 |
-| 부하 강도 | 약 1600 msg/s 5초 누적 → ~8000 publish |
-| 발생 일관성 | 100% reproducible — broker mode 부하 시작 후 수 초 내 |
+| 부하 강도                           | 약 1600 msg/s 5초 누적 → ~8000 publish                                   |
+| 발생 일관성                          | 100% reproducible — broker mode 부하 시작 후 수 초 내                        |
 
 ## 2. 임시 회피 (현재 운영 상태)
 
@@ -56,13 +56,13 @@ publish_packet(client, pktbuf, pktlen)        ← packet_proc 가 호출
 
 ### 3.2 의심 후보 (SIGABRT 가능 위치)
 
-| # | 위치 | 시나리오 | 영향 |
-|---|------|---------|------|
-| **A** | publisher thread 의 `clientmap` iter (line 178~234) | 다른 thread 가 client_alloc / client_close 중. `memset(client, 0, ...)` (client.c:300) 와 동시 진행 | client 필드가 garbage. `client->ioix` out-of-bounds → `iofunc[]` array overflow → 다른 함수 pointer 호출 → 임의 abort |
-| **B** | `MAX_PUBLISH_Q = 40` (line 10) | 부하 시 publish_q 가득 → `cond_timedwait` 3초 block. broker reader thread 가 block 되면 TCP buffer 누적 | 직접 SIGABRT 아니지만 메모리 / heap 압박 트리거 |
-| **C** | `iofunc[client->ioix].send(...)` (line 232) | client_close 와 race — `client->mqio.pktbuf=NULL` set 후 send 가 access | NULL deref → 보통 SIGSEGV (139). SIGABRT 아님 |
-| **D** | `packet_free(pktbuf)` (line 237) | publisher 가 처리 끝나고 free. 한편 동일 pktbuf 가 다른 path 에서 참조 중일 수 있음 | double-free 또는 use-after-free → glibc abort (134) |
-| **E** | `strcasecmp(client->xchg, pubmsg.exchange)` (line 226) | `client->xchg` 의 메모리가 client_alloc 시점에 memset 되었거나 새 string 으로 reset 중 | strcasecmp 가 invalid pointer 읽으면 SIGSEGV. SIGABRT 아님 |
+| #     | 위치                                                     | 시나리오                                                                                         | 영향                                                                                                         |
+| ----- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **A** | publisher thread 의 `clientmap` iter (line 178~234)     | 다른 thread 가 client_alloc / client_close 중. `memset(client, 0, ...)` (client.c:300) 와 동시 진행   | client 필드가 garbage. `client->ioix` out-of-bounds → `iofunc[]` array overflow → 다른 함수 pointer 호출 → 임의 abort |
+| **B** | `MAX_PUBLISH_Q = 40` (line 10)                         | 부하 시 publish_q 가득 → `cond_timedwait` 3초 block. broker reader thread 가 block 되면 TCP buffer 누적 | 직접 SIGABRT 아니지만 메모리 / heap 압박 트리거                                                                          |
+| **C** | `iofunc[client->ioix].send(...)` (line 232)            | client_close 와 race — `client->mqio.pktbuf=NULL` set 후 send 가 access                         | NULL deref → 보통 SIGSEGV (139). SIGABRT 아님                                                                  |
+| **D** | `packet_free(pktbuf)` (line 237)                       | publisher 가 처리 끝나고 free. 한편 동일 pktbuf 가 다른 path 에서 참조 중일 수 있음                                | double-free 또는 use-after-free → glibc abort (134)                                                          |
+| **E** | `strcasecmp(client->xchg, pubmsg.exchange)` (line 226) | `client->xchg` 의 메모리가 client_alloc 시점에 memset 되었거나 새 string 으로 reset 중                       | strcasecmp 가 invalid pointer 읽으면 SIGSEGV. SIGABRT 아님                                                       |
 
 ### 3.3 가장 강한 후보 — A (clientmap race) + D (double-free)
 

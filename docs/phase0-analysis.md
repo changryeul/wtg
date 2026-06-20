@@ -180,20 +180,20 @@ struct broadcast {
 
 ### 4.1 FUNC (mqhdr.func, content.func)
 
-| 값 | 이름 | 설명 |
-|----|------|-----|
-| 1 | FC_CNTL | 제어 명령 (CONNECT/DECLARE_*/BIND_SERVICE) |
-| 2 | FC_DOMAIN | 도메인 네트워크 명령 |
-| 3 | FC_ADMIN | 관리 명령 (GET_STATUS/CLIENT/...) |
-| 4 | FC_CAST | broadcast |
-| 5 | FC_NOTIFY | notify (응답 없는 트랜) |
-| 10 | FC_TRAN | 트랜잭션 (request/reply) |
-| 11 | FC_FANOUT | fanout |
-| 12 | FC_UNSO | unsolicited |
-| 13 | FC_PUSH | push |
-| 14 | FC_SIGNAL | signal |
-| 15 | FC_BULK | ftp/bulk |
-| 100 | FC_RAW | free format |
+| 값   | 이름        | 설명                                     |
+| --- | --------- | -------------------------------------- |
+| 1   | FC_CNTL   | 제어 명령 (CONNECT/DECLARE_*/BIND_SERVICE) |
+| 2   | FC_DOMAIN | 도메인 네트워크 명령                            |
+| 3   | FC_ADMIN  | 관리 명령 (GET_STATUS/CLIENT/...)          |
+| 4   | FC_CAST   | broadcast                              |
+| 5   | FC_NOTIFY | notify (응답 없는 트랜)                      |
+| 10  | FC_TRAN   | 트랜잭션 (request/reply)                   |
+| 11  | FC_FANOUT | fanout                                 |
+| 12  | FC_UNSO   | unsolicited                            |
+| 13  | FC_PUSH   | push                                   |
+| 14  | FC_SIGNAL | signal                                 |
+| 15  | FC_BULK   | ftp/bulk                               |
+| 100 | FC_RAW    | free format                            |
 
 ### 4.2 SUBC (자주 쓰는 것만)
 

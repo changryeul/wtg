@@ -1,0 +1,77 @@
+# Prometheus alert rules — mci-price 의 FX swap 잠금 (Phase S3-e).
+#
+# 설치: Prometheus rule_files 에 추가 + Alertmanager 통해 Slack/PagerDuty.
+#
+# 주의: 본 룰은 mci-price 가 swap 카운터를 Prometheus 형식으로도 노출하면
+# 즉시 활성. 현재 (S3-e) 는 `GET /v1/quote/swap/stats` 의 JSON 만 노출 —
+# admin UI 가 시각화. Prometheus 노출 (`internal/price/metrics_p6.go` 의
+# AtomicSwapLockMetrics → counter vec 매핑) 은 S3 후속.
+#
+# 메트릭 명 컨벤션 (예정):
+#   wtg_swap_lock_requests_total{instance}
+#   wtg_swap_lock_successes_total{instance}
+#   wtg_swap_lock_partial_failures_total{instance, stage="near|far|swap_index"}
+#   wtg_swap_lock_revoke_total{instance, outcome="ok|fail"}
+
+groups:
+  - name: wtg-swap-lock-alerts
+    interval: 30s
+    rules:
+      # 부분실패 비율 — 정상 < 0.1%, > 1% 면 위험.
+      - alert: SwapLockPartialFailureRate
+        expr: |
+          sum by (instance) (rate(wtg_swap_lock_partial_failures_total[5m]))
+            /
+          sum by (instance) (rate(wtg_swap_lock_requests_total[5m]))
+            > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: mci-price
+          domain: swap-lock
+        annotations:
+          summary: "FX swap 잠금 부분실패율 > 1%"
+          description: "{{ $labels.instance }} 의 5m 평균 부분실패율 {{ $value | humanizePercentage }} — Registry/SwapIndex (Redis) 점검."
+          runbook_url: "docs/swap-trade-spec.md#4.5-부분-실패-정책"
+
+      # revoke 실패 — stale quote_id 잔존. 즉시 분쟁 큐 / 매매 AP validate 가 reject 처리해야.
+      - alert: SwapLockRevokeFailure
+        expr: |
+          sum by (instance) (increase(wtg_swap_lock_revoke_total{outcome="fail"}[10m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+          service: mci-price
+          domain: swap-lock
+        annotations:
+          summary: "FX swap 잠금 revoke 실패 — stale quote_id 잔존 가능"
+          description: "{{ $labels.instance }} 에서 부분실패 후 revoke 실패가 10m 누적. 매매 AP 측 ValidateSwap 이 stale leg 를 reject 하는지 확인 필요."
+          runbook_url: "docs/swap-trade-spec.md#4.5-부분-실패-정책"
+
+      # swap_index 단계 실패 — 가장 위험한 단계 (near+far 둘 다 revoke 필요).
+      - alert: SwapLockSwapIndexFailure
+        expr: |
+          sum by (instance) (rate(wtg_swap_lock_partial_failures_total{stage="swap_index"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: mci-price
+          domain: swap-lock
+        annotations:
+          summary: "FX swap_index 등록 실패 지속"
+          description: "{{ $labels.instance }} 의 swap_index.PutSwap 5m 누적 실패. SwapIndex (Redis) 연결성 / pipeline timeout 점검."
+          runbook_url: "docs/swap-trade-spec.md#3-설계-원칙"
+
+      # ConsumeSwap partial-race — 두 leg 중 한 쪽만 표시되는 race. 정상 운영에선 매우 드물어야.
+      - alert: ConsumeSwapPartialRace
+        expr: |
+          sum by (instance) (rate(wtg_consume_swap_partial_race_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: mci-price
+          domain: swap-lock
+        annotations:
+          summary: "ConsumeSwap partial-race 발생"
+          description: "{{ $labels.instance }} 에서 두 leg 중 한 쪽만 MarkConsumed 표시되는 race 가 5m 지속. 매매 AP 의 leg revoke 정책 점검."
+          runbook_url: "docs/swap-trade-spec.md#6-broker-측-변경-매매-ap"

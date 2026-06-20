@@ -261,19 +261,19 @@ SpotDate(now, spot_days=2) = AddBusinessDaysCal(startOfDay(now), 2, calendar)
 
 WTG 가 **현재 지원하지 않는** 정책 패턴들. 운영 도입 결정 시 §7.3 의 hook 으로 확장.
 
-| 카테고리 | 의도 | 입력 데이터 | 적용 시점 | WTG 확장 위치 |
-|---------|------|-----------|----------|--------------|
-| **A. 누적 거래량 기반 할인** | 월별 N$ 이상 거래 고객에게 마진 X% 할인 | customer_id 별 월 누적 / etcd 또는 Redis | `ApplyForCustomer` 의 customer layer | 새 layer `Volume`, customer.go 옆 `volume.go` |
-| **B. 시간대별 마진 (TimeWindow 확장)** | 장외/주말/야간에 마진 가산 (변동성 보상) | 시간대 룰 (`time_windows` 이미 도입) | 모든 layer entry 의 `window` 필드 매칭 | 이미 구현 — DB CMG015/019 에 `time_window` 컬럼 추가만 필요 |
-| **C. 변동성 추적 마진 (ATR)** | 최근 N분 ATR 이 임계 초과 시 마진 동적 확장 | mci-price 의 BestConsumer recent tick window | `Apply` 직전 추가 dynamic layer | 새 `volatility.go` + ring buffer 기반 ATR |
-| **D. 환위험 한도 기반 자동 마진** | 회사 net position 이 한 방향 누적 시 그쪽 가격 unfavorable | 외환 시스템의 hedge 잔량 | `Apply` 결과에 ±α 가산 | 새 layer `RiskAdjust` — 외부 REST/etcd 입력 |
-| **E. 통화 group 별 차등** | KRW pair / Major / 신흥국 group 별 다른 base 마진 | currency master 의 `group` 컬럼 | HQ lookup 전 group 매칭 우선 | `engine.go` `lookupHQ` 분기 추가 |
-| **F. 최소 마진 floor / 최대 마진 cap** | 시장 변동성 이하로 낮아지지 않도록 / 너무 높지 않도록 | floor/cap 정책 entry | `Apply` 결과 후처리 | `engine.go` 끝부분 `clamp(minSpread, maxSpread)` |
-| **G. 시장 휴장 시 마진 가산** | 주요 시장 (런던/뉴욕) 휴장 중에는 spread 확장 | session_clock + 거래소 캘린더 | TimeWindow 와 유사 | 새 `market_hours.go` |
-| **H. 신규 고객 promotion 마진** | 등록 N일 이내 고객에게 마진 −α | customer 의 created_at | customer layer 의 priority 보정 | `matchCustomerRule` 의 추가 필터 |
-| **I. 채널별 보너스 (모바일 vs 영업점)** | 모바일 채널 마진 −α (디지털 가입 유도) | Profile.Channel | Site margin 의 channel 별 entry 로 이미 가능 | DB 만 추가 |
-| **J. 종가 (closing rate) 우선 매칭** | 일정 시각 이후 거래는 직전 종가 ±α 만 허용 | daily snapshot | `Apply` 진입 전 시각 분기 | `engine.go` 앞단 분기 — closing snapshot lookup |
-| **K. 거래 통화 한도** | 통화별 일/월 한도 초과 시 가격 unfavorable + 알림 | 누적 거래량 / 한도 정책 | engine 외부 (mci-api `/v1/tx` 진입 시 거부) | **WTG 책임 X** — 매매 엔진에 위임 (`docs/auth.md`) |
+| 카테고리                           | 의도                                            | 입력 데이터                                      | 적용 시점                                 | WTG 확장 위치                                       |
+| ------------------------------ | --------------------------------------------- | ------------------------------------------- | ------------------------------------- | ----------------------------------------------- |
+| **A. 누적 거래량 기반 할인**            | 월별 N$ 이상 거래 고객에게 마진 X% 할인                     | customer_id 별 월 누적 / etcd 또는 Redis          | `ApplyForCustomer` 의 customer layer   | 새 layer `Volume`, customer.go 옆 `volume.go`     |
+| **B. 시간대별 마진 (TimeWindow 확장)** | 장외/주말/야간에 마진 가산 (변동성 보상)                      | 시간대 룰 (`time_windows` 이미 도입)                | 모든 layer entry 의 `window` 필드 매칭       | 이미 구현 — DB CMG015/019 에 `time_window` 컬럼 추가만 필요 |
+| **C. 변동성 추적 마진 (ATR)**         | 최근 N분 ATR 이 임계 초과 시 마진 동적 확장                  | mci-price 의 BestConsumer recent tick window | `Apply` 직전 추가 dynamic layer           | 새 `volatility.go` + ring buffer 기반 ATR          |
+| **D. 환위험 한도 기반 자동 마진**         | 회사 net position 이 한 방향 누적 시 그쪽 가격 unfavorable | 외환 시스템의 hedge 잔량                            | `Apply` 결과에 ±α 가산                     | 새 layer `RiskAdjust` — 외부 REST/etcd 입력          |
+| **E. 통화 group 별 차등**           | KRW pair / Major / 신흥국 group 별 다른 base 마진     | currency master 의 `group` 컬럼                | HQ lookup 전 group 매칭 우선               | `engine.go` `lookupHQ` 분기 추가                    |
+| **F. 최소 마진 floor / 최대 마진 cap** | 시장 변동성 이하로 낮아지지 않도록 / 너무 높지 않도록               | floor/cap 정책 entry                          | `Apply` 결과 후처리                        | `engine.go` 끝부분 `clamp(minSpread, maxSpread)`   |
+| **G. 시장 휴장 시 마진 가산**           | 주요 시장 (런던/뉴욕) 휴장 중에는 spread 확장                | session_clock + 거래소 캘린더                     | TimeWindow 와 유사                       | 새 `market_hours.go`                             |
+| **H. 신규 고객 promotion 마진**      | 등록 N일 이내 고객에게 마진 −α                           | customer 의 created_at                       | customer layer 의 priority 보정          | `matchCustomerRule` 의 추가 필터                     |
+| **I. 채널별 보너스 (모바일 vs 영업점)**    | 모바일 채널 마진 −α (디지털 가입 유도)                      | Profile.Channel                             | Site margin 의 channel 별 entry 로 이미 가능 | DB 만 추가                                         |
+| **J. 종가 (closing rate) 우선 매칭** | 일정 시각 이후 거래는 직전 종가 ±α 만 허용                    | daily snapshot                              | `Apply` 진입 전 시각 분기                    | `engine.go` 앞단 분기 — closing snapshot lookup     |
+| **K. 거래 통화 한도**                | 통화별 일/월 한도 초과 시 가격 unfavorable + 알림           | 누적 거래량 / 한도 정책                              | engine 외부 (mci-api `/v1/tx` 진입 시 거부)  | **WTG 책임 X** — 매매 엔진에 위임 (`docs/auth.md`)       |
 
 > 카테고리 K 는 **WTG 가 처리하지 말 것** — 비즈니스 권한이라 매매 엔진 (`mymqd` AP) 책임.
 > WTG 는 가격 산출만, 거래 거부는 엔진의 응답을 그대로 전달.

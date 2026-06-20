@@ -73,15 +73,15 @@ mymq.Open(ctx, host, port, mymq.Options{
 
 ### 카탈로그
 
-| 상수 | 값 | 의미 |
-|-----|---|-----|
-| `ChannelWeb` | `WEB` | 웹 브라우저 |
-| `ChannelMobile` | `MOB` | 모바일 |
-| `ChannelCS` | `CS` | 기존 CS 클라이언트 (presto / vivace) |
-| `ChannelAdmin` | `ADM` | 직원 어드민 |
-| `ChannelFix` | `FIX` | 외부 FIX 카운터파티 |
-| `ChannelAPI` | `API` | 외부 REST API 통합 |
-| `ChannelBot` | `BOT` | 자동매매 봇 |
+| 상수              | 값     | 의미                            |
+| --------------- | ----- | ----------------------------- |
+| `ChannelWeb`    | `WEB` | 웹 브라우저                        |
+| `ChannelMobile` | `MOB` | 모바일                           |
+| `ChannelCS`     | `CS`  | 기존 CS 클라이언트 (presto / vivace) |
+| `ChannelAdmin`  | `ADM` | 직원 어드민                        |
+| `ChannelFix`    | `FIX` | 외부 FIX 카운터파티                  |
+| `ChannelAPI`    | `API` | 외부 REST API 통합                |
+| `ChannelBot`    | `BOT` | 자동매매 봇                        |
 
 ### 자동 첨부
 
@@ -94,15 +94,15 @@ mymq.Open(ctx, host, port, mymq.Options{
 
 ### Exchange
 
-| 상수 | 이름 | 타입 | Producer | Consumer |
-|-----|-----|------|---------|---------|
-| `ExchangeOrder` | `ORDER` | DIRECT | mci-api | 매매 엔진 |
-| `ExchangeExec` | `EXEC` | FANOUT | 매매 엔진 | mci-push |
-| `ExchangePrice` | `PRICE` | FANOUT | cooker | mci-price |
-| `ExchangeAlert` | `ALERT` | DIRECT | 리스크 엔진 | mci-push |
-| `ExchangeSignal` | `SIGNAL` | FANOUT | mci-admin | 모든 mci-* |
-| `ExchangeAdmin` | `ADMIN` | DIRECT | mci-admin | mymqd |
-| `ExchangeAudit` | `AUDIT` | FANOUT | 모든 mci-* | mci-admin |
+| 상수               | 이름       | 타입     | Producer  | Consumer  |
+| ---------------- | -------- | ------ | --------- | --------- |
+| `ExchangeOrder`  | `ORDER`  | DIRECT | mci-api   | 매매 엔진     |
+| `ExchangeExec`   | `EXEC`   | FANOUT | 매매 엔진     | mci-push  |
+| `ExchangePrice`  | `PRICE`  | FANOUT | cooker    | mci-price |
+| `ExchangeAlert`  | `ALERT`  | DIRECT | 리스크 엔진    | mci-push  |
+| `ExchangeSignal` | `SIGNAL` | FANOUT | mci-admin | 모든 mci-*  |
+| `ExchangeAdmin`  | `ADMIN`  | DIRECT | mci-admin | mymqd     |
+| `ExchangeAudit`  | `AUDIT`  | FANOUT | 모든 mci-*  | mci-admin |
 
 ### Routing Key (DIRECT exchange 만)
 

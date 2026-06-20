@@ -403,6 +403,17 @@ func main() {
 	if quoteIDGen != nil && quoteIDReg != nil {
 		srv.AttachQuoteID(quoteIDGen, quoteIDReg, cfg.QuoteIDValidity)
 	}
+	// S3-b — swap/lock endpoint. EnableSwapLock + Registry 가 SwapIndex 도
+	// 구현할 때만 활성. MemoryRegistry 는 둘 다 구현하므로 dev 에서 자동 동작.
+	// Redis (S3-c) 도입 후엔 별도 SwapIndex impl 을 주입.
+	if cfg.EnableSwapLock && quoteIDReg != nil {
+		if idx, ok := quoteIDReg.(quoteid.SwapIndex); ok {
+			srv.AttachSwapIndex(idx)
+		} else {
+			logger.Warn("EnableSwapLock=true 인데 Registry 가 SwapIndex 미구현 — swap endpoint 비활성",
+				slog.String("hint", "MemoryRegistry 또는 S3-c Redis SwapIndex 필요"))
+		}
+	}
 	if etcdTblWatch != nil {
 		defer etcdTblWatch.Close()
 	}
@@ -420,6 +431,14 @@ func main() {
 		logger.Warn("P6 메트릭 등록 실패", slog.Any("error", err))
 	} else {
 		logger.Info("P6 metrics 등록 — wtg_cross_*, wtg_pricing_*, wtg_master_*")
+	}
+
+	// S3 swap 메트릭 — swap_lock 발급 + ValidateSwap/ConsumeSwap RPC + partial-race.
+	// 미주입 컴포넌트는 nil 로 자동 skip.
+	if err := price.RegisterSwapMetrics(srv.Metrics(), srv.SwapLockMetrics(), srv.QuoteValidator()); err != nil {
+		logger.Warn("Swap 메트릭 등록 실패", slog.Any("error", err))
+	} else if srv.SwapLockMetrics() != nil || srv.QuoteValidator() != nil {
+		logger.Info("Swap metrics 등록 — wtg_swap_lock_*, wtg_swap_validate_total, wtg_swap_consume_total, wtg_consume_swap_partial_race_total")
 	}
 
 	// 6) Server 시작 (블로킹).

@@ -76,6 +76,23 @@ type QuoteValidationServer struct {
 	batchConsumeTotal atomic.Uint64 // BatchMarkConsumed RPC 누적
 	batchConsumeItems atomic.Uint64 // 처리된 표시 항목 총합
 	deniedEngine      atomic.Uint64 // engine_id allowlist 거절
+
+	// S3-c — swap_id 인덱스 + swap 검증/소비 카운터. nil 이면 ValidateSwap /
+	// ConsumeSwap 이 Unimplemented 반환.
+	swapIdx               atomic.Pointer[quoteid.SwapIndex]
+	swapValidateTotal     atomic.Uint64
+	swapValidateOK        atomic.Uint64
+	swapValidateNotFound  atomic.Uint64
+	swapValidateExpired   atomic.Uint64
+	swapValidateConsumed  atomic.Uint64
+	swapValidateInternal  atomic.Uint64
+	swapConsumeTotal       atomic.Uint64
+	swapConsumeOK          atomic.Uint64
+	swapConsumeAlready     atomic.Uint64
+	swapConsumeNotFound    atomic.Uint64
+	swapConsumeExpired     atomic.Uint64
+	swapConsumeInternal    atomic.Uint64
+	swapConsumePartialRace atomic.Uint64 // 2단계 race — 사전검사 OK 였는데 MarkConsumed 에서 한 leg ALREADY
 }
 
 // NewQuoteValidationServer — Registry 가 nil 이면 panic. logger 가 nil 이면

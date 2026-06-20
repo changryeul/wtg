@@ -96,6 +96,11 @@ type Server struct {
 	quoteIDReg      quoteid.Registry
 	quoteIDValidity time.Duration
 
+	// S3-b — swap/lock endpoint 용. AttachSwapIndex 로 주입. nil 이면 swap
+	// endpoint 미등록 (forward/lock 은 영향 X).
+	swapIndex   quoteid.SwapIndex
+	swapMetrics *AtomicSwapLockMetrics
+
 	totalRecv  atomic.Uint64
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
 	totalDrop  atomic.Uint64 // 디코딩 실패 등
@@ -233,6 +238,66 @@ func (s *Server) AttachQuoteID(gen *quoteid.Generator, reg quoteid.Registry, val
 func (s *Server) AttachQuoteValidator(v *QuoteValidationServer) {
 	s.quoteValidator = v
 }
+
+// registerSwapLockRoutes — S3-b. swap/lock endpoint + stats 등록.
+// 별도 메서드로 분리해 단위 테스트가 mux 직접 검증 가능. EnableSwapLock 와
+// 모든 deps 가 채워졌을 때만 라우트 등록 — 그 외엔 no-op.
+func (s *Server) registerSwapLockRoutes(mux *http.ServeMux) {
+	if !s.cfg.EnableSwapLock {
+		return
+	}
+	if s.pricingStore == nil || s.best == nil ||
+		s.quoteIDGen == nil || s.quoteIDReg == nil || s.swapIndex == nil {
+		return
+	}
+	if s.swapMetrics == nil {
+		s.swapMetrics = &AtomicSwapLockMetrics{}
+	}
+	mux.HandleFunc("POST /v1/quote/swap/lock",
+		SwapLockHandler(SwapLockDeps{
+			Store:      s.pricingStore,
+			Best:       s.best,
+			Cross:      s.crossConsumer,
+			Gen:        s.quoteIDGen,
+			Reg:        s.quoteIDReg,
+			Idx:        s.swapIndex,
+			Validity:   s.quoteIDValidity,
+			PutTimeout: s.cfg.QuoteIDRegistryTimeout,
+			SpotDays:   2, // S3 1차: T+2 고정. pair 별 컨벤션은 후속.
+			Metrics:    s.swapMetrics,
+		}, s.cfg.DevMode))
+	mux.HandleFunc("GET /v1/quote/swap/stats", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.DevMode {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		writeJSON(w, http.StatusOK, s.swapMetrics.Snapshot())
+	})
+	s.logger.Info("Swap quote-lock endpoint 활성 — POST /v1/quote/swap/lock + GET /v1/quote/swap/stats",
+		slog.Duration("validity", s.quoteIDValidity))
+}
+
+// AttachSwapIndex — S3-b. swap/lock endpoint 의 swap_id 인덱스 store 주입.
+// nil 또는 EnableSwapLock=false 면 endpoint 미등록 — forward/lock 은 영향 X.
+// MemoryRegistry 는 Registry + SwapIndex 둘 다 구현하므로 같은 인스턴스를
+// AttachQuoteID + AttachSwapIndex 양쪽에 주입 가능 (운영 = Redis SwapIndex
+// 도입 S3-c 후 분리).
+func (s *Server) AttachSwapIndex(idx quoteid.SwapIndex) {
+	s.swapIndex = idx
+	if s.swapMetrics == nil {
+		s.swapMetrics = &AtomicSwapLockMetrics{}
+	}
+	// QuoteValidationServer 가 주입돼 있으면 swap RPC 활성화도 같이.
+	if s.quoteValidator != nil {
+		s.quoteValidator.SetSwapIndex(idx)
+	}
+}
+
+// SwapLockMetrics — admin/Prometheus exporter 가 stats 조회. nil 가능.
+func (s *Server) SwapLockMetrics() *AtomicSwapLockMetrics { return s.swapMetrics }
+
+// QuoteValidator — 현재 attached 된 QuoteValidationServer. nil 가능 — Prometheus
+// 메트릭 등록 등 외부 wire 용.
+func (s *Server) QuoteValidator() *QuoteValidationServer { return s.quoteValidator }
 
 // Metrics — Prometheus Registry 노출. main.go 가 validator 에 주입 시 사용.
 func (s *Server) Metrics() *metrics.Registry { return s.metrics }
@@ -666,6 +731,7 @@ func (s *Server) startHTTP(ctx context.Context) error {
 		s.logger.Info("Forward quote-lock endpoint 활성 — POST /v1/quote/forward/lock",
 			slog.Duration("validity", s.quoteIDValidity))
 	}
+	s.registerSwapLockRoutes(mux)
 	// 운영 진단 — gRPC stream 카탈로그 (누가 구독 중인가). grpcSrv 가 주입된
 	// 경우에만 노출. 큐 깊이 = backpressure 가시화. operator 가 "지금 edge-A 가
 	// VIP profile 받고 있나" 같은 질문에 즉시 답하기 위한 endpoint.

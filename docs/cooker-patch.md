@@ -8,12 +8,12 @@
 
 ## 1. 변경 범위
 
-| 항목 | 변경 |
-|-----|------|
-| Cooker 코드 | `myrq_push` 호출부에 `publish_price()` wrapper 도입 (5줄) |
-| MyMQ 헤더 | 변경 없음 |
-| `mymqd.cfg` | `PRICE` exchange / queue / bind 추가 |
-| myrqd / 기존 클라이언트 | 변경 없음 |
+| 항목               | 변경                                                 |
+| ---------------- | -------------------------------------------------- |
+| Cooker 코드        | `myrq_push` 호출부에 `publish_price()` wrapper 도입 (5줄) |
+| MyMQ 헤더          | 변경 없음                                              |
+| `mymqd.cfg`      | `PRICE` exchange / queue / bind 추가                 |
+| myrqd / 기존 클라이언트 | 변경 없음                                              |
 
 기존 `presto`, `vivace`, `znet` 등의 시세 수신은 영향 없음. 신규 mci-price만 broker 경유로 시세 수신.
 

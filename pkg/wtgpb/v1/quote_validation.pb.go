@@ -651,6 +651,300 @@ func (x *MarkConsumedResponse) GetRejectText() string {
 	return ""
 }
 
+// ValidateSwapRequest — swap_id 한 개로 두 leg 동시 검증.
+type ValidateSwapRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SwapId        string                 `protobuf:"bytes,1,opt,name=swap_id,json=swapId,proto3" json:"swap_id,omitempty"`
+	EngineId      string                 `protobuf:"bytes,10,opt,name=engine_id,json=engineId,proto3" json:"engine_id,omitempty"`
+	TsUnixNano    int64                  `protobuf:"varint,11,opt,name=ts_unix_nano,json=tsUnixNano,proto3" json:"ts_unix_nano,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ValidateSwapRequest) Reset() {
+	*x = ValidateSwapRequest{}
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValidateSwapRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValidateSwapRequest) ProtoMessage() {}
+
+func (x *ValidateSwapRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValidateSwapRequest.ProtoReflect.Descriptor instead.
+func (*ValidateSwapRequest) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ValidateSwapRequest) GetSwapId() string {
+	if x != nil {
+		return x.SwapId
+	}
+	return ""
+}
+
+func (x *ValidateSwapRequest) GetEngineId() string {
+	if x != nil {
+		return x.EngineId
+	}
+	return ""
+}
+
+func (x *ValidateSwapRequest) GetTsUnixNano() int64 {
+	if x != nil {
+		return x.TsUnixNano
+	}
+	return 0
+}
+
+// ValidateSwapResponse — swap 단위 결과 + 개별 leg 결과.
+//
+//	swap_status:
+//	  OK              : 두 leg 모두 OK — 거래 가능.
+//	  NOT_FOUND       : swap_id 자체 미존재 / 만료.
+//	  EXPIRED         : 두 leg 중 하나라도 EXPIRED.
+//	  ALREADY_CONSUMED: 두 leg 중 하나라도 ALREADY_CONSUMED.
+//	near / far : 개별 leg 의 ValidateResponse (audit + reject 이유 추적).
+type ValidateSwapResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SwapStatus    ValidationStatus       `protobuf:"varint,1,opt,name=swap_status,json=swapStatus,proto3,enum=wtg.v1.ValidationStatus" json:"swap_status,omitempty"`
+	Near          *ValidateResponse      `protobuf:"bytes,2,opt,name=near,proto3" json:"near,omitempty"`
+	Far           *ValidateResponse      `protobuf:"bytes,3,opt,name=far,proto3" json:"far,omitempty"`
+	OrdRejReason  int32                  `protobuf:"varint,4,opt,name=ord_rej_reason,json=ordRejReason,proto3" json:"ord_rej_reason,omitempty"`
+	RejectText    string                 `protobuf:"bytes,5,opt,name=reject_text,json=rejectText,proto3" json:"reject_text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ValidateSwapResponse) Reset() {
+	*x = ValidateSwapResponse{}
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValidateSwapResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValidateSwapResponse) ProtoMessage() {}
+
+func (x *ValidateSwapResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValidateSwapResponse.ProtoReflect.Descriptor instead.
+func (*ValidateSwapResponse) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ValidateSwapResponse) GetSwapStatus() ValidationStatus {
+	if x != nil {
+		return x.SwapStatus
+	}
+	return ValidationStatus_STATUS_UNSPECIFIED
+}
+
+func (x *ValidateSwapResponse) GetNear() *ValidateResponse {
+	if x != nil {
+		return x.Near
+	}
+	return nil
+}
+
+func (x *ValidateSwapResponse) GetFar() *ValidateResponse {
+	if x != nil {
+		return x.Far
+	}
+	return nil
+}
+
+func (x *ValidateSwapResponse) GetOrdRejReason() int32 {
+	if x != nil {
+		return x.OrdRejReason
+	}
+	return 0
+}
+
+func (x *ValidateSwapResponse) GetRejectText() string {
+	if x != nil {
+		return x.RejectText
+	}
+	return ""
+}
+
+// ConsumeSwapRequest — 두 leg 동시 표시.
+type ConsumeSwapRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SwapId        string                 `protobuf:"bytes,1,opt,name=swap_id,json=swapId,proto3" json:"swap_id,omitempty"`
+	ConsumerId    string                 `protobuf:"bytes,2,opt,name=consumer_id,json=consumerId,proto3" json:"consumer_id,omitempty"` // 매매 AP 의 거래 식별자 (OrderID 등)
+	EngineId      string                 `protobuf:"bytes,10,opt,name=engine_id,json=engineId,proto3" json:"engine_id,omitempty"`
+	TsUnixNano    int64                  `protobuf:"varint,11,opt,name=ts_unix_nano,json=tsUnixNano,proto3" json:"ts_unix_nano,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConsumeSwapRequest) Reset() {
+	*x = ConsumeSwapRequest{}
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConsumeSwapRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConsumeSwapRequest) ProtoMessage() {}
+
+func (x *ConsumeSwapRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConsumeSwapRequest.ProtoReflect.Descriptor instead.
+func (*ConsumeSwapRequest) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ConsumeSwapRequest) GetSwapId() string {
+	if x != nil {
+		return x.SwapId
+	}
+	return ""
+}
+
+func (x *ConsumeSwapRequest) GetConsumerId() string {
+	if x != nil {
+		return x.ConsumerId
+	}
+	return ""
+}
+
+func (x *ConsumeSwapRequest) GetEngineId() string {
+	if x != nil {
+		return x.EngineId
+	}
+	return ""
+}
+
+func (x *ConsumeSwapRequest) GetTsUnixNano() int64 {
+	if x != nil {
+		return x.TsUnixNano
+	}
+	return 0
+}
+
+// ConsumeSwapResponse — 두 leg 표시 결과. status=OK 일 때만 둘 다 OK 로 표시됨.
+// status != OK 면 두 leg 중 하나 또는 둘 다 표시 안 됨 (atomic-skip).
+type ConsumeSwapResponse struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SwapStatus ValidationStatus       `protobuf:"varint,1,opt,name=swap_status,json=swapStatus,proto3,enum=wtg.v1.ValidationStatus" json:"swap_status,omitempty"`
+	// 개별 leg 의 MarkConsumed 결과. swap_status=OK 면 둘 다 OK.
+	// partial race (한 leg 만 표시됨) 발생 시 호출자 (매매 AP) 가 거래 거부.
+	Near          *MarkConsumedResponse `protobuf:"bytes,2,opt,name=near,proto3" json:"near,omitempty"`
+	Far           *MarkConsumedResponse `protobuf:"bytes,3,opt,name=far,proto3" json:"far,omitempty"`
+	OrdRejReason  int32                 `protobuf:"varint,4,opt,name=ord_rej_reason,json=ordRejReason,proto3" json:"ord_rej_reason,omitempty"`
+	RejectText    string                `protobuf:"bytes,5,opt,name=reject_text,json=rejectText,proto3" json:"reject_text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConsumeSwapResponse) Reset() {
+	*x = ConsumeSwapResponse{}
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConsumeSwapResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConsumeSwapResponse) ProtoMessage() {}
+
+func (x *ConsumeSwapResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConsumeSwapResponse.ProtoReflect.Descriptor instead.
+func (*ConsumeSwapResponse) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ConsumeSwapResponse) GetSwapStatus() ValidationStatus {
+	if x != nil {
+		return x.SwapStatus
+	}
+	return ValidationStatus_STATUS_UNSPECIFIED
+}
+
+func (x *ConsumeSwapResponse) GetNear() *MarkConsumedResponse {
+	if x != nil {
+		return x.Near
+	}
+	return nil
+}
+
+func (x *ConsumeSwapResponse) GetFar() *MarkConsumedResponse {
+	if x != nil {
+		return x.Far
+	}
+	return nil
+}
+
+func (x *ConsumeSwapResponse) GetOrdRejReason() int32 {
+	if x != nil {
+		return x.OrdRejReason
+	}
+	return 0
+}
+
+func (x *ConsumeSwapResponse) GetRejectText() string {
+	if x != nil {
+		return x.RejectText
+	}
+	return ""
+}
+
 // QuoteRecord 는 pkg/quoteid.Record 의 wire 표현.
 type QuoteRecord struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
@@ -672,7 +966,7 @@ type QuoteRecord struct {
 
 func (x *QuoteRecord) Reset() {
 	*x = QuoteRecord{}
-	mi := &file_wtg_v1_quote_validation_proto_msgTypes[9]
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -684,7 +978,7 @@ func (x *QuoteRecord) String() string {
 func (*QuoteRecord) ProtoMessage() {}
 
 func (x *QuoteRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_wtg_v1_quote_validation_proto_msgTypes[9]
+	mi := &file_wtg_v1_quote_validation_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -697,7 +991,7 @@ func (x *QuoteRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuoteRecord.ProtoReflect.Descriptor instead.
 func (*QuoteRecord) Descriptor() ([]byte, []int) {
-	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{9}
+	return file_wtg_v1_quote_validation_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *QuoteRecord) GetQuoteId() string {
@@ -836,6 +1130,36 @@ const file_wtg_v1_quote_validation_proto_rawDesc = "" +
 	"consumedBy\x12$\n" +
 	"\x0eord_rej_reason\x18\x04 \x01(\x05R\fordRejReason\x12\x1f\n" +
 	"\vreject_text\x18\x05 \x01(\tR\n" +
+	"rejectText\"m\n" +
+	"\x13ValidateSwapRequest\x12\x17\n" +
+	"\aswap_id\x18\x01 \x01(\tR\x06swapId\x12\x1b\n" +
+	"\tengine_id\x18\n" +
+	" \x01(\tR\bengineId\x12 \n" +
+	"\fts_unix_nano\x18\v \x01(\x03R\n" +
+	"tsUnixNano\"\xf2\x01\n" +
+	"\x14ValidateSwapResponse\x129\n" +
+	"\vswap_status\x18\x01 \x01(\x0e2\x18.wtg.v1.ValidationStatusR\n" +
+	"swapStatus\x12,\n" +
+	"\x04near\x18\x02 \x01(\v2\x18.wtg.v1.ValidateResponseR\x04near\x12*\n" +
+	"\x03far\x18\x03 \x01(\v2\x18.wtg.v1.ValidateResponseR\x03far\x12$\n" +
+	"\x0eord_rej_reason\x18\x04 \x01(\x05R\fordRejReason\x12\x1f\n" +
+	"\vreject_text\x18\x05 \x01(\tR\n" +
+	"rejectText\"\x8d\x01\n" +
+	"\x12ConsumeSwapRequest\x12\x17\n" +
+	"\aswap_id\x18\x01 \x01(\tR\x06swapId\x12\x1f\n" +
+	"\vconsumer_id\x18\x02 \x01(\tR\n" +
+	"consumerId\x12\x1b\n" +
+	"\tengine_id\x18\n" +
+	" \x01(\tR\bengineId\x12 \n" +
+	"\fts_unix_nano\x18\v \x01(\x03R\n" +
+	"tsUnixNano\"\xf9\x01\n" +
+	"\x13ConsumeSwapResponse\x129\n" +
+	"\vswap_status\x18\x01 \x01(\x0e2\x18.wtg.v1.ValidationStatusR\n" +
+	"swapStatus\x120\n" +
+	"\x04near\x18\x02 \x01(\v2\x1c.wtg.v1.MarkConsumedResponseR\x04near\x12.\n" +
+	"\x03far\x18\x03 \x01(\v2\x1c.wtg.v1.MarkConsumedResponseR\x03far\x12$\n" +
+	"\x0eord_rej_reason\x18\x04 \x01(\x05R\fordRejReason\x12\x1f\n" +
+	"\vreject_text\x18\x05 \x01(\tR\n" +
 	"rejectText\"\xc9\x02\n" +
 	"\vQuoteRecord\x12\x19\n" +
 	"\bquote_id\x18\x01 \x01(\tR\aquoteId\x12\x12\n" +
@@ -856,12 +1180,14 @@ const file_wtg_v1_quote_validation_proto_rawDesc = "" +
 	"\x02OK\x10\x01\x12\r\n" +
 	"\tNOT_FOUND\x10\x02\x12\v\n" +
 	"\aEXPIRED\x10\x03\x12\x14\n" +
-	"\x10ALREADY_CONSUMED\x10\x042\xca\x02\n" +
+	"\x10ALREADY_CONSUMED\x10\x042\xdd\x03\n" +
 	"\x16QuoteValidationService\x12=\n" +
 	"\bValidate\x12\x17.wtg.v1.ValidateRequest\x1a\x18.wtg.v1.ValidateResponse\x12I\n" +
 	"\fMarkConsumed\x12\x1b.wtg.v1.MarkConsumedRequest\x1a\x1c.wtg.v1.MarkConsumedResponse\x12L\n" +
 	"\rBatchValidate\x12\x1c.wtg.v1.BatchValidateRequest\x1a\x1d.wtg.v1.BatchValidateResponse\x12X\n" +
-	"\x11BatchMarkConsumed\x12 .wtg.v1.BatchMarkConsumedRequest\x1a!.wtg.v1.BatchMarkConsumedResponseB3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
+	"\x11BatchMarkConsumed\x12 .wtg.v1.BatchMarkConsumedRequest\x1a!.wtg.v1.BatchMarkConsumedResponse\x12I\n" +
+	"\fValidateSwap\x12\x1b.wtg.v1.ValidateSwapRequest\x1a\x1c.wtg.v1.ValidateSwapResponse\x12F\n" +
+	"\vConsumeSwap\x12\x1a.wtg.v1.ConsumeSwapRequest\x1a\x1b.wtg.v1.ConsumeSwapResponseB3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
 
 var (
 	file_wtg_v1_quote_validation_proto_rawDescOnce sync.Once
@@ -876,7 +1202,7 @@ func file_wtg_v1_quote_validation_proto_rawDescGZIP() []byte {
 }
 
 var file_wtg_v1_quote_validation_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_wtg_v1_quote_validation_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_wtg_v1_quote_validation_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_wtg_v1_quote_validation_proto_goTypes = []any{
 	(ValidationStatus)(0),             // 0: wtg.v1.ValidationStatus
 	(*ValidateRequest)(nil),           // 1: wtg.v1.ValidateRequest
@@ -888,29 +1214,43 @@ var file_wtg_v1_quote_validation_proto_goTypes = []any{
 	(*BatchMarkConsumedRequest)(nil),  // 7: wtg.v1.BatchMarkConsumedRequest
 	(*BatchMarkConsumedResponse)(nil), // 8: wtg.v1.BatchMarkConsumedResponse
 	(*MarkConsumedResponse)(nil),      // 9: wtg.v1.MarkConsumedResponse
-	(*QuoteRecord)(nil),               // 10: wtg.v1.QuoteRecord
+	(*ValidateSwapRequest)(nil),       // 10: wtg.v1.ValidateSwapRequest
+	(*ValidateSwapResponse)(nil),      // 11: wtg.v1.ValidateSwapResponse
+	(*ConsumeSwapRequest)(nil),        // 12: wtg.v1.ConsumeSwapRequest
+	(*ConsumeSwapResponse)(nil),       // 13: wtg.v1.ConsumeSwapResponse
+	(*QuoteRecord)(nil),               // 14: wtg.v1.QuoteRecord
 }
 var file_wtg_v1_quote_validation_proto_depIdxs = []int32{
 	0,  // 0: wtg.v1.ValidateResponse.status:type_name -> wtg.v1.ValidationStatus
-	10, // 1: wtg.v1.ValidateResponse.record:type_name -> wtg.v1.QuoteRecord
+	14, // 1: wtg.v1.ValidateResponse.record:type_name -> wtg.v1.QuoteRecord
 	2,  // 2: wtg.v1.BatchValidateResponse.results:type_name -> wtg.v1.ValidateResponse
 	6,  // 3: wtg.v1.BatchMarkConsumedRequest.items:type_name -> wtg.v1.ConsumeItem
 	9,  // 4: wtg.v1.BatchMarkConsumedResponse.results:type_name -> wtg.v1.MarkConsumedResponse
 	0,  // 5: wtg.v1.MarkConsumedResponse.status:type_name -> wtg.v1.ValidationStatus
-	10, // 6: wtg.v1.MarkConsumedResponse.record:type_name -> wtg.v1.QuoteRecord
-	1,  // 7: wtg.v1.QuoteValidationService.Validate:input_type -> wtg.v1.ValidateRequest
-	3,  // 8: wtg.v1.QuoteValidationService.MarkConsumed:input_type -> wtg.v1.MarkConsumedRequest
-	4,  // 9: wtg.v1.QuoteValidationService.BatchValidate:input_type -> wtg.v1.BatchValidateRequest
-	7,  // 10: wtg.v1.QuoteValidationService.BatchMarkConsumed:input_type -> wtg.v1.BatchMarkConsumedRequest
-	2,  // 11: wtg.v1.QuoteValidationService.Validate:output_type -> wtg.v1.ValidateResponse
-	9,  // 12: wtg.v1.QuoteValidationService.MarkConsumed:output_type -> wtg.v1.MarkConsumedResponse
-	5,  // 13: wtg.v1.QuoteValidationService.BatchValidate:output_type -> wtg.v1.BatchValidateResponse
-	8,  // 14: wtg.v1.QuoteValidationService.BatchMarkConsumed:output_type -> wtg.v1.BatchMarkConsumedResponse
-	11, // [11:15] is the sub-list for method output_type
-	7,  // [7:11] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	14, // 6: wtg.v1.MarkConsumedResponse.record:type_name -> wtg.v1.QuoteRecord
+	0,  // 7: wtg.v1.ValidateSwapResponse.swap_status:type_name -> wtg.v1.ValidationStatus
+	2,  // 8: wtg.v1.ValidateSwapResponse.near:type_name -> wtg.v1.ValidateResponse
+	2,  // 9: wtg.v1.ValidateSwapResponse.far:type_name -> wtg.v1.ValidateResponse
+	0,  // 10: wtg.v1.ConsumeSwapResponse.swap_status:type_name -> wtg.v1.ValidationStatus
+	9,  // 11: wtg.v1.ConsumeSwapResponse.near:type_name -> wtg.v1.MarkConsumedResponse
+	9,  // 12: wtg.v1.ConsumeSwapResponse.far:type_name -> wtg.v1.MarkConsumedResponse
+	1,  // 13: wtg.v1.QuoteValidationService.Validate:input_type -> wtg.v1.ValidateRequest
+	3,  // 14: wtg.v1.QuoteValidationService.MarkConsumed:input_type -> wtg.v1.MarkConsumedRequest
+	4,  // 15: wtg.v1.QuoteValidationService.BatchValidate:input_type -> wtg.v1.BatchValidateRequest
+	7,  // 16: wtg.v1.QuoteValidationService.BatchMarkConsumed:input_type -> wtg.v1.BatchMarkConsumedRequest
+	10, // 17: wtg.v1.QuoteValidationService.ValidateSwap:input_type -> wtg.v1.ValidateSwapRequest
+	12, // 18: wtg.v1.QuoteValidationService.ConsumeSwap:input_type -> wtg.v1.ConsumeSwapRequest
+	2,  // 19: wtg.v1.QuoteValidationService.Validate:output_type -> wtg.v1.ValidateResponse
+	9,  // 20: wtg.v1.QuoteValidationService.MarkConsumed:output_type -> wtg.v1.MarkConsumedResponse
+	5,  // 21: wtg.v1.QuoteValidationService.BatchValidate:output_type -> wtg.v1.BatchValidateResponse
+	8,  // 22: wtg.v1.QuoteValidationService.BatchMarkConsumed:output_type -> wtg.v1.BatchMarkConsumedResponse
+	11, // 23: wtg.v1.QuoteValidationService.ValidateSwap:output_type -> wtg.v1.ValidateSwapResponse
+	13, // 24: wtg.v1.QuoteValidationService.ConsumeSwap:output_type -> wtg.v1.ConsumeSwapResponse
+	19, // [19:25] is the sub-list for method output_type
+	13, // [13:19] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_wtg_v1_quote_validation_proto_init() }
@@ -924,7 +1264,7 @@ func file_wtg_v1_quote_validation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wtg_v1_quote_validation_proto_rawDesc), len(file_wtg_v1_quote_validation_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   10,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -23,7 +23,8 @@ endif
 CMDS := $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard cmd/*/*.go)))))
 
 .PHONY: all build test test-v test-race test-integration vet fmt fmt-check tidy clean install \
-        lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside $(CMDS)
+        lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside \
+        wtgprice wtgprice-clean test-wtgprice $(CMDS)
 
 all: build
 
@@ -60,6 +61,19 @@ cside-clean:
 # 선결: cside 타겟 먼저 빌드 필요.
 test-cside: cside
 	$(GO) test $(GOFLAGS) -tags=cside -run CSide ./pkg/push/...
+
+# Phase S3-d — C SDK (cside/wtgprice) 빌드. mci-price 의 swap/lock endpoint
+# 를 호출하는 매칭 엔진용. 외부 의존 0 — POSIX socket / make.
+wtgprice:
+	$(MAKE) -C cside/wtgprice
+
+wtgprice-clean:
+	$(MAKE) -C cside/wtgprice clean
+
+# C SDK ↔ SwapLockHandler wire 호환성 검증 (build tag=wtgprice).
+# 선결: wtgprice 타겟 먼저 빌드 필요.
+test-wtgprice: wtgprice
+	$(GO) test $(GOFLAGS) -tags=wtgprice -run CSideWtgprice ./internal/price/...
 
 # coverage HTML 리포트.
 coverage: test-race

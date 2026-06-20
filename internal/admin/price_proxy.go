@@ -16,11 +16,12 @@ import (
 
 // pricePathAllowlist — 안전한 GET endpoint 만 forward (write/control 차단).
 var pricePathAllowlist = map[string]string{
-	"price-stats": "/v1/price-stats",
-	"best-stats":  "/v1/best-stats",
-	"subscribers":  "/v1/subscribers",  // gRPC stream 카탈로그 (UI 통합 N4)
-	"customers":    "/v1/customers",    // 등록된 customer digest
-	"backpressure": "/v1/backpressure", // backpressure WARN history (N7)
+	"price-stats":  "/v1/price-stats",
+	"best-stats":   "/v1/best-stats",
+	"subscribers":  "/v1/subscribers",      // gRPC stream 카탈로그 (UI 통합 N4)
+	"customers":    "/v1/customers",        // 등록된 customer digest
+	"backpressure": "/v1/backpressure",     // backpressure WARN history (N7)
+	"swap-stats":   "/v1/quote/swap/stats", // FX swap 잠금 카운터 (S3-e)
 }
 
 // PriceStatsProxy — GET /v1/admin/price/{kind} — kind ∈ {price-stats, best-stats}.

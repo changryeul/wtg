@@ -17,6 +17,7 @@ type MemoryRegistry struct {
 	mu       sync.RWMutex
 	records  map[QuoteID]Record
 	consumed map[QuoteID]string // QuoteID → consumer_id (먼저 MarkConsumed 한 자)
+	swaps    map[string]SwapRecord // S3-b — swap_id 인덱스 (SwapIndex 구현).
 	now      func() time.Time
 	grace    time.Duration
 }
@@ -28,6 +29,7 @@ func NewMemoryRegistry(grace time.Duration) *MemoryRegistry {
 	return &MemoryRegistry{
 		records:  make(map[QuoteID]Record),
 		consumed: make(map[QuoteID]string),
+		swaps:    make(map[string]SwapRecord),
 		now:      time.Now,
 		grace:    grace,
 	}
@@ -200,7 +202,7 @@ func (m *MemoryRegistry) Consumed(_ context.Context, id QuoteID) (string, bool, 
 }
 
 // Sweep — 만료된 record 일괄 제거. 운영 인스턴스가 주기적으로 호출.
-// 반환값은 제거된 개수.
+// 반환값은 제거된 record 개수 (swap 인덱스 정리는 부수효과).
 func (m *MemoryRegistry) Sweep() int {
 	now := m.now()
 	m.mu.Lock()
@@ -214,7 +216,73 @@ func (m *MemoryRegistry) Sweep() int {
 			n++
 		}
 	}
+	// swap 인덱스 — leg 만료보다 약간 더 보존 (분쟁 조회 여유).
+	for swapID, sw := range m.swaps {
+		expireAt := time.Unix(0, sw.ValidUntil).Add(m.grace)
+		if now.After(expireAt) {
+			delete(m.swaps, swapID)
+		}
+	}
 	return n
+}
+
+// ---- SwapIndex 구현 (S3-b) ----
+
+// PutSwap — swap_id 인덱스 등록. ValidUntil <= IssuedAt 또는 leg 미지정은 거부.
+func (m *MemoryRegistry) PutSwap(_ context.Context, rec SwapRecord) error {
+	if rec.ValidUntil <= rec.IssuedAt {
+		return ErrInvalidRecord
+	}
+	if rec.SwapID == "" || rec.NearID == "" || rec.FarID == "" {
+		return ErrInvalidRecord
+	}
+	m.mu.Lock()
+	m.swaps[rec.SwapID] = rec
+	m.mu.Unlock()
+	return nil
+}
+
+// GetSwap — swap_id 로 인덱스 조회. ValidUntil + grace 도래 시 lazy evict +
+// ErrSwapNotFound.
+func (m *MemoryRegistry) GetSwap(_ context.Context, swapID string) (SwapRecord, error) {
+	m.mu.RLock()
+	rec, ok := m.swaps[swapID]
+	m.mu.RUnlock()
+	if !ok {
+		return SwapRecord{}, ErrSwapNotFound
+	}
+	expireAt := time.Unix(0, rec.ValidUntil).Add(m.grace)
+	if m.now().After(expireAt) {
+		m.mu.Lock()
+		delete(m.swaps, swapID)
+		m.mu.Unlock()
+		return SwapRecord{}, ErrSwapNotFound
+	}
+	return rec, nil
+}
+
+// Delete — leg quote_id 의 Record + consumed marker 제거. partial-failure
+// revoke 용. 미존재는 nil (idempotent).
+func (m *MemoryRegistry) Delete(_ context.Context, id QuoteID) error {
+	if id == "" {
+		return nil
+	}
+	m.mu.Lock()
+	delete(m.records, id)
+	delete(m.consumed, id)
+	m.mu.Unlock()
+	return nil
+}
+
+// DeleteSwap — swap_id 인덱스 entry 제거. 미존재는 nil.
+func (m *MemoryRegistry) DeleteSwap(_ context.Context, swapID string) error {
+	if swapID == "" {
+		return nil
+	}
+	m.mu.Lock()
+	delete(m.swaps, swapID)
+	m.mu.Unlock()
+	return nil
 }
 
 // Len — 현재 보관 중인 record 수 (만료 포함, sweep 전 카운트). 메트릭/디버깅용.

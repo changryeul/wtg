@@ -33,6 +33,8 @@ const (
 	QuoteValidationService_MarkConsumed_FullMethodName      = "/wtg.v1.QuoteValidationService/MarkConsumed"
 	QuoteValidationService_BatchValidate_FullMethodName     = "/wtg.v1.QuoteValidationService/BatchValidate"
 	QuoteValidationService_BatchMarkConsumed_FullMethodName = "/wtg.v1.QuoteValidationService/BatchMarkConsumed"
+	QuoteValidationService_ValidateSwap_FullMethodName      = "/wtg.v1.QuoteValidationService/ValidateSwap"
+	QuoteValidationService_ConsumeSwap_FullMethodName       = "/wtg.v1.QuoteValidationService/ConsumeSwap"
 )
 
 // QuoteValidationServiceClient is the client API for QuoteValidationService service.
@@ -91,6 +93,34 @@ type QuoteValidationServiceClient interface {
 	// FIX NewOrderList ('E') 다건 주문 fill 직전 한 번에 표시 — 직렬 호출
 	// 대비 N× wallclock 개선 (goroutine fan-out 으로 Redis round-trip 병렬화).
 	BatchMarkConsumed(ctx context.Context, in *BatchMarkConsumedRequest, opts ...grpc.CallOption) (*BatchMarkConsumedResponse, error)
+	// Phase S3-c — FX swap (near+far 2-leg) 의 swap_id 동시 검증.
+	//
+	// 매매 AP 가 swap_id 1개를 보내면 WTG 가:
+	//  1. SwapIndex.GetSwap(swap_id) → (near_id, far_id)
+	//  2. Registry.LookupMany([near_id, far_id]) → 두 leg 동시 검증
+	//  3. AND 정책 — 둘 다 OK 여야 OK. 어느 한 쪽이라도 NOT_FOUND / EXPIRED /
+	//     ALREADY_CONSUMED 면 전체 거부. 한 leg 가 valid 한데 다른 leg 가 못 쓰면
+	//     위험 (반쪽만 체결) — 결과는 swap_status 로 묶어 반환.
+	//
+	// 본 RPC 자체는 read-only. 매매 AP 는 검증 통과 시 ConsumeSwap 로 동시 표시.
+	ValidateSwap(ctx context.Context, in *ValidateSwapRequest, opts ...grpc.CallOption) (*ValidateSwapResponse, error)
+	// ConsumeSwap — swap_id 의 두 leg quote_id 를 한 번에 표시. AND 원자성:
+	//
+	//	· 둘 다 OK 가능 시 → 둘 다 표시 + status=OK
+	//	· 한 쪽이라도 표시 불가 → 표시 시도 X (atomic-skip) + status=AlREADY/EXPIRED/NOT_FOUND
+	//
+	// 구현 노트:
+	//
+	//	1단계: ValidateSwap 와 동일한 LookupMany 로 사전 검사.
+	//	2단계: 둘 다 OK 면 MarkConsumedMany 호출 — race 보호.
+	//	2단계 race: 두 mci-price 가 동시 ConsumeSwap 받아 사전검사 통과해도
+	//	           MarkConsumed 의 SET NX 가 정확히 한 호출만 OK 반환. 다른
+	//	           쪽은 ALREADY_CONSUMED — 그 응답을 받은 호출자는 자기쪽 leg
+	//	           revoke (best-effort). 따라서 호출자 (매매 AP) 는 status !=
+	//	           OK 응답을 받으면 그 거래는 거부.
+	//
+	// FX Global Code Principle 17 — "use only once" 적용 단위가 swap_id.
+	ConsumeSwap(ctx context.Context, in *ConsumeSwapRequest, opts ...grpc.CallOption) (*ConsumeSwapResponse, error)
 }
 
 type quoteValidationServiceClient struct {
@@ -135,6 +165,26 @@ func (c *quoteValidationServiceClient) BatchMarkConsumed(ctx context.Context, in
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BatchMarkConsumedResponse)
 	err := c.cc.Invoke(ctx, QuoteValidationService_BatchMarkConsumed_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *quoteValidationServiceClient) ValidateSwap(ctx context.Context, in *ValidateSwapRequest, opts ...grpc.CallOption) (*ValidateSwapResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ValidateSwapResponse)
+	err := c.cc.Invoke(ctx, QuoteValidationService_ValidateSwap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *quoteValidationServiceClient) ConsumeSwap(ctx context.Context, in *ConsumeSwapRequest, opts ...grpc.CallOption) (*ConsumeSwapResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConsumeSwapResponse)
+	err := c.cc.Invoke(ctx, QuoteValidationService_ConsumeSwap_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -197,6 +247,34 @@ type QuoteValidationServiceServer interface {
 	// FIX NewOrderList ('E') 다건 주문 fill 직전 한 번에 표시 — 직렬 호출
 	// 대비 N× wallclock 개선 (goroutine fan-out 으로 Redis round-trip 병렬화).
 	BatchMarkConsumed(context.Context, *BatchMarkConsumedRequest) (*BatchMarkConsumedResponse, error)
+	// Phase S3-c — FX swap (near+far 2-leg) 의 swap_id 동시 검증.
+	//
+	// 매매 AP 가 swap_id 1개를 보내면 WTG 가:
+	//  1. SwapIndex.GetSwap(swap_id) → (near_id, far_id)
+	//  2. Registry.LookupMany([near_id, far_id]) → 두 leg 동시 검증
+	//  3. AND 정책 — 둘 다 OK 여야 OK. 어느 한 쪽이라도 NOT_FOUND / EXPIRED /
+	//     ALREADY_CONSUMED 면 전체 거부. 한 leg 가 valid 한데 다른 leg 가 못 쓰면
+	//     위험 (반쪽만 체결) — 결과는 swap_status 로 묶어 반환.
+	//
+	// 본 RPC 자체는 read-only. 매매 AP 는 검증 통과 시 ConsumeSwap 로 동시 표시.
+	ValidateSwap(context.Context, *ValidateSwapRequest) (*ValidateSwapResponse, error)
+	// ConsumeSwap — swap_id 의 두 leg quote_id 를 한 번에 표시. AND 원자성:
+	//
+	//	· 둘 다 OK 가능 시 → 둘 다 표시 + status=OK
+	//	· 한 쪽이라도 표시 불가 → 표시 시도 X (atomic-skip) + status=AlREADY/EXPIRED/NOT_FOUND
+	//
+	// 구현 노트:
+	//
+	//	1단계: ValidateSwap 와 동일한 LookupMany 로 사전 검사.
+	//	2단계: 둘 다 OK 면 MarkConsumedMany 호출 — race 보호.
+	//	2단계 race: 두 mci-price 가 동시 ConsumeSwap 받아 사전검사 통과해도
+	//	           MarkConsumed 의 SET NX 가 정확히 한 호출만 OK 반환. 다른
+	//	           쪽은 ALREADY_CONSUMED — 그 응답을 받은 호출자는 자기쪽 leg
+	//	           revoke (best-effort). 따라서 호출자 (매매 AP) 는 status !=
+	//	           OK 응답을 받으면 그 거래는 거부.
+	//
+	// FX Global Code Principle 17 — "use only once" 적용 단위가 swap_id.
+	ConsumeSwap(context.Context, *ConsumeSwapRequest) (*ConsumeSwapResponse, error)
 	mustEmbedUnimplementedQuoteValidationServiceServer()
 }
 
@@ -218,6 +296,12 @@ func (UnimplementedQuoteValidationServiceServer) BatchValidate(context.Context, 
 }
 func (UnimplementedQuoteValidationServiceServer) BatchMarkConsumed(context.Context, *BatchMarkConsumedRequest) (*BatchMarkConsumedResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchMarkConsumed not implemented")
+}
+func (UnimplementedQuoteValidationServiceServer) ValidateSwap(context.Context, *ValidateSwapRequest) (*ValidateSwapResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ValidateSwap not implemented")
+}
+func (UnimplementedQuoteValidationServiceServer) ConsumeSwap(context.Context, *ConsumeSwapRequest) (*ConsumeSwapResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ConsumeSwap not implemented")
 }
 func (UnimplementedQuoteValidationServiceServer) mustEmbedUnimplementedQuoteValidationServiceServer() {
 }
@@ -313,6 +397,42 @@ func _QuoteValidationService_BatchMarkConsumed_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _QuoteValidationService_ValidateSwap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ValidateSwapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QuoteValidationServiceServer).ValidateSwap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: QuoteValidationService_ValidateSwap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QuoteValidationServiceServer).ValidateSwap(ctx, req.(*ValidateSwapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _QuoteValidationService_ConsumeSwap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConsumeSwapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QuoteValidationServiceServer).ConsumeSwap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: QuoteValidationService_ConsumeSwap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QuoteValidationServiceServer).ConsumeSwap(ctx, req.(*ConsumeSwapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // QuoteValidationService_ServiceDesc is the grpc.ServiceDesc for QuoteValidationService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -335,6 +455,14 @@ var QuoteValidationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchMarkConsumed",
 			Handler:    _QuoteValidationService_BatchMarkConsumed_Handler,
+		},
+		{
+			MethodName: "ValidateSwap",
+			Handler:    _QuoteValidationService_ValidateSwap_Handler,
+		},
+		{
+			MethodName: "ConsumeSwap",
+			Handler:    _QuoteValidationService_ConsumeSwap_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -45,10 +45,12 @@ func (s *Server) DevTickHandler() http.HandlerFunc {
 		}
 
 		// v1 평면 envelope (docs/cooker-quote-schema.md) — JSONCookerDecoder 가 파싱.
-		body := []byte(fmt.Sprintf(`{"sym":"%s","bid":%g,"ask":%g}`, req.Symbol, req.Bid, req.Ask))
+		// BestConsumer 가 Tick.Source 와 envelope.src 모두 요구 — DEV 라벨 부여.
+		body := []byte(fmt.Sprintf(`{"sym":"%s","bid":%g,"ask":%g,"src":"DEV"}`, req.Symbol, req.Bid, req.Ask))
 
 		tick := &Tick{
 			Symbol:   req.Symbol,
+			Source:   "DEV",
 			Body:     body,
 			Received: time.Now(),
 		}

@@ -350,6 +350,7 @@
           <button data-page="customer-search" class="nav-btn nav-item"><span class="nav-ico">🔍</span>Customer 검색</button>
           <button data-page="fwdstats" class="nav-btn nav-item"><span class="nav-ico">📡</span>forwarder 통계</button>
           <button data-page="backpressure" class="nav-btn nav-item"><span class="nav-ico">⚠️</span>Backpressure 이력</button>
+          <button data-page="swaplock"    class="nav-btn nav-item"><span class="nav-ico">🔁</span>FX swap 잠금 통계</button>
         </div>
 
         <!-- 7. 외부 도구 — chart 별도 탭 열기 (SPA 전환 아님) -->
@@ -3017,6 +3018,34 @@ WEB.HQ.VIP</textarea>
           <div id="bp-tables" class="space-y-3 text-sm"></div>
         </div>
 
+        <!-- ───── FX swap 잠금 통계 — mci-price /v1/quote/swap/stats (Phase S3-e) ─────
+             swap_lock 핸들러의 누적 카운터 시각화 + 부분실패 비율 alert.
+             requests/successes 비교, near/far/swap_index 단계 실패, revoke 결과. -->
+        <div id="page-swaplock" class="page hidden space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h3 class="text-lg font-semibold">FX swap 잠금 통계</h3>
+            <label class="text-xs"><input type="checkbox" id="sw-auto" checked> 자동 새로고침 (2s)</label>
+            <button id="sw-refresh" class="px-2 py-1 text-xs border rounded">새로고침</button>
+            <span id="sw-updated" class="text-xs text-slate-500"></span>
+          </div>
+          <details class="text-xs text-slate-400 border border-slate-700/40 rounded p-2">
+            <summary class="cursor-pointer text-slate-300">이 페이지가 무엇을 보여주는가?</summary>
+            <div class="mt-2 space-y-1">
+              <div>🔁 매칭 엔진이 호출하는 <code class="text-accent-400">POST /v1/quote/swap/lock</code> (FX swap = near leg + far leg 동시 잠금) 의 누적 카운터.</div>
+              <ul class="list-disc pl-5">
+                <li><b>requests / successes</b>: 차이가 누적되면 운영 alert. 보통 ≤ 0.1% 가 정상.</li>
+                <li><b>fail_near / fail_far / fail_swap_index</b>: 어느 단계에서 부분실패했는지. near→far→swap_index 순차 시도 — 뒤로 갈수록 위험도 ↑ (다른 leg revoke 필요).</li>
+                <li><b>revoke_ok / revoke_fail</b>: 부분실패 시 best-effort revoke 결과. fail 증가 시 stale quote_id 가 Registry 에 잔존 — 매매 AP 측 validate 가 reject 처리해야.</li>
+              </ul>
+              <div>⚠️ 운영 alert 기준 (suggested): <span class="text-amber-400">fail_far + fail_swap_index &gt; requests × 0.1%</span> → Registry 또는 SwapIndex (Redis) 점검. <span class="text-red-400">revoke_fail &gt; 0</span> → 즉시 분쟁 큐 (leg 잔존 위험).</div>
+              <div>상세: <span class="font-mono text-slate-300">docs/swap-trade-spec.md §4.5</span>.</div>
+            </div>
+          </details>
+          <div id="sw-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm"></div>
+          <div id="sw-health" class="text-sm"></div>
+          <div id="sw-error" class="text-xs text-slate-500"></div>
+        </div>
+
         <!-- ───── forwarder 통계 — quote-forwarder /stats ─────
              received / published / invalid_quotes breakdown 시각화. 매 reject
              reason 별 카운터 + 각 feed → broker connection 정보. -->
@@ -3464,7 +3493,8 @@ function goPage(name) {
                    margin: "마진 재계산", "margin-calc": "마진 계산기 (5-Layer)",
                    "margin-policy": "마진 정책 명세",
                    monitoring: "운영 모니터링",
-                   audit: "감사 로그", guide: "운영 가이드", tools: "운영 도구 (외부 링크)" };
+                   audit: "감사 로그", guide: "운영 가이드", tools: "운영 도구 (외부 링크)",
+                   swaplock: "FX swap 잠금 통계" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
   if (name === "dashboard") loadDashboard();
@@ -3514,6 +3544,8 @@ function goPage(name) {
   if (name === "fwdstats") initFwdStats();
   if (name !== "backpressure") stopBpPoller();
   if (name === "backpressure") initBackpressure();
+  if (name !== "swaplock") stopSwaplockPoller();
+  if (name === "swaplock") initSwaplock();
 }
 
 // ───────── Dashboard ─────────
@@ -9378,6 +9410,95 @@ function renderBackpressure(price, edge) {
       </table>
     </div>`;
   $("#bp-tables").innerHTML = priceTable + edgeTable;
+}
+
+// ─── FX swap 잠금 통계 (S3-e) ────────────────────────────────────────────
+
+// 주의: 'swState' 는 이미 위쪽 swap 정책 페이지(line 5744) 가 점유 — 같은 const
+// 재선언은 SyntaxError 로 전체 SPA parse 실패. 별도 이름 사용.
+const swapLockState = { wired: false, poller: null };
+
+function initSwaplock() {
+  if (!swapLockState.wired) {
+    swapLockState.wired = true;
+    $("#sw-refresh").onclick = loadSwaplock;
+    $("#sw-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startSwaplockPoller(); else stopSwaplockPoller();
+    });
+  }
+  loadSwaplock();
+  if ($("#sw-auto").checked) startSwaplockPoller();
+}
+function startSwaplockPoller() { if (!swapLockState.poller) swapLockState.poller = setInterval(loadSwaplock, 2000); }
+function stopSwaplockPoller()  { if (swapLockState.poller) { clearInterval(swapLockState.poller); swapLockState.poller = null; } }
+
+async function loadSwaplock() {
+  $("#sw-error").textContent = "";
+  try {
+    const s = await api("/v1/admin/price/swap-stats");
+    renderSwaplock(s);
+    $("#sw-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    // /v1/quote/swap/stats 가 미등록 (EnableSwapLock=false) 일 때 404.
+    $("#sw-error").textContent = "endpoint 미응답 — mci-price 의 --enable-swap-lock + SwapIndex 주입 확인 (" + (e.message || "fetch error") + ")";
+    renderSwaplock({});
+  }
+}
+
+function renderSwaplock(s) {
+  const req = s.requests || 0;
+  const ok  = s.successes || 0;
+  const fn  = s.fail_near || 0;
+  const ff  = s.fail_far || 0;
+  const fsi = s.fail_swap_index || 0;
+  const rok = s.revoke_ok || 0;
+  const rfl = s.revoke_fail || 0;
+  const failTotal = fn + ff + fsi;
+  const failPct = req > 0 ? (failTotal / req * 100) : 0;
+
+  const cards = [
+    { label: "requests (누적)", value: req.toLocaleString(), color: "", hint: "" },
+    { label: "successes (누적)", value: ok.toLocaleString(),
+      color: req === ok ? "text-emerald-300" : "text-amber-400", hint: "" },
+    { label: "부분실패 합",
+      value: failTotal.toLocaleString() + (req > 0 ? "  (" + failPct.toFixed(2) + "%)" : ""),
+      color: failPct < 0.1 ? "text-slate-200" : failPct < 1 ? "text-amber-400" : "text-red-400",
+      hint: "" },
+    { label: "revoke 결과",
+      value: rok.toLocaleString() + " ok / " + rfl.toLocaleString() + " fail",
+      color: rfl === 0 ? "text-slate-200" : "text-red-400",
+      hint: rfl === 0 ? "정상" : "stale quote_id 잔존 — 매매 AP 측 validate 가 reject" },
+  ];
+  $("#sw-cards").innerHTML = cards.map(c => `
+    <div class="border border-slate-700/40 rounded p-3">
+      <div class="text-xs text-slate-400">${esc(c.label)}</div>
+      <div class="text-xl font-semibold ${esc(c.color)}">${esc(c.value)}</div>
+      <div class="text-[10px] text-slate-500 mt-1">${esc(c.hint)}</div>
+    </div>`).join("");
+
+  // 단계별 분석 — near→far→swap_index 순서로 위험도 차등.
+  const rows = [
+    { stage: "near.Put 실패", count: fn, level: "낮음", note: "다음 단계 진행 안 함. revoke 불필요." },
+    { stage: "far.Put 실패",  count: ff, level: "중간", note: "near 1개 revoke 시도. revoke_fail 증가 시 stale near 잔존." },
+    { stage: "swap_index.PutSwap 실패", count: fsi, level: "높음", note: "near+far 둘 다 revoke 시도. revoke_fail 발생 시 두 leg 모두 stale 가능." },
+  ];
+  const tbl = `
+    <div class="border border-slate-700/40 rounded">
+      <div class="px-2 py-1 bg-slate-800/40 font-semibold">단계별 분석 (위험도 ↑ 순서)</div>
+      <table class="w-full text-xs">
+        <thead><tr class="text-left text-slate-400">
+          <th class="px-2 py-1">단계</th><th class="px-2 py-1">횟수</th><th class="px-2 py-1">위험도</th><th class="px-2 py-1">의미</th>
+        </tr></thead>
+        <tbody>${rows.map(r => `
+          <tr>
+            <td class="px-2 py-1 border-t border-slate-700/40">${esc(r.stage)}</td>
+            <td class="px-2 py-1 border-t border-slate-700/40 font-mono ${r.count > 0 ? "text-amber-400" : ""}">${esc(r.count.toLocaleString())}</td>
+            <td class="px-2 py-1 border-t border-slate-700/40">${esc(r.level)}</td>
+            <td class="px-2 py-1 border-t border-slate-700/40 text-slate-400">${esc(r.note)}</td>
+          </tr>`).join("")}</tbody>
+      </table>
+    </div>`;
+  $("#sw-health").innerHTML = tbl;
 }
 
 async function doCustomerSearch() {

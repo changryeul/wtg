@@ -451,6 +451,87 @@ func (r *RedisRegistry) MarkConsumedMany(ctx context.Context, reqs []ConsumeRequ
 	return out, nil
 }
 
+// ============================================================
+// Phase S3-c — SwapIndex 구현.
+//
+// swap_id 인덱스를 별도 키 namespace `<prefix>:sw:{<swap_id>}` 에 보관.
+// 매매 AP 는 ValidateSwap RPC 로 swap_id 를 보내고, WTG 가 swap_id →
+// (near_id, far_id) → LookupMany 흐름으로 두 leg 동시 검증.
+//
+// 키 형식:
+//
+//	<prefix>:sw:{<swap_id>}   — SwapRecord JSON
+//
+// hash tag 가 swap_id 자체라 cluster slot 일관 — leg quote_id 들과는 다른
+// slot 일 수 있음. 매매 AP 의 ValidateSwap 은 두 단계 (GetSwap → LookupMany)
+// 라 한 transaction 으로 묶을 필요 없음.
+//
+// Delete (leg quote_id) 는 두 키 (`:q`, `:c`) 동시 삭제.
+// ============================================================
+
+func (r *RedisRegistry) swapKey(swapID string) string {
+	return r.prefix + ":sw:{" + swapID + "}"
+}
+
+// PutSwap — swap_id 인덱스 등록. ValidUntil + grace 가 TTL.
+func (r *RedisRegistry) PutSwap(ctx context.Context, rec SwapRecord) error {
+	if rec.ValidUntil <= rec.IssuedAt {
+		return ErrInvalidRecord
+	}
+	if rec.SwapID == "" || rec.NearID == "" || rec.FarID == "" {
+		return ErrInvalidRecord
+	}
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("quoteid: swap marshal: %w", err)
+	}
+	remaining := time.Unix(0, rec.ValidUntil).Sub(r.now()) + r.grace
+	if remaining <= 0 {
+		return nil
+	}
+	return r.rdb.Set(ctx, r.swapKey(rec.SwapID), body, remaining).Err()
+}
+
+// GetSwap — swap_id 로 인덱스 조회. 미존재/만료 시 ErrSwapNotFound.
+func (r *RedisRegistry) GetSwap(ctx context.Context, swapID string) (SwapRecord, error) {
+	body, err := r.rdb.Get(ctx, r.swapKey(swapID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return SwapRecord{}, ErrSwapNotFound
+	}
+	if err != nil {
+		return SwapRecord{}, fmt.Errorf("quoteid: swap get: %w", err)
+	}
+	var rec SwapRecord
+	if err := json.Unmarshal(body, &rec); err != nil {
+		return SwapRecord{}, fmt.Errorf("quoteid: swap unmarshal: %w", err)
+	}
+	return rec, nil
+}
+
+// Delete — leg quote_id 의 record + consumed 키 동시 삭제. partial-failure
+// revoke 용 + 운영 cleanup. 미존재는 nil (idempotent).
+func (r *RedisRegistry) Delete(ctx context.Context, id QuoteID) error {
+	if id == "" {
+		return nil
+	}
+	// 두 키 동시 삭제 — 같은 hash tag(slot) 라 cluster 에서도 multi-key OK.
+	if err := r.rdb.Del(ctx, r.key(id), r.consumedKey(id)).Err(); err != nil {
+		return fmt.Errorf("quoteid: delete: %w", err)
+	}
+	return nil
+}
+
+// DeleteSwap — swap_id 인덱스 삭제. 미존재는 nil.
+func (r *RedisRegistry) DeleteSwap(ctx context.Context, swapID string) error {
+	if swapID == "" {
+		return nil
+	}
+	if err := r.rdb.Del(ctx, r.swapKey(swapID)).Err(); err != nil {
+		return fmt.Errorf("quoteid: swap delete: %w", err)
+	}
+	return nil
+}
+
 // decodeRecordFromLua — Lua 반환 배열의 idx 위치에서 record JSON 추출 + unmarshal.
 func decodeRecordFromLua(arr []any, idx int) (Record, error) {
 	if len(arr) <= idx {

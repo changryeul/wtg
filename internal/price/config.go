@@ -206,6 +206,11 @@ type Config struct {
 	QuoteIDGrace           time.Duration // default 1s — Registry GC 유예
 	QuoteIDRegistryTimeout time.Duration // default 200ms — Put 단위 timeout
 
+	// EnableSwapLock — POST /v1/quote/swap/lock + GET /v1/quote/swap/stats 노출.
+	// quoteid 활성 + SwapIndex 주입이 선결조건. flag 없이도 deps 미주입이면
+	// 자동 비활성. GA 게이트 (Redis SwapIndex 구현 S3-c) 까지는 dev/internal 만.
+	EnableSwapLock bool
+
 	// Redis Registry — 비어 있으면 MemoryRegistry (dev / 단일 인스턴스).
 	// 단일 addr (host:port) → 직접 연결.
 	// 콤마 구분 addr 목록 → Sentinel FailoverClient — QuoteIDRedisMaster 필요.
@@ -316,6 +321,8 @@ func DefaultConfig() Config {
 		QuoteIDRedisAddr:       "",
 		QuoteIDRedisPrefix:     "wtg:quoteid",
 		QuoteIDRedisMaster:     "wtg-quoteid-master",
+
+		EnableSwapLock: false,
 	}
 }
 
@@ -554,6 +561,8 @@ func LoadConfig(args []string) (Config, error) {
 		"Registry GC 유예 (ValidUntil 이후 추가 보존 시간)")
 	fs.DurationVar(&cfg.QuoteIDRegistryTimeout, "quoteid-reg-timeout", cfg.QuoteIDRegistryTimeout,
 		"Registry.Put 단위 timeout")
+	fs.BoolVar(&cfg.EnableSwapLock, "enable-swap-lock", cfg.EnableSwapLock,
+		"POST /v1/quote/swap/lock + GET /v1/quote/swap/stats 노출 (S3-b). SwapIndex 주입 필요")
 	fs.StringVar(&cfg.QuoteIDRedisAddr, "quoteid-redis", cfg.QuoteIDRedisAddr,
 		"Redis 주소. 단일 host:port → 직접 연결. 콤마 구분 다중 → Sentinel FailoverClient. 비면 MemoryRegistry")
 	fs.StringVar(&cfg.QuoteIDRedisPassword, "quoteid-redis-pass", cfg.QuoteIDRedisPassword, "Redis 비밀번호")

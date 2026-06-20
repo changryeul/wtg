@@ -54,13 +54,15 @@ func grpcErrToHTTP(err error) int {
 // 정도지만 protojson + engine_id 등 포함 여유 잡아 256KB.
 const HTTPMaxBodyBytes = 256 * 1024
 
-// RegisterQuoteValidationHTTP — mux 에 6개 라우트 등록.
+// RegisterQuoteValidationHTTP — mux 에 8개 라우트 등록 (S3-c 에서 swap 2개 추가).
 func RegisterQuoteValidationHTTP(mux *http.ServeMux, srv *QuoteValidationServer, logger *slog.Logger) {
 	h := &quoteValidationHTTP{srv: srv, logger: logger}
 	mux.HandleFunc("POST /v1/quoteid/validate", h.handleValidate)
 	mux.HandleFunc("POST /v1/quoteid/batch-validate", h.handleBatchValidate)
 	mux.HandleFunc("POST /v1/quoteid/mark-consumed", h.handleMarkConsumed)
 	mux.HandleFunc("POST /v1/quoteid/batch-mark-consumed", h.handleBatchMarkConsumed)
+	mux.HandleFunc("POST /v1/quoteid/validate-swap", h.handleValidateSwap)
+	mux.HandleFunc("POST /v1/quoteid/consume-swap", h.handleConsumeSwap)
 	mux.HandleFunc("GET /v1/quoteid/stats", h.handleStats)
 	mux.HandleFunc("GET /v1/quoteid/lookup", h.handleLookup)
 }
@@ -155,6 +157,34 @@ func (h *quoteValidationHTTP) handleBatchMarkConsumed(w http.ResponseWriter, r *
 		return
 	}
 	resp, err := h.srv.BatchMarkConsumed(r.Context(), req)
+	if err != nil {
+		h.writeError(w, grpcErrToHTTP(err), err.Error())
+		return
+	}
+	h.writeProtoJSON(w, http.StatusOK, resp)
+}
+
+func (h *quoteValidationHTTP) handleValidateSwap(w http.ResponseWriter, r *http.Request) {
+	req := &wtgpb.ValidateSwapRequest{}
+	if err := h.readProtoJSON(r, req); err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := h.srv.ValidateSwap(r.Context(), req)
+	if err != nil {
+		h.writeError(w, grpcErrToHTTP(err), err.Error())
+		return
+	}
+	h.writeProtoJSON(w, http.StatusOK, resp)
+}
+
+func (h *quoteValidationHTTP) handleConsumeSwap(w http.ResponseWriter, r *http.Request) {
+	req := &wtgpb.ConsumeSwapRequest{}
+	if err := h.readProtoJSON(r, req); err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := h.srv.ConsumeSwap(r.Context(), req)
 	if err != nil {
 		h.writeError(w, grpcErrToHTTP(err), err.Error())
 		return

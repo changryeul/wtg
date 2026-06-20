@@ -4,9 +4,6 @@
   {"channel": "WEB", "site": "BRANCH", "tier": "STD"},
   {"channel": "WEB", "site": "HQ",     "tier": "VIP"},
   {"channel": "WEB", "site": "HQ",     "tier": "STD"},
-  {"channel": "MOB", "site": "BRANCH", "tier": "VIP"},
-  {"channel": "MOB", "site": "BRANCH", "tier": "STD"},
-  {"channel": "MOB", "site": "HQ",     "tier": "STD"},
   {"channel": "CS",  "site": "BRANCH", "tier": "STD"},
   {"channel": "CS",  "site": "HQ",     "tier": "VIP"}
 ]

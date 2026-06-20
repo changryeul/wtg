@@ -1,0 +1,52 @@
+[Unit]
+Description=WTG mci-admin — 운영 콘솔
+Documentation=file:///opt/wtg/share/doc/admin-ui-manual.md
+After=network-online.target etcd.service wtg-mci-price.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wtg
+Group=wtg
+EnvironmentFile=/etc/wtg/wtg.env
+ExecStart=/opt/wtg/bin/mci-admin \
+    --listen :9090 \
+    --tls-cert /etc/pki/wtg/admin.crt \
+    --tls-key  /etc/pki/wtg/admin.key \
+    --etcd ${WTG_ETCD} \
+    --etcd-tls-ca   ${WTG_ETCD_TLS_CA} \
+    --etcd-tls-cert ${WTG_ETCD_TLS_CERT} \
+    --etcd-tls-key  ${WTG_ETCD_TLS_KEY} \
+    --broker-host ${WTG_BROKER_HOST} \
+    --broker-port ${WTG_BROKER_PORT} \
+    --broker-tls-ca   ${WTG_BROKER_TLS_CA} \
+    --broker-tls-cert ${WTG_BROKER_TLS_CERT} \
+    --broker-tls-key  ${WTG_BROKER_TLS_KEY} \
+    --price-url http://int1.internal:8082 \
+    --fwd-url http://fwd1.internal:9091 \
+    --prom-url ${WTG_PROM_URL} \
+    --grafana-url ${WTG_GRAFANA_URL} \
+    --grafana-user ${WTG_GRAFANA_USER} \
+    --grafana-pass ${WTG_GRAFANA_PASS} \
+    --otel-endpoint ${WTG_OTEL_ENDPOINT}
+
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+TimeoutStopSec=30
+
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/wtg
+ProtectHome=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-admin
+
+[Install]
+WantedBy=multi-user.target

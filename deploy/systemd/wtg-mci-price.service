@@ -1,0 +1,55 @@
+[Unit]
+Description=WTG mci-price — 시세 fan-out + BestConsumer + 마진 + QuoteID
+Documentation=file:///opt/wtg/share/doc/operations.md
+After=network-online.target etcd.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wtg
+Group=wtg
+EnvironmentFile=/etc/wtg/wtg.env
+ExecStart=/opt/wtg/bin/mci-price \
+    --listen :8082 \
+    --grpc :50051 \
+    --broker-host ${WTG_BROKER_HOST} \
+    --broker-port ${WTG_BROKER_PORT} \
+    --broker-tls-ca ${WTG_BROKER_TLS_CA} \
+    --broker-tls-cert ${WTG_BROKER_TLS_CERT} \
+    --broker-tls-key ${WTG_BROKER_TLS_KEY} \
+    --etcd ${WTG_ETCD} \
+    --etcd-tls-ca ${WTG_ETCD_TLS_CA} \
+    --etcd-tls-cert ${WTG_ETCD_TLS_CERT} \
+    --etcd-tls-key ${WTG_ETCD_TLS_KEY} \
+    --quoteid-redis ${WTG_QUOTEID_REDIS} \
+    --quoteid-redis-master ${WTG_QUOTEID_REDIS_MASTER} \
+    --quoteid-instance ${WTG_QUOTEID_INSTANCE} \
+    --quoteid-validity 500ms \
+    --quoteid-reg-timeout 500ms \
+    --best-staleness 10s \
+    --chart-dsn ${WTG_DSN} \
+    --otel-endpoint ${WTG_OTEL_ENDPOINT}
+
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+TimeoutStopSec=30
+
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# 보안 강화
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/wtg /var/lib/wtg
+ProtectHome=true
+
+# 로그
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-price
+
+[Install]
+WantedBy=multi-user.target

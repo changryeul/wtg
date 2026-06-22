@@ -20,11 +20,13 @@ cd "$REPO"
 WITH_CHART=0
 WITH_FORWARDER=0
 WITH_PROM=0
+WITH_SWAP_LOCK=0
 for arg in "$@"; do
   case "$arg" in
     --with-chart)     WITH_CHART=1 ;;
     --with-forwarder) WITH_FORWARDER=1 ;;
     --with-prom)      WITH_PROM=1 ;;
+    --with-swap-lock) WITH_SWAP_LOCK=1 ;;
     *) echo "unknown arg: $arg"; exit 1 ;;
   esac
 done
@@ -65,13 +67,14 @@ if [ "$WITH_PROM" = "1" ]; then
   fi
 fi
 
-# mci-price (단순화 v3 — swap-lock 끔, 5-Layer → 3-Layer)
-start mci-price ./build/bin/mci-price \
-  --dev --no-broker \
+# mci-price (단순화 v3 — 5-Layer → 3-Layer. swap-lock 은 --with-swap-lock 옵션)
+PRICE_ARGS=(--dev --no-broker \
   --listen "${LISTEN_PRICE:-:8082}" --grpc "${GRPC_PRICE:-:50051}" \
   --symbols etc/symbols.json \
   --pricing etc/pricing.json \
-  --profiles etc/profiles.json
+  --profiles etc/profiles.json)
+[ "$WITH_SWAP_LOCK" = "1" ] && PRICE_ARGS+=(--enable-swap-lock)
+start mci-price ./build/bin/mci-price "${PRICE_ARGS[@]}"
 
 # mci-edge-price (3 stream 활성)
 start mci-edge-price ./build/bin/mci-edge-price \
@@ -101,11 +104,14 @@ ADMIN_FLAGS=(--dev --no-broker --listen "${LISTEN_ADMIN:-:9090}")
 [ "$WITH_PROM" = "1" ] && ADMIN_FLAGS+=(--prom-url http://127.0.0.1:9095)
 start mci-admin ./build/bin/mci-admin "${ADMIN_FLAGS[@]}"
 
-# tickloop (dev tick generator)
-if [ -f /tmp/wtg-dev-tickloop.py ]; then
+# tickloop (dev tick generator) — 영구 위치 scripts/wtg-dev-tickloop.py
+TICKLOOP="$REPO/scripts/wtg-dev-tickloop.py"
+if [ -f "$TICKLOOP" ]; then
   echo "==> tickloop 시작"
-  nohup python3 /tmp/wtg-dev-tickloop.py > logs/dev-tick.log 2>&1 &
+  nohup python3 "$TICKLOOP" > logs/dev-tick.log 2>&1 &
   echo "    pid=$!"
+else
+  echo "==> tickloop 스크립트 없음 ($TICKLOOP) — 시세 흐름 안 함"
 fi
 
 sleep 2

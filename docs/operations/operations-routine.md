@@ -2,7 +2,7 @@
 
 > 운영자가 매일 / 매주 / 분기 / 사고 시 무엇을 하는지 한 장으로.
 > **인쇄해서 모니터 옆에 붙여놓는 용도**.
-> 자세한 설명은 `docs/admin-ui-manual.md` §12 참조.
+> 자세한 설명은 `admin-ui-manual.md` §12 참조.
 
 ---
 
@@ -75,11 +75,11 @@
 
 □ 4. 보안 점검
      - TLS cert 만료까지 60일 남았는지 (broker / etcd / Redis / DMZ)
-     - push-secret 회전 (분기 1회 권장, docs/push-secret-rotation.md)
+     - push-secret 회전 (분기 1회 권장, ../push-secret-rotation.md)
      - 운영자 계정 권한 (roles=admin) 의 정당성
 
 □ 5. 단순화 검토
-     - docs/simplification-guide.md §11 Week 4 (큰 자르기) 도입 후보 점검
+     - ../simplification-guide.md §11 Week 4 (큰 자르기) 도입 후보 점검
      - 사용 안 하는 feature flag off 결정
 ```
 
@@ -173,8 +173,8 @@ redis-cli -p 26379 sentinel masters          # Sentinel 상태
 
 ## 참고 문서
 
-- `docs/admin-ui-manual.md` §12 — 운영 시나리오 7가지 자세히
-- `docs/deployment-scenario-ha-channel.md` §11 — 단일 사이트 운영 SOP
-- `docs/deployment-scenario-multi-site.md` §7.2 — 다중 사이트 SOP
-- `docs/simplification-guide.md` — 단순화 의사결정
-- `docs/operations.md` — 서비스 flag/env 카탈로그
+- `admin-ui-manual.md` §12 — 운영 시나리오 7가지 자세히
+- `deployment-scenario-ha-channel.md` §11 — 단일 사이트 운영 SOP
+- `deployment-scenario-multi-site.md` §7.2 — 다중 사이트 SOP
+- `../simplification-guide.md` — 단순화 의사결정
+- `../operations.md` — 서비스 flag/env 카탈로그

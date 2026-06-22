@@ -168,7 +168,7 @@ make proto
 # → pkg/wtgpb/v1/*.pb.go  +  pkg/wtgpb/v1/*_grpc.pb.go
 ```
 
-필요 도구 — `protoc` + `protoc-gen-go` + `protoc-gen-go-grpc` (자세히 `docs/deployment-software.md` §6.2).
+필요 도구 — `protoc` + `protoc-gen-go` + `protoc-gen-go-grpc` (자세히 `docs/operations/deployment-software.md` §6.2).
 
 ---
 
@@ -285,7 +285,7 @@ customer_id 별 우대/페널티. `mode` 와 `priority` 가 핵심.
 
 **현재 시드 예시** : alice (VIP, add −0.01), bob (GOLD, override ±0.005), carol (wildcard −0.02).
 
-→ 5-Layer 결합 산식은 `docs/deployment-scenario-ha-channel.md` §5.7 참조.
+→ 5-Layer 결합 산식은 `docs/operations/deployment-scenario-ha-channel.md` §5.7 참조.
 
 ### 6.4 `etc/db-mirror/` — 외환 운영 DB 미러
 
@@ -312,7 +312,7 @@ mci-chart 부트스트랩 시 :
 psql -d wtg -f etc/sql/quote_bars.sql
 ```
 
-> 일반 PostgreSQL 만 쓰려면 hypertable / 압축 / retention 줄을 제거. mci-chart 의 SELECT 는 평범한 SQL 이라 동작 (`docs/deployment-scenario-ha-channel.md` §10.6.x 참조).
+> 일반 PostgreSQL 만 쓰려면 hypertable / 압축 / retention 줄을 제거. mci-chart 의 SELECT 는 평범한 SQL 이라 동작 (`docs/operations/deployment-scenario-ha-channel.md` §10.6.x 참조).
 
 ### 6.6 `etc/grafana/` — Prometheus rule + Grafana dashboard
 
@@ -424,11 +424,11 @@ MYMQD_HOST=10.0.0.10 go test -v ./test/integration/...   # 실 broker 통합
 
 | 문서 | 내용 |
 |---|---|
-| `docs/admin-ui-manual.md` | mci-admin UI 37 페이지 매뉴얼 (37 페이지 × 6칸 + 시나리오 7 + 부록) |
+| `docs/operations/admin-ui-manual.md` | mci-admin UI 37 페이지 매뉴얼 (37 페이지 × 6칸 + 시나리오 7 + 부록) |
 | `docs/admin-ui-test-guide.md` | 페이지별 테스트 시나리오 |
-| `docs/deployment-software.md` | 배포 시 설치할 모든 소프트웨어 |
-| `docs/deployment-scenario-ha-channel.md` | 단일 사이트 HA + 채널 분리 (WEB / CS) 시나리오 — broker 라우팅 / wire / 시세 / push / quote_id 5 단계 멘탈모델 |
-| `docs/deployment-scenario-multi-site.md` | 다중 사이트 Active-Active + GSLB |
+| `docs/operations/deployment-software.md` | 배포 시 설치할 모든 소프트웨어 |
+| `docs/operations/deployment-scenario-ha-channel.md` | 단일 사이트 HA + 채널 분리 (WEB / CS) 시나리오 — broker 라우팅 / wire / 시세 / push / quote_id 5 단계 멘탈모델 |
+| `docs/operations/deployment-scenario-multi-site.md` | 다중 사이트 Active-Active + GSLB |
 | `docs/directory-structure.md` | (본 문서) 디렉토리 + 설정 파일 안내 |
 
 ### 11.2 아키텍처 / 컨벤션
@@ -610,7 +610,7 @@ WantedBy=multi-user.target
 | broker AP 의 transaction schema 확인 | mci-admin UI 의 `📋 서비스 명세` 페이지 |
 | 운영 모니터링 대시보드 | `etc/grafana/*.json` import → Grafana UI |
 | Prometheus alert 룰 | `etc/grafana/*.yml` → `/etc/prometheus/rules/` |
-| dev stack 일괄 부팅 | `scripts/dev-up.sh` 또는 `docs/admin-ui-manual.md` 부록 A |
+| dev stack 일괄 부팅 | `scripts/dev-up.sh` 또는 `docs/operations/admin-ui-manual.md` 부록 A |
 | 부하 테스트 | `scripts/load-test.sh low/mid/high/custom` |
 | broker 재연결 검증 | `scripts/chaos-broker.sh` |
 | broker AP 와 wire 합의 | `pkg/mymq/conventions.go` (ApplName / Channel / Exchange / RoutingKey / Queue) |
@@ -619,9 +619,9 @@ WantedBy=multi-user.target
 | 새 protobuf 추가 | `api/proto/wtg/v1/*.proto` → `make proto` |
 | TimescaleDB 스키마 변경 | `etc/sql/quote_bars.sql` + migration script |
 | C 매매 엔진 SDK 배포본 | `etc/sdk/c/` |
-| 운영 SOP / 사고 대응 | `docs/admin-ui-manual.md` §12 + `docs/operations.md` |
-| 5-Layer 마진 산식 | `docs/deployment-scenario-ha-channel.md` §5.7 |
-| 다중 사이트 배포 | `docs/deployment-scenario-multi-site.md` |
+| 운영 SOP / 사고 대응 | `docs/operations/admin-ui-manual.md` §12 + `docs/operations.md` |
+| 5-Layer 마진 산식 | `docs/operations/deployment-scenario-ha-channel.md` §5.7 |
+| 다중 사이트 배포 | `docs/operations/deployment-scenario-multi-site.md` |
 
 ---
 
@@ -661,9 +661,9 @@ WantedBy=multi-user.target
 
 - `CLAUDE.md` — 프로젝트 한 페이지 요약
 - `README.md` — 소개 + 디렉토리 구조 (간략)
-- `docs/admin-ui-manual.md` — 운영 콘솔 37 페이지
-- `docs/deployment-software.md` — 설치할 모든 소프트웨어
-- `docs/deployment-scenario-ha-channel.md` — 단일 사이트 시나리오 + 5 단계 멘탈모델
-- `docs/deployment-scenario-multi-site.md` — 다중 사이트 시나리오
+- `docs/operations/admin-ui-manual.md` — 운영 콘솔 37 페이지
+- `docs/operations/deployment-software.md` — 설치할 모든 소프트웨어
+- `docs/operations/deployment-scenario-ha-channel.md` — 단일 사이트 시나리오 + 5 단계 멘탈모델
+- `docs/operations/deployment-scenario-multi-site.md` — 다중 사이트 시나리오
 - `docs/operations.md` — 서비스 flag/env + 운영 작업
 - `docs/conventions.md` — ApplName/Channel/Exchange/RoutingKey 카탈로그

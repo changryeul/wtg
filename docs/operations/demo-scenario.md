@@ -124,7 +124,7 @@ curl -s http://127.0.0.1:8082/v1/quote/swap/stats
 > WTG (Winway Trading Gateway) 는 기존 C 매매 엔진 위에 web 기반 게이트웨이를 얹어
 > 웹/모바일/영업점 단말을 한 단일 인프라로 통합한 시스템입니다.
 
-`docs/deployment-scenario-ha-channel.md` 의 §2.2 토폴로지 그림을 한 장 띄움 (slide 또는 마크다운 뷰어).
+`deployment-scenario-ha-channel.md` 의 §2.2 토폴로지 그림을 한 장 띄움 (slide 또는 마크다운 뷰어).
 
 핵심 메시지 :
 - **DMZ ↔ Internal 분리** : 보안 격리
@@ -350,7 +350,7 @@ pkill -f load-gen 2>/dev/null
 
 #### 2.12 운영 SOP 한 장 보여주기
 
-`docs/operations-routine.md` 를 브라우저 또는 마크다운 뷰어로 띄움. 핵심 :
+`operations-routine.md` 를 브라우저 또는 마크다운 뷰어로 띄움. 핵심 :
 
 - **매일 5분** : 3 페이지 (대시보드 / 운영 모니터링 / 감사 로그)
 - **사고 시 3단계** : Kill switch → 정보 수집 → 회복
@@ -371,7 +371,7 @@ pkill -f load-gen 2>/dev/null
 | 보안은? | DMZ ↔ Internal 분리 + JWT + mTLS + IP allowlist + rate-limit. |
 | swap-lock 의 atomic 보장? | Reg.Put(near) → Put(far) → SwapIdx.PutSwap 순차 + 부분실패 시 revoke. |
 | 마진 정책 변경 시 다운타임? | 0 — etcd watch 로 hot reload. |
-| 다중 사이트는? | 가능. docs/deployment-scenario-multi-site.md 참조. |
+| 다중 사이트는? | 가능. deployment-scenario-multi-site.md 참조. |
 
 ---
 
@@ -407,7 +407,7 @@ pkill -f load-gen 2>/dev/null
 ### 4.3 90분 풀 (신규 개발자)
 
 - 60분 시나리오 + 다음 추가 :
-  - `docs/directory-structure.md` 한 페이지 투어 (5분)
+  - `../directory-structure.md` 한 페이지 투어 (5분)
   - `cside/wtgprice/sample.c` 코드 한 줄씩 설명 (5분)
   - `pkg/mymq/conventions.go` 의 ApplName / Channel / Exchange 카탈로그 (5분)
   - 부하 테스트 `./scripts/load-test.sh mid` 6.4k tick/s 실시간 보기 (10분)
@@ -511,7 +511,7 @@ curl -s -X POST http://127.0.0.1:8082/v1/quote/swap/lock \
 >
 > 준비물 : 노트북 (브라우저 접근만)
 > 시현 URL : (사내 admin UI 또는 본 노트북 화면 공유)
-> 사전 자료 : docs/admin-ui-manual.md 의 §1~3 (사이드바 한눈에)
+> 사전 자료 : admin-ui-manual.md 의 §1~3 (사이드바 한눈에)
 
 ---
 
@@ -602,8 +602,8 @@ prometheus --config.file=logs/prometheus.yml \
 
 ## 12. 참고 문서
 
-- `docs/admin-ui-manual.md` — 운영 매뉴얼 (37 페이지 상세)
-- `docs/operations-routine.md` — 운영자 SOP (인쇄용)
-- `docs/deployment-scenario-ha-channel.md` — 시현에서 보여줄 architecture
-- `docs/simplification-guide.md` — 단순화 v3 의 이론적 배경
-- `docs/admin-ui-test-guide.md` — 페이지별 테스트 시나리오 (시현 사전 점검용)
+- `admin-ui-manual.md` — 운영 매뉴얼 (37 페이지 상세)
+- `operations-routine.md` — 운영자 SOP (인쇄용)
+- `deployment-scenario-ha-channel.md` — 시현에서 보여줄 architecture
+- `../simplification-guide.md` — 단순화 v3 의 이론적 배경
+- `../admin-ui-test-guide.md` — 페이지별 테스트 시나리오 (시현 사전 점검용)

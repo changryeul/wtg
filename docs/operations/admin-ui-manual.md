@@ -657,7 +657,7 @@ VIP 가 spread 가장 좁고 STD 가 가장 넓음 — 같은 BEST 호가 1380.5
 PricingTable 의 **읽기 전용 문서/SOP**. 정책의 의미와 운영 절차를 본 페이지에서 인라인으로 본다.
 
 #### endpoint
-- `fetch("docs/margin-policy.md")` (정적 마크다운 인라인)
+- `fetch("../margin-policy.md")` (정적 마크다운 인라인)
 
 #### 언제 보나
 - 신규 운영자 인수인계
@@ -670,7 +670,7 @@ PricingTable 의 **읽기 전용 문서/SOP**. 정책의 의미와 운영 절차
 - 하단 — "운영 가이드 전체 보기" 링크
 
 #### 예시
-> 본 페이지가 보여주는 마크다운 = `docs/margin-policy.md` 의 내용.
+> 본 페이지가 보여주는 마크다운 = `../margin-policy.md` 의 내용.
 
 #### 주의
 - 본 페이지는 정책 자체가 아니라 정책 **설명서**. 정책 변경은 `margin-policy.md` 파일 + 본 `pricing` 페이지에서 동시 진행.

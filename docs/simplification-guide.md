@@ -465,10 +465,10 @@ PricingTable / 라우팅 룰 / 정책 변경 시 :
 
 ## 14. 참고 문서
 
-- `docs/admin-ui-manual.md` — 운영 매뉴얼 37 페이지
-- `docs/deployment-software.md` — 배포 소프트웨어 명세
-- `docs/deployment-scenario-ha-channel.md` — 단일 사이트 시나리오 + 5 단계 멘탈모델
-- `docs/deployment-scenario-multi-site.md` — 다중 사이트 시나리오
+- `docs/operations/admin-ui-manual.md` — 운영 매뉴얼 37 페이지
+- `docs/operations/deployment-software.md` — 배포 소프트웨어 명세
+- `docs/operations/deployment-scenario-ha-channel.md` — 단일 사이트 시나리오 + 5 단계 멘탈모델
+- `docs/operations/deployment-scenario-multi-site.md` — 다중 사이트 시나리오
 - `docs/directory-structure.md` — 소스 레이아웃 + 설정 파일
 - `docs/phase-2.7-rollout.md` — 두 트랙 push 의 트랙 B 안정화 절차
 - `docs/operations.md` — 서비스 flag/env 카탈로그

@@ -121,9 +121,9 @@
 - **포트** — broker `:11217`, cluster `:11218`
 - **수정** — **WTG 코드와 별개의 비즈니스 로직**. wire schema 확장 (예: mqhdr 끝의 `trcid[16]`) 같은 인프라 변경만 양측 동시 deploy
 - **HA** — broker cluster (active-standby + cluster port)
-- **로그** — `DEV_MAIN_LOG` (구조화 log, `docs/dev-main.md`)
-- **TLS** — `docs/broker-tls.md` 의 합의안
-- **재연결** — WTG 측 supervisor goroutine (`docs/broker-reconnect.md`)
+- **로그** — `DEV_MAIN_LOG` (구조화 log, `../dev-main.md`)
+- **TLS** — `../broker-tls.md` 의 합의안
+- **재연결** — WTG 측 supervisor goroutine (`../broker-reconnect.md`)
 
 ### 3.2 etcd
 
@@ -168,8 +168,8 @@ wget https://github.com/etcd-io/etcd/releases/download/v3.5.21/etcd-v3.5.21-linu
 
 - **DMZ TLS** — 외부에 노출되는 edge-api / edge-push / edge-price / edge-chart 의 server cert. Let's Encrypt 또는 사내 CA
 - **mTLS (내부)** — Internal ↔ DMZ, gRPC, etcd, Redis 모두 mTLS 권장. 사내 CA 로 통일
-- **broker TLS** — `docs/broker-tls.md`. broker 와 WTG 가 같은 사내 CA
-- **회전 정책** — cert 6개월~1년. `docs/push-secret-rotation.md` 의 회전 절차 참조 (secret 도 동일 패턴)
+- **broker TLS** — `../broker-tls.md`. broker 와 WTG 가 같은 사내 CA
+- **회전 정책** — cert 6개월~1년. `../push-secret-rotation.md` 의 회전 절차 참조 (secret 도 동일 패턴)
 - **저장** — `/etc/pki/wtg/` (mode 0600, wtg user 만 read)
 
 도구: `step-ca`, `cert-manager`, HashiCorp Vault PKI 등.
@@ -238,7 +238,7 @@ wget https://github.com/etcd-io/etcd/releases/download/v3.5.21/etcd-v3.5.21-linu
 
 - **무엇** — Prometheus / Loki / Tempo 위의 시각화 + alert UI. mci-admin 의 firing alerts banner 의 source
 - **버전** — 10.4+
-- **dashboards** — `docs/monitoring.md`, `docs/push-monitoring.md` 의 panel 명세를 dashboard 로 작성
+- **dashboards** — `../monitoring.md`, `../push-monitoring.md` 의 panel 명세를 dashboard 로 작성
 - **alerts** — Prometheus rule 과 통합 — `/api/prometheus/grafana/api/v1/rules` 가 mci-admin 의 `wtg-*` 그룹 source
 - **mci-admin 연결** — `--grafana-url http://grafana.internal:3000` + Basic auth 또는 SSO
 
@@ -474,7 +474,7 @@ services:
 - [ ] PricingTable (HQ/Site/Customer/Window/Swap 5 layer) 모두 적절 — `margin-calc` 페이지로 샘플 시뮬레이션
 - [ ] `users` 페이지에서 운영자 계정 + role 부여
 - [ ] `quoteid-engines` 페이지에서 매매 AP 엔진 등록 + secret 안전 보관
-- [ ] 운영 SOP (`docs/operations.md`) 가 운영팀에 공유됨
+- [ ] 운영 SOP (`../operations.md`) 가 운영팀에 공유됨
 - [ ] 비상 시 Kill Switch 절차 + Maintenance Window 입력 절차 운영자가 숙지
 - [ ] 백업 — etcd snapshot / Redis AOF / TimescaleDB pg_dump 자동화 동작
 - [ ] DR — 다른 region 또는 다른 datacenter 에 cold standby (선택)
@@ -485,30 +485,30 @@ services:
 
 본 문서가 가리키는 다른 명세:
 
-- `docs/mci-architecture.md` — 컴포넌트 흐름
-- `docs/operations.md` — 서비스별 flag/env + mci-admin 운영 작업
-- `docs/conventions.md` — ApplName / Channel / Exchange / RoutingKey / Queue 카탈로그
-- `docs/auth.md` — JWT + Redis store + Session.Profile + cookie_t passthrough
-- `docs/cooker-quote-schema.md` — UDP FIX → broker → mci-price 시세 wire
-- `docs/cooker-patch.md` — Cooker 가 myrqd + mymqd 양쪽 publish 패치
-- `docs/chart-schema.md` — TimescaleDB hypertable 설계
-- `docs/margin-business-spec.md` — 마진 업무 정의
-- `docs/margin-policy.md` — Pricing Policy 명세
-- `docs/swap-trade-spec.md` — FX swap 2-leg 잠금 (Phase S3)
-- `docs/broker-tls.md` — broker TLS 합의안
-- `docs/broker-tracing.md` — mqhdr 의 trace_id 확장
-- `docs/broker-reconnect.md` — supervisor goroutine 재연결 정책
-- `docs/broker-sigabrt-analysis.md` — broker SIGABRT 부하 사고 사후 분석
-- `docs/push-secret-rotation.md` — HTTP push secret 회전 절차
-- `docs/quoteid-validation-rfc.md` — quote_id 검증 RFC (sync/async 모드, store 선택)
-- `docs/quoteid-operations.md` — quote_id allowlist 운영
-- `docs/mci-price-ha.md` — mci-price 다중 인스턴스 HA
+- `../mci-architecture.md` — 컴포넌트 흐름
+- `../operations.md` — 서비스별 flag/env + mci-admin 운영 작업
+- `../conventions.md` — ApplName / Channel / Exchange / RoutingKey / Queue 카탈로그
+- `../auth.md` — JWT + Redis store + Session.Profile + cookie_t passthrough
+- `../cooker-quote-schema.md` — UDP FIX → broker → mci-price 시세 wire
+- `../cooker-patch.md` — Cooker 가 myrqd + mymqd 양쪽 publish 패치
+- `../chart-schema.md` — TimescaleDB hypertable 설계
+- `../margin-business-spec.md` — 마진 업무 정의
+- `../margin-policy.md` — Pricing Policy 명세
+- `../swap-trade-spec.md` — FX swap 2-leg 잠금 (Phase S3)
+- `../broker-tls.md` — broker TLS 합의안
+- `../broker-tracing.md` — mqhdr 의 trace_id 확장
+- `../broker-reconnect.md` — supervisor goroutine 재연결 정책
+- `../broker-sigabrt-analysis.md` — broker SIGABRT 부하 사고 사후 분석
+- `../push-secret-rotation.md` — HTTP push secret 회전 절차
+- `../quoteid-validation-rfc.md` — quote_id 검증 RFC (sync/async 모드, store 선택)
+- `../quoteid-operations.md` — quote_id allowlist 운영
+- `../mci-price-ha.md` — mci-price 다중 인스턴스 HA
 - `docs/phase-2.7-rollout.md` — broker 우회 HTTP push rollout
-- `docs/observability.md` — 운영 진단/관측 통합 가이드
-- `docs/monitoring.md` — Prometheus / Grafana 가이드
-- `docs/push-monitoring.md` — mci-push 가시화 dashboard / rules
-- `docs/cs-ws-migration.md` — legacy cs framework → mci-edge-price ws 마이그레이션
-- `docs/admin-ui-manual.md` — admin UI 37 페이지 운영 매뉴얼
-- `docs/admin-ui-test-guide.md` — admin UI 페이지별 테스트 시나리오
-- `docs/testing.md` — 단위/통합/e2e 단계별
-- `docs/roadmap.md` — Phase 1~9 일정
+- `../observability.md` — 운영 진단/관측 통합 가이드
+- `../monitoring.md` — Prometheus / Grafana 가이드
+- `../push-monitoring.md` — mci-push 가시화 dashboard / rules
+- `../cs-ws-migration.md` — legacy cs framework → mci-edge-price ws 마이그레이션
+- `admin-ui-manual.md` — admin UI 37 페이지 운영 매뉴얼
+- `../admin-ui-test-guide.md` — admin UI 페이지별 테스트 시나리오
+- `../testing.md` — 단위/통합/e2e 단계별
+- `../roadmap.md` — Phase 1~9 일정

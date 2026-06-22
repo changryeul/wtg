@@ -2,7 +2,7 @@
 
 > 운영자가 매일 만지는 것 (설정 / 로그 / 명령) 의 단일 출처.
 > "이걸 바꾸려면 어디를 만지지?", "이 메시지는 무슨 뜻이지?" 에 즉답.
-> 자세한 운영 SOP 는 `docs/operations-routine.md`, 페이지별 설명은 `docs/admin-ui-manual.md`.
+> 자세한 운영 SOP 는 `operations-routine.md`, 페이지별 설명은 `admin-ui-manual.md`.
 
 ---
 
@@ -344,9 +344,9 @@ sudo systemctl status wtg-mci-price --no-pager -n 100
 
 ## 10. 참고 문서
 
-- `docs/operations-routine.md` — 운영자 일일 / 주간 / 사고 SOP
-- `docs/admin-ui-manual.md` — admin UI 37 페이지 매뉴얼 (각 페이지의 endpoint / 메시지 의미)
-- `docs/observability.md` — Prometheus / Grafana 통합 가이드
-- `docs/monitoring.md` — 메트릭 명세
+- `operations-routine.md` — 운영자 일일 / 주간 / 사고 SOP
+- `admin-ui-manual.md` — admin UI 37 페이지 매뉴얼 (각 페이지의 endpoint / 메시지 의미)
+- `../observability.md` — Prometheus / Grafana 통합 가이드
+- `../monitoring.md` — 메트릭 명세
 - `deploy/systemd/wtg.env.sample` — 환경 변수 카탈로그
 - `deploy/systemd/DEPLOY-CHECKLIST.md` — 운영 배포 단계별 명령

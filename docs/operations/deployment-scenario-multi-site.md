@@ -1,7 +1,7 @@
 # 배포 시나리오 — 다중 사이트 (Active-Active + GSLB)
 
 > 지리적으로 분리된 두 데이터센터 (Seoul / Busan) 에 WTG 를 배포하는 구성 예제.
-> 본 문서는 단일 사이트 구성 (`docs/deployment-scenario-ha-channel.md`) 을 전제로 — **사이트 1개 안의 HA / 채널 / 라우팅 / 마진 / 검증** 은 그 문서 그대로 적용된다.
+> 본 문서는 단일 사이트 구성 (`deployment-scenario-ha-channel.md`) 을 전제로 — **사이트 1개 안의 HA / 채널 / 라우팅 / 마진 / 검증** 은 그 문서 그대로 적용된다.
 > 본 문서가 다루는 것은 **사이트가 둘 이상 됐을 때 새로 결정해야 할 4가지** 와 그 결과 :
 > 1. **사이트 간 데이터 동기화** — etcd / Redis / TimescaleDB
 > 2. **사용자 트래픽 라우팅** — GSLB / sticky 정책
@@ -32,7 +32,7 @@
 
 ### 2.1 사이트 별 컴포넌트
 
-각 사이트는 단일 사이트 구성 (`docs/deployment-scenario-ha-channel.md` §2) 의 풀스택을 그대로 가진다. 새로 추가되는 건 사이트 간 동기화 + GSLB.
+각 사이트는 단일 사이트 구성 (`deployment-scenario-ha-channel.md` §2) 의 풀스택을 그대로 가진다. 새로 추가되는 건 사이트 간 동기화 + GSLB.
 
 ```
                        사용자 (전세계)
@@ -311,7 +311,7 @@ Sentinel:
 **단점** :
 - 사이트 간 전용선 끊김 → split-brain 위험 (양 사이트가 각자 active 라고 생각).
 - broker cluster 의 cross-site sync latency → 매매 latency ↑.
-- mymq broker 가 이 모드 지원하는지 별도 검증 필요 — `docs/broker-tls.md` 참조.
+- mymq broker 가 이 모드 지원하는지 별도 검증 필요 — `../broker-tls.md` 참조.
 
 ### 5.3 본 시나리오 선택 — A (사이트별 독립)
 
@@ -527,15 +527,15 @@ etcdctl member add etcd-sl-1 --peer-urls=...
 
 ## 11. 참고 문서
 
-- `docs/deployment-scenario-ha-channel.md` — **본 문서의 전제** (단일 사이트 / HA / 채널 분리)
-- `docs/deployment-software.md` — 배포 소프트웨어 명세
-- `docs/admin-ui-manual.md` — 운영 매뉴얼 (37 페이지)
-- `docs/operations.md` — 서비스 flag/env + 부트스트랩 순서
-- `docs/broker-reconnect.md` — supervisor goroutine 재연결 정책
-- `docs/broker-tls.md` — broker cluster TLS / cross-site 합의안 (옵션 B 검토 시 필독)
-- `docs/mci-price-ha.md` — mci-price 다중 인스턴스 HA — 사이트 간 분산 고려
-- `docs/quoteid-operations.md` — quoteid allowlist 운영 (사이트 별 Registry 분리 정책)
-- `docs/auth.md` — JWT + cookie_t passthrough
+- `deployment-scenario-ha-channel.md` — **본 문서의 전제** (단일 사이트 / HA / 채널 분리)
+- `deployment-software.md` — 배포 소프트웨어 명세
+- `admin-ui-manual.md` — 운영 매뉴얼 (37 페이지)
+- `../operations.md` — 서비스 flag/env + 부트스트랩 순서
+- `../broker-reconnect.md` — supervisor goroutine 재연결 정책
+- `../broker-tls.md` — broker cluster TLS / cross-site 합의안 (옵션 B 검토 시 필독)
+- `../mci-price-ha.md` — mci-price 다중 인스턴스 HA — 사이트 간 분산 고려
+- `../quoteid-operations.md` — quoteid allowlist 운영 (사이트 별 Registry 분리 정책)
+- `../auth.md` — JWT + cookie_t passthrough
 - (외부) AWS Route53 / Cloudflare Load Balancer / Google Cloud DNS 의 latency-based routing 문서
 - (외부) etcd 5-node operations guide — `etcd.io/docs/v3.5/op-guide/`
 - (외부) Redis Sentinel cross-DC guide

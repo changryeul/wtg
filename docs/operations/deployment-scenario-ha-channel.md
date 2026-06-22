@@ -94,7 +94,7 @@
 ### 2.3 active-standby 동작
 
 - broker cluster port `11218` 로 ap1 ↔ ap2 가 서로 heartbeat. active 가 죽으면 standby 가 active 로 promote.
-- WTG (mci-api/push/price) 는 broker 주소를 **VIP** (또는 DNS round-robin) 로 잡아 active 만 보게 한다. failover 시 supervisor goroutine 이 자동 재연결 (`docs/broker-reconnect.md`).
+- WTG (mci-api/push/price) 는 broker 주소를 **VIP** (또는 DNS round-robin) 로 잡아 active 만 보게 한다. failover 시 supervisor goroutine 이 자동 재연결 (`../broker-reconnect.md`).
 - 매매 AP / 매칭엔진은 broker 와 동일 노드 — broker 가 죽으면 둘 다 같이 죽고 standby 노드의 짝이 올라옴.
 
 ---
@@ -425,7 +425,7 @@ mymq wire 는 **publish (broadcast)** 와 **send (transaction RPC)** 의 두 가
 - **Q. `Options.Channel = ChannelWeb` 으로 등록한 mci-api 가 `ChannelAdmin` 메시지도 받을 수 있나?**
   못 받는다. broker 가 channel 단위로도 라우팅 — `ChannelAdmin` 메시지는 `ChannelAdmin` 으로 등록된 client (= mci-admin, quote-forwarder) 만 받는다. 그래서 quote-forwarder 가 admin channel 로 시세를 publish 하면 그 채널 받는 mci-price 가 ChannelAdmin 또는 multi-channel 등록 필요.
 - **Q. trcid (trace_id) 와 ckey 는 다른가?**
-  다르다. ckey = 한 RPC pair (요청↔응답) 매칭용, 짧게 (보통 ms 단위 lifetime). trcid = 분산 trace 전체 식별, end-to-end (브라우저 → mci-edge → mci-api → broker → AP → DB) 일관 유지. 둘 다 mqhdr 안에 박힌다. `docs/broker-tracing.md` 참조.
+  다르다. ckey = 한 RPC pair (요청↔응답) 매칭용, 짧게 (보통 ms 단위 lifetime). trcid = 분산 trace 전체 식별, end-to-end (브라우저 → mci-edge → mci-api → broker → AP → DB) 일관 유지. 둘 다 mqhdr 안에 박힌다. `../broker-tracing.md` 참조.
 
 ### 4.5 시세 파이프라인 — raw tick 부터 사용자 호가까지
 
@@ -591,7 +591,7 @@ mymq wire 는 **publish (broadcast)** 와 **send (transaction RPC)** 의 두 가
 
 - **트랙 A** = legacy. 매매 AP (WECHO 등) 가 broker 로 publish → broker 의 representative receiver 로 등록된 mci-push 가 받음. **wire 호환 보장** — broker 와 같은 mymq protocol.
 - **트랙 B** = 신규 (Phase 2.x). 운영 svc 가 HTTP 로 mci-push 에 직접 push. **broker 우회**. 도입 동기 :
-  - broker 가 SIGABRT 부하 상황에서 publisher thread 가 ceiling — `docs/broker-sigabrt-analysis.md`
+  - broker 가 SIGABRT 부하 상황에서 publisher thread 가 ceiling — `../broker-sigabrt-analysis.md`
   - 운영 C 코드에서 mymq 의존을 제거하고 싶음 (POSIX socket 만으로 충분)
   - C SDK `cside/wtgpush` 가 외부 의존 0 으로 만들어져 운영 매매 엔진의 어느 platform (AIX/Solaris/HP-UX/Linux/Darwin) 에서나 build
 
@@ -641,7 +641,7 @@ mci-push 의 ws 클라이언트
 mci-push (int1, int2)
   │
   │  ① 인증 :
-  │     - X-Push-Secret 헤더 검증 (운영 정책상 secret-only 모드) — `docs/push-secret-rotation.md`
+  │     - X-Push-Secret 헤더 검증 (운영 정책상 secret-only 모드) — `../push-secret-rotation.md`
   │     - 또는 mTLS client cert 검증 (대안)
   │     - 둘 중 어느 쪽도 통과면 accept
   │
@@ -714,7 +714,7 @@ if (rc != 0) {
 | 트랙 A 메시지가 중복 도착 | 두 mci-push 인스턴스 모두 rep receiver → 양쪽 ws 에 fan-out. 트랙 B 또는 user→instance sticky 필요 |
 | 트랙 B 가 401 | `X-Push-Secret` 헤더 누락 또는 mTLS client cert 없음 |
 | 트랙 B 가 다른 instance 로 도달 | 호출자가 라운드로빈으로 보냄 — consistent hash ring 의 forwarder 가 다시 sticky instance 로 reroute (정상 동작 — latency 1-hop 증가) |
-| 트랙 B 가 secret 회전 후 401 | 회전 시 두 secret (`old+new`) 동시 유효 기간이 짧음 — `docs/push-secret-rotation.md` 의 절차 (`grace_period`) 준수 필요 |
+| 트랙 B 가 secret 회전 후 401 | 회전 시 두 secret (`old+new`) 동시 유효 기간이 짧음 — `../push-secret-rotation.md` 의 절차 (`grace_period`) 준수 필요 |
 | LogonID 매칭 실패 (메시지가 어디로도 안 감) | LogonID 컨벤션 (Profile.Key() + usid) 가 broker 측과 mci-push 측 불일치 — `pkg/mymq/conventions.go` 의 LogonID encoder 확인 |
 | 브로드캐스트 (LogonID 빈값) 가 너무 많은 ws 에 폭주 | mci-edge-push 의 queue_cap 초과 → backpressure close. 공지 빈도 제한 또는 queue_cap 증대 |
 
@@ -727,7 +727,7 @@ if (rc != 0) {
 - **Q. broker 끊어진 상태에서 트랙 A push 는?**
   drop. 매매 AP 가 broker connection 없으면 publish 자체가 fail. 트랙 B 는 broker 무관하게 계속 동작.
 - **Q. 트랙 B 의 secret 은 어디에 보관?**
-  파일 `/etc/pki/wtg/push-secret` (mode 0600, wtg user 만 read) + 운영 매매 엔진 측 별도 사본. 회전 절차는 `docs/push-secret-rotation.md`. Vault 같은 secret manager 도입하면 mci-push 가 init 시 fetch.
+  파일 `/etc/pki/wtg/push-secret` (mode 0600, wtg user 만 read) + 운영 매매 엔진 측 별도 사본. 회전 절차는 `../push-secret-rotation.md`. Vault 같은 secret manager 도입하면 mci-push 가 init 시 fetch.
 - **Q. consistent hash ring 의 instance 추가/제거 시 일부 사용자는 끊기나?**
   ring 의 일부 슬롯만 재분배 → 보통 1/N 의 사용자만 reroute. 끊김은 없지만 새 instance 로 옮긴 사용자는 잠깐 ws 재연결 (mci-edge-push 자동).
 
@@ -926,7 +926,7 @@ if (rc != 0) {
 - **Q. customer 가 화면에서 망설이면 어떻게 되나?**
   500ms 지나면 EXPIRED. confirm 시도 시 매매 AP 가 reject → 클라이언트가 자동으로 새 quote_id 발급 받아 다시 시도 (refresh & re-confirm).
 - **Q. ValidateSwap 의 호가가 swap_lock 응답의 호가와 다르면?**
-  안 다르다. swap_lock 의 응답 호가와 ValidateSwap 의 응답 호가는 같은 Record 에서 나온 같은 snapshot. 다르게 보이면 버그 — `docs/swap-trade-spec.md` 의 spec 위반.
+  안 다르다. swap_lock 의 응답 호가와 ValidateSwap 의 응답 호가는 같은 Record 에서 나온 같은 snapshot. 다르게 보이면 버그 — `../swap-trade-spec.md` 의 spec 위반.
 - **Q. MarkConsumed 후 환불/취소는?**
   Registry 단에서 unmark 안 한다 — 한 번 소진된 quote_id 는 그대로. 취소 거래는 별도 transaction (`WEB_ORDER_CANCEL`) 로 매매 AP 의 ledger 에서 처리. WTG 는 그 흐름에 관여 안 함.
 - **Q. quote_id 가 매매 AP 외에서 reuse 되면?**
@@ -1361,7 +1361,7 @@ quote-forwarder \
     --otel-endpoint otel-col.obs1.internal:4317
 ```
 
-> `--publish-mode grpc` 로 broker 우회. broker 부하 회피 + 운영 C 코드의 mymq 의존 제거 (`docs/cooker-patch.md`).
+> `--publish-mode grpc` 로 broker 우회. broker 부하 회피 + 운영 C 코드의 mymq 의존 제거 (`../cooker-patch.md`).
 
 ### 6.5 인프라
 
@@ -1409,7 +1409,7 @@ scrape_configs:
     static_configs: [{ targets: ['etcd1.internal:2379','etcd2.internal:2379','etcd3.internal:2379'] }]
 ```
 - Alertmanager — Slack webhook + PagerDuty
-- Grafana dashboard import : `docs/monitoring.md`, `docs/push-monitoring.md`
+- Grafana dashboard import : `../monitoring.md`, `../push-monitoring.md`
 - alert rule `etc/grafana/mci-price-swaplock-alerts.yml` 포함
 
 ---
@@ -1487,7 +1487,7 @@ mci-api `/v1/login` 이 발급하는 JWT 의 claim:
 - **Authorization (무엇을 할 수 있는가)** → 매매 AP
 - WTG 는 거래 한도/통화쌍 활성/거래시간/slippage 같은 비즈니스 권한 체크 안 함.
 - 로그인 시 매매 AP 가 발급한 `cookie_t` 를 Redis 에 저장, 이후 호출에 그대로 첨부 (passthrough).
-- 자세히 `docs/auth.md`.
+- 자세히 `../auth.md`.
 
 ### 8.4 cookie_t passthrough — 가장 헷갈리는 부분
 
@@ -1591,7 +1591,7 @@ mymqd  ──►  WECHO (ap1)
 | 만료 후 호출 | 매매 AP 가 `EXPIRED_SESSION` 응답 → mci-api 가 401 → 클라이언트가 `/v1/login` 재호출 |
 | 로그아웃 | `/v1/logout` → mci-api 가 broker `AUTH/LOGOUT` 호출 + Redis 키 삭제 |
 
-> 본 시나리오의 매매 AP (WECHO/BWECHO) 가 rolling token 을 쓰는지 안 쓰는지는 운영 합의 문서 (`docs/auth.md`) 참조. 안 쓰면 ④ step 은 no-op.
+> 본 시나리오의 매매 AP (WECHO/BWECHO) 가 rolling token 을 쓰는지 안 쓰는지는 운영 합의 문서 (`../auth.md`) 참조. 안 쓰면 ④ step 은 no-op.
 
 #### 8.4.5 Redis store — 멀티 인스턴스 공유
 
@@ -1916,7 +1916,7 @@ T=0.460   state = Connected, 새 요청 받기 시작
 - **Q. 재연결 동안 새 요청 받으면?**
   `Client.Call/Send` 가 `state=Disconnected` 면 즉시 errn=ECONN_LOST 반환. 호출자가 retry 정책으로 짧게 대기 후 재시도. 사용자에겐 503 응답.
 - **Q. broker cluster 가 split-brain 되면?**
-  WTG 측에서 막을 길 없음. broker 측 quorum 정책으로 회피 (`docs/broker-tls.md` 의 cluster 합의안).
+  WTG 측에서 막을 길 없음. broker 측 quorum 정책으로 회피 (`../broker-tls.md` 의 cluster 합의안).
 - **Q. broker 재연결 동안 시세도 끊기나?**
   본 시나리오는 quote-forwarder 가 publish-mode=grpc 라 broker 무관 → 시세 정상 흐름. 단 broker subscribe 도 같이 쓰면 (publish-mode=both) 동안 시세도 일시 끊김.
 - **Q. graceful shutdown 시는?**
@@ -1962,7 +1962,7 @@ T=0.460   state = Connected, 새 요청 받기 시작
 | MOB 채널 | 사용 안 함 | `pkg/session/types.go` 의 `Channel` enum 에서 `MOB` 제거하거나 그대로 두고 미사용 |
 | Site = HQ/BRANCH 만 | 다지점 / 위탁 (`OUTSRC`) 없음 | Site enum 에 `OUTSRC` 추가 |
 | Tier = VIP/GOLD/STD | 4종 이상 필요 시 | `Tier` enum 갱신 |
-| AP active-standby | active-active 이면 | broker 측 cluster 정책 + WTG 측 routing 검토 (`docs/mci-price-ha.md`) |
+| AP active-standby | active-active 이면 | broker 측 cluster 정책 + WTG 측 routing 검토 (`../mci-price-ha.md`) |
 | broker 와 매매 AP 동거 | 분리 가능 | broker 만 별도 서버로 옮기는 건 wire 호환만 맞으면 무관 |
 | Redis Sentinel | Cluster 사용하면 | `--quoteid-redis` flag 가 `cluster:host:port,...` 형식 |
 | TimescaleDB | 일반 Postgres | `etc/sql/quote_bars.sql` 의 hypertable / 압축 / retention 줄 제거 |
@@ -2169,11 +2169,11 @@ mci-admin → broker call : exchange="ADMIN", rkey="RELOAD", channel=ChannelAdmi
 - **Q. 매매 AP 1개가 여러 Exchange 를 동시에 처리할 수 있나?**
   가능. 한 프로세스가 broker 에 여러 번 register (Exchange 별) 호출. 단 보통 1 프로세스 = 1 Exchange 가 운영 깔끔.
 - **Q. WTG 가 보낸 메시지의 trcid 는 매매 AP 가 신경 써야 하나?**
-  응답 mqhdr 의 trcid 에 받은 값을 그대로 echo. 매매 AP 가 내부에서 다른 시스템 (DB, 매칭엔진) 호출할 때도 trcid 를 전파해야 분산 trace 완성. `docs/broker-tracing.md`.
+  응답 mqhdr 의 trcid 에 받은 값을 그대로 echo. 매매 AP 가 내부에서 다른 시스템 (DB, 매칭엔진) 호출할 때도 trcid 를 전파해야 분산 trace 완성. `../broker-tracing.md`.
 - **Q. ChannelAdmin 으로 등록한 AP 가 ChannelWeb 메시지도 받을 수 있나?**
   안 받는다 — 보통은 단일 channel 등록. 다중 channel 받으려면 broker register 를 channel 마다 한 번씩 해야.
 - **Q. 매매 AP 가 broker 끊김 감지 후 어떻게 해야 하나?**
-  C 측 mymq 라이브러리도 비슷한 supervisor 패턴이 있음 (`docs/dev-main.md`). 끊김 시 reconnect + 자기 등록 정보 복원. WTG 의 Go supervisor (§10.6) 와 같은 책임.
+  C 측 mymq 라이브러리도 비슷한 supervisor 패턴이 있음 (`../dev-main.md`). 끊김 시 reconnect + 자기 등록 정보 복원. WTG 의 Go supervisor (§10.6) 와 같은 책임.
 - **Q. 매매 AP 가 응답에 cookie_t_new 안 박으면?**
   WTG 의 Redis 의 cookie_t 가 그대로 유지 → 다음 호출에도 같은 cookie_t. rolling 안 한다는 의미. 매매 AP 가 cookie_t 의 유효기간을 다른 메커니즘으로 관리해야 (예: AUTH/REFRESH 로 주기적 갱신).
 - **Q. 매매 AP 가 시세 잠금 (quote_id) 검증 실패 시 어떻게?**
@@ -2191,14 +2191,14 @@ mci-admin → broker call : exchange="ADMIN", rkey="RELOAD", channel=ChannelAdmi
 
 ## 15. 참고 문서
 
-- `docs/admin-ui-manual.md` — 운영 매뉴얼 (37 페이지)
-- `docs/deployment-software.md` — 배포 소프트웨어 명세
-- `docs/operations.md` — 서비스 flag/env + 부트스트랩 순서
-- `docs/auth.md` — JWT + Session.Profile + cookie_t passthrough
-- `docs/conventions.md` — ApplName / Channel / Exchange / RoutingKey 카탈로그
-- `docs/broker-reconnect.md` — supervisor goroutine 재연결 정책
-- `docs/broker-tracing.md` — mqhdr trcid 확장
-- `docs/cooker-patch.md` — broker 우회 publish 패치
-- `docs/swap-trade-spec.md` — FX swap 2-leg 잠금
-- `docs/quoteid-validation-rfc.md` — quote_id 검증 RFC
-- `docs/mci-price-ha.md` — mci-price 다중 인스턴스 HA
+- `admin-ui-manual.md` — 운영 매뉴얼 (37 페이지)
+- `deployment-software.md` — 배포 소프트웨어 명세
+- `../operations.md` — 서비스 flag/env + 부트스트랩 순서
+- `../auth.md` — JWT + Session.Profile + cookie_t passthrough
+- `../conventions.md` — ApplName / Channel / Exchange / RoutingKey 카탈로그
+- `../broker-reconnect.md` — supervisor goroutine 재연결 정책
+- `../broker-tracing.md` — mqhdr trcid 확장
+- `../cooker-patch.md` — broker 우회 publish 패치
+- `../swap-trade-spec.md` — FX swap 2-leg 잠금
+- `../quoteid-validation-rfc.md` — quote_id 검증 RFC
+- `../mci-price-ha.md` — mci-price 다중 인스턴스 HA

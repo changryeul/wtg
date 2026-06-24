@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# WTG dev 스택 일괄 부팅 — mci-admin + mci-price + mci-edge-price + quote-forwarder + tickloop.
-# 기존 scripts/dev-up.sh 는 TimescaleDB 컨테이너만 다룬다. 본 스크립트는 WTG 바이너리.
+# WTG dev 스택 일괄 부팅 — mci-admin + mci-price + mci-edge-price + tickloop 기본.
+# 기존 scripts/dev-up.sh 는 TimescaleDB 컨테이너만 다룬다. 본 스크립트는 WTG 바이너리 + (선택) docker broker.
 #
 # 사용 :
-#   ./scripts/wtg-stack-up.sh                  # 기본 (단순화 v3 — swap-lock off)
-#   ./scripts/wtg-stack-up.sh --with-chart     # mci-chart 도 띄움 (TimescaleDB 필요)
-#   ./scripts/wtg-stack-up.sh --with-forwarder # quote-forwarder 도 띄움
-#   ./scripts/wtg-stack-up.sh --with-prom      # Prometheus + 운영 모니터링
+#   ./scripts/wtg-stack-up.sh                    # 기본 (단순화 v3 — swap-lock off)
+#   ./scripts/wtg-stack-up.sh --with-chart       # mci-chart 도 띄움 (PostgreSQL 또는 TimescaleDB 필요)
+#   ./scripts/wtg-stack-up.sh --with-forwarder   # quote-forwarder 도 띄움
+#   ./scripts/wtg-stack-up.sh --with-prom        # Prometheus + 운영 모니터링
+#   ./scripts/wtg-stack-up.sh --with-swap-lock   # mci-price 에 --enable-swap-lock 추가
+#   ./scripts/wtg-stack-up.sh --with-broker      # docker mymqd (broker + test_service + WECHO) 같이
+#   ./scripts/wtg-stack-up.sh --with-api         # mci-api 까지 (broker 필요 → --with-broker 자동)
+#   ./scripts/wtg-stack-up.sh --with-all         # 모든 컴포넌트 (chart 제외 — DB 의존)
 #
 # 환경변수 override :
-#   LISTEN_ADMIN=:9090  LISTEN_PRICE=:8082  ...
+#   LISTEN_ADMIN=:9090  LISTEN_PRICE=:8082  LISTEN_API=:8080
+#   CHART_DSN="postgres://winwaysystems@localhost/wtg?sslmode=disable"
+#   BROKER_IMAGE=wtg-mymqd:arm64-trcid-fix    # 기본은 가장 최근 build 된 image 자동 선택
 
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,20 +27,25 @@ WITH_CHART=0
 WITH_FORWARDER=0
 WITH_PROM=0
 WITH_SWAP_LOCK=0
+WITH_BROKER=0
+WITH_API=0
 for arg in "$@"; do
   case "$arg" in
     --with-chart)     WITH_CHART=1 ;;
     --with-forwarder) WITH_FORWARDER=1 ;;
     --with-prom)      WITH_PROM=1 ;;
     --with-swap-lock) WITH_SWAP_LOCK=1 ;;
+    --with-broker)    WITH_BROKER=1 ;;
+    --with-api)       WITH_API=1; WITH_BROKER=1 ;;     # api 는 broker 필수
+    --with-all)       WITH_FORWARDER=1; WITH_PROM=1; WITH_SWAP_LOCK=1; WITH_BROKER=1; WITH_API=1 ;;
     *) echo "unknown arg: $arg"; exit 1 ;;
   esac
 done
 
 mkdir -p logs
 
-# 기존 서비스 종료 (idempotent)
-for svc in mci-admin mci-price mci-edge-price quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
+# 기존 host 서비스 종료 (idempotent)
+for svc in mci-admin mci-api mci-price mci-edge-price quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
   pkill -f "build/bin/$svc" 2>/dev/null || true
 done
 pkill -f "wtg-dev-tickloop.py" 2>/dev/null || true
@@ -53,6 +64,29 @@ start() {
   echo "    pid=$!"
   sleep 1
 }
+
+# (선택) docker mymqd — broker + test_service + WECHO
+if [ "$WITH_BROKER" = "1" ]; then
+  if ! docker info >/dev/null 2>&1; then
+    echo "==> docker daemon 안 떠 있음 — broker skip (open -a Docker 후 재시도)"
+  else
+    # 기존 컨테이너 정리
+    docker rm -f mymqd >/dev/null 2>&1 || true
+    # image 결정 — env override 가장 우선, 없으면 wtg-mymqd 계열 중 가장 최근
+    IMAGE="${BROKER_IMAGE:-$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^wtg-mymqd:' | head -1)}"
+    if [ -z "$IMAGE" ]; then
+      echo "==> wtg-mymqd image 없음 — cd ~/mywork/mymq && docker build -f scripts/Dockerfile.runtime -t wtg-mymqd ."
+    else
+      echo "==> mymqd 컨테이너 띄움 :: $IMAGE"
+      docker run --rm -d -p 11217:11217 --name mymqd "$IMAGE" >/dev/null
+      # broker port ready 까지 polling
+      for i in {1..15}; do
+        nc -z 127.0.0.1 11217 2>/dev/null && { echo "    broker ready (${i}회차)"; break; }
+        sleep 1
+      done
+    fi
+  fi
+fi
 
 # Prometheus (선택)
 if [ "$WITH_PROM" = "1" ]; then
@@ -91,18 +125,25 @@ if [ "$WITH_FORWARDER" = "1" ]; then
     --price-grpc "127.0.0.1${GRPC_PRICE:-:50051}"
 fi
 
-# mci-chart (선택)
+# mci-chart (선택) — default DSN 은 brew postgres 기준
 if [ "$WITH_CHART" = "1" ]; then
   start mci-chart ./build/bin/mci-chart \
     --listen "${LISTEN_CHART:-:8086}" \
     --upstream "127.0.0.1${GRPC_PRICE:-:50051}" \
-    --dsn "${CHART_DSN:-postgres://wtg:secret@localhost:5432/wtg?sslmode=disable}"
+    --dsn "${CHART_DSN:-postgres://$(whoami)@localhost/wtg?sslmode=disable}"
 fi
 
 # mci-admin (마지막에 — 다른 서비스 url 가져옴)
 ADMIN_FLAGS=(--dev --no-broker --listen "${LISTEN_ADMIN:-:9090}")
 [ "$WITH_PROM" = "1" ] && ADMIN_FLAGS+=(--prom-url http://127.0.0.1:9095)
 start mci-admin ./build/bin/mci-admin "${ADMIN_FLAGS[@]}"
+
+# mci-api (broker 필수 — --with-api 옵션 시 활성)
+if [ "$WITH_API" = "1" ]; then
+  start mci-api ./build/bin/mci-api \
+    --dev --listen "${LISTEN_API:-:8080}" \
+    --broker-host 127.0.0.1 --broker-port 11217
+fi
 
 # tickloop (dev tick generator) — 영구 위치 scripts/wtg-dev-tickloop.py
 TICKLOOP="$REPO/scripts/wtg-dev-tickloop.py"

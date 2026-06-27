@@ -32,7 +32,8 @@ build/
 cside/*/*.a
 cside/*/*.o
 cside/*/sample
-cside/*/sample.dSYM/
+cside/*/sample_spot
+cside/*/*.dSYM/
 
 # proto / pb.go 의 임시 백업
 *.pb.go.bak

@@ -21,13 +21,14 @@ ifeq ($(UNAME),SunOS)
 LDLIBS_PLATFORM = -lsocket -lnsl
 endif
 
-LIB     = libwtgprice.a
-OBJ     = wtgprice.o
-SAMPLE  = sample
+LIB         = libwtgprice.a
+OBJ         = wtgprice.o
+SAMPLE      = sample
+SAMPLE_SPOT = sample_spot
 
 .PHONY: all clean
 
-all: $(LIB) $(SAMPLE)
+all: $(LIB) $(SAMPLE) $(SAMPLE_SPOT)
 
 $(LIB): $(OBJ)
 	$(AR) rcs $@ $^
@@ -38,5 +39,8 @@ wtgprice.o: wtgprice.c wtgprice.h
 $(SAMPLE): sample.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ sample.c $(LIB) $(LDLIBS_PLATFORM)
 
+$(SAMPLE_SPOT): sample_spot.c $(LIB)
+	$(CC) $(CFLAGS) -o $@ sample_spot.c $(LIB) $(LDLIBS_PLATFORM)
+
 clean:
-	rm -f $(OBJ) $(LIB) $(SAMPLE)
+	rm -f $(OBJ) $(LIB) $(SAMPLE) $(SAMPLE_SPOT)

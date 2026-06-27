@@ -58,14 +58,17 @@ extern "C" {
 #define WTGPRICE_E_OVERSIZE    -10   /* 입력/응답 buffer 한계 초과 */
 
 /* 필드 길이 상수 — server 측 형식과 일치. */
-#define WTGPRICE_PAIR_LEN       16   /* "USD/KRW\0" */
-#define WTGPRICE_QUOTEID_LEN    64
-#define WTGPRICE_TENOR_LEN      16   /* "SPOT" / "1W" / "1M" ... */
-#define WTGPRICE_VDATE_LEN      16   /* "2026-07-15\0" */
-#define WTGPRICE_PROFILE_LEN    64
-#define WTGPRICE_CUSTID_LEN     64
-#define WTGPRICE_SIDE_LEN       16
-#define WTGPRICE_ERRBODY_LEN   256
+#define WTGPRICE_PAIR_LEN          16   /* "USD/KRW\0" */
+#define WTGPRICE_QUOTEID_LEN       64
+#define WTGPRICE_TENOR_LEN         16   /* "SPOT" / "1W" / "1M" ... */
+#define WTGPRICE_VDATE_LEN         16   /* "2026-07-15\0" */
+#define WTGPRICE_PROFILE_LEN       64
+#define WTGPRICE_CUSTID_LEN        64
+#define WTGPRICE_SIDE_LEN          16
+#define WTGPRICE_SOURCE_LEN         8   /* "BEST" / "CROSS" */
+#define WTGPRICE_ERRBODY_LEN      256
+#define WTGPRICE_SPOT_MAX_PAIRS    16   /* 한 get_spot 호출의 최대 pair 수 */
+#define WTGPRICE_SPOT_MAX_MISSING  16   /* 동일 — missing 도 같은 cap */
 
 /* 클라이언트 컨텍스트. 한 번 init 후 여러 호출에 재사용. */
 typedef struct {
@@ -145,6 +148,54 @@ int wtg_price_init(wtg_price_client_t *cli,
 int wtg_price_swap_lock(wtg_price_client_t *cli,
                         const wtg_swap_req_t *req,
                         wtg_swap_result_t *out);
+
+/* spot 한 pair 의 호가 + 마진 + raw 시장가. server SpotSnapshotEntry 의
+ * 필수 필드만 추출 — spread / raw_spread 는 호출자가 ask-bid 로 도출 가능. */
+typedef struct {
+    char    pair[WTGPRICE_PAIR_LEN];     /* "USD/KRW" */
+    double  bid;                          /* customer-applied */
+    double  ask;                          /* customer-applied */
+    double  raw_bid;                      /* 시장 BEST bid */
+    double  raw_ask;                      /* 시장 BEST ask */
+    char    source[WTGPRICE_SOURCE_LEN]; /* "BEST" | "CROSS" */
+} wtg_spot_entry_t;
+
+/* spot 요청. pairs_csv 는 콤마 구분 ("USD/KRW,EUR/KRW"). cap 16. */
+typedef struct {
+    const char *pairs_csv;       /* 필수. 예: "USD/KRW,EUR/KRW" */
+    const char *profile;         /* 필수. 예: "WEB.BRANCH.VIP" */
+    const char *customer_id;     /* NULL 가능 — 5-Layer 적용 skip */
+} wtg_spot_req_t;
+
+/* spot 응답. 고정 cap 배열 — 동적 할당 0. */
+typedef struct {
+    long long          table_version;
+    int                spot_count;                  /* spots[] 유효 길이 */
+    wtg_spot_entry_t   spots[WTGPRICE_SPOT_MAX_PAIRS];
+    int                missing_count;               /* missing[] 유효 길이 */
+    char               missing[WTGPRICE_SPOT_MAX_MISSING][WTGPRICE_PAIR_LEN];
+} wtg_spot_result_t;
+
+/*
+ * wtg_price_get_spot — GET /v1/quote/spot?pair=...&profile=...&customer_id=...
+ *
+ * 매칭 엔진 / 운영 svc 가 통화쌍의 현재 customer-applied bid/ask 를 1회 호출로
+ * 조회. spot-only lite path — forward tenor 루프 / 봉 / 마진 audit 우회.
+ * 다중 pair bulk (cap 16) 지원. 응답이 cap 을 넘으면 WTGPRICE_E_OVERSIZE.
+ *
+ * @cli   init 된 클라이언트.
+ * @req   요청. pairs_csv + profile 필수. customer_id NULL 가능.
+ * @out   결과 — WTGPRICE_OK 일 때만 신뢰. 호출 전 zero-init 권장.
+ *
+ * 반환: WTGPRICE_OK 또는 WTGPRICE_E_*.
+ * 실패 시 cli->last_http_status / cli->last_errno / cli->last_error_body 참조.
+ *
+ * 정책: 응답이 idempotent 라 retry 가능하지만 본 SDK 는 swap_lock 과 일관성
+ * 차원에서 1회 시도만. 호출자가 정책 결정.
+ */
+int wtg_price_get_spot(wtg_price_client_t *cli,
+                       const wtg_spot_req_t *req,
+                       wtg_spot_result_t *out);
 
 /*
  * wtg_price_strerror — 반환 코드의 짧은 식별 메시지. static const,

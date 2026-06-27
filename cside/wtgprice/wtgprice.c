@@ -303,6 +303,83 @@ static void extract_swap_diff(const char *ctx, double *bid_diff, double *ask_dif
     (void)extract_double(inside, "ask_diff", ask_diff);
 }
 
+/* ====================== TCP round-trip 공통 ====================== */
+
+/* tcp_round_trip — connect + send + recv 전체. resp 는 NULL-terminated.
+ * 반환: 누적 응답 길이 (>0) 또는 음수 WTGPRICE_E_*. cli->last_errno 만 갱신.
+ * swap_lock / get_spot 양쪽에서 재사용. */
+static int tcp_round_trip(wtg_price_client_t *cli,
+                          const char *req, size_t req_len,
+                          char *resp, size_t resp_cap) {
+    struct in_addr ip;
+    if (resolve_host(cli->host, &ip) < 0) {
+        cli->last_errno = errno;
+        return WTGPRICE_E_RESOLVE;
+    }
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        cli->last_errno = errno;
+        return WTGPRICE_E_SOCKET;
+    }
+    int one = 1;
+    (void)setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+
+    struct timeval tv;
+    tv.tv_sec  = cli->timeout_ms / 1000;
+    tv.tv_usec = (cli->timeout_ms % 1000) * 1000;
+    (void)setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    (void)setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons((uint16_t)cli->port);
+    addr.sin_addr   = ip;
+
+    if (connect_timeout(sock, (struct sockaddr *)&addr, sizeof(addr), cli->timeout_ms) < 0) {
+        cli->last_errno = errno;
+        close(sock);
+        return WTGPRICE_E_CONNECT;
+    }
+    if (send_all(sock, req, req_len) < 0) {
+        cli->last_errno = errno;
+        close(sock);
+        return WTGPRICE_E_SEND;
+    }
+    int n = recv_all(sock, resp, resp_cap);
+    close(sock);
+    if (n <= 0) {
+        cli->last_errno = errno;
+        return WTGPRICE_E_RECV;
+    }
+    return n;
+}
+
+/* http_status_and_body — 응답에서 status 추출 + body 포인터 반환.
+ * 4xx/5xx 시 cli->last_error_body 에 본문 보존. status_out 채움.
+ * 반환: WTGPRICE_OK 면 body_out 유효. 그 외 음수 WTGPRICE_E_*. */
+static int http_status_and_body(wtg_price_client_t *cli, const char *resp,
+                                int *status_out, const char **body_out) {
+    int status = parse_http_status(resp);
+    if (status < 0) return WTGPRICE_E_PARSE;
+    cli->last_http_status = status;
+    *status_out = status;
+
+    const char *bptr = http_body(resp);
+    if (bptr == NULL) return WTGPRICE_E_PARSE;
+    *body_out = bptr;
+
+    if (status >= 400) {
+        size_t blen = strlen(bptr);
+        if (blen >= sizeof(cli->last_error_body)) blen = sizeof(cli->last_error_body) - 1;
+        memcpy(cli->last_error_body, bptr, blen);
+        cli->last_error_body[blen] = 0;
+        return (status >= 500) ? WTGPRICE_E_HTTP_5XX : WTGPRICE_E_HTTP_4XX;
+    }
+    if (status != 200) return WTGPRICE_E_PARSE;
+    return WTGPRICE_OK;
+}
+
 /* ====================== 본 API ====================== */
 
 int wtg_price_init(wtg_price_client_t *cli, const char *host, int port, int timeout_ms) {
@@ -431,9 +508,9 @@ int wtg_price_swap_lock(wtg_price_client_t *cli, const wtg_swap_req_t *req,
     int body_len = build_swap_req_body(req, body, sizeof(body));
     if (body_len < 0) return WTGPRICE_E_INVALID;
 
-    /* 2. header. */
-    char header[REQ_HEADER_MAX];
-    int hlen = snprintf(header, sizeof(header),
+    /* 2. header + body 를 한 buffer 에 모아 1회 send. */
+    char request[REQ_HEADER_MAX + REQ_BODY_MAX];
+    int hlen = snprintf(request, sizeof(request),
         "POST /v1/quote/swap/lock HTTP/1.1\r\n"
         "Host: %s:%d\r\n"
         "Content-Type: application/json\r\n"
@@ -441,78 +518,24 @@ int wtg_price_swap_lock(wtg_price_client_t *cli, const wtg_swap_req_t *req,
         "Connection: close\r\n"
         "\r\n",
         cli->host, cli->port, body_len);
-    if (hlen < 0 || hlen >= (int)sizeof(header)) return WTGPRICE_E_OVERSIZE;
+    if (hlen < 0 || hlen >= (int)sizeof(request)) return WTGPRICE_E_OVERSIZE;
+    if ((size_t)(hlen + body_len) >= sizeof(request)) return WTGPRICE_E_OVERSIZE;
+    memcpy(request + hlen, body, (size_t)body_len);
+    int req_len = hlen + body_len;
 
-    /* 3. socket + connect. */
-    struct in_addr ip;
-    if (resolve_host(cli->host, &ip) < 0) {
-        cli->last_errno = errno;
-        return WTGPRICE_E_RESOLVE;
-    }
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        cli->last_errno = errno;
-        return WTGPRICE_E_SOCKET;
-    }
-    int one = 1;
-    (void)setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-
-    struct timeval tv;
-    tv.tv_sec  = cli->timeout_ms / 1000;
-    tv.tv_usec = (cli->timeout_ms % 1000) * 1000;
-    (void)setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    (void)setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port   = htons((uint16_t)cli->port);
-    addr.sin_addr   = ip;
-
-    if (connect_timeout(sock, (struct sockaddr *)&addr, sizeof(addr), cli->timeout_ms) < 0) {
-        cli->last_errno = errno;
-        close(sock);
-        return WTGPRICE_E_CONNECT;
-    }
-
-    /* 4. send. */
-    if (send_all(sock, header, (size_t)hlen) < 0 ||
-        send_all(sock, body,   (size_t)body_len) < 0) {
-        cli->last_errno = errno;
-        close(sock);
-        return WTGPRICE_E_SEND;
-    }
-
-    /* 5. recv 전체. */
+    /* 3. round-trip. */
     char *resp = (char *)malloc(RESP_BUF);
-    if (resp == NULL) { close(sock); return WTGPRICE_E_INVALID; }
-    int n = recv_all(sock, resp, RESP_BUF);
-    close(sock);
-    if (n <= 0) {
-        cli->last_errno = errno;
-        free(resp);
-        return WTGPRICE_E_RECV;
-    }
+    if (resp == NULL) return WTGPRICE_E_INVALID;
+    int n = tcp_round_trip(cli, request, (size_t)req_len, resp, RESP_BUF);
+    if (n < 0) { free(resp); return n; }
 
-    int status = parse_http_status(resp);
-    if (status < 0) { free(resp); return WTGPRICE_E_PARSE; }
-    cli->last_http_status = status;
+    /* 4. status + body. */
+    int status;
+    const char *bptr = NULL;
+    int rc = http_status_and_body(cli, resp, &status, &bptr);
+    if (rc != WTGPRICE_OK) { free(resp); return rc; }
 
-    const char *bptr = http_body(resp);
-    if (bptr == NULL) { free(resp); return WTGPRICE_E_PARSE; }
-
-    if (status >= 400) {
-        /* error body 첫 부분 보존. */
-        size_t blen = strlen(bptr);
-        if (blen >= sizeof(cli->last_error_body)) blen = sizeof(cli->last_error_body) - 1;
-        memcpy(cli->last_error_body, bptr, blen);
-        cli->last_error_body[blen] = 0;
-        free(resp);
-        return (status >= 500) ? WTGPRICE_E_HTTP_5XX : WTGPRICE_E_HTTP_4XX;
-    }
-    if (status != 200) { free(resp); return WTGPRICE_E_PARSE; }
-
-    /* 6. body 파싱 — 필수 필드 모두 OK 여야 성공. */
+    /* 5. JSON 추출 — 필수 필드 전부 OK 여야 성공. */
     if (extract_string(bptr, "swap_id", out->swap_id, sizeof(out->swap_id)) < 0) {
         free(resp); return WTGPRICE_E_PARSE;
     }
@@ -527,6 +550,188 @@ int wtg_price_swap_lock(wtg_price_client_t *cli, const wtg_swap_req_t *req,
         free(resp); return WTGPRICE_E_PARSE;
     }
     extract_swap_diff(bptr, &out->bid_diff, &out->ask_diff);
+    free(resp);
+    return WTGPRICE_OK;
+}
+
+/* ====================== get_spot ====================== */
+
+/* URL query value escape — RFC 3986 unreserved + 매매에 안전한 ',' '/' 통과.
+ * 식별자 / pair / profile / customer_id 는 모두 ASCII 라 단순 처리 가능. */
+static int url_escape_into(char *dst, size_t dstsz, const char *src) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t i = 0;
+    while (*src) {
+        unsigned char c = (unsigned char)*src++;
+        int safe = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                   (c >= '0' && c <= '9') ||
+                   c == '-' || c == '.' || c == '_' || c == '~' ||
+                   c == ',' || c == '/';
+        if (safe) {
+            if (i + 1 >= dstsz) return -1;
+            dst[i++] = (char)c;
+        } else {
+            if (i + 3 >= dstsz) return -1;
+            dst[i++] = '%';
+            dst[i++] = hex[c >> 4];
+            dst[i++] = hex[c & 0xF];
+        }
+    }
+    dst[i] = 0;
+    return 0;
+}
+
+/* JSON object span skip — '{' 직후 위치에서 같은 depth 의 '}' 까지 진행한
+ * 다음 위치 반환. nested object / string / escape 안전. NULL = malformed. */
+static const char *json_skip_object_body(const char *p) {
+    int depth = 0, in_str = 0, esc = 0;
+    while (*p) {
+        if (esc) { esc = 0; p++; continue; }
+        if (in_str) {
+            if (*p == '\\') esc = 1;
+            else if (*p == '"') in_str = 0;
+            p++;
+            continue;
+        }
+        if (*p == '"') { in_str = 1; p++; continue; }
+        if (*p == '{' || *p == '[') { depth++; p++; continue; }
+        if (*p == '}' || *p == ']') {
+            if (depth == 0) return p + 1;
+            depth--;
+            p++;
+            continue;
+        }
+        p++;
+    }
+    return NULL;
+}
+
+/* JSON string span skip — '"' 직후 위치에서 종료 '"' 다음 위치 반환. */
+static const char *json_skip_string_body(const char *p) {
+    while (*p) {
+        if (*p == '\\' && p[1]) { p += 2; continue; }
+        if (*p == '"') return p + 1;
+        p++;
+    }
+    return NULL;
+}
+
+int wtg_price_get_spot(wtg_price_client_t *cli, const wtg_spot_req_t *req,
+                       wtg_spot_result_t *out) {
+    if (cli == NULL || req == NULL || out == NULL) return WTGPRICE_E_INVALID;
+    if (req->pairs_csv == NULL || *req->pairs_csv == 0) return WTGPRICE_E_INVALID;
+    if (req->profile   == NULL || *req->profile   == 0) return WTGPRICE_E_INVALID;
+    cli->last_http_status = 0;
+    cli->last_errno = 0;
+    cli->last_error_body[0] = 0;
+    memset(out, 0, sizeof(*out));
+
+    /* 1. query 인자 escape. */
+    char pairs_esc[512], profile_esc[256], custid_esc[256];
+    custid_esc[0] = 0;
+    if (url_escape_into(pairs_esc,   sizeof(pairs_esc),   req->pairs_csv) < 0)
+        return WTGPRICE_E_OVERSIZE;
+    if (url_escape_into(profile_esc, sizeof(profile_esc), req->profile) < 0)
+        return WTGPRICE_E_OVERSIZE;
+    if (req->customer_id && *req->customer_id) {
+        if (url_escape_into(custid_esc, sizeof(custid_esc), req->customer_id) < 0)
+            return WTGPRICE_E_OVERSIZE;
+    }
+
+    /* 2. GET request — body 없음. */
+    char request[REQ_HEADER_MAX + 1024];
+    int rlen;
+    if (custid_esc[0]) {
+        rlen = snprintf(request, sizeof(request),
+            "GET /v1/quote/spot?pair=%s&profile=%s&customer_id=%s HTTP/1.1\r\n"
+            "Host: %s:%d\r\n"
+            "Connection: close\r\n"
+            "\r\n",
+            pairs_esc, profile_esc, custid_esc, cli->host, cli->port);
+    } else {
+        rlen = snprintf(request, sizeof(request),
+            "GET /v1/quote/spot?pair=%s&profile=%s HTTP/1.1\r\n"
+            "Host: %s:%d\r\n"
+            "Connection: close\r\n"
+            "\r\n",
+            pairs_esc, profile_esc, cli->host, cli->port);
+    }
+    if (rlen < 0 || rlen >= (int)sizeof(request)) return WTGPRICE_E_OVERSIZE;
+
+    /* 3. round-trip. */
+    char *resp = (char *)malloc(RESP_BUF);
+    if (resp == NULL) return WTGPRICE_E_INVALID;
+    int n = tcp_round_trip(cli, request, (size_t)rlen, resp, RESP_BUF);
+    if (n < 0) { free(resp); return n; }
+
+    /* 4. status + body. */
+    int status;
+    const char *bptr = NULL;
+    int rc = http_status_and_body(cli, resp, &status, &bptr);
+    if (rc != WTGPRICE_OK) { free(resp); return rc; }
+
+    /* 5. top-level. table_version 만 필수 — profile / snapshot_ts 는 운영자
+     *    audit 용이라 SDK 에서 추출 생략. */
+    if (extract_int64(bptr, "table_version", &out->table_version) < 0) {
+        free(resp); return WTGPRICE_E_PARSE;
+    }
+
+    /* 6. spots[] iteration. */
+    const char *spots_v = json_find_key(bptr, "spots");
+    if (spots_v == NULL) { free(resp); return WTGPRICE_E_PARSE; }
+    spots_v = skip_ws(spots_v);
+    if (*spots_v != '[') { free(resp); return WTGPRICE_E_PARSE; }
+    const char *cur = spots_v + 1;
+    for (;;) {
+        cur = skip_ws(cur);
+        if (*cur == ']') { cur++; break; }
+        if (*cur == ',') { cur = skip_ws(cur + 1); }
+        if (*cur != '{') { free(resp); return WTGPRICE_E_PARSE; }
+        if (out->spot_count >= WTGPRICE_SPOT_MAX_PAIRS) {
+            free(resp); return WTGPRICE_E_OVERSIZE;
+        }
+        wtg_spot_entry_t *e = &out->spots[out->spot_count];
+        memset(e, 0, sizeof(*e));
+        const char *inside = cur + 1;   /* '{' 직후 */
+        if (extract_string(inside, "pair", e->pair, sizeof(e->pair)) < 0 ||
+            extract_double(inside, "bid",     &e->bid)     < 0 ||
+            extract_double(inside, "ask",     &e->ask)     < 0 ||
+            extract_double(inside, "raw_bid", &e->raw_bid) < 0 ||
+            extract_double(inside, "raw_ask", &e->raw_ask) < 0) {
+            free(resp); return WTGPRICE_E_PARSE;
+        }
+        (void)extract_string(inside, "source", e->source, sizeof(e->source));
+        out->spot_count++;
+        /* 이 entry 의 '}' 다음으로 진행. */
+        cur = json_skip_object_body(cur + 1);
+        if (cur == NULL) { free(resp); return WTGPRICE_E_PARSE; }
+    }
+
+    /* 7. missing[] — string array, omitempty (없을 수 있음). */
+    const char *miss_v = json_find_key(bptr, "missing");
+    if (miss_v != NULL) {
+        miss_v = skip_ws(miss_v);
+        if (*miss_v == '[') {
+            const char *mcur = miss_v + 1;
+            for (;;) {
+                mcur = skip_ws(mcur);
+                if (*mcur == ']') break;
+                if (*mcur == ',') { mcur = skip_ws(mcur + 1); }
+                if (*mcur != '"') { free(resp); return WTGPRICE_E_PARSE; }
+                if (out->missing_count >= WTGPRICE_SPOT_MAX_MISSING) {
+                    free(resp); return WTGPRICE_E_OVERSIZE;
+                }
+                if (json_read_string(mcur, out->missing[out->missing_count],
+                                     sizeof(out->missing[0])) < 0) {
+                    free(resp); return WTGPRICE_E_PARSE;
+                }
+                out->missing_count++;
+                mcur = json_skip_string_body(mcur + 1);
+                if (mcur == NULL) { free(resp); return WTGPRICE_E_PARSE; }
+            }
+        }
+    }
+
     free(resp);
     return WTGPRICE_OK;
 }

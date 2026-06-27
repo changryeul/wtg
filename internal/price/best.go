@@ -3,6 +3,7 @@ package price
 import (
 	"encoding/json"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -208,10 +209,16 @@ type BestStats struct {
 }
 
 type BestSymbolStat struct {
-	ActiveSources  int     `json:"active_sources"`
-	BestBid        float64 `json:"best_bid"`
-	BestAsk        float64 `json:"best_ask"`
-	CrossedFallbck bool    `json:"crossed_fallback,omitempty"`
+	ActiveSources int `json:"active_sources"`
+	// Sources — active (non-stale) source 이름. 운영자가 어떤 feed 가
+	// 실제 best 산정에 기여 중인지 확인 (예: ["KMB","SMB"]). 정렬 보장 —
+	// 동일 입력에 대해 동일 출력을 내기 위함. ActiveSources 와 동일 staleness
+	// 필터로 수집되므로 len(Sources) == ActiveSources (crossed fallback 시도
+	// |ActiveSources|).
+	Sources        []string `json:"sources"`
+	BestBid        float64  `json:"best_bid"`
+	BestAsk        float64  `json:"best_ask"`
+	CrossedFallbck bool     `json:"crossed_fallback,omitempty"`
 }
 
 // Stats 는 현재 cache 상태의 스냅샷을 반환 (HTTP /v1/best-stats 노출용).
@@ -222,14 +229,27 @@ func (b *BestConsumer) Stats() BestStats {
 		Symbols:        make(map[string]BestSymbolStat, len(b.cache)),
 		RejectedQuotes: b.rejectedQuotes.Load(),
 	}
+	now := time.Now()
 	for sym, bySource := range b.cache {
 		bid, ask, n := b.recomputeLocked(bySource)
 		crossed := n < 0
 		if crossed {
 			n = -n
 		}
+		// active source 이름 수집 — recomputeLocked 와 동일한 staleness
+		// 필터. 운영자가 "SMB 가 들어왔는지" 를 카운트가 아닌 이름으로
+		// 직접 판정. Stats 는 hot path 아니라 alloc 비용 무시 가능.
+		sources := make([]string, 0, len(bySource))
+		for src, sq := range bySource {
+			if b.maxStaleness >= 0 && now.Sub(sq.ts) > b.maxStaleness {
+				continue
+			}
+			sources = append(sources, src)
+		}
+		sort.Strings(sources)
 		out.Symbols[sym] = BestSymbolStat{
 			ActiveSources:  n,
+			Sources:        sources,
 			BestBid:        bid,
 			BestAsk:        ask,
 			CrossedFallbck: crossed,

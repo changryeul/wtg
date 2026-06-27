@@ -233,6 +233,48 @@ func TestBestConsumer_ThreeFeedsNormal(t *testing.T) {
 	}
 }
 
+// Stats.Sources — active feed 이름이 정렬된 list 로 노출되는지.
+// 운영자가 "SMB 가 들어왔는지" 를 카운트가 아닌 이름으로 직접 판정.
+func TestBestConsumer_StatsSources(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	// 의도적으로 비-알파벳 순서로 ingest — 정렬 보장 확인용.
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10))
+	bc.OnTick(buildRaw("USDKRW", "KMB", 1380.05, 1380.12))
+	bc.OnTick(buildRaw("USDKRW", "EBS", 1380.02, 1380.11))
+
+	st := bc.Stats().Symbols["USDKRW"]
+	want := []string{"EBS", "KMB", "SMB"}
+	if len(st.Sources) != len(want) {
+		t.Fatalf("Sources len=%d, want %d (%v)", len(st.Sources), len(want), st.Sources)
+	}
+	for i, s := range want {
+		if st.Sources[i] != s {
+			t.Errorf("Sources[%d]=%q, want %q (정렬 안 됨? 전체=%v)", i, st.Sources[i], s, st.Sources)
+		}
+	}
+	if st.ActiveSources != len(want) {
+		t.Errorf("ActiveSources=%d, want %d (Sources 와 동일해야)", st.ActiveSources, len(want))
+	}
+}
+
+// Stats.Sources — stale 된 feed 는 이름에서도 제외되어야.
+func TestBestConsumer_StatsSourcesExcludesStale(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{MaxStaleness: 30 * time.Millisecond}, c)
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10))
+	time.Sleep(50 * time.Millisecond)
+	bc.OnTick(buildRaw("USDKRW", "KMB", 1380.05, 1380.12))
+
+	st := bc.Stats().Symbols["USDKRW"]
+	if len(st.Sources) != 1 || st.Sources[0] != "KMB" {
+		t.Errorf("Sources=%v, want [KMB] (SMB stale 제외)", st.Sources)
+	}
+	if st.ActiveSources != 1 {
+		t.Errorf("ActiveSources=%d, want 1", st.ActiveSources)
+	}
+}
+
 // 3 feeds cross — 가장 최신 ts 의 feed 로 fallback 검증.
 func TestBestConsumer_ThreeFeedsCrossedNewestWins(t *testing.T) {
 	c := &collector{}

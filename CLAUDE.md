@@ -22,7 +22,7 @@ make test-integration   # build tag=integration, embedded etcd 사용 (~30s)
 make coverage           # coverage.html 생성
 make lint               # fmt-check + vet + staticcheck
 make vulncheck          # govulncheck
-make ci                 # CI 와 동일한 전체 검증 (commit/PR 전 권장)
+make ci                 # lint + vulncheck + test-race + build (CI 동일, commit/PR 전 권장)
 make ckey-echo          # Phase 1 GO/NO-GO — mymqd 가 ckey echo back 하는지
 make proto              # api/proto/*.proto → pkg/wtgpb/v1/*.pb.go
 make install            # build/bin/* → $(BINDIR), etc/* → $(ETCDIR) (PREFIX=/opt/wtg 기본)
@@ -41,6 +41,18 @@ make test-wtgprice      # C SDK ↔ SwapLockHandler wire 호환성 (build tag=wt
 ```bash
 go test ./pkg/mymq/ -run TestCkeyEcho -v
 go test ./internal/api/handlers/ -run TestLogin -race
+go test -tags=integration -run TestEtcdRouting ./internal/api/...   # build tag 필요 테스트
+```
+
+### 로컬 스택 부팅 (개발용)
+
+```bash
+./scripts/dev-up.sh                    # TimescaleDB Docker 컨테이너 + DDL + 데모 봉 seed
+./scripts/wtg-stack-up.sh              # WTG 바이너리 (mci-admin + mci-price + mci-edge-price + tickloop)
+./scripts/wtg-stack-up.sh --with-broker --with-api   # docker mymqd + mci-api 까지
+./scripts/wtg-stack-up.sh --with-all                 # broker/forwarder/prom 포함 (chart 는 DB 의존이라 별도)
+./scripts/wtg-status.sh                # 프로세스 / docker broker / 핵심 카운터 1회 스냅샷
+./scripts/wtg-stack-down.sh            # 일괄 종료
 ```
 
 ### 부하 테스트 (시세 파이프라인)

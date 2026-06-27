@@ -104,12 +104,45 @@ endpoint 단순 교체로는 안 됨 — **adapter 필요**:
 
 ## 남는 실제 작업
 
-| 작업 | 목적 | 추정 |
+| 작업 | 목적 | 상태 |
 |---|---|---|
-| W9501 종가 조회 wire adapter PoC | NH 사내 client 가 binary 만 교체하면 transparent — adapter 패턴 검증 | 1~2일 |
+| W9501S01 wire adapter PoC | NH 사내 client 가 binary 만 교체하면 transparent — adapter 패턴 검증 | ✓ 완료 (`cside/wtgquery/` + `make test-wtgquery`) |
+| W9501 의 S02 / S03 + FWD pdcd 확장 | PoC 가 S01 + SPT 만 — 거래소별 (S02) / bulk (S03) / 선물환 (FWD) 까지 cover | ~1주 |
 | `cmd/quote-replay` 신설 (pcap 재생) | mds `replay_smb2` 와 동등 — 회귀 / 사후분석 | ~1주 |
 | SHM → gRPC p99 측정 | 같은 호스트 단일 mci-price vs 분리된 edge — latency 비교 | 반나절 |
 | 마스터 데이터 (FOS 외) → `fx-sync` 확장 | NH 마스터 카탈로그를 etcd 미러 — FOS 파일 포맷 cover 가 필요하면 | 1주 |
+
+### W9501S01 PoC 결과 요약
+
+`cside/wtgquery/` — mds W9501S01 의 input/output struct (`W9501S01_in_t` /
+`_dat_t` / `_out_t`) 와 memory layout 동일한 wire-compat 헤더 + mci-chart
+REST 백엔드를 한 줄 호출로 묶은 C SDK. NH 사내 client 는
+
+```c
+ret = mymq_call(broker, "W9501S01", &in, ..., &out, ...);   // 기존
+```
+
+을
+
+```c
+ret = wtg_query_w9501s01(&cli, &in, &out, sizeof(out_buf)); // PoC
+```
+
+로 단순 교체 — broker 우회, `pkg/mymq` 의존 제거. 매핑:
+
+| mds | WTG |
+|---|---|
+| `pdcd "SPT"` | `tf "1d"` |
+| `symb "USDKRW"` (6 chars) | `pair "USD/KRW"` |
+| `tenor ""` | (무시 — spot 만) |
+| `opened_at` RFC3339 | `kymd "yyyymmdd"` + `khms "HHmmss"` |
+| `open_bid` float64 | `bid_open "%.5f"` 16-char ASCII |
+
+검증: `make wtgquery && make test-wtgquery` —
+`TestCSideWtgquery_W9501S01_HappyPath` (1 일봉) +
+`TestCSideWtgquery_W9501S01_MultiBar` (3 일봉) 모두 mds 형식으로 정확히
+채워지는 것 확인. FWD 는 `WTGQUERY_E_UNSUPPORTED` — phase 2 에서
+forward-snapshot endpoint 와 연결.
 
 ## 참조
 

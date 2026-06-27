@@ -24,7 +24,8 @@ CMDS := $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard cmd/*/*.go)))))
 
 .PHONY: all build test test-v test-race test-integration vet fmt fmt-check tidy clean install \
         lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside \
-        wtgprice wtgprice-clean test-wtgprice $(CMDS)
+        wtgprice wtgprice-clean test-wtgprice \
+        wtgquery wtgquery-clean test-wtgquery $(CMDS)
 
 all: build
 
@@ -74,6 +75,19 @@ wtgprice-clean:
 # 선결: wtgprice 타겟 먼저 빌드 필요.
 test-wtgprice: wtgprice
 	$(GO) test $(GOFLAGS) -tags=wtgprice -run CSideWtgprice ./internal/price/...
+
+# PoC — C SDK (cside/wtgquery) 빌드. mds query-server W9501S01 (종가 조회) 의
+# WTG mci-chart REST 백엔드 wrapper. 외부 의존 0 — POSIX socket / make.
+wtgquery:
+	$(MAKE) -C cside/wtgquery
+
+wtgquery-clean:
+	$(MAKE) -C cside/wtgquery clean
+
+# C SDK ↔ mci-chart /v1/chart wire 호환성 검증 (build tag=wtgquery).
+# 선결: wtgquery 타겟 먼저 빌드 필요.
+test-wtgquery: wtgquery
+	$(GO) test $(GOFLAGS) -tags=wtgquery -run CSideWtgquery ./internal/chart/...
 
 # coverage HTML 리포트.
 coverage: test-race

@@ -33,6 +33,8 @@ cside/*/*.a
 cside/*/*.o
 cside/*/sample
 cside/*/sample_spot
+cside/*/sample_s02
+cside/*/sample_s03
 cside/*/*.dSYM/
 
 # proto / pb.go 의 임시 백업

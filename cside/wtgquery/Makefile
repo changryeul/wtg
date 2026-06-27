@@ -23,13 +23,15 @@ ifeq ($(UNAME),SunOS)
 LDLIBS_PLATFORM = -lsocket -lnsl
 endif
 
-LIB     = libwtgquery.a
-OBJ     = wtgquery.o
-SAMPLE  = sample
+LIB         = libwtgquery.a
+OBJ         = wtgquery.o
+SAMPLE      = sample
+SAMPLE_S02  = sample_s02
+SAMPLE_S03  = sample_s03
 
 .PHONY: all clean
 
-all: $(LIB) $(SAMPLE)
+all: $(LIB) $(SAMPLE) $(SAMPLE_S02) $(SAMPLE_S03)
 
 $(LIB): $(OBJ)
 	$(AR) rcs $@ $^
@@ -40,5 +42,11 @@ wtgquery.o: wtgquery.c wtgquery.h
 $(SAMPLE): sample.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ sample.c $(LIB) $(LDLIBS_PLATFORM)
 
+$(SAMPLE_S02): sample_s02.c $(LIB)
+	$(CC) $(CFLAGS) -o $@ sample_s02.c $(LIB) $(LDLIBS_PLATFORM)
+
+$(SAMPLE_S03): sample_s03.c $(LIB)
+	$(CC) $(CFLAGS) -o $@ sample_s03.c $(LIB) $(LDLIBS_PLATFORM)
+
 clean:
-	rm -f $(OBJ) $(LIB) $(SAMPLE)
+	rm -f $(OBJ) $(LIB) $(SAMPLE) $(SAMPLE_S02) $(SAMPLE_S03)

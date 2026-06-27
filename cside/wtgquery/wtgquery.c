@@ -188,6 +188,15 @@ static int extract_double(const char *ctx, const char *key, double *out) {
     return (v == NULL) ? -1 : json_read_double(v, out);
 }
 
+/* sub-object 진입 — val 의 '{' 다음 위치 반환. json_find_key 가 그 안에서
+ * 같은 depth 의 key 만 매칭하므로 nested object traversal 의 표준 진입점. */
+static int json_enter_object(const char *val, const char **out_inside) {
+    val = skip_ws(val);
+    if (*val != '{') return -1;
+    if (out_inside) *out_inside = val + 1;
+    return 0;
+}
+
 /* object span skip — '{' 직후 위치 → 같은 depth 의 '}' 다음 위치. */
 static const char *json_skip_object_body(const char *p) {
     int depth = 0, in_str = 0, esc = 0;
@@ -496,6 +505,180 @@ int wtg_query_w9501s01(wtg_query_client_t *cli, const W9501S01_in_t *in,
     }
 
     int_to_field(nrec, out->nrec, sizeof(out->nrec));
+    free(resp);
+    return WTGQUERY_OK;
+}
+
+/* ====================== W9501S02 / S03 ====================== */
+
+/* exnm 의 첫 글자 → mds 의 1-char source code.
+ * 'B'(EST), 'R'(EUT) → mds 표기 ('B', 'R')
+ * 'S'(MB), 'K'(MB), 'E'(BS) → mds 표기 ('S', 'K', 'E')
+ * 알 수 없으면 ' '. */
+static char exnm_to_source_char(const char *exnm_trim) {
+    if (*exnm_trim == 0) return ' ';
+    char c = exnm_trim[0];
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+    return c;
+}
+
+/* W9501S02 의 출력 1건 채우기 (S02/S03 공유).
+ * body 는 GET /v1/best-stats 의 JSON body. in 은 단일 W9501S02_in_t.
+ * 반환: WTGQUERY_OK 또는 _PARSE. symb miss / exnm miss 도 _OK (bid/ask=0).
+ *
+ * mds 호환을 위해 입력 echo + best 항상 채움. exnm 의 호가는 매핑 결과. */
+static int fill_s02_from_body(const char *body, const W9501S02_in_t *in,
+                              W9501S02_out_t *out) {
+    memset(out, 0, sizeof(*out));
+    /* echo. */
+    memcpy(out->exnm,    in->exnm,    sizeof(out->exnm));
+    memcpy(out->symb,    in->symb,    sizeof(out->symb));
+    memcpy(out->pay_ymd, in->pay_ymd, sizeof(out->pay_ymd));
+    memcpy(out->exp_ymd, in->exp_ymd, sizeof(out->exp_ymd));
+
+    char exnm_trim[16], symb_trim[16];
+    trim_spaces(exnm_trim, in->exnm, 16);
+    trim_spaces(symb_trim, in->symb, 16);
+    if (*exnm_trim == 0 || *symb_trim == 0) {
+        float_to_field(0.0, out->bid);
+        float_to_field(0.0, out->ask);
+        return WTGQUERY_OK;
+    }
+
+    /* symbols.<symb> 진입. */
+    const char *symbols_v = json_find_key(body, "symbols");
+    if (symbols_v == NULL) return WTGQUERY_E_PARSE;
+    const char *symbols_inside = NULL;
+    if (json_enter_object(symbols_v, &symbols_inside) < 0) return WTGQUERY_E_PARSE;
+
+    const char *sym_v = json_find_key(symbols_inside, symb_trim);
+    if (sym_v == NULL) {
+        /* symb miss — 시세가 아직 안 들어옴. miss 응답. */
+        float_to_field(0.0, out->bid);
+        float_to_field(0.0, out->ask);
+        return WTGQUERY_OK;
+    }
+    const char *sym_inside = NULL;
+    if (json_enter_object(sym_v, &sym_inside) < 0) return WTGQUERY_E_PARSE;
+
+    /* best_bid/best_ask 는 항상 채움. */
+    double best_bid = 0.0, best_ask = 0.0;
+    (void)extract_double(sym_inside, "best_bid", &best_bid);
+    (void)extract_double(sym_inside, "best_ask", &best_ask);
+    float_to_field(best_bid, out->bid_best);
+    float_to_field(best_ask, out->ask_best);
+
+    /* exnm 별 매핑. */
+    double bid = 0.0, ask = 0.0;
+    char src_char = ' ';
+    if (strcmp(exnm_trim, "BEST") == 0) {
+        bid = best_bid;
+        ask = best_ask;
+        src_char = 'B';
+    } else {
+        const char *sq_v = json_find_key(sym_inside, "source_quotes");
+        if (sq_v != NULL) {
+            const char *sq_inside = NULL;
+            if (json_enter_object(sq_v, &sq_inside) == 0) {
+                const char *src_v = json_find_key(sq_inside, exnm_trim);
+                if (src_v != NULL) {
+                    const char *src_inside = NULL;
+                    if (json_enter_object(src_v, &src_inside) == 0) {
+                        (void)extract_double(src_inside, "bid", &bid);
+                        (void)extract_double(src_inside, "ask", &ask);
+                        src_char = exnm_to_source_char(exnm_trim);
+                    }
+                }
+            }
+        }
+        /* exnm miss 시 bid/ask 0, src_char ' ' — mds 가 그렇게 처리. */
+    }
+    float_to_field(bid, out->bid);
+    float_to_field(ask, out->ask);
+    out->bid_source[0] = src_char;
+    out->ask_source[0] = src_char;
+    return WTGQUERY_OK;
+}
+
+/* 공통: GET /v1/best-stats 요청 + 응답 → body 포인터.
+ * 반환: WTGQUERY_OK 또는 음수 (_RECV / _PARSE / _HTTP_4XX / _HTTP_5XX).
+ * 성공 시 호출자가 *resp_out free 책임. body_out 은 *resp_out 내부 가리킴. */
+static int fetch_best_stats(wtg_query_client_t *cli, char **resp_out, const char **body_out) {
+    char request[256];
+    int rlen = snprintf(request, sizeof(request),
+        "GET /v1/best-stats HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        cli->host, cli->port);
+    if (rlen < 0 || rlen >= (int)sizeof(request)) return WTGQUERY_E_OVERSIZE;
+
+    char *resp = (char *)malloc(RESP_BUF);
+    if (resp == NULL) return WTGQUERY_E_INVALID;
+    int n = tcp_round_trip(cli, request, (size_t)rlen, resp, RESP_BUF);
+    if (n < 0) { free(resp); return n; }
+
+    int status;
+    const char *bptr = NULL;
+    int rc = http_status_and_body(cli, resp, &status, &bptr);
+    if (rc != WTGQUERY_OK) { free(resp); return rc; }
+    *resp_out = resp;
+    *body_out = bptr;
+    return WTGQUERY_OK;
+}
+
+int wtg_query_w9501s02(wtg_query_client_t *cli, const W9501S02_in_t *in,
+                       W9501S02_out_t *out) {
+    if (cli == NULL || in == NULL || out == NULL) return WTGQUERY_E_INVALID;
+    cli->last_http_status = 0;
+    cli->last_errno = 0;
+    cli->last_error_body[0] = 0;
+
+    char *resp = NULL;
+    const char *bptr = NULL;
+    int rc = fetch_best_stats(cli, &resp, &bptr);
+    if (rc != WTGQUERY_OK) return rc;
+
+    rc = fill_s02_from_body(bptr, in, out);
+    free(resp);
+    return rc;
+}
+
+int wtg_query_w9501s03(wtg_query_client_t *cli,
+                       const W9501S03_in_t *in, size_t in_cap,
+                       W9501S03_out_t *out, size_t out_cap) {
+    if (cli == NULL || in == NULL || out == NULL) return WTGQUERY_E_INVALID;
+    if (in_cap  < sizeof(W9501S03_in_t))  return WTGQUERY_E_OVERSIZE;
+    if (out_cap < sizeof(W9501S03_out_t)) return WTGQUERY_E_OVERSIZE;
+    cli->last_http_status = 0;
+    cli->last_errno = 0;
+    cli->last_error_body[0] = 0;
+
+    /* nrec_in parse. */
+    char nrec_trim[8];
+    trim_spaces(nrec_trim, in->nrec, sizeof(in->nrec));
+    int nrec_in = atoi(nrec_trim);
+    if (nrec_in <= 0) return WTGQUERY_E_INVALID;
+    if (nrec_in > WTGQUERY_S03_MAX_RECORDS) return WTGQUERY_E_OVERSIZE;
+
+    /* in / out 슬롯 cap 검증. */
+    size_t in_avail  = in_cap  - sizeof(W9501S03_in_t);
+    size_t out_avail = out_cap - sizeof(W9501S03_out_t);
+    if (in_avail  / sizeof(W9501S02_in_t)  < (size_t)nrec_in) return WTGQUERY_E_OVERSIZE;
+    if (out_avail / sizeof(W9501S02_out_t) < (size_t)nrec_in) return WTGQUERY_E_OVERSIZE;
+
+    /* 1회 best-stats fetch, N pair fill. */
+    char *resp = NULL;
+    const char *bptr = NULL;
+    int rc = fetch_best_stats(cli, &resp, &bptr);
+    if (rc != WTGQUERY_OK) return rc;
+
+    memset(out, 0, sizeof(W9501S03_out_t));
+    for (int i = 0; i < nrec_in; i++) {
+        rc = fill_s02_from_body(bptr, &in->data[i], &out->data[i]);
+        if (rc != WTGQUERY_OK) { free(resp); return rc; }
+    }
+    int_to_field(nrec_in, out->nrec, sizeof(out->nrec));
     free(resp);
     return WTGQUERY_OK;
 }

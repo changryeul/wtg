@@ -106,13 +106,13 @@ endpoint 단순 교체로는 안 됨 — **adapter 필요**:
 
 | 작업 | 목적 | 상태 |
 |---|---|---|
-| W9501S01 wire adapter PoC | NH 사내 client 가 binary 만 교체하면 transparent — adapter 패턴 검증 | ✓ 완료 (`cside/wtgquery/` + `make test-wtgquery`) |
-| W9501 의 S02 / S03 + FWD pdcd 확장 | PoC 가 S01 + SPT 만 — 거래소별 (S02) / bulk (S03) / 선물환 (FWD) 까지 cover | ~1주 |
+| W9501S01 / S02 / S03 wire adapter PoC | NH 사내 client 가 binary 만 교체하면 transparent — adapter 패턴 검증 | ✓ 완료 (`cside/wtgquery/` + `make test-wtgquery`) |
+| FWD pdcd / W9501S02 의 audit 필드 (시초/전일대비/base/fill 등) 채움 | 현재 PoC 가 핵심 필드 (bid/ask/best) 만 — audit 성 필드 채우려면 forward-snapshot + 봉 영역 연결 | ~1주 |
 | `cmd/quote-replay` 신설 (pcap 재생) | mds `replay_smb2` 와 동등 — 회귀 / 사후분석 | ~1주 |
 | SHM → gRPC p99 측정 | 같은 호스트 단일 mci-price vs 분리된 edge — latency 비교 | 반나절 |
 | 마스터 데이터 (FOS 외) → `fx-sync` 확장 | NH 마스터 카탈로그를 etcd 미러 — FOS 파일 포맷 cover 가 필요하면 | 1주 |
 
-### W9501S01 PoC 결과 요약
+### W9501 PoC 결과 요약
 
 `cside/wtgquery/` — mds W9501S01 의 input/output struct (`W9501S01_in_t` /
 `_dat_t` / `_out_t`) 와 memory layout 동일한 wire-compat 헤더 + mci-chart
@@ -138,11 +138,27 @@ ret = wtg_query_w9501s01(&cli, &in, &out, sizeof(out_buf)); // PoC
 | `opened_at` RFC3339 | `kymd "yyyymmdd"` + `khms "HHmmss"` |
 | `open_bid` float64 | `bid_open "%.5f"` 16-char ASCII |
 
-검증: `make wtgquery && make test-wtgquery` —
-`TestCSideWtgquery_W9501S01_HappyPath` (1 일봉) +
-`TestCSideWtgquery_W9501S01_MultiBar` (3 일봉) 모두 mds 형식으로 정확히
-채워지는 것 확인. FWD 는 `WTGQUERY_E_UNSUPPORTED` — phase 2 에서
-forward-snapshot endpoint 와 연결.
+검증: `make wtgquery && make test-wtgquery`.
+
+**W9501S01 (종가)** — `mci-chart /v1/chart` 백엔드:
+- `TestCSideWtgquery_W9501S01_HappyPath` (1 일봉)
+- `TestCSideWtgquery_W9501S01_MultiBar` (3 일봉)
+
+**W9501S02 / S03 (거래소별 spot)** — `mci-price /v1/best-stats` 백엔드.
+`BestSymbolStat.SourceQuotes` 신설 (per-source bid/ask/ts 노출) → wtgquery
+가 활용:
+- `TestCSideWtgquery_W9501S02_BEST` — exnm "BEST" → BestBid/Ask
+- `TestCSideWtgquery_W9501S02_BySource` — exnm "KMB" → SourceQuotes[KMB]
+- `TestCSideWtgquery_W9501S02_UnknownExnm` — miss 시 bid/ask 0, src=' ',
+  best 만 채워짐 (mds 동일 동작)
+- `TestCSideWtgquery_W9501S03_Bulk` — 1회 best-stats fetch 로 3 pair fill
+
+S02/S03 의 채움 범위는 PoC 의 **핵심 필드** (exnm/symb/bid/ask/bid_best/
+ask_best/bid_source/ask_source) 만. mds 의 audit 성 필드 (시초/고저/전일대비/
+base/fill/mid 등) 는 빈 문자열 — phase 2 에서 봉 영역 (Aggregator) 과 연결.
+
+FWD pdcd 는 `WTGQUERY_E_UNSUPPORTED` — forward-snapshot endpoint 와의
+연결은 phase 2.
 
 ## 참조
 

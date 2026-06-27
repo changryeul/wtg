@@ -258,6 +258,37 @@ func TestBestConsumer_StatsSources(t *testing.T) {
 	}
 }
 
+// Stats.SourceQuotes — per-source bid/ask/ts 값이 정확히 노출되는지.
+// mds W9501S02 (거래소별 호가 조회) 백엔드로 cside/wtgquery 가 사용.
+func TestBestConsumer_StatsSourceQuotes(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1378.65, 1378.69))
+	bc.OnTick(buildRaw("USDKRW", "KMB", 1378.60, 1378.72))
+
+	st := bc.Stats().Symbols["USDKRW"]
+	if len(st.SourceQuotes) != 2 {
+		t.Fatalf("SourceQuotes len=%d, want 2 (%v)", len(st.SourceQuotes), st.SourceQuotes)
+	}
+	smb, ok := st.SourceQuotes["SMB"]
+	if !ok {
+		t.Fatalf("SourceQuotes[SMB] 누락")
+	}
+	if smb.Bid != 1378.65 || smb.Ask != 1378.69 {
+		t.Errorf("SMB bid/ask = %v/%v, want 1378.65/1378.69", smb.Bid, smb.Ask)
+	}
+	if smb.TS.IsZero() {
+		t.Errorf("SMB TS zero — 수신 시각 안 채워짐")
+	}
+	kmb, ok := st.SourceQuotes["KMB"]
+	if !ok {
+		t.Fatalf("SourceQuotes[KMB] 누락")
+	}
+	if kmb.Bid != 1378.60 || kmb.Ask != 1378.72 {
+		t.Errorf("KMB bid/ask = %v/%v, want 1378.60/1378.72", kmb.Bid, kmb.Ask)
+	}
+}
+
 // Stats.Sources — stale 된 feed 는 이름에서도 제외되어야.
 func TestBestConsumer_StatsSourcesExcludesStale(t *testing.T) {
 	c := &collector{}

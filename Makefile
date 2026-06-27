@@ -84,10 +84,11 @@ wtgquery:
 wtgquery-clean:
 	$(MAKE) -C cside/wtgquery clean
 
-# C SDK ↔ mci-chart /v1/chart wire 호환성 검증 (build tag=wtgquery).
+# C SDK ↔ mci-chart /v1/chart + mci-price /v1/best-stats wire 호환성
+# 검증 (build tag=wtgquery). W9501S01 (chart), S02/S03 (price 의 best-stats).
 # 선결: wtgquery 타겟 먼저 빌드 필요.
 test-wtgquery: wtgquery
-	$(GO) test $(GOFLAGS) -tags=wtgquery -run CSideWtgquery ./internal/chart/...
+	$(GO) test $(GOFLAGS) -tags=wtgquery -run CSideWtgquery ./internal/chart/... ./internal/price/...
 
 # coverage HTML 리포트.
 coverage: test-race

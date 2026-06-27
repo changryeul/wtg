@@ -215,10 +215,21 @@ type BestSymbolStat struct {
 	// 동일 입력에 대해 동일 출력을 내기 위함. ActiveSources 와 동일 staleness
 	// 필터로 수집되므로 len(Sources) == ActiveSources (crossed fallback 시도
 	// |ActiveSources|).
-	Sources        []string `json:"sources"`
-	BestBid        float64  `json:"best_bid"`
-	BestAsk        float64  `json:"best_ask"`
-	CrossedFallbck bool     `json:"crossed_fallback,omitempty"`
+	Sources []string `json:"sources"`
+	// SourceQuotes — per-source 의 raw bid/ask/ts. mds 의 W9501S02 형
+	// "거래소별 호가 조회" 백엔드 (wire adapter `cside/wtgquery` 가 사용).
+	// Sources 와 동일 staleness 필터. Sources 가 quick scan, 본 필드가 detail.
+	SourceQuotes   map[string]BestSourceQuote `json:"source_quotes"`
+	BestBid        float64                    `json:"best_bid"`
+	BestAsk        float64                    `json:"best_ask"`
+	CrossedFallbck bool                       `json:"crossed_fallback,omitempty"`
+}
+
+// BestSourceQuote — per-source 호가 + 수신 시각.
+type BestSourceQuote struct {
+	Bid float64   `json:"bid"`
+	Ask float64   `json:"ask"`
+	TS  time.Time `json:"ts"`
 }
 
 // Stats 는 현재 cache 상태의 스냅샷을 반환 (HTTP /v1/best-stats 노출용).
@@ -236,20 +247,23 @@ func (b *BestConsumer) Stats() BestStats {
 		if crossed {
 			n = -n
 		}
-		// active source 이름 수집 — recomputeLocked 와 동일한 staleness
+		// active source 이름 + 값 수집 — recomputeLocked 와 동일한 staleness
 		// 필터. 운영자가 "SMB 가 들어왔는지" 를 카운트가 아닌 이름으로
 		// 직접 판정. Stats 는 hot path 아니라 alloc 비용 무시 가능.
 		sources := make([]string, 0, len(bySource))
+		srcQuotes := make(map[string]BestSourceQuote, len(bySource))
 		for src, sq := range bySource {
 			if b.maxStaleness >= 0 && now.Sub(sq.ts) > b.maxStaleness {
 				continue
 			}
 			sources = append(sources, src)
+			srcQuotes[src] = BestSourceQuote{Bid: sq.bid, Ask: sq.ask, TS: sq.ts}
 		}
 		sort.Strings(sources)
 		out.Symbols[sym] = BestSymbolStat{
 			ActiveSources:  n,
 			Sources:        sources,
+			SourceQuotes:   srcQuotes,
 			BestBid:        bid,
 			BestAsk:        ask,
 			CrossedFallbck: crossed,

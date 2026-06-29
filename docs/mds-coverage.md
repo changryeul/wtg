@@ -109,7 +109,7 @@ endpoint 단순 교체로는 안 됨 — **adapter 필요**:
 | W9501S01 / S02 / S03 wire adapter PoC | NH 사내 client 가 binary 만 교체하면 transparent — adapter 패턴 검증 | ✓ 완료 (`cside/wtgquery/` + `make test-wtgquery`) |
 | FWD pdcd / W9501S02 의 audit 필드 (시초/전일대비/base/fill 등) 채움 | 현재 PoC 가 핵심 필드 (bid/ask/best) 만 — audit 성 필드 채우려면 forward-snapshot + 봉 영역 연결 | ~1주 |
 | `cmd/quote-replay` 신설 (pcap 재생) | mds `replay_smb2` 와 동등 — 회귀 / 사후분석 | ~1주 |
-| SHM → gRPC p99 측정 | 같은 호스트 단일 mci-price vs 분리된 edge — latency 비교 | 반나절 |
+| SHM → REST p99 측정 (`/v1/quote/spot`) | mds SHM 직접 read 대비 WTG REST round-trip latency 검증 | ✓ 완료 — `docs/spot-latency-poc.md` (20k RPS p99 ≤ 2ms) |
 | 마스터 데이터 (FOS 외) → `fx-sync` 확장 | NH 마스터 카탈로그를 etcd 미러 — FOS 파일 포맷 cover 가 필요하면 | 1주 |
 
 ### W9501 PoC 결과 요약

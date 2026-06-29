@@ -354,6 +354,12 @@ func (s *Server) Start(ctx context.Context) error {
 		Audit:  s.audit,
 		Hub:    s.hub,
 	}
+	customerPairsDeps := &CustomerPairsDeps{
+		Cli:    s.etcdShared,
+		Prefix: s.cfg.EtcdCustomerPairsPrefix,
+		Logger: s.logger,
+		Audit:  s.audit,
+	}
 	marginDeps := &MarginRecomputeDeps{
 		Cli:     s.etcdShared,
 		Pool:    s.chartPool,
@@ -434,6 +440,12 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/admin/ratelimit/{service}", GetRateLimitPolicy(rateLimitDeps))
 	mux.HandleFunc("PUT /v1/admin/ratelimit/{service}", PutRateLimitPolicy(rateLimitDeps))
 	mux.HandleFunc("DELETE /v1/admin/ratelimit/{service}", DeleteRateLimitPolicy(rateLimitDeps))
+
+	// 고객별 ws 구독 허용 pair allowlist — mci-edge-price 가 watch 로 hot-swap.
+	mux.HandleFunc("GET /v1/admin/customer-pairs", ListCustomerPairs(customerPairsDeps))
+	mux.HandleFunc("GET /v1/admin/customer-pairs/{customer_id}", GetCustomerPairs(customerPairsDeps))
+	mux.HandleFunc("PUT /v1/admin/customer-pairs/{customer_id}", PutCustomerPairs(customerPairsDeps))
+	mux.HandleFunc("DELETE /v1/admin/customer-pairs/{customer_id}", DeleteCustomerPairs(customerPairsDeps))
 
 	// Prometheus query proxy — 운영 모니터링 페이지가 사용.
 	promDeps := &PromProxyDeps{

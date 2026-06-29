@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>고객별 ws 구독 허용 pair — mci-admin</title>
+<style>
+  body { font-family: -apple-system, Pretendard, "Apple SD Gothic Neo", sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2733; }
+  h1 { font-size: 20px; border-bottom: 2px solid #1f4e79; padding-bottom: 8px; color: #1f4e79; }
+  h2 { font-size: 16px; color: #2e5496; margin-top: 24px; }
+  .card { border: 1px solid #e3e8ef; border-radius: 8px; padding: 14px; margin: 12px 0; background: #f7f9fc; }
+  label { display: block; font-size: 12px; color: #5b6675; margin-top: 8px; }
+  input[type=text], textarea { width: 100%; padding: 8px; border: 1px solid #ccd; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 13px; }
+  textarea { min-height: 60px; resize: vertical; }
+  button { padding: 8px 14px; border: none; border-radius: 4px; background: #1f4e79; color: #fff; font-weight: 600; cursor: pointer; margin-right: 8px; margin-top: 12px; }
+  button.danger { background: #c0392b; }
+  button:hover { opacity: 0.9; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  th, td { border: 1px solid #e3e8ef; padding: 8px; text-align: left; }
+  th { background: #1f4e79; color: #fff; }
+  tr:nth-child(even) { background: #f6f8fb; }
+  .pairs { font-family: ui-monospace, monospace; font-size: 12px; color: #1f4e79; }
+  .empty-list { color: #c0392b; font-style: italic; }
+  .help { font-size: 12px; color: #5b6675; margin-top: 4px; }
+  .msg { padding: 8px 12px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+  .msg.ok { background: #e1f5ee; color: #0f6e56; }
+  .msg.err { background: #fdf0e8; color: #a8551f; }
+  .actions { white-space: nowrap; }
+</style>
+</head>
+<body>
+  <h1>고객별 ws 구독 허용 pair</h1>
+  <p class="help">
+    mci-edge-price 의 ws 구독 요청에서 고객별 허용 pair 만 통과시킵니다.
+    글로벌 정책 ∩ customer 정책. 등록 안 된 customer 는 글로벌 정책만 (unrestricted).
+    빈 list 등록은 "전체 차단" 의도. 변경 즉시 etcd watch 로 반영.
+  </p>
+
+  <div class="card">
+    <h2>등록 / 수정</h2>
+    <label>Customer ID (운영자 임의 부여, 공백/슬래시/제어문자 금지, 64자 이내)</label>
+    <input type="text" id="cid" placeholder="alice123" autocomplete="off">
+
+    <label>허용 pair list (콤마 또는 줄바꿈 구분, 예: USD/KRW, EUR/USD)</label>
+    <textarea id="pairs" placeholder="USD/KRW, EUR/USD, JPY/KRW"></textarea>
+    <div class="help">빈 입력은 "전체 차단" (어떤 pair 도 구독 불가).</div>
+
+    <button onclick="savePut()">저장 (PUT)</button>
+    <button class="danger" onclick="delOne()">삭제 (DELETE)</button>
+    <button onclick="reload()">목록 새로고침</button>
+    <div id="msg"></div>
+  </div>
+
+  <h2>현재 등록 (<span id="count">0</span>건)</h2>
+  <table>
+    <thead>
+      <tr><th style="width:25%">Customer ID</th><th>허용 pair</th><th style="width:14%">동작</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+<script>
+const API = "/v1/admin/customer-pairs";
+
+function showMsg(t, ok) {
+  const m = document.getElementById("msg");
+  m.className = "msg " + (ok ? "ok" : "err");
+  m.textContent = t;
+  setTimeout(() => { m.textContent = ""; m.className = ""; }, 3500);
+}
+
+function parsePairs(raw) {
+  return raw.split(/[,\n]/).map(s => s.trim()).filter(s => s.length > 0);
+}
+
+// 행 1개 생성 — innerHTML 사용 X (XSS 회피). customer_id/pair 가 운영자 입력이라
+// validateCustomerID 통과 후라도 textContent 로 안전 삽입.
+function buildRow(c) {
+  const tr = document.createElement("tr");
+  const td1 = document.createElement("td");
+  const code = document.createElement("code");
+  code.textContent = c.customer_id;
+  td1.appendChild(code);
+
+  const td2 = document.createElement("td");
+  if (!c.pairs || c.pairs.length === 0) {
+    const span = document.createElement("span");
+    span.className = "empty-list";
+    span.textContent = "[전체 차단]";
+    td2.appendChild(span);
+  } else {
+    const span = document.createElement("span");
+    span.className = "pairs";
+    span.textContent = c.pairs.join(", ");
+    td2.appendChild(span);
+  }
+
+  const td3 = document.createElement("td");
+  td3.className = "actions";
+  const btn = document.createElement("button");
+  btn.textContent = "편집";
+  btn.addEventListener("click", () => loadInto(c.customer_id, c.pairs || []));
+  td3.appendChild(btn);
+
+  tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+  return tr;
+}
+
+async function reload() {
+  try {
+    const r = await fetch(API);
+    if (!r.ok) throw new Error("status " + r.status);
+    const d = await r.json();
+    document.getElementById("count").textContent = d.count;
+    const tb = document.getElementById("rows");
+    tb.replaceChildren();
+    (d.customers || []).forEach(c => tb.appendChild(buildRow(c)));
+  } catch (e) {
+    showMsg("목록 조회 실패: " + e.message, false);
+  }
+}
+
+function loadInto(cid, pairs) {
+  document.getElementById("cid").value = cid;
+  document.getElementById("pairs").value = pairs.join(", ");
+  window.scrollTo(0, 0);
+}
+
+async function savePut() {
+  const cid = document.getElementById("cid").value.trim();
+  if (!cid) { showMsg("customer_id 필요", false); return; }
+  const pairs = parsePairs(document.getElementById("pairs").value);
+  try {
+    const r = await fetch(API + "/" + encodeURIComponent(cid), {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({pairs}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.message || "status " + r.status);
+    const blockLabel = d.pairs.length === 0 ? " (전체 차단)" : "";
+    showMsg("저장 완료: " + d.customer_id + " → " + d.pairs.length + " pair" + blockLabel, true);
+    reload();
+  } catch (e) {
+    showMsg("저장 실패: " + e.message, false);
+  }
+}
+
+async function delOne() {
+  const cid = document.getElementById("cid").value.trim();
+  if (!cid) { showMsg("customer_id 필요", false); return; }
+  if (!confirm(cid + " 의 customer-pair 등록을 삭제할까요? (글로벌 정책만 적용으로 복귀)")) return;
+  try {
+    const r = await fetch(API + "/" + encodeURIComponent(cid), {method: "DELETE"});
+    if (!r.ok) {
+      const d = await r.json();
+      throw new Error(d.message || "status " + r.status);
+    }
+    showMsg("삭제 완료: " + cid, true);
+    document.getElementById("cid").value = "";
+    document.getElementById("pairs").value = "";
+    reload();
+  } catch (e) {
+    showMsg("삭제 실패: " + e.message, false);
+  }
+}
+
+reload();
+</script>
+</body>
+</html>

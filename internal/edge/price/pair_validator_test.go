@@ -45,7 +45,7 @@ func TestMemoryPairValidator_AddIdempotent(t *testing.T) {
 func TestGateSubscribe_NilValidator_AllowsAll(t *testing.T) {
 	s := NewServer(DefaultConfig(), discardLogger())
 	// SetPairValidator 없이 — backward compat 경로.
-	acc, rej := s.gateSubscribe([]string{"USD/KRW", "EUR/USD"})
+	acc, rej := s.gateSubscribe(nil, []string{"USD/KRW", "EUR/USD"})
 	if len(acc) != 2 || len(rej) != 0 {
 		t.Errorf("nil validator accepted=%v rejected=%v, want all accepted", acc, rej)
 	}
@@ -57,7 +57,7 @@ func TestGateSubscribe_PartialReject(t *testing.T) {
 	v.Add("USD/KRW", "EUR/USD")
 	s.SetPairValidator(v)
 
-	acc, rej := s.gateSubscribe([]string{"USD/KRW", "JPY/KRW", "EUR/USD", "FAKE/PAIR"})
+	acc, rej := s.gateSubscribe(nil, []string{"USD/KRW", "JPY/KRW", "EUR/USD", "FAKE/PAIR"})
 	if len(acc) != 2 {
 		t.Errorf("accepted=%v, want 2", acc)
 	}

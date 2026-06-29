@@ -63,6 +63,13 @@ type Config struct {
 	EtcdEndpoints    string
 	EtcdRateLimitKey string // default "wtg/ratelimit/edge-price"
 
+	// EtcdCustomerPairsPrefix — customer 별 ws 구독 허용 pair allowlist 의 etcd
+	// prefix. 채워지면 CustomerPairPolicy 활성 + watcher 가동. 빈값이면 비활성
+	// (글로벌 정책만 적용, backward compat).
+	//
+	// etcd schema: <prefix><customerID> = JSON []string  (예: ["USD/KRW","EUR/USD"])
+	EtcdCustomerPairsPrefix string // default "wtg/customers/"
+
 	// Redis backend — 다중 인스턴스 단일 카운터. 비면 in-memory.
 	RateLimitRedisAddr     string
 	RateLimitRedisPassword string
@@ -170,7 +177,8 @@ func DefaultConfig() Config {
 		DialTimeout:       5 * time.Second,
 		IPRatePerSec:      100,
 		IPBurst:           200,
-		EtcdRateLimitKey:  "wtg/ratelimit/edge-price",
+		EtcdRateLimitKey:        "wtg/ratelimit/edge-price",
+		EtcdCustomerPairsPrefix: "wtg/customers/",
 		LogLevel:          "info",
 		EnableQuoteStream: false,
 		StaleThreshold:    30 * time.Second,
@@ -268,6 +276,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.Float64Var(&cfg.IPRatePerSec, "ip-rate", cfg.IPRatePerSec, "fallback rate limit TPS (룰 매칭 안 된 path, 0=비활성)")
 	fs.StringVar(&cfg.EtcdEndpoints, "etcd", cfg.EtcdEndpoints, "etcd endpoints (콤마 구분, 비면 정적 룰만)")
 	fs.StringVar(&cfg.EtcdRateLimitKey, "etcd-ratelimit-key", cfg.EtcdRateLimitKey, "etcd PolicyDoc key (default wtg/ratelimit/edge-price)")
+	fs.StringVar(&cfg.EtcdCustomerPairsPrefix, "etcd-customer-pairs-prefix", cfg.EtcdCustomerPairsPrefix, "customer 별 ws 구독 허용 pair allowlist etcd prefix. 빈값이면 비활성 (글로벌 정책만)")
 	fs.StringVar(&cfg.RateLimitRedisAddr, "ratelimit-redis", cfg.RateLimitRedisAddr, "Redis addr — rate limit 분산 backend (host:port)")
 	fs.StringVar(&cfg.RateLimitRedisPassword, "ratelimit-redis-pass", cfg.RateLimitRedisPassword, "Redis password")
 	fs.IntVar(&cfg.RateLimitRedisDB, "ratelimit-redis-db", cfg.RateLimitRedisDB, "Redis DB index")

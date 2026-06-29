@@ -58,6 +58,14 @@ type Server struct {
 	// learning (consumeQuoteOnce 가 도착 quote.Pair 추가) 결합.
 	pairValidator PairValidator
 
+	// customerPairs — 고객별 ws 구독 허용 pair allowlist. nil 이면 글로벌
+	// 정책만 (backward compat). etcd watch 로 mci-admin 의 변경 즉시 반영.
+	customerPairs CustomerPairPolicy
+
+	// customerPairsWatcher — etcd lifecycle 보유. Stop 시 cancel.
+	customerPairsWatcher *EtcdCustomerPairWatcher
+	customerPairsEtcdCli *clientv3.Client
+
 	// Phase 4c — customer-specific quote 경로. cfg.EnableCustomerStream 활성 시
 	// Start 에서 가동. ws upgrade 시 customerRegMgr.Register 호출,
 	// subscribeCustomerQuoteLoop 가 customer-tagged quote 를 Registry 로 전달.
@@ -176,7 +184,43 @@ func (s *Server) Start(ctx context.Context) error {
 		s.logger.Warn("ratelimit etcd watcher 시작 실패 — 정적 룰", slog.Any("error", err))
 	}
 
+	if err := s.startCustomerPairsWatcher(ctx); err != nil {
+		s.logger.Warn("customer-pair etcd watcher 시작 실패 — 글로벌 정책만", slog.Any("error", err))
+	}
+
 	return s.startHTTP(ctx)
+}
+
+// startCustomerPairsWatcher — EtcdEndpoints + EtcdCustomerPairsPrefix 둘 다
+// 채워지면 활성. MemoryCustomerPairPolicy 생성 후 etcd watcher 가동.
+// 빈값이면 no-op (글로벌 정책만 — backward compat).
+func (s *Server) startCustomerPairsWatcher(ctx context.Context) error {
+	if s.cfg.EtcdEndpoints == "" || s.cfg.EtcdCustomerPairsPrefix == "" {
+		return nil
+	}
+	eps := policy.SplitEndpoints(s.cfg.EtcdEndpoints)
+	if len(eps) == 0 {
+		return nil
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   eps,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("etcd dial: %w", err)
+	}
+	cp := NewMemoryCustomerPairPolicy()
+	w := NewEtcdCustomerPairWatcher(cli, s.cfg.EtcdCustomerPairsPrefix, cp, s.logger)
+	if err := w.Start(ctx); err != nil {
+		_ = cli.Close()
+		return fmt.Errorf("customer-pair watcher Start: %w", err)
+	}
+	s.customerPairs = cp
+	s.customerPairsWatcher = w
+	s.customerPairsEtcdCli = cli
+	s.logger.Info("CustomerPairPolicy etcd watcher 활성",
+		slog.String("prefix", s.cfg.EtcdCustomerPairsPrefix))
+	return nil
 }
 
 // upstreamCreds 는 Internal mci-price 호출용 gRPC TransportCredentials.
@@ -775,10 +819,14 @@ func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc
 		}
 
 		// Phase 4c — customer-specific quote 활성 시 ws 클라이언트의 customer
-		// 식별자 결정. Principal.Usid 가 자연스러운 customer key.
+		// 식별자 결정. Principal.Usid 가 자연스러운 customer key. 또한 customer
+		// 별 pair allowlist (CustomerPairPolicy) 가 활성이면 quote stream 비활성
+		// 이라도 customer 식별 필요.
 		var customerID string
-		if s.cfg.EnableCustomerStream && s.customerRegMgr != nil && profileKey != "" {
-			customerID = p.Usid
+		if profileKey != "" && p.Usid != "" {
+			if (s.cfg.EnableCustomerStream && s.customerRegMgr != nil) || s.customerPairs != nil {
+				customerID = p.Usid
+			}
 		}
 
 		ws, err := upgrader.Upgrade(w, r, nil)
@@ -888,7 +936,7 @@ func (s *Server) handleControlMessage(sub *Subscriber, data []byte) {
 	}
 	switch req.Type {
 	case "subscribe":
-		accepted, rejected := s.gateSubscribe(req.Pairs)
+		accepted, rejected := s.gateSubscribe(sub, req.Pairs)
 		sub.SubscribePairs(accepted)
 		if len(rejected) > 0 {
 			s.totalRejectedPairs.Add(uint64(len(rejected)))
@@ -904,23 +952,47 @@ func (s *Server) handleControlMessage(sub *Subscriber, data []byte) {
 	s.sendControlEcho(sub)
 }
 
-// gateSubscribe — Phase 2 권한 가드. validator 가 nil 이면 모두 통과 (회귀
-// 없는 backward compat). 빈 string 은 무조건 reject.
-func (s *Server) gateSubscribe(pairs []string) (accepted, rejected []string) {
-	if s.pairValidator == nil {
-		return pairs, nil
+// gateSubscribe — ws subscribe 권한 가드. 두 정책 결합:
+//
+//  1. 글로벌 pairValidator (Phase 2) — nil 이면 모두 통과 (backward compat).
+//  2. customerPairs (PoC) — customer 미등록이면 무관 (unrestricted),
+//     등록되면 글로벌 ∩ customer 허용 set 만 accept.
+//
+// 글로벌 disallow 가 항상 우선 (emergency cut). 빈 string 은 무조건 reject.
+func (s *Server) gateSubscribe(sub *Subscriber, pairs []string) (accepted, rejected []string) {
+	// customer policy 사전 조회 (등록된 경우만 적용).
+	var customerAllowed map[string]struct{}
+	customerRegistered := false
+	if s.customerPairs != nil && sub != nil && sub.CustomerID() != "" {
+		allowed, ok := s.customerPairs.AllowedFor(sub.CustomerID())
+		if ok {
+			customerRegistered = true
+			customerAllowed = make(map[string]struct{}, len(allowed))
+			for _, p := range allowed {
+				customerAllowed[p] = struct{}{}
+			}
+		}
 	}
+
 	accepted = make([]string, 0, len(pairs))
 	for _, p := range pairs {
 		if p == "" {
 			rejected = append(rejected, p)
 			continue
 		}
-		if s.pairValidator.IsAllowed(p) {
-			accepted = append(accepted, p)
-		} else {
+		// 글로벌 정책 — 우선.
+		if s.pairValidator != nil && !s.pairValidator.IsAllowed(p) {
 			rejected = append(rejected, p)
+			continue
 		}
+		// customer 정책 — 등록된 경우만 추가 필터.
+		if customerRegistered {
+			if _, ok := customerAllowed[p]; !ok {
+				rejected = append(rejected, p)
+				continue
+			}
+		}
+		accepted = append(accepted, p)
 	}
 	return accepted, rejected
 }
@@ -1040,6 +1112,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.rateLimitRedis != nil {
 		_ = s.rateLimitRedis.Close()
+	}
+	if s.customerPairsWatcher != nil {
+		s.customerPairsWatcher.Stop()
+	}
+	if s.customerPairsEtcdCli != nil {
+		_ = s.customerPairsEtcdCli.Close()
 	}
 	if s.tlsReloader != nil {
 		s.tlsReloader.Stop()

@@ -54,9 +54,10 @@ func (w *tWriter) Write(p []byte) (int, error) {
 
 // initiator — 테스트 client 의 quickfix.Application 구현.
 type testInitiator struct {
-	logonCount atomic.Int32
-	mu         sync.Mutex
-	logonDone  chan struct{}
+	logonCount  atomic.Int32
+	mu          sync.Mutex
+	logonDone   chan struct{}
+	execReports []*quickfix.Message // 수신한 35=8
 }
 
 func newTestInitiator() *testInitiator {
@@ -83,7 +84,31 @@ func (i *testInitiator) FromAdmin(msg *quickfix.Message, sid quickfix.SessionID)
 }
 func (i *testInitiator) ToApp(msg *quickfix.Message, sid quickfix.SessionID) error { return nil }
 func (i *testInitiator) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix.MessageRejectError {
+	mt, _ := msg.MsgType()
+	if mt == "8" {
+		// ExecutionReport 수신 — copy 보관.
+		dup := quickfix.NewMessage()
+		msg.CopyInto(dup)
+		i.mu.Lock()
+		i.execReports = append(i.execReports, dup)
+		i.mu.Unlock()
+	}
 	return nil
+}
+
+func (i *testInitiator) recvCount() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return len(i.execReports)
+}
+
+func (i *testInitiator) recvLast() *quickfix.Message {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if len(i.execReports) == 0 {
+		return nil
+	}
+	return i.execReports[len(i.execReports)-1]
 }
 
 // startInitiator — quickfix initiator. acceptorPort 로 연결.
@@ -406,6 +431,136 @@ func TestFixServer_AliasAndRawFix(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatalf("httptest receive timeout — Stats=%+v", srv.Stats())
+	}
+}
+
+// Phase B-2 — POST /v1/internal/exec-report → quickfix initiator 가 35=8 수신.
+func TestFixServer_ExecReportDropCopy(t *testing.T) {
+	port := pickFreePort(t)
+	cfg := DefaultConfig()
+	cfg.ListenPort = port
+	cfg.Counterparties = map[string]Counterparty{
+		"ECN_A": {Password: "secret-pw", Channel: "FIX", Site: "HQ", Tier: "VIP", Usid: "ECN_A_USID"},
+	}
+	srv, _ := startServer(t, cfg)
+
+	// initiator + Logon 통과 대기.
+	iniApp, _ := startInitiator(t, port, "ECN_A", "WTG")
+	select {
+	case <-iniApp.logonDone:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Logon timeout")
+	}
+
+	// HTTP receive endpoint mount.
+	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("POST /v1/internal/exec-report", ExecReportHandler(ExecReportHandlerDeps{
+		Server: srv,
+		Secret: "test-secret",
+		Logger: quietLogger(),
+	}))
+	hts := httptest.NewServer(httpMux)
+	defer hts.Close()
+
+	// 1) 인증 실패 → 401.
+	r, _ := http.Post(hts.URL+"/v1/internal/exec-report", "application/json",
+		strings.NewReader(`{"target_sender_comp_id":"ECN_A","order_id":"X","exec_id":"Y","exec_type":"0","ord_status":"0","side":"buy"}`))
+	if r.StatusCode != 401 {
+		t.Errorf("no secret status=%d, want 401", r.StatusCode)
+	}
+	r.Body.Close()
+
+	// 2) New 단계 ExecutionReport — secret 정확.
+	body := `{
+		"target_sender_comp_id":"ECN_A",
+		"order_id":"ENG-001",
+		"client_order_id":"ORD-001",
+		"exec_id":"EXEC-001",
+		"exec_type":"0",
+		"ord_status":"0",
+		"side":"buy",
+		"symbol":"USD/KRW",
+		"leaves_qty":1000000,
+		"cum_qty":0,
+		"avg_px":0
+	}`
+	req, _ := http.NewRequest(http.MethodPost, hts.URL+"/v1/internal/exec-report", strings.NewReader(body))
+	req.Header.Set("X-Push-Secret", "test-secret")
+	req.Header.Set("Content-Type", "application/json")
+	r, _ = http.DefaultClient.Do(req)
+	if r.StatusCode != 200 {
+		t.Fatalf("post status=%d", r.StatusCode)
+	}
+	r.Body.Close()
+
+	// 3) initiator 가 35=8 수신.
+	if !waitFor(2*time.Second, func() bool { return iniApp.recvCount() >= 1 }) {
+		t.Fatalf("ExecutionReport 미수신 — Stats=%+v", srv.Stats())
+	}
+	msg := iniApp.recvLast()
+	mt, _ := msg.MsgType()
+	if mt != "8" {
+		t.Errorf("MsgType=%q, want 8", mt)
+	}
+	orderID, _ := msg.Body.GetString(37)
+	if orderID != "ENG-001" {
+		t.Errorf("OrderID=%q, want ENG-001", orderID)
+	}
+	clOrdID, _ := msg.Body.GetString(11)
+	if clOrdID != "ORD-001" {
+		t.Errorf("ClOrdID=%q, want ORD-001", clOrdID)
+	}
+
+	// 4) Rejection — OrdRejReason 매핑 검증.
+	body = `{
+		"target_sender_comp_id":"ECN_A",
+		"order_id":"ENG-002",
+		"exec_id":"EXEC-002",
+		"exec_type":"8",
+		"ord_status":"8",
+		"side":"buy",
+		"symbol":"USD/KRW",
+		"ord_rej_reason":"1029"
+	}`
+	req, _ = http.NewRequest(http.MethodPost, hts.URL+"/v1/internal/exec-report", strings.NewReader(body))
+	req.Header.Set("X-Push-Secret", "test-secret")
+	req.Header.Set("Content-Type", "application/json")
+	r, _ = http.DefaultClient.Do(req)
+	if r.StatusCode != 200 {
+		t.Fatalf("rej post status=%d", r.StatusCode)
+	}
+	r.Body.Close()
+
+	if !waitFor(2*time.Second, func() bool { return iniApp.recvCount() >= 2 }) {
+		t.Fatalf("Rejection ExecutionReport 미수신 — Stats=%+v", srv.Stats())
+	}
+	msg = iniApp.recvLast()
+	rejReason, _ := msg.Body.GetString(103)
+	if rejReason != "99" {
+		t.Errorf("OrdRejReason=%q, want 99 (errn 1029 → Other)", rejReason)
+	}
+	text, _ := msg.Body.GetString(58)
+	if text != "quote id expired" {
+		t.Errorf("Text=%q, want 'quote id expired'", text)
+	}
+
+	// 5) target session 미활성 → 503.
+	body = `{"target_sender_comp_id":"UNKNOWN","order_id":"E","exec_id":"X","exec_type":"0","ord_status":"0","side":"buy"}`
+	req, _ = http.NewRequest(http.MethodPost, hts.URL+"/v1/internal/exec-report", strings.NewReader(body))
+	req.Header.Set("X-Push-Secret", "test-secret")
+	r, _ = http.DefaultClient.Do(req)
+	if r.StatusCode != 503 {
+		t.Errorf("unknown target status=%d, want 503", r.StatusCode)
+	}
+	r.Body.Close()
+
+	// Stats 검증.
+	st := srv.Stats()
+	if st.ExecReportSent != 2 {
+		t.Errorf("ExecReportSent=%d, want 2", st.ExecReportSent)
+	}
+	if st.ExecReportRejected != 1 {
+		t.Errorf("ExecReportRejected=%d, want 1", st.ExecReportRejected)
 	}
 }
 

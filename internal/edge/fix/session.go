@@ -34,11 +34,13 @@ type fixApp struct {
 	active map[string]Principal
 
 	// 카운터.
-	logonOK         atomic.Uint64
-	logonReject     atomic.Uint64
-	ordersReceived  atomic.Uint64
-	ordersForwarded atomic.Uint64
-	ordersRejected  atomic.Uint64
+	logonOK            atomic.Uint64
+	logonReject        atomic.Uint64
+	ordersReceived     atomic.Uint64
+	ordersForwarded    atomic.Uint64
+	ordersRejected     atomic.Uint64
+	execReportSent     atomic.Uint64 // Phase B-2 drop copy 발송 누적
+	execReportRejected atomic.Uint64 // session 미활성 / 변환 실패 등
 
 	// forwarder — NewOrderSingle 변환 결과를 /v1/tx 로 보내는 함수.
 	// nil 이면 envelope log 만 (PoC default).
@@ -230,12 +232,14 @@ func (a *fixApp) snapshot() Stats {
 	active := len(a.active)
 	a.mu.RUnlock()
 	return Stats{
-		LogonOK:         a.logonOK.Load(),
-		LogonReject:     a.logonReject.Load(),
-		OrdersReceived:  a.ordersReceived.Load(),
-		OrdersForwarded: a.ordersForwarded.Load(),
-		OrdersRejected:  a.ordersRejected.Load(),
-		ActiveSessions:  active,
+		LogonOK:            a.logonOK.Load(),
+		LogonReject:        a.logonReject.Load(),
+		OrdersReceived:     a.ordersReceived.Load(),
+		OrdersForwarded:    a.ordersForwarded.Load(),
+		OrdersRejected:     a.ordersRejected.Load(),
+		ExecReportSent:     a.execReportSent.Load(),
+		ExecReportRejected: a.execReportRejected.Load(),
+		ActiveSessions:     active,
 	}
 }
 

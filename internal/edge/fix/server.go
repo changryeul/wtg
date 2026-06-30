@@ -234,12 +234,14 @@ func (s *Server) startCounterpartyWatcher(ctx context.Context) error {
 
 // Stats — Server 의 누적 카운터 (운영 endpoint 용 / 테스트 용).
 type Stats struct {
-	LogonOK         uint64 `json:"logon_ok"`
-	LogonReject     uint64 `json:"logon_reject"`
-	OrdersReceived  uint64 `json:"orders_received"`
-	OrdersForwarded uint64 `json:"orders_forwarded"`
-	OrdersRejected  uint64 `json:"orders_rejected"`
-	ActiveSessions  int    `json:"active_sessions"`
+	LogonOK            uint64 `json:"logon_ok"`
+	LogonReject        uint64 `json:"logon_reject"`
+	OrdersReceived     uint64 `json:"orders_received"`
+	OrdersForwarded    uint64 `json:"orders_forwarded"`
+	OrdersRejected     uint64 `json:"orders_rejected"`
+	ExecReportSent     uint64 `json:"exec_report_sent"`     // Phase B-2
+	ExecReportRejected uint64 `json:"exec_report_rejected"` // Phase B-2
+	ActiveSessions     int    `json:"active_sessions"`
 }
 
 func (s *Server) Stats() Stats {

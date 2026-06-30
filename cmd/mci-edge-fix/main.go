@@ -32,6 +32,7 @@ func main() {
 		statsAddr    = flag.String("stats", "", "HTTP /stats listen 주소 (예: 127.0.0.1:5002). 빈값=비활성")
 		etcdEps      = flag.String("etcd", "", "etcd endpoints (콤마 구분). Phase B 동적 counterparty 등록. 빈값=정적 seed 만")
 		etcdPrefix   = flag.String("etcd-counterparties-prefix", "wtg/fix/counterparties/", "etcd counterparty prefix")
+		pushSecret   = flag.String("push-secret", "", "POST /v1/internal/exec-report 의 X-Push-Secret 검증 값. 빈값=인증 skip (dev only)")
 	)
 	var seedCPs multiCP
 	flag.Var(&seedCPs, "seed-cp", "정적 counterparty seed. 형식: 'ID=PASSWORD,SITE,TIER,USID' (반복 가능)")
@@ -58,7 +59,7 @@ func main() {
 	defer cancel()
 
 	if *statsAddr != "" {
-		go startStatsServer(*statsAddr, srv, logger)
+		go startStatsServer(*statsAddr, srv, *pushSecret, logger)
 	}
 
 	logger.Info("mci-edge-fix 부팅",

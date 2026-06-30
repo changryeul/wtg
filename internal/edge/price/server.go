@@ -173,7 +173,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	// Phase 4c — customer-specific quote 경로 활성.
 	if s.cfg.EnableCustomerStream {
-		s.customerRegMgr = newCustomerRegManager(s.upstream, s.cfg.SubscriberID, s.logger)
+		s.customerRegMgr = newCustomerRegManager(s.upstream, s.cfg.SubscriberID, s.logger, s.cfg.CustomerRegSendRate)
 		s.customerRegMgr.Start(streamCtx)
 		go s.subscribeCustomerQuoteLoop(streamCtx)
 		s.logger.Info("Customer-specific quote 경로 활성")

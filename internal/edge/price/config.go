@@ -119,6 +119,19 @@ type Config struct {
 	// 둘 다 받을 수도, 둘 중 하나만 받을 수도 있음.
 	EnableCustomerStream bool
 
+	// CustomerRegSendRate — RegisterCustomer stream.Send 의 초당 token-bucket
+	// rate. 0 = throttling 없음 (legacy 동작, burst 위험). > 0 = 그 초당 rate
+	// 로 send 제한.
+	//
+	// 운영 권장: 100~500. 1000+ customer 환경의 stream 끊김 후 self-heal 이
+	// mci-price 의 customer-quote stream send chan (--grpc-buf) 한도를 한꺼번에
+	// 못 넘게 막아 무한 재격리 loop 방지 (docs/ws-fanout-burst-poc.md §Follow-up).
+	//
+	// trade-off: rate=100 + 1000 active customer → self-heal 완료까지 ~10초,
+	// 그 동안 일부 customer 의 customer-quote 미수신. ws connect/disconnect 의
+	// 정상 enqueue 도 throttle 받지만 default 1024 queue 안에 흡수.
+	CustomerRegSendRate int
+
 	// QuoteSeedPairs — Phase 2 권한 가드의 초기 시드. operator 가 알고 있는
 	// 운영 pair 카탈로그를 사전 등록해 첫 quote 도착 전에도 subscribe 가능하게.
 	// 비면 passive learning 만 — 첫 quote 까지는 어떤 pair 도 허용 안 됨.
@@ -180,10 +193,11 @@ func DefaultConfig() Config {
 		EtcdRateLimitKey:        "wtg/ratelimit/edge-price",
 		EtcdCustomerPairsPrefix: "wtg/customers/",
 		LogLevel:          "info",
-		EnableQuoteStream: false,
-		StaleThreshold:    30 * time.Second,
-		StaleScanInterval: 5 * time.Second,
-		EnvelopeFormat:    "best",
+		EnableQuoteStream:   false,
+		CustomerRegSendRate: 200,
+		StaleThreshold:      30 * time.Second,
+		StaleScanInterval:   5 * time.Second,
+		EnvelopeFormat:      "best",
 	}
 }
 
@@ -290,6 +304,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.TLSClientCAFile, "tls-client-ca", cfg.TLSClientCAFile, "외부 mTLS 클라이언트 CA bundle")
 	fs.BoolVar(&cfg.EnableQuoteStream, "quote-stream", cfg.EnableQuoteStream, "PriceService.SubscribeQuote 활성 (Profile-routed CustomerQuote)")
 	fs.BoolVar(&cfg.EnableCustomerStream, "customer-stream", cfg.EnableCustomerStream, "Phase 4c: RegisterCustomer + SubscribeCustomerQuote 활성 (customer-specific 마진)")
+	fs.IntVar(&cfg.CustomerRegSendRate, "customer-reg-rate", cfg.CustomerRegSendRate, "RegisterCustomer stream.Send 초당 token-bucket rate (0=throttle 없음, 권장 100~500). self-heal burst 회피")
 	quoteProfStr := strings.Join(cfg.QuoteProfileKeys, ",")
 	fs.StringVar(&quoteProfStr, "quote-profiles", quoteProfStr, "수신할 profile_keys 화이트리스트 (콤마 구분, 빈값=모두)")
 	seedPairsStr = strings.Join(cfg.QuoteSeedPairs, ",")

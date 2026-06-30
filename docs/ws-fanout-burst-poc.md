@@ -165,6 +165,127 @@ gRPC stream send chan default 1024 가 너무 작음**. 즉시 fix = `--grpc-buf
 65536` 또는 운영 시 `--grpc-buf 131072+`. 단 throughput 의 진짜 한계는
 별도 작업 (A/B/C) 으로 해결 가능.
 
+## 2차 fix — A옵션 (customer Register batching) 본질적 해결
+
+### 진단의 본질
+
+1차 fix (`--grpc-buf 65536`) 는 buffer 늘림으로 **첫 burst 회피** 만 됐고
+**격리 mechanism 자체** 가 1000 client 부담 한계에서 발동되는 잠재 결함은
+그대로 였음. 격리 mechanism 은 1개월 전 (P4b 단계, 2026-05-31 `22808b8`)
+부터 의도적으로 코딩된 정상 동작 — **결함은 격리 후 자동 회복 path**:
+
+- mci-edge-price 의 `customerRegManager.streamOnce` 가 재연결 시 active
+  set 의 모든 customer 를 한 번에 enqueue (`customer_reg.go:166-176`).
+- send loop 가 rate-limit 없이 큐를 빠르게 비움 → mci-price 측의
+  customer-quote stream send chan 다시 가득 참 → 격리 → 같은 burst 다시 →
+  **무한 loop**.
+
+작은 부하 (100 client) 에선 안 드러나지만 1000+ client 환경의 첫 큰 격리
+발생 후 운영자 재기동 외 회복 안 됨.
+
+### 본질적 fix — send loop 에 token bucket
+
+`internal/edge/price/customer_reg.go` 의 `streamOnce` send loop 에
+초당 N token 의 ticker 추가. self-heal burst 도 정상 ws connect/disconnect
+도 같은 rate 로 throttle.
+
+코드 변경:
+
+```go
+// customer_reg.go
+type customerRegManager struct {
+    ...
+    sendRatePerSec int   // 신규 — 0 = throttle 없음 (legacy)
+    totalThrottled atomic.Uint64
+}
+
+// streamOnce 의 send loop
+var sendTick *time.Ticker
+if m.sendRatePerSec > 0 {
+    interval := time.Second / time.Duration(m.sendRatePerSec)
+    sendTick = time.NewTicker(interval)
+    defer sendTick.Stop()
+}
+send := func(reg *wtgpb.CustomerRegistration) error {
+    if sendTick != nil {
+        select {
+        case <-ctx.Done(): return ctx.Err()
+        case <-sendTick.C:
+            m.totalThrottled.Add(1)
+        }
+    }
+    return stream.Send(reg)
+    // ... counter update
+}
+```
+
+config flag 추가:
+```
+--customer-reg-rate 200   // default 200/sec — 1000 customer self-heal ~5초
+```
+
+### fix 효과 (실측)
+
+mci-edge-price 재기동 + `--customer-reg-rate 200` + 1000 client × 30초:
+
+| 항목 | default (legacy) | 1차 fix (`--grpc-buf 65536`) | **2차 fix (rate=200)** |
+|---|---|---|---|
+| connect | 1000/1000 | 1000/1000 | 1000/1000 |
+| recv > 0 client | **0** (stuck) | 1000 | **1000** |
+| disconnect | 0 (mechanism 미작동) | 21 (격리 발동 후 회복) | **1** |
+| **stream 끊김 이벤트** | **무한 loop** | 발생 | **0** |
+| total msgs (30초) | 0 | 181,000 | **238,441** |
+| avg msgs/client | 0 | 181 | **238** |
+
+**stream 끊김 0** — 결함의 본질적 해결. throughput 의 잔여 한계 (avg 238 =
+예상의 8%) 는 mac kqueue 의 1000 ws scheduling 한계로 추정 — Linux 재측정
+필요.
+
+### 검증
+
+- **단위 테스트**: `TestCustomerRegManager_SendRateThrottle` — 100 customer
+  burst enqueue + rate=10 → 1초 후 도달 수 ≤ 15 (token 누적 마진 안). PASS.
+- **회귀**: 기존 customer_reg_test.go 의 3 케이스 (Register/Unregister
+  delivery / 빈 ID skip / E2E) 모두 PASS — rate=0 default 로 backward compat.
+- **실측**: 위 표.
+
+### Stats 가시화
+
+`customerRegStats` 에 신규 필드 노출 — 운영자가 throttle 동작 확인:
+
+```json
+{
+  "registered": 1000,
+  "active": 1000,
+  "reconnects": 0,
+  "throttled": 1000,         // 신규 — rate-limit ticker 통과한 누적 send
+  "send_rate_pps": 200       // 신규 — 현재 throttle 설정값 (0=무제한)
+}
+```
+
+### 운영 권장
+
+| 부하 | 권장 rate |
+|---|---|
+| 100 customer 이하 | 0 (무제한, legacy 동작 OK) |
+| 100~1000 customer | **200** (default) |
+| 1000~5000 customer | 500 |
+| 5000+ | 1000 + `--grpc-buf` 도 같이 늘림 |
+
+trade-off: rate=200 + 5000 active customer → self-heal 회복 시간 ~25초.
+그 동안 일부 customer 의 customer-quote 미수신. 격리 후 무한 loop 보다는
+허용 가능.
+
+### 잔여 — 본 PoC 후속 작업
+
+| 작업 | 상태 |
+|---|---|
+| A. customer Register batching (rate-limit) | **✓ 완료 (본 절)** |
+| B. customer-quote stream per-shard 분산 | 미진행 — 5000+ customer 운영 시 |
+| C. on-demand register + dedup (ws subscribed pair 만 customer-quote) | 미진행 — 부하 자체 감소 |
+| D. gRPC stream send chan 점유율 metric | 미진행 — 운영 monitoring |
+| E. **Linux 운영 머신 재측정** | 미진행 — mac kqueue 한계 분리 |
+
 ## 운영 권장 cap (PoC 기준 잠정)
 
 | 셋업 | 추정 1 인스턴스 cap | 비고 |

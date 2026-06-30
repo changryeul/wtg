@@ -42,24 +42,40 @@ type customerRegManager struct {
 	// stream 동시 Send 금지).
 	queue chan *wtgpb.CustomerRegistration
 
+	// sendRatePerSec — RegisterCustomer stream.Send 의 token-bucket rate.
+	// 0 이면 throttling 없음 (backward compat). 정수 > 0 이면 1초에 그만큼만
+	// send. 격리 후 self-heal 의 1000+ customer burst 가 mci-price 측의
+	// customer-quote stream send chan (--grpc-buf) 한도를 한꺼번에 못 넘게
+	// throttle — 결함의 본질적 fix (자동 회복 path 의 burst 방지).
+	sendRatePerSec int
+
 	totalRegistered   atomic.Uint64
 	totalUnregistered atomic.Uint64
 	totalAckOK        atomic.Uint64
 	totalAckErr       atomic.Uint64
 	totalReconnects   atomic.Uint64
+	totalThrottled    atomic.Uint64 // rate-limit ticker 대기 후 send 한 누적 수
 }
 
 // newCustomerRegManager — 새 매니저. Start() 로 가동.
-func newCustomerRegManager(upstream *grpc.ClientConn, subscriberID string, logger *slog.Logger) *customerRegManager {
+//
+// sendRatePerSec: 0 = throttling 없음 (backward compat). > 0 면 그 초당 rate
+// 로 stream.Send 제한. 운영 권장 100~500 (1000+ customer 환경에선 self-heal
+// 회복이 ~10초 안에 끝나는 trade-off).
+func newCustomerRegManager(upstream *grpc.ClientConn, subscriberID string, logger *slog.Logger, sendRatePerSec int) *customerRegManager {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if sendRatePerSec < 0 {
+		sendRatePerSec = 0
+	}
 	return &customerRegManager{
-		logger:       logger,
-		upstream:     upstream,
-		subscriberID: subscriberID,
-		active:       make(map[string]string),
-		queue:        make(chan *wtgpb.CustomerRegistration, 1024),
+		logger:         logger,
+		upstream:       upstream,
+		subscriberID:   subscriberID,
+		active:         make(map[string]string),
+		queue:          make(chan *wtgpb.CustomerRegistration, 1024),
+		sendRatePerSec: sendRatePerSec,
 	}
 }
 
@@ -204,7 +220,36 @@ func (m *customerRegManager) streamOnce(ctx context.Context, client wtgpb.PriceS
 		}
 	}()
 
-	// send loop.
+	// send loop — sendRatePerSec > 0 면 token-bucket throttle. 격리 후 self-heal
+	// 의 대량 customer burst 가 mci-price 측 stream send chan 의 한도를 한꺼번에
+	// 못 넘게 막는다 (잠재 결함의 본질적 fix).
+	var sendTick *time.Ticker
+	if m.sendRatePerSec > 0 {
+		interval := time.Second / time.Duration(m.sendRatePerSec)
+		sendTick = time.NewTicker(interval)
+		defer sendTick.Stop()
+	}
+	send := func(reg *wtgpb.CustomerRegistration) error {
+		if sendTick != nil {
+			// 한 token 대기. ctx cancel / recv 종료 시 빠져나옴.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-sendTick.C:
+				m.totalThrottled.Add(1)
+			}
+		}
+		if err := stream.Send(reg); err != nil {
+			return err
+		}
+		switch reg.GetOp() {
+		case wtgpb.CustomerRegistration_OP_REGISTER:
+			m.totalRegistered.Add(1)
+		case wtgpb.CustomerRegistration_OP_UNREGISTER:
+			m.totalUnregistered.Add(1)
+		}
+		return nil
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -214,15 +259,9 @@ func (m *customerRegManager) streamOnce(ctx context.Context, client wtgpb.PriceS
 		case err := <-recvDone:
 			return err
 		case reg := <-m.queue:
-			if err := stream.Send(reg); err != nil {
+			if err := send(reg); err != nil {
 				_ = stream.CloseSend()
 				return err
-			}
-			switch reg.GetOp() {
-			case wtgpb.CustomerRegistration_OP_REGISTER:
-				m.totalRegistered.Add(1)
-			case wtgpb.CustomerRegistration_OP_UNREGISTER:
-				m.totalUnregistered.Add(1)
 			}
 		}
 	}
@@ -236,6 +275,8 @@ type customerRegStats struct {
 	AckErr       uint64 `json:"ack_err"`
 	Reconnects   uint64 `json:"reconnects"`
 	ActiveCount  int    `json:"active"`
+	Throttled    uint64 `json:"throttled"`     // rate-limit ticker 통과한 누적 send 수
+	SendRate     int    `json:"send_rate_pps"` // 현재 throttle 설정값 (0 = 무제한)
 }
 
 func (m *customerRegManager) Stats() customerRegStats {
@@ -249,5 +290,7 @@ func (m *customerRegManager) Stats() customerRegStats {
 		AckErr:       m.totalAckErr.Load(),
 		Reconnects:   m.totalReconnects.Load(),
 		ActiveCount:  active,
+		Throttled:    m.totalThrottled.Load(),
+		SendRate:     m.sendRatePerSec,
 	}
 }

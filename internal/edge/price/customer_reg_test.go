@@ -137,7 +137,7 @@ func TestCustomerRegManager_RegisterUnregisterDelivered(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mgr := newCustomerRegManager(conn, "edge-1", quietLogger())
+	mgr := newCustomerRegManager(conn, "edge-1", quietLogger(), 0)
 	mgr.Start(ctx)
 
 	mgr.Register("VIP-7", "WEB.BRANCH.VIP")
@@ -176,6 +176,58 @@ func TestCustomerRegManager_RegisterUnregisterDelivered(t *testing.T) {
 	}
 }
 
+// rate-limit 동작 — sendRatePerSec=10 → 1초 안에 ≤ 15개 (token 누적 oversend
+// 안전 마진) 만 도달해야. self-heal burst 결함의 본질적 fix 검증.
+func TestCustomerRegManager_SendRateThrottle(t *testing.T) {
+	mock, conn, cleanup := startMockPrice(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr := newCustomerRegManager(conn, "edge-throttle", quietLogger(), 10) // 10/sec
+	mgr.Start(ctx)
+
+	// 100 customer 일제 enqueue — burst.
+	for i := 0; i < 100; i++ {
+		mgr.Register("CID-"+fmtInt(i), "WEB.BRANCH.VIP")
+	}
+
+	// 1초 후 도달 수 확인.
+	time.Sleep(1100 * time.Millisecond)
+	count := 0
+	for _, r := range mock.registrations() {
+		if r.GetOp() == wtgpb.CustomerRegistration_OP_REGISTER {
+			count++
+		}
+	}
+	if count > 15 {
+		t.Errorf("1초간 register %d 도달 — rate=10 throttle 미작동 (15 초과)", count)
+	}
+	if count < 5 {
+		t.Errorf("1초간 register %d 도달 — rate=10 가 너무 느림 (5 미만)", count)
+	}
+	st := mgr.Stats()
+	if st.SendRate != 10 {
+		t.Errorf("Stats.SendRate=%d, want 10", st.SendRate)
+	}
+	if st.Throttled == 0 {
+		t.Errorf("Stats.Throttled=0 — token 통과 카운터 누락")
+	}
+}
+
+func fmtInt(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	out := []byte{}
+	for i > 0 {
+		out = append([]byte{byte('0' + i%10)}, out...)
+		i /= 10
+	}
+	return string(out)
+}
+
 // 빈 customerID / profileKey 호출은 enqueue X.
 func TestCustomerRegManager_EmptyArgsIgnored(t *testing.T) {
 	_, conn, cleanup := startMockPrice(t)
@@ -184,7 +236,7 @@ func TestCustomerRegManager_EmptyArgsIgnored(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	mgr := newCustomerRegManager(conn, "edge-1", quietLogger())
+	mgr := newCustomerRegManager(conn, "edge-1", quietLogger(), 0)
 	mgr.Start(ctx)
 
 	mgr.Register("", "WEB.BRANCH.VIP")
@@ -260,7 +312,7 @@ func TestEdgePrice_E2E_CustomerStream(t *testing.T) {
 	defer cancel()
 
 	// 1) customerRegManager 가동.
-	mgr := newCustomerRegManager(conn, "edge-e2e", quietLogger())
+	mgr := newCustomerRegManager(conn, "edge-e2e", quietLogger(), 0)
 	mgr.Start(ctx)
 	mgr.Register("VIP-7", "WEB.BRANCH.VIP")
 

@@ -71,16 +71,99 @@ client cap 추정치는 **default 설정 기준 ~500명** 으로 좁혀짐.
 어딘가. gRPC SubscribeQuote stream 의 mci-edge-price 측 수신 / Registry
 broadcast 의 RLock 경합 / ws Write deadline 등 후보 3개.
 
-## 의심 위치 (코드 인덱스 추정)
+## 의심 위치 (1차 가설)
 
 | 위치 | 의심 사유 |
 |---|---|
-| `internal/edge/price/registry.go:348` `Broadcast` | 매 tick 마다 `r.mu.RLock` + 모든 subs iterate. 1000 sub × 1초당 N tick = 큰 RLock 경합 |
-| `Subscriber.Send` non-blocking enqueue | OK — 격리 mechanism 정상이라면 일부는 끊겼어야 |
-| `writeLoop` 의 `SetWriteDeadline(10s)` | 10초 안에 write 못 하면 ws 끊김 — log 에 안 보임 = 10초 안엔 처리되지만 read 까지 못 옴 |
-| mci-price `SubscribeQuote` stream 의 mci-edge-price 측 send chan | 가능성 있음. backpressure 80% 알람도 발동 안 했으니 다른 layer |
+| `internal/edge/price/registry.go:348` `Broadcast` | RLock 경합? |
+| `Subscriber.Send` non-blocking enqueue | OK — 격리 발동 안 함 |
+| mci-price 측 gRPC stream send chan | **← 정답 (다음 절 진단 결과 참조)** |
 
-→ **PoC 범위 밖** — 별도 추후 진단 작업 필요.
+## Follow-up 진단 결과 — root cause + 1차 fix (반나절 작업)
+
+### 진단 방법
+
+1. mci-edge-price `--dev` 모드에 `/debug/pprof/` 노출 (DevMode 한정 패치).
+2. 1000 client stuck 상태에서 goroutine dump (`debug=2`):
+
+```
+goroutine: total 2045
+  1000 @ writeLoop+0xc3 (server.go:882) — select 의 <-sub.send 대기
+  1000 @ readLoop+0x11b (server.go:927) — ws ReadMessage 대기
+  1 @ subscribeQuoteLoop → consumeQuoteOnce
+       grpc.(*clientStream).RecvMsg ← block here
+```
+
+→ **mci-edge-price 의 gRPC stream 자체가 메시지를 못 받음**. Broadcast 는
+호출조차 안 됨 (incoming 없으니까).
+
+3. mci-price 측 `/v1/subscribers` 확인:
+
+```
+quote_subscribers: []           ← empty
+customer_quote_subscribers: []  ← empty
+```
+
+→ **mci-edge-price 의 gRPC stream 들이 mci-price 측에 등록조차 되어있지 않음**.
+
+4. mci-edge-price log 의 stream 이벤트:
+
+```
+WARN: SubscribeCustomerQuote stream 끊김 — 재시도
+  error: rpc error: code = Unknown desc = price: slow customer-quote consumer
+  backoff: 500ms → 1s → 2s (exponential)
+```
+
+### Root cause
+
+**`mci-price` 의 customer-quote stream 의 send chan (default `--grpc-buf 1024`) 이
+1000 client 동시 register 의 customer-quote 부담을 못 받아냄** → mci-price
+가 slow consumer 로 stream 강제 close → mci-edge-price 가 exponential
+backoff 재연결 → 다시 같은 부담 → **infinite loop**.
+
+코드 위치:
+- `internal/price/grpc.go:500` — `"price: slow customer-quote consumer"` return
+- `internal/price/grpc.go:498` `case cq, ok := <-sub.out` — channel ok=false (closed)
+- `internal/price/grpc.go:469` — `sub.out = make(chan *wtgpb.CustomerQuote, g.bufSz)`
+- `internal/price/config.go:31` `GRPCBufSize` default 1024
+- `internal/price/config.go:508` `--grpc-buf` flag
+
+### 1차 fix — mci-price `--grpc-buf 65536`
+
+```bash
+./build/bin/mci-price ... --grpc-buf 65536   # default 1024 → 64x
+```
+
+**fix 후 1000 client 재측정**:
+
+| 항목 | 전 (default 1024) | 후 (65536) |
+|---|---|---|
+| connect | 1000/1000 | 1000/1000 |
+| **recv > 0 client** | **0** | **1000** |
+| disconnect | 0 (mechanism 미작동) | 21 (정상 격리 발동) |
+| total msgs | **0** | **181,000** |
+| avg msgs/client | 0 | 181 |
+
+→ **fan-out 자체는 살아남, but avg 181 (예상의 6%) 로 여전히 degradation**.
+즉 buffer 늘림은 **첫 burst 회피만 해결**. 지속 부하의 throughput 한계는
+별개 작업.
+
+### 잔여 작업 (follow-up 의 follow-up)
+
+| 작업 | 추정 | 가치 |
+|---|---|---|
+| **A. mci-edge-price 의 customer Register batching** — 1000 customer 한 번에 보내지 말고 rate-limit (예: 100/sec) | 1일 | burst 자체를 분산 |
+| **B. customer-quote stream 의 per-shard 분산** — 한 stream 당 N customer 만 | 2일 | scale-out 의 정공법 |
+| **C. mci-edge-price 의 customer 등록 dedup + on-demand** — 중복 등록 회피 + ws 가 subscribe 한 pair 만 customer-quote 활성 | 1일 | 부하 자체 감소 |
+| **D. metric 추가** — gRPC stream 의 send chan 점유율, 격리 발생 카운터 | 반나절 | 운영 진단 도구 |
+| **E. Linux 운영 머신 재측정** | 반나절 | mac kqueue 와 분리한 진짜 cap |
+
+### 결론
+
+**default 설정의 1000 client 동시 stuck 의 root cause = mci-price 의
+gRPC stream send chan default 1024 가 너무 작음**. 즉시 fix = `--grpc-buf
+65536` 또는 운영 시 `--grpc-buf 131072+`. 단 throughput 의 진짜 한계는
+별도 작업 (A/B/C) 으로 해결 가능.
 
 ## 운영 권장 cap (PoC 기준 잠정)
 

@@ -317,12 +317,14 @@ OrderCancelReject (35=9)         ← /v1/tx 응답 변환 (취소 거부)
 | 자체 구현 (mds 의 `mds_fix.c` 포팅) | 외부 의존 0 (cside 원칙) | Logon/Resend/Sequence boilerplate 가 크고 4.4 spec 100+ msg 지원 부담 |
 | simplefix / 직접 파서 | 가벼움 | session 보일러플레이트 없음 — Logon/Resend 직접 구현 |
 
-**추천: QuickFIX/Go**.
+**추천: QuickFIX/Go** ← **`docs/quickfix-go-spike.md` 평가로 확정**.
 - WTG 의 다른 외부 의존 (`go.etcd.io/etcd`, `redis/go-redis` 등) 과 같은 수준
 - mds 가 자체 FIX 구현으로 가는 건 C 환경 / cside 원칙 (외부 의존 0) 때문 —
   Go 환경의 mci-edge-fix 는 그 제약 없음
 - Phase A (Logon + NewOrderSingle + ExecutionReport) 만 보면 ~500 lines.
   자체 구현은 ~3000+
+- spike 확인 결과 — 의존성 6개 / vulncheck 깨끗 / boilerplate 84 LOC /
+  multi-session 자동 지원
 
 ### 10.2 의존성 추가
 

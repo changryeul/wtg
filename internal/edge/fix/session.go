@@ -52,6 +52,9 @@ type Principal struct {
 	Channel      string
 	Site         string
 	Tier         string
+	// OrderAlias — 카운터파티별 매매 alias (Phase B Layer 2). 빈값이면 mapper
+	// 의 default ("FIX_NEW_ORDER") 사용.
+	OrderAlias string
 }
 
 // OrderForwarder — NewOrderSingle envelope 변환 결과를 backend (mci-api) 로
@@ -138,6 +141,7 @@ func (a *fixApp) FromAdmin(msg *quickfix.Message, sid quickfix.SessionID) quickf
 		Channel:      cp.Channel,
 		Site:         cp.Site,
 		Tier:         cp.Tier,
+		OrderAlias:   cp.OrderAlias,
 	}
 	if p.Usid == "" {
 		p.Usid = sid.TargetCompID

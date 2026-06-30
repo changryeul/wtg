@@ -342,7 +342,7 @@ go get github.com/quickfixgo/fix44/...
 | **라이브러리** | QuickFIX/Go | 표준, 보일러플레이트 절감 |
 | **Session ↔ Principal 매핑** | etcd 룰 (`wtg/fix/counterparties/<SenderCompID>`) | 운영자가 mci-admin UI 에서 CRUD, customer-pairs 와 동일 패턴 |
 | **drop copy** | mci-push HTTP push 재사용 + mci-edge-fix 가 FIX 변환 | broker 우회, 운영 일관 (Phase 2.x 방향) |
-| **NewOrderSingle → 매매** | `/v1/tx` alias 1개 (`FIX_NEW_ORDER`) | generic envelope, 매매 엔진 변경 0 |
+| **NewOrderSingle → 매매** | `/v1/tx` alias — **카운터파티별 (`Counterparty.OrderAlias`)** + envelope 의 `raw_fix` map (모든 tag 보존) | generic envelope + dialect cover (Phase B Layer 2/3) |
 
 이 4 결정에 동의 안 하시는 부분이 있으면 PoC 들어가기 전에 짚어야 함.
 
@@ -352,6 +352,7 @@ go get github.com/quickfixgo/fix44/...
 |---|---|---|
 | **A — 주문 in (단방향)** | mci-edge-fix 신설 + Logon + NewOrderSingle → `/v1/tx` 까지. ExecutionReport 동기 (New 39=0) 만. drop copy 없음. | ✓ **완료** (`cmd/mci-edge-fix/` + `internal/edge/fix/`, E2E 3 케이스 PASS) |
 | **B-1 — etcd watch + admin CRUD** | counterparty 등록 dynamic 갱신 + admin UI/REST | ✓ **완료** (`internal/edge/fix/counterparty_policy.go` + `internal/admin/admin_fix_counterparties.go` + `ui/fix-counterparties.html`) |
+| **B-1a — dialect cover (Layer 2 + 3)** | 카운터파티별 OrderAlias + envelope 의 raw_fix map (모든 tag 보존). user-defined / ECN required tag 처리. | ✓ **완료** (`Counterparty.OrderAlias` + `OrderEnvelope.RawFix` + admin UI 입력 칸) |
 | **B-2 — 체결 out (양방향)** | mci-push HTTP push 의 channel=FIX routing + mci-edge-fix 의 push receive endpoint + 35=8 비동기 송신 + OrdRejReason 매핑 + ResendRequest 처리. | 3~5일 |
 | **C — Cancel/Replace + 운영 가시화** | 35=F/G 매핑 + mci-admin UI counterparty CRUD + reject 카운터 dashboard + audit log. | **3~5일** |
 | **D — 운영 강화** | TLS / mTLS, FileStore 영속, 다중 인스턴스 sticky LB, 모니터링 (session 상태 / heartbeat 결손 등). | **1주** |

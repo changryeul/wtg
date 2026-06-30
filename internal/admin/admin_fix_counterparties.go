@@ -57,14 +57,18 @@ type fixCpEntry struct {
 	Site         string `json:"site"`
 	Tier         string `json:"tier"`
 	Usid         string `json:"usid"`
+	// OrderAlias — Phase B Layer 2. 카운터파티별 매매 alias. 빈값이면 mci-edge-fix
+	// 가 default "FIX_NEW_ORDER" 사용 (Phase A 호환).
+	OrderAlias string `json:"order_alias,omitempty"`
 }
 
 type fixCpPutRequest struct {
-	Password string `json:"password"`
-	Channel  string `json:"channel"`
-	Site     string `json:"site"`
-	Tier     string `json:"tier"`
-	Usid     string `json:"usid"`
+	Password   string `json:"password"`
+	Channel    string `json:"channel"`
+	Site       string `json:"site"`
+	Tier       string `json:"tier"`
+	Usid       string `json:"usid"`
+	OrderAlias string `json:"order_alias"`
 }
 
 // validateSenderCompID — FIX SenderCompID. ASCII, 공백/슬래시/제어문자 금지,
@@ -94,6 +98,7 @@ func normalizeFixCp(req fixCpPutRequest) fixCpPutRequest {
 	req.Site = strings.TrimSpace(req.Site)
 	req.Tier = strings.TrimSpace(req.Tier)
 	req.Usid = strings.TrimSpace(req.Usid)
+	req.OrderAlias = strings.TrimSpace(req.OrderAlias)
 	return req
 }
 
@@ -131,6 +136,7 @@ func ListFixCounterparties(deps *FixCounterpartiesDeps) http.HandlerFunc {
 				Site:         cp.Site,
 				Tier:         cp.Tier,
 				Usid:         cp.Usid,
+				OrderAlias:   cp.OrderAlias,
 			})
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].SenderCompID < out[j].SenderCompID })
@@ -177,6 +183,7 @@ func GetFixCounterparty(deps *FixCounterpartiesDeps) http.HandlerFunc {
 			Site:         cp.Site,
 			Tier:         cp.Tier,
 			Usid:         cp.Usid,
+			OrderAlias:   cp.OrderAlias,
 		})
 	}
 }
@@ -238,6 +245,7 @@ func PutFixCounterparty(deps *FixCounterpartiesDeps) http.HandlerFunc {
 			Site:         req.Site,
 			Tier:         req.Tier,
 			Usid:         req.Usid,
+			OrderAlias:   req.OrderAlias,
 		})
 	}
 }

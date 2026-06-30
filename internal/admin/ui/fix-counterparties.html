@@ -61,6 +61,10 @@
     <label>Usid (log/audit 의 일상 ID)</label>
     <input type="text" id="usid" placeholder="ECN_DEUTSCHE_01">
 
+    <label>OrderAlias (매매 엔진의 routing alias — 카운터파티별 dialect 분기)</label>
+    <input type="text" id="order_alias" placeholder="FIX_NEW_ORDER (빈값=default)">
+    <div class="help">빈값이면 mci-edge-fix 가 <code>FIX_NEW_ORDER</code> default 사용. ECN 별 alias 등록 시 매매 엔진이 다른 transaction 으로 dispatch.</div>
+
     <button onclick="savePut()">저장 (PUT)</button>
     <button class="danger" onclick="delOne()">삭제 (DELETE)</button>
     <button onclick="reload()">목록 새로고침</button>
@@ -71,9 +75,10 @@
   <table>
     <thead>
       <tr>
-        <th style="width:20%">SenderCompID</th>
-        <th style="width:18%">Profile</th>
-        <th style="width:24%">Usid</th>
+        <th style="width:18%">SenderCompID</th>
+        <th style="width:16%">Profile</th>
+        <th style="width:20%">Usid</th>
+        <th style="width:18%">OrderAlias</th>
         <th style="width:10%">Password</th>
         <th style="width:14%">동작</th>
       </tr>
@@ -104,6 +109,11 @@ function buildRow(c) {
   const td3 = document.createElement("td");
   td3.textContent = c.usid || "";
 
+  const tdAlias = document.createElement("td");
+  const aliasCode = document.createElement("code");
+  aliasCode.textContent = c.order_alias || "FIX_NEW_ORDER";
+  tdAlias.appendChild(aliasCode);
+
   const td4 = document.createElement("td");
   td4.textContent = c.password || "***";
 
@@ -115,7 +125,7 @@ function buildRow(c) {
   td5.appendChild(btn);
 
   tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
-  tr.appendChild(td4); tr.appendChild(td5);
+  tr.appendChild(tdAlias); tr.appendChild(td4); tr.appendChild(td5);
   return tr;
 }
 
@@ -144,6 +154,7 @@ async function loadEdit(cid) {
     document.getElementById("site").value = c.site || "";
     document.getElementById("tier").value = c.tier || "";
     document.getElementById("usid").value = c.usid || "";
+    document.getElementById("order_alias").value = c.order_alias || "";
     window.scrollTo(0, 0);
   } catch (e) {
     showMsg("조회 실패: " + e.message, false);
@@ -154,11 +165,12 @@ async function savePut() {
   const cid = document.getElementById("cid").value.trim();
   if (!cid) { showMsg("SenderCompID 필요", false); return; }
   const body = {
-    password: document.getElementById("pw").value,
-    channel:  document.getElementById("channel").value.trim() || "FIX",
-    site:     document.getElementById("site").value.trim(),
-    tier:     document.getElementById("tier").value.trim(),
-    usid:     document.getElementById("usid").value.trim() || cid,
+    password:    document.getElementById("pw").value,
+    channel:     document.getElementById("channel").value.trim() || "FIX",
+    site:        document.getElementById("site").value.trim(),
+    tier:        document.getElementById("tier").value.trim(),
+    usid:        document.getElementById("usid").value.trim() || cid,
+    order_alias: document.getElementById("order_alias").value.trim(),
   };
   try {
     const r = await fetch(API + "/" + encodeURIComponent(cid), {
@@ -186,7 +198,7 @@ async function delOne() {
       throw new Error(d.message || "status " + r.status);
     }
     showMsg("삭제 완료: " + cid, true);
-    ["cid","pw","channel","site","tier","usid"].forEach(id => document.getElementById(id).value = "");
+    ["cid","pw","channel","site","tier","usid","order_alias"].forEach(id => document.getElementById(id).value = "");
     document.getElementById("channel").value = "FIX";
     reload();
   } catch (e) {

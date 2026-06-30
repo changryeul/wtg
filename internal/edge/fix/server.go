@@ -71,20 +71,27 @@ type Config struct {
 // Counterparty — 카운터파티 1개의 인증·라우팅 정보.
 //
 // Phase A 의 정적 seed 의미. Phase B 에서 etcd `wtg/fix/counterparties/<CID>`
-// 의 watch 결과로 동적 교체.
+// 의 watch 결과로 동적 교체. JSON tag 는 mci-admin 의 admin REST 와 wire 일관.
 type Counterparty struct {
 	// Password — Logon 메시지 tag 554 의 비교 대상. 빈값이면 검증 skip
 	// (운영 금지, PoC 한정).
-	Password string
+	Password string `json:"password"`
 
 	// Profile — Principal.Channel/Site/Tier. `/v1/tx` 호출 시 envelope 의
 	// X-WTG-Edge-* 헤더로 전달.
-	Channel string // "FIX"
-	Site    string // "HQ" / "BRANCH"
-	Tier    string // "VIP" / "GOLD" / "STD"
+	Channel string `json:"channel"` // "FIX"
+	Site    string `json:"site"`    // "HQ" / "BRANCH"
+	Tier    string `json:"tier"`    // "VIP" / "GOLD" / "STD"
 
 	// Usid — Principal.Usid. log / audit 의 일상 ID.
-	Usid string
+	Usid string `json:"usid"`
+
+	// OrderAlias — Phase B Layer 2. NewOrderSingle 변환 시 envelope 의 alias
+	// 필드. 카운터파티마다 다른 wire/dialect 를 매매 엔진의 routing 으로 분기.
+	// 빈값이면 "FIX_NEW_ORDER" default — 모든 카운터파티 동일 alias (Phase A 호환).
+	// 예: "ECN_DEUTSCHE_ORDER" / "MM_CITI_ORDER" — 매매 엔진의 alias 룰이 별도
+	// transaction 으로 dispatch.
+	OrderAlias string `json:"order_alias,omitempty"`
 }
 
 // DefaultConfig.

@@ -322,6 +322,93 @@ func TestFixServer_TxForward(t *testing.T) {
 	}
 }
 
+// Layer 2 + 3 — counterparty alias + raw_fix 보존 한 케이스로.
+func TestFixServer_AliasAndRawFix(t *testing.T) {
+	port := pickFreePort(t)
+
+	received := make(chan map[string]any, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.NewDecoder(bytes.NewReader(body)).Decode(&m)
+		received <- m
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	cfg := DefaultConfig()
+	cfg.ListenPort = port
+	cfg.TxForwardURL = ts.URL
+	cfg.Counterparties = map[string]Counterparty{
+		"ECN_BANK": {
+			Password:   "secret-pw",
+			Channel:    "FIX",
+			Site:       "HQ",
+			Tier:       "VIP",
+			Usid:       "ECN_BANK_01",
+			OrderAlias: "ECN_BANK_ORDER",
+		},
+	}
+	srv, _ := startServer(t, cfg)
+	iniApp, _ := startInitiator(t, port, "ECN_BANK", "WTG")
+	select {
+	case <-iniApp.logonDone:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Logon timeout — Stats=%+v", srv.Stats())
+	}
+
+	// user-defined tag 5001 (예: NH_INTERNAL_ORDER_ID) 포함한 NewOrderSingle.
+	nos := newordersingle.New(
+		field.NewClOrdID("ORD-RAW-001"),
+		field.NewSide(enum.Side_BUY),
+		field.NewTransactTime(time.Now()),
+		field.NewOrdType(enum.OrdType_LIMIT),
+	)
+	nos.SetSymbol("USD/KRW")
+	nos.SetOrderQty(decimal.NewFromInt(1000000), 0)
+	nos.SetPrice(decimal.NewFromFloat(1378.55), 5)
+	// user-defined tag — Body 에 직접 set.
+	nos.Body.SetString(5001, "NH_ORD_999")
+	nos.Body.SetString(100, "DEUTSCHE_BOOK_A") // ExDestination (FIX 표준 tag)
+	if err := quickfix.SendToTarget(nos, quickfix.SessionID{
+		BeginString: "FIX.4.4", SenderCompID: "ECN_BANK", TargetCompID: "WTG",
+	}); err != nil {
+		t.Fatalf("SendToTarget: %v", err)
+	}
+
+	select {
+	case got := <-received:
+		// Layer 2 — alias 가 counterparty 의 OrderAlias.
+		if got["alias"] != "ECN_BANK_ORDER" {
+			t.Errorf("alias=%v, want ECN_BANK_ORDER (counterparty override 안 됨)", got["alias"])
+		}
+		data, _ := got["data"].(map[string]any)
+		// Layer 1 — typed 필드 (기존).
+		if data["symbol"] != "USD/KRW" {
+			t.Errorf("symbol=%v", data["symbol"])
+		}
+		// Layer 3 — raw_fix 에 모든 tag 보존.
+		rawFix, ok := data["raw_fix"].(map[string]any)
+		if !ok {
+			t.Fatalf("raw_fix 누락: %+v", data)
+		}
+		// 표준 tag 도 포함되어야 (typed 와 중복 — generic 원칙).
+		if rawFix["11"] != "ORD-RAW-001" {
+			t.Errorf("raw_fix[11]=%v, want ORD-RAW-001", rawFix["11"])
+		}
+		// user-defined tag.
+		if rawFix["5001"] != "NH_ORD_999" {
+			t.Errorf("raw_fix[5001]=%v, want NH_ORD_999 (user-defined tag 누락)", rawFix["5001"])
+		}
+		// 표준이지만 typed 안 한 tag.
+		if rawFix["100"] != "DEUTSCHE_BOOK_A" {
+			t.Errorf("raw_fix[100]=%v, want DEUTSCHE_BOOK_A (ExDestination 누락)", rawFix["100"])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("httptest receive timeout — Stats=%+v", srv.Stats())
+	}
+}
+
 func waitFor(d time.Duration, fn func() bool) bool {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {

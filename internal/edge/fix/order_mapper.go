@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/quickfixgo/field"
@@ -19,7 +20,7 @@ import (
 // `/v1/tx` 호출 시 body 의 `data` 영역에 그대로 들어감. envelope wire 호환
 // 형식 — 매매 엔진은 변경 없이 받음.
 //
-// 매핑:
+// Layer 1 (typed) 매핑 — 표준 FIX 4.4 의 공통 tag (모든 카운터파티 공통):
 //
 //	FIX tag   FIX 의미        envelope 필드
 //	------    --------        ---------------
@@ -31,6 +32,11 @@ import (
 //	44       Price            price (Limit 일 때만)
 //	59       TimeInForce      tif ("day" / "gtc" / "ioc" / "fok")
 //	117      QuoteID          quote_id
+//
+// Layer 3 (raw_fix) — Body 의 모든 tag/value 를 stringly-typed dict 로 보존
+// (Phase B). 카운터파티별 dialect (user-defined tag 5000+ / 카운터파티별
+// required tag) 를 매매 엔진이 알아서 해석. WTG 는 변환 0 — generic envelope
+// 원칙 일관.
 type OrderEnvelope struct {
 	ClientOrderID string  `json:"client_order_id"`
 	Symbol        string  `json:"symbol"`
@@ -40,6 +46,11 @@ type OrderEnvelope struct {
 	Price         float64 `json:"price,omitempty"`
 	TIF           string  `json:"tif,omitempty"`
 	QuoteID       string  `json:"quote_id,omitempty"`
+
+	// RawFix — Phase B Layer 3. NewOrderSingle 의 Body 의 모든 tag/value
+	// (string key = tag 번호). 카운터파티별 dialect / user-defined tag 보존.
+	// nil 이면 typed 필드만 사용 — Phase A 호환.
+	RawFix map[string]string `json:"raw_fix,omitempty"`
 }
 
 // mapNewOrderSingle — FIX 4.4 NewOrderSingle 메시지 → OrderEnvelope.
@@ -131,7 +142,31 @@ func mapNewOrderSingle(nos newordersingle.NewOrderSingle) (OrderEnvelope, error)
 		env.QuoteID = qid.String()
 	}
 
+	// Layer 3 — Body 의 모든 tag/value 를 raw_fix 에 보존 (카운터파티별 dialect
+	// 처리). 35=D 본문의 tags() 를 stringly-typed map 으로 복사.
+	env.RawFix = extractRawFix(nos.Body.FieldMap)
+
 	return env, nil
+}
+
+// extractRawFix — FieldMap 의 모든 tag/value 를 string map 으로. 매매 엔진이
+// dialect (user-defined tag / 카운터파티별 required tag) 해석 시 참조.
+//
+// 실패한 GetString 은 skip — typed 필드에선 이미 검증됨.
+func extractRawFix(body quickfix.FieldMap) map[string]string {
+	tags := body.Tags()
+	if len(tags) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(tags))
+	for _, t := range tags {
+		v, err := body.GetString(t)
+		if err != nil {
+			continue
+		}
+		out[strconv.Itoa(int(t))] = v
+	}
+	return out
 }
 
 // httpForwarder — OrderEnvelope 을 mci-api 의 POST /v1/tx 로 forward.
@@ -152,10 +187,15 @@ func newHTTPForwarder(url string, logger *slog.Logger) *httpForwarder {
 }
 
 // Forward — JSON envelope POST. principal 의 Channel/Usid 를 X-WTG-Edge-*
-// 헤더로 전달 — 기존 internal 인증 패턴 그대로.
+// 헤더로 전달 — 기존 internal 인증 패턴 그대로. Phase B Layer 2 — alias 는
+// principal.OrderAlias 사용 (카운터파티별 매매 routing 분기).
 func (f *httpForwarder) Forward(ctx context.Context, p Principal, env OrderEnvelope) error {
+	alias := p.OrderAlias
+	if alias == "" {
+		alias = "FIX_NEW_ORDER"
+	}
 	body, err := json.Marshal(map[string]any{
-		"alias": "FIX_NEW_ORDER",
+		"alias": alias,
 		"data":  env,
 	})
 	if err != nil {

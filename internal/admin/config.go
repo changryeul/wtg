@@ -168,6 +168,19 @@ type Config struct {
 	// /stats 를 same-origin proxy 로 조회. invalid_quote breakdown 시각화 용.
 	FwdURL string
 
+	// FixURL — mci-edge-fix 의 stats / drop copy base URL (default :5002).
+	// admin UI 의 fix-counterparties 페이지가 ExecutionReport drop copy 송신 +
+	// /stats 진단 조회에 사용.
+	FixURL string
+
+	// FixListen — mci-edge-fix 의 FIX session listen host:port (default
+	// 127.0.0.1:5001). admin UI 의 fix-tester CLI 명령 생성에 사용.
+	FixListen string
+
+	// FixPushSecret — mci-edge-fix 의 --push-secret. UI 의 ExecutionReport
+	// drop copy 호출 시 X-Push-Secret 헤더 값.
+	FixPushSecret string
+
 	// PushSecret — mci-push 의 X-Push-Secret 헤더 값. mci-push 의 --push-secret
 	// 와 일치해야 함. 빈값 = 인증 disable (dev 전용).
 	PushSecret string
@@ -228,6 +241,9 @@ func DefaultConfig() Config {
 		PushURL:           "http://127.0.0.1:8081",
 		EdgeURLs:          []string{"http://127.0.0.1:8083"},
 		FwdURL:            "http://127.0.0.1:9091",
+		FixURL:            "http://127.0.0.1:5002",
+		FixListen:         "127.0.0.1:5001",
+		FixPushSecret:     "dev-secret",
 	}
 }
 
@@ -432,6 +448,9 @@ func LoadConfig(args []string) (Config, error) {
 	// flag 파싱 후 둘을 합치는 처리는 Parse 호출 직후 별도 단계에서 함.
 	// 여기서는 StringVar 만 등록 — main.go 가 ParseAndValidate 호출 흐름.
 	fs.StringVar(&cfg.FwdURL, "fwd-url", cfg.FwdURL, "quote-forwarder HTTP metrics base URL — invalid_quote breakdown proxy. 기본 http://127.0.0.1:9091")
+	fs.StringVar(&cfg.FixURL, "fix-url", cfg.FixURL, "mci-edge-fix stats/drop copy base URL (default http://127.0.0.1:5002)")
+	fs.StringVar(&cfg.FixListen, "fix-listen", cfg.FixListen, "mci-edge-fix FIX session listen host:port (default 127.0.0.1:5001)")
+	fs.StringVar(&cfg.FixPushSecret, "fix-push-secret", cfg.FixPushSecret, "mci-edge-fix 의 --push-secret 값 (UI 의 drop copy 호출에 사용, default dev-secret)")
 	fs.StringVar(&cfg.PushSecret, "push-secret", cfg.PushSecret, "mci-push 의 X-Push-Secret 헤더 값. 빈값=인증 disable (dev only)")
 	fs.StringVar(&cfg.DevRoutesFile, "dev-routes-file", cfg.DevRoutesFile, "DevMode 라우팅 룰 시드 JSON 경로 (예: ~/mymq/etc/wtg-routes.json). 비면 hardcode default")
 	fs.StringVar(&cfg.DevRoutesPolicy, "dev-routes-policy", cfg.DevRoutesPolicy, "cfg ↔ in-memory 동기화 정책. additive(default) | sync. sync 는 cfg 가 진실의 원천 (cfg 삭제 alias 가 in-memory 에서도 제거)")

@@ -460,6 +460,19 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("PUT /v1/admin/fix-counterparties/{cid}", PutFixCounterparty(fixCpDeps))
 	mux.HandleFunc("DELETE /v1/admin/fix-counterparties/{cid}", DeleteFixCounterparty(fixCpDeps))
 
+	// FIX URL config — fix-counterparties.html 의 default 값 결정.
+	// DevMode 일 때만 push_secret 노출 (운영은 reverse proxy 차단 또는 직접 입력).
+	mux.HandleFunc("GET /v1/admin/fix-config", func(w http.ResponseWriter, r *http.Request) {
+		out := map[string]any{
+			"fix_url":    s.cfg.FixURL,
+			"fix_listen": s.cfg.FixListen,
+		}
+		if s.cfg.DevMode {
+			out["fix_push_secret"] = s.cfg.FixPushSecret
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
+
 	// Prometheus query proxy — 운영 모니터링 페이지가 사용.
 	promDeps := &PromProxyDeps{
 		BaseURL: s.cfg.PromURL,

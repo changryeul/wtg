@@ -333,15 +333,14 @@ async function refreshStats() {
 }
 
 function genTesterCmd() {
-  const target  = (document.getElementById("fix_base").value.replace(/\/$/, "").match(/\/\/([^:]+):/) || [,"127.0.0.1"])[1];
   const cid     = document.getElementById("tester_cid").value.trim();
   const pw      = document.getElementById("tester_pw").value.trim();
   const order   = document.getElementById("tester_order").value.trim();
   if (!cid) { alert("카운터파티 ID 필요"); return; }
-  // mci-edge-fix 의 FIX listen port 는 stats:5002 와 별개 (default 5001).
-  // base URL 에서 host 만 추출, port 는 5001 default.
+  // FIX listen 은 admin config 에서 받아옴 (default 127.0.0.1:5001).
+  const fixListen = window.__fixListen || "127.0.0.1:5001";
   let cmd = "./build/bin/fix-tester \\\n";
-  cmd += "  --target " + target + ":5001 \\\n";
+  cmd += "  --target " + fixListen + " \\\n";
   cmd += "  --sender " + cid;
   if (pw) cmd += " \\\n  --password " + JSON.stringify(pw);
   if (order) cmd += " \\\n  --send-order " + JSON.stringify(order);
@@ -356,6 +355,32 @@ function genTesterCmd() {
   }
 }
 
+// 서버 측 admin config 에서 fix URL / listen / push_secret 받아 default 채움.
+async function loadFixConfig() {
+  try {
+    const r = await fetch("/v1/admin/fix-config");
+    if (!r.ok) return;
+    const c = await r.json();
+    if (c.fix_url) {
+      const el = document.getElementById("fix_base");
+      if (el && !el.dataset.userSet) el.value = c.fix_url;
+    }
+    if (c.fix_push_secret) {
+      const el = document.getElementById("push_secret");
+      if (el && !el.dataset.userSet) el.value = c.fix_push_secret;
+    }
+    // fix_listen 은 fix-tester CLI 명령 생성에 사용 — window 에 저장.
+    window.__fixListen = c.fix_listen || "127.0.0.1:5001";
+  } catch (e) {}
+}
+
+// 사용자가 직접 수정한 input 은 reload 시 덮지 않게.
+["fix_base","push_secret"].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("input", () => el.dataset.userSet = "1");
+});
+
+loadFixConfig();
 reload();
 </script>
 </body>

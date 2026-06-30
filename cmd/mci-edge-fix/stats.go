@@ -27,6 +27,8 @@ func startStatsServer(addr string, srv *fix.Server, pushSecret string, logger *s
 		Secret: pushSecret,
 		Logger: logger,
 	}))
+	// Phase D — Prometheus metrics endpoint.
+	mux.Handle("GET /metrics", fix.MetricsHandler())
 	logger.Info("stats HTTP listen",
 		slog.String("addr", addr),
 		slog.Bool("push_secret", pushSecret != ""))

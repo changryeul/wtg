@@ -90,6 +90,8 @@ func (a *fixApp) OnCreate(sid quickfix.SessionID) {
 // OnLogon — Logon (35=A) 통과 후. FromAdmin 에서 reject 안 했다면 호출됨.
 func (a *fixApp) OnLogon(sid quickfix.SessionID) {
 	a.logonOK.Add(1)
+	getMetrics().logon.WithLabelValues("ok").Inc()
+	getMetrics().activeSessions.Inc()
 	a.logger.Info("FIX logon",
 		slog.String("sender", sid.SenderCompID),
 		slog.String("target", sid.TargetCompID))
@@ -100,6 +102,7 @@ func (a *fixApp) OnLogout(sid quickfix.SessionID) {
 	a.mu.Lock()
 	delete(a.active, sid.String())
 	a.mu.Unlock()
+	getMetrics().activeSessions.Dec()
 	a.logger.Info("FIX logout", slog.String("sender", sid.SenderCompID))
 }
 
@@ -123,6 +126,7 @@ func (a *fixApp) FromAdmin(msg *quickfix.Message, sid quickfix.SessionID) quickf
 	cp, ok := a.policy.Lookup(sid.TargetCompID)
 	if !ok {
 		a.logonReject.Add(1)
+		getMetrics().logon.WithLabelValues("reject").Inc()
 		a.logger.Warn("FIX logon reject — counterparty 미등록",
 			slog.String("target", sid.TargetCompID))
 		return quickfix.NewBusinessMessageRejectError(
@@ -132,6 +136,7 @@ func (a *fixApp) FromAdmin(msg *quickfix.Message, sid quickfix.SessionID) quickf
 		pw, err := msg.Body.GetString(tag.Password)
 		if err != nil || pw != cp.Password {
 			a.logonReject.Add(1)
+			getMetrics().logon.WithLabelValues("reject").Inc()
 			a.logger.Warn("FIX logon reject — password 불일치",
 				slog.String("target", sid.TargetCompID))
 			return quickfix.NewBusinessMessageRejectError(
@@ -203,6 +208,7 @@ func (a *fixApp) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix
 	}
 	if mapErr != nil {
 		a.ordersRejected.Add(1)
+		getMetrics().ordersRejected.Inc()
 		a.logger.Warn("FIX message 변환 실패",
 			slog.String("sender", sid.TargetCompID),
 			slog.String("msg_type", msgType),
@@ -210,6 +216,7 @@ func (a *fixApp) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix
 		return quickfix.NewBusinessMessageRejectError(mapErr.Error(), 0, nil)
 	}
 	a.ordersReceived.Add(1)
+	getMetrics().ordersReceived.Inc()
 
 	// PoC default — forwarder 없음. envelope log 만.
 	if a.forwarder == nil {
@@ -230,12 +237,14 @@ func (a *fixApp) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix
 	defer cancel()
 	if err := a.forwarder.Forward(ctx, p, env); err != nil {
 		a.ordersRejected.Add(1)
+		getMetrics().ordersRejected.Inc()
 		a.logger.Warn("/v1/tx forward 실패",
 			slog.String("client_order_id", env.ClientOrderID),
 			slog.Any("error", err))
 		return quickfix.NewBusinessMessageRejectError(err.Error(), 0, nil)
 	}
 	a.ordersForwarded.Add(1)
+	getMetrics().ordersForwarded.Inc()
 	return nil
 }
 

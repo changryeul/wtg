@@ -33,6 +33,7 @@ func main() {
 		etcdEps      = flag.String("etcd", "", "etcd endpoints (콤마 구분). Phase B 동적 counterparty 등록. 빈값=정적 seed 만")
 		etcdPrefix   = flag.String("etcd-counterparties-prefix", "wtg/fix/counterparties/", "etcd counterparty prefix")
 		pushSecret   = flag.String("push-secret", "", "POST /v1/internal/exec-report 의 X-Push-Secret 검증 값. 빈값=인증 skip (dev only)")
+		storeDir     = flag.String("store-dir", "", "FIX session message store dir. 빈값=memory store (재시작 시 seq 1 부터, dev only). 운영 권장 영속 dir 필수")
 	)
 	var seedCPs multiCP
 	flag.Var(&seedCPs, "seed-cp", "정적 counterparty seed. 형식: 'ID=PASSWORD,SITE,TIER,USID' (반복 가능)")
@@ -48,6 +49,7 @@ func main() {
 	cfg.Counterparties = seedCPs.parsed
 	cfg.EtcdEndpoints = *etcdEps
 	cfg.EtcdCounterpartiesPrefix = *etcdPrefix
+	cfg.StoreDir = *storeDir
 
 	srv, err := fix.NewServer(cfg, logger)
 	if err != nil {

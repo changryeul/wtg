@@ -163,17 +163,21 @@ func (s *Server) SendExecReport(p ExecReportPayload) error {
 	s.app.mu.RUnlock()
 	if !ok {
 		s.app.execReportRejected.Add(1)
+		getMetrics().execRejected.Inc()
 		return errors.New("target session 미활성: " + p.TargetSenderCompID)
 	}
 	msg, err := buildExecutionReport(p)
 	if err != nil {
 		s.app.execReportRejected.Add(1)
+		getMetrics().execRejected.Inc()
 		return err
 	}
 	if err := quickfix.SendToTarget(msg, sid); err != nil {
 		s.app.execReportRejected.Add(1)
+		getMetrics().execRejected.Inc()
 		return err
 	}
 	s.app.execReportSent.Add(1)
+	getMetrics().execSent.Inc()
 	return nil
 }

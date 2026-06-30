@@ -356,7 +356,9 @@ go get github.com/quickfixgo/fix44/...
 | **B-2 — 체결 out (drop copy)** | mci-edge-fix 의 `POST /v1/internal/exec-report` HTTP receive endpoint + 35=8 비동기 송신 + OrdRejReason 매핑. mci-push 는 손대지 않음 (매매 엔진이 channel=FIX 면 mci-edge-fix 로 직접 push — 운영 단순). | ✓ **완료** (`exec_report.go` + `exec_report_http.go` + `orderrej_reason.go` + E2E PASS) |
 | B-2b — 운영 보강 | ResendRequest 처리 (이미 quickfix 자동 처리) / 다중 ExecReport 의 sequence 보장 / drop copy 의 ack mechanism | 별도 — 운영 측정 후 |
 | **C — Cancel/Replace + SIGHUP reload** | 35=F/G 매핑 + envelope.Op 분기 (한 alias 가 lifecycle 처리) + SIGHUP 으로 새 CID 등록 (Acceptor 재시작). | ✓ **완료** (`cancel_replace_mapper.go` + `Server.Reload` + SIGHUP handler + E2E PASS) |
-| **D — 운영 강화** | TLS / mTLS, FileStore 영속, 다중 인스턴스 sticky LB, 모니터링 (session 상태 / heartbeat 결손 등). | **1주** |
+| **D-1 — FileStore + Prometheus metrics** | quickfix FileStore (재시작 시 seq 보존, `--store-dir`) + 8 metric (logon ok/reject / orders received/forwarded/rejected / exec_report sent/rejected / reload ok/fail / active_sessions gauge) + `/metrics` endpoint | ✓ **완료** (`metrics.go` + `selectStoreFactory` + `--store-dir` + `MetricsHandler`) |
+| D-2 — TLS / mTLS | listen 측 + initiator 인증서 + 운영 권장 cipher suite | 3일 |
+| D-3 — 다중 인스턴스 sticky LB | session sticky 정책 + LB 설정 가이드 (HAProxy / NLB) + Mongo 백엔드 옵션 (다중 인스턴스 shared store) | 1주 |
 
 **총 ~3주 PoC + ~1주 운영 강화 = 약 1개월**.
 

@@ -11,14 +11,30 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/quickfixgo/quickfix"
+	"github.com/quickfixgo/quickfix/store/file"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+// selectStoreFactory — cfg.StoreDir 채워졌으면 FileStore (seq 영속),
+// 빈값이면 MemoryStore (재시작 시 seq 1 부터).
+func selectStoreFactory(cfg Config, settings *quickfix.Settings) (quickfix.MessageStoreFactory, error) {
+	if cfg.StoreDir == "" {
+		return quickfix.NewMemoryStoreFactory(), nil
+	}
+	if err := os.MkdirAll(cfg.StoreDir, 0o755); err != nil {
+		return nil, fmt.Errorf("StoreDir mkdir: %w", err)
+	}
+	// quickfix file store 는 settings 의 GlobalSettings 의 FileStorePath 를 읽음.
+	settings.GlobalSettings().Set("FileStorePath", cfg.StoreDir)
+	return file.NewStoreFactory(settings), nil
+}
 
 // CounterpartySnapshot — admin 진단용 정책 스냅샷 노출.
 func (s *Server) CounterpartySnapshot() map[string]Counterparty {
@@ -30,9 +46,16 @@ func (s *Server) CounterpartySnapshot() map[string]Counterparty {
 // 끊김 — 짧은 (수 초) 재로그온 윈도우 발생. 시장 마감 시간 등 적용 권장.
 //
 // thread-safe — caller 가 SIGHUP signal handler 또는 admin endpoint 에서 호출.
-func (s *Server) Reload() error {
+func (s *Server) Reload() (retErr error) {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()
+	defer func() {
+		if retErr != nil {
+			getMetrics().reload.WithLabelValues("fail").Inc()
+		} else {
+			getMetrics().reload.WithLabelValues("ok").Inc()
+		}
+	}()
 
 	// 새 policy snapshot 으로 cfg.Counterparties 갱신 + settings 재빌드.
 	snap := s.app.policy.Snapshot()
@@ -51,8 +74,11 @@ func (s *Server) Reload() error {
 		s.acceptor = nil
 	}
 
-	newAcceptor, err := quickfix.NewAcceptor(s.app,
-		quickfix.NewMemoryStoreFactory(), settings, quickfix.NewNullLogFactory())
+	storeFactory, sfErr := selectStoreFactory(s.cfg, settings)
+	if sfErr != nil {
+		return sfErr
+	}
+	newAcceptor, err := quickfix.NewAcceptor(s.app, storeFactory, settings, quickfix.NewNullLogFactory())
 	if err != nil {
 		return fmt.Errorf("reload NewAcceptor: %w", err)
 	}
@@ -109,6 +135,14 @@ type Config struct {
 	// LogQuickfix — true 면 quickfix 내부 log 도 slog 로 노출. default false
 	// (NullLogFactory — boilerplate 최소).
 	LogQuickfix bool
+
+	// StoreDir — Phase D. 채워지면 FileStore 사용 (재시작 시 sequence 보존).
+	// 빈값=MemoryStore (재시작 시 seq 1 부터 — dev/PoC). 운영 권장 — 영속
+	// dir 필수.
+	//
+	// quickfix 가 dir 아래에 session 별 *.body / *.header / *.senderseqnums /
+	// *.targetseqnums 파일 생성.
+	StoreDir string
 }
 
 // Counterparty — 카운터파티 1개의 인증·라우팅 정보.
@@ -189,8 +223,11 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	// LogQuickfix 옵션 — Phase B 에서 slog-backed LogFactory 로 교체 가능.
 	_ = cfg.LogQuickfix
 
-	acceptor, err := quickfix.NewAcceptor(app,
-		quickfix.NewMemoryStoreFactory(), settings, logFactory)
+	storeFactory, sfErr := selectStoreFactory(cfg, settings)
+	if sfErr != nil {
+		return nil, sfErr
+	}
+	acceptor, err := quickfix.NewAcceptor(app, storeFactory, settings, logFactory)
 	if err != nil {
 		return nil, fmt.Errorf("NewAcceptor: %w", err)
 	}

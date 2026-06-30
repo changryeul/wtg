@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -529,6 +530,48 @@ func verifyCRMessage(t *testing.T, received chan map[string]any, wantOp, wantClO
 	case <-time.After(3 * time.Second):
 		t.Fatalf("receive timeout for op=%s", wantOp)
 		return nil
+	}
+}
+
+// Phase D — FileStore 활성 시 store dir 에 quickfix 가 session 파일 생성.
+func TestFixServer_FileStore(t *testing.T) {
+	dir := t.TempDir()
+	port := pickFreePort(t)
+	cfg := DefaultConfig()
+	cfg.ListenPort = port
+	cfg.StoreDir = dir
+	cfg.Counterparties = map[string]Counterparty{
+		"CP_FS": {Password: "secret-pw", Channel: "FIX", Site: "HQ", Tier: "VIP", Usid: "FS"},
+	}
+	srv, _ := startServer(t, cfg)
+	iniApp, _ := startInitiator(t, port, "CP_FS", "WTG")
+	select {
+	case <-iniApp.logonDone:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Logon timeout — Stats=%+v", srv.Stats())
+	}
+	// quickfix file store 가 dir 아래에 session 파일 생성하는지.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Errorf("StoreDir 가 비어있음 — file store 가 동작 안 함")
+	}
+	// session 파일 패턴 확인 — quickfix 가 FIX.4.4-WTG-CP_FS.* 형식 생성.
+	found := false
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name != "" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("StoreDir 에 quickfix 파일 안 만들어짐")
 	}
 }
 

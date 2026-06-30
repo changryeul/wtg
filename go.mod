@@ -12,7 +12,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	go.etcd.io/etcd/client/v3 v3.6.11
 	go.etcd.io/etcd/server/v3 v3.6.11
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.69.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.44.0

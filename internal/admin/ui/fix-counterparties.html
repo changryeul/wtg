@@ -71,6 +71,70 @@
     <div id="msg"></div>
   </div>
 
+  <div class="card">
+    <h2>테스트 도구</h2>
+    <p class="help">
+      mci-edge-fix 가 가동 중이어야 동작합니다 (default <code>http://127.0.0.1:5002</code>).
+      <code>--with-fix</code> 로 stack-up 시 자동 부팅. 위 등록한 카운터파티가 fix-tester
+      CLI 또는 ExecutionReport drop copy 폼으로 즉시 검증 가능.
+    </p>
+
+    <label>mci-edge-fix stats base URL (port :5002)</label>
+    <input type="text" id="fix_base" value="http://127.0.0.1:5002" autocomplete="off">
+
+    <label>X-Push-Secret (mci-edge-fix 의 --push-secret 값. 기본 dev-secret)</label>
+    <input type="text" id="push_secret" value="dev-secret" autocomplete="off">
+
+    <h3 style="font-size:14px;margin-top:18px;color:#1f4e79">1) ExecutionReport drop copy 송신 (35=8)</h3>
+    <label>Target SenderCompID (위 등록한 ID 중 하나, 현재 Logon 통과한 active session 만)</label>
+    <input type="text" id="er_target" placeholder="ECN_DEUTSCHE">
+    <div class="row">
+      <div>
+        <label>order_id (tag 37)</label>
+        <input type="text" id="er_order_id" placeholder="ENG-001">
+      </div>
+      <div>
+        <label>exec_id (tag 17)</label>
+        <input type="text" id="er_exec_id" placeholder="EXEC-001">
+      </div>
+      <div>
+        <label>side (buy/sell)</label>
+        <input type="text" id="er_side" value="buy">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>exec_type / ord_status (0=New / 1=Partial / 2=Filled / 8=Rejected)</label>
+        <input type="text" id="er_exec_type" value="0">
+      </div>
+      <div>
+        <label>symbol</label>
+        <input type="text" id="er_symbol" placeholder="USD/KRW">
+      </div>
+      <div>
+        <label>ord_rej_reason (rejected 시 mymq errn, 예: 1029)</label>
+        <input type="text" id="er_rej" placeholder="(rejected 일 때만)">
+      </div>
+    </div>
+    <button onclick="sendExecReport()">송신</button>
+    <button onclick="refreshStats()">stats 조회</button>
+    <div id="er_msg"></div>
+
+    <h3 style="font-size:14px;margin-top:18px;color:#1f4e79">2) fix-tester CLI 명령 복사</h3>
+    <p class="help">아래 명령을 터미널에 붙여넣어 Logon + 옵션 NewOrderSingle 1건 송신을 검증.</p>
+    <label>편집할 카운터파티</label>
+    <input type="text" id="tester_cid" placeholder="ECN_DEUTSCHE">
+    <label>Password</label>
+    <input type="text" id="tester_pw" placeholder="(위 카운터파티의 password)">
+    <label>Send order (옵션, 예: USD/KRW:buy:1000000:1378.55, 빈값=Logon 만)</label>
+    <input type="text" id="tester_order" placeholder="USD/KRW:buy:1000000:1378.55">
+    <button onclick="genTesterCmd()">명령 생성 / 복사</button>
+    <pre id="tester_cmd" style="background:#0f1722;color:#d7e0ea;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap;display:none"></pre>
+
+    <h3 style="font-size:14px;margin-top:18px;color:#1f4e79">3) mci-edge-fix 상태</h3>
+    <pre id="stats_dump" style="background:#0f1722;color:#d7e0ea;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;display:none"></pre>
+  </div>
+
   <h2>현재 등록 (<span id="count">0</span>건)</h2>
   <table>
     <thead>
@@ -203,6 +267,92 @@ async function delOne() {
     reload();
   } catch (e) {
     showMsg("삭제 실패: " + e.message, false);
+  }
+}
+
+// ── 테스트 도구 ──────────────────────────────────────────────────────
+
+function showErMsg(t, ok) {
+  const m = document.getElementById("er_msg");
+  m.className = "msg " + (ok ? "ok" : "err");
+  m.textContent = t;
+  setTimeout(() => { m.textContent = ""; m.className = ""; }, 4000);
+}
+
+async function sendExecReport() {
+  const base   = document.getElementById("fix_base").value.replace(/\/$/, "");
+  const secret = document.getElementById("push_secret").value;
+  const body = {
+    target_sender_comp_id: document.getElementById("er_target").value.trim(),
+    order_id:              document.getElementById("er_order_id").value.trim(),
+    exec_id:               document.getElementById("er_exec_id").value.trim(),
+    exec_type:             document.getElementById("er_exec_type").value.trim() || "0",
+    ord_status:            document.getElementById("er_exec_type").value.trim() || "0",
+    side:                  document.getElementById("er_side").value.trim() || "buy",
+    symbol:                document.getElementById("er_symbol").value.trim(),
+    leaves_qty: 0, cum_qty: 0, avg_px: 0,
+  };
+  const rej = document.getElementById("er_rej").value.trim();
+  if (rej) body.ord_rej_reason = rej;
+
+  if (!body.target_sender_comp_id || !body.order_id || !body.exec_id) {
+    showErMsg("target_sender_comp_id / order_id / exec_id 필수", false);
+    return;
+  }
+  try {
+    const r = await fetch(base + "/v1/internal/exec-report", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Push-Secret": secret},
+      body: JSON.stringify(body),
+    });
+    if (r.ok) {
+      showErMsg("송신 OK → " + body.target_sender_comp_id + " 의 FIX client 가 35=8 수신", true);
+      refreshStats();
+    } else {
+      const d = await r.json().catch(() => ({}));
+      showErMsg("실패: status=" + r.status + " " + (d.message || ""), false);
+    }
+  } catch (e) {
+    showErMsg("네트워크 오류: " + e.message + " (mci-edge-fix 가 가동 중인지 확인)", false);
+  }
+}
+
+async function refreshStats() {
+  const base = document.getElementById("fix_base").value.replace(/\/$/, "");
+  const pre = document.getElementById("stats_dump");
+  try {
+    const r = await fetch(base + "/stats");
+    if (!r.ok) throw new Error("status " + r.status);
+    const d = await r.json();
+    pre.style.display = "block";
+    pre.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    pre.style.display = "block";
+    pre.textContent = "stats 조회 실패: " + e.message;
+  }
+}
+
+function genTesterCmd() {
+  const target  = (document.getElementById("fix_base").value.replace(/\/$/, "").match(/\/\/([^:]+):/) || [,"127.0.0.1"])[1];
+  const cid     = document.getElementById("tester_cid").value.trim();
+  const pw      = document.getElementById("tester_pw").value.trim();
+  const order   = document.getElementById("tester_order").value.trim();
+  if (!cid) { alert("카운터파티 ID 필요"); return; }
+  // mci-edge-fix 의 FIX listen port 는 stats:5002 와 별개 (default 5001).
+  // base URL 에서 host 만 추출, port 는 5001 default.
+  let cmd = "./build/bin/fix-tester \\\n";
+  cmd += "  --target " + target + ":5001 \\\n";
+  cmd += "  --sender " + cid;
+  if (pw) cmd += " \\\n  --password " + JSON.stringify(pw);
+  if (order) cmd += " \\\n  --send-order " + JSON.stringify(order);
+  const pre = document.getElementById("tester_cmd");
+  pre.style.display = "block";
+  pre.textContent = cmd;
+  // clipboard 복사 시도.
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(cmd).then(() => {
+      pre.textContent = cmd + "\n\n# 클립보드에 복사됨 — 터미널에 붙여넣기";
+    }).catch(() => {});
   }
 }
 

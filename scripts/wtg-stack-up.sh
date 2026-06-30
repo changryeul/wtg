@@ -10,6 +10,7 @@
 #   ./scripts/wtg-stack-up.sh --with-swap-lock   # mci-price 에 --enable-swap-lock 추가
 #   ./scripts/wtg-stack-up.sh --with-broker      # docker mymqd (broker + test_service + WECHO) 같이
 #   ./scripts/wtg-stack-up.sh --with-api         # mci-api 까지 (broker 필요 → --with-broker 자동)
+#   ./scripts/wtg-stack-up.sh --with-fix         # mci-edge-fix (FIX 4.4 DMZ gateway)
 #   ./scripts/wtg-stack-up.sh --with-all         # 모든 컴포넌트 (chart 제외 — DB 의존)
 #
 # 환경변수 override :
@@ -37,7 +38,8 @@ for arg in "$@"; do
     --with-swap-lock) WITH_SWAP_LOCK=1 ;;
     --with-broker)    WITH_BROKER=1 ;;
     --with-api)       WITH_API=1; WITH_BROKER=1 ;;     # api 는 broker 필수
-    --with-all)       WITH_FORWARDER=1; WITH_PROM=1; WITH_SWAP_LOCK=1; WITH_BROKER=1; WITH_API=1 ;;
+    --with-fix)       WITH_FIX=1 ;;
+    --with-all)       WITH_FORWARDER=1; WITH_PROM=1; WITH_SWAP_LOCK=1; WITH_BROKER=1; WITH_API=1; WITH_FIX=1 ;;
     *) echo "unknown arg: $arg"; exit 1 ;;
   esac
 done
@@ -45,7 +47,7 @@ done
 mkdir -p logs
 
 # 기존 host 서비스 종료 (idempotent)
-for svc in mci-admin mci-api mci-price mci-edge-price quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
+for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-fix quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
   pkill -f "build/bin/$svc" 2>/dev/null || true
 done
 pkill -f "wtg-dev-tickloop.py" 2>/dev/null || true
@@ -143,6 +145,26 @@ if [ "$WITH_API" = "1" ]; then
   start mci-api ./build/bin/mci-api \
     --dev --listen "${LISTEN_API:-:8080}" \
     --broker-host 127.0.0.1 --broker-port 11217
+fi
+
+# mci-edge-fix (--with-fix) — FIX 4.4 DMZ gateway.
+# admin UI 의 /fix-counterparties.html 에서 carrier 등록 + fix-tester CLI 로 smoke.
+if [ "$WITH_FIX" = "1" ]; then
+  # admin 의 embedded etcd port 추출 — 부팅 직후 log 에 client_url 보임.
+  sleep 1
+  ETCD_URL=$(grep -o 'http://127.0.0.1:[0-9]*' logs/mci-admin.log 2>/dev/null | head -1)
+  ETCD_ARGS=()
+  [ -n "$ETCD_URL" ] && ETCD_ARGS=(--etcd "$ETCD_URL")
+  mkdir -p /tmp/wtg-fix-store
+  start mci-edge-fix ./build/bin/mci-edge-fix \
+    --port "${FIX_PORT:-5001}" \
+    --stats "${FIX_STATS:-:5002}" \
+    --sender "${FIX_SENDER:-WTG}" \
+    --tx-forward "${FIX_TX_FORWARD:-}" \
+    --push-secret "${FIX_PUSH_SECRET:-dev-secret}" \
+    --store-dir "${FIX_STORE_DIR:-/tmp/wtg-fix-store}" \
+    "${ETCD_ARGS[@]}" \
+    --log-level info
 fi
 
 # tickloop (dev tick generator) — 영구 위치 scripts/wtg-dev-tickloop.py

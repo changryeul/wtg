@@ -58,6 +58,19 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// SIGHUP — Phase C. Reload (acceptor 재시작 + 새 counterparty 등록).
+	// 시장 마감 시간 등 안전한 시점에 적용 권장 — 기존 active session 끊김 발생.
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
+	go func() {
+		for range sighup {
+			logger.Info("SIGHUP — 새 counterparty 등록 reload")
+			if err := srv.Reload(); err != nil {
+				logger.Error("reload 실패", slog.Any("err", err))
+			}
+		}
+	}()
+
 	if *statsAddr != "" {
 		go startStatsServer(*statsAddr, srv, *pushSecret, logger)
 	}

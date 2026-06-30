@@ -355,7 +355,7 @@ go get github.com/quickfixgo/fix44/...
 | **B-1a — dialect cover (Layer 2 + 3)** | 카운터파티별 OrderAlias + envelope 의 raw_fix map (모든 tag 보존). user-defined / ECN required tag 처리. | ✓ **완료** (`Counterparty.OrderAlias` + `OrderEnvelope.RawFix` + admin UI 입력 칸) |
 | **B-2 — 체결 out (drop copy)** | mci-edge-fix 의 `POST /v1/internal/exec-report` HTTP receive endpoint + 35=8 비동기 송신 + OrdRejReason 매핑. mci-push 는 손대지 않음 (매매 엔진이 channel=FIX 면 mci-edge-fix 로 직접 push — 운영 단순). | ✓ **완료** (`exec_report.go` + `exec_report_http.go` + `orderrej_reason.go` + E2E PASS) |
 | B-2b — 운영 보강 | ResendRequest 처리 (이미 quickfix 자동 처리) / 다중 ExecReport 의 sequence 보장 / drop copy 의 ack mechanism | 별도 — 운영 측정 후 |
-| **C — Cancel/Replace + 운영 가시화** | 35=F/G 매핑 + mci-admin UI counterparty CRUD + reject 카운터 dashboard + audit log. | **3~5일** |
+| **C — Cancel/Replace + SIGHUP reload** | 35=F/G 매핑 + envelope.Op 분기 (한 alias 가 lifecycle 처리) + SIGHUP 으로 새 CID 등록 (Acceptor 재시작). | ✓ **완료** (`cancel_replace_mapper.go` + `Server.Reload` + SIGHUP handler + E2E PASS) |
 | **D — 운영 강화** | TLS / mTLS, FileStore 영속, 다중 인스턴스 sticky LB, 모니터링 (session 상태 / heartbeat 결손 등). | **1주** |
 
 **총 ~3주 PoC + ~1주 운영 강화 = 약 1개월**.

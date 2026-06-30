@@ -38,16 +38,28 @@ import (
 // required tag) 를 매매 엔진이 알아서 해석. WTG 는 변환 0 — generic envelope
 // 원칙 일관.
 type OrderEnvelope struct {
+	// Op — Phase C. 운영 alias 의 분기 (한 alias 가 모든 lifecycle 처리).
+	// "new" / "cancel" / "replace". 매매 엔진의 alias handler 가 op 봐서 dispatch.
+	Op string `json:"op"`
+
 	ClientOrderID string  `json:"client_order_id"`
-	Symbol        string  `json:"symbol"`
+	Symbol        string  `json:"symbol,omitempty"`
 	Side          string  `json:"side"`
-	Qty           float64 `json:"qty"`
-	OrdType       string  `json:"ord_type"`
+	Qty           float64 `json:"qty,omitempty"`
+	OrdType       string  `json:"ord_type,omitempty"`
 	Price         float64 `json:"price,omitempty"`
 	TIF           string  `json:"tif,omitempty"`
 	QuoteID       string  `json:"quote_id,omitempty"`
 
-	// RawFix — Phase B Layer 3. NewOrderSingle 의 Body 의 모든 tag/value
+	// OrigClientOrderID — Phase C 의 Cancel/Replace 의 원본 ClOrdID (FIX tag 41).
+	// op="new" 이면 빈값.
+	OrigClientOrderID string `json:"orig_client_order_id,omitempty"`
+
+	// OrderID — 매매 엔진의 채번 ID (FIX tag 37). Cancel/Replace 시 클라가
+	// 직전 ExecutionReport 의 OrderID 를 그대로 송신.
+	OrderID string `json:"order_id,omitempty"`
+
+	// RawFix — Phase B Layer 3. 메시지 Body 의 모든 tag/value
 	// (string key = tag 번호). 카운터파티별 dialect / user-defined tag 보존.
 	// nil 이면 typed 필드만 사용 — Phase A 호환.
 	RawFix map[string]string `json:"raw_fix,omitempty"`
@@ -59,6 +71,7 @@ type OrderEnvelope struct {
 // Limit 일 때만 Price(44) 필수.
 func mapNewOrderSingle(nos newordersingle.NewOrderSingle) (OrderEnvelope, error) {
 	var env OrderEnvelope
+	env.Op = "new"
 
 	// ClOrdID (필수).
 	var clOrdID field.ClOrdIDField

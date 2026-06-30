@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/quickfixgo/quickfix"
@@ -24,16 +25,58 @@ func (s *Server) CounterpartySnapshot() map[string]Counterparty {
 	return s.app.policy.Snapshot()
 }
 
+// Reload — Phase C. 현재 policy snapshot 으로 settings 재빌드 + acceptor
+// 재시작. 새 SenderCompID 등록 시 SIGHUP 으로 호출. 기존 active session 은
+// 끊김 — 짧은 (수 초) 재로그온 윈도우 발생. 시장 마감 시간 등 적용 권장.
+//
+// thread-safe — caller 가 SIGHUP signal handler 또는 admin endpoint 에서 호출.
+func (s *Server) Reload() error {
+	s.reloadMu.Lock()
+	defer s.reloadMu.Unlock()
+
+	// 새 policy snapshot 으로 cfg.Counterparties 갱신 + settings 재빌드.
+	snap := s.app.policy.Snapshot()
+	cfg := s.cfg
+	cfg.Counterparties = snap
+
+	settings, err := buildSettings(cfg)
+	if err != nil {
+		return fmt.Errorf("reload buildSettings: %w", err)
+	}
+
+	// quickfix 의 global session registry 충돌 회피 — 기존 Stop 먼저, 그 후
+	// 새 Acceptor 생성. 짧은 (수 초) 재로그온 윈도우 발생.
+	if s.acceptor != nil {
+		s.acceptor.Stop()
+		s.acceptor = nil
+	}
+
+	newAcceptor, err := quickfix.NewAcceptor(s.app,
+		quickfix.NewMemoryStoreFactory(), settings, quickfix.NewNullLogFactory())
+	if err != nil {
+		return fmt.Errorf("reload NewAcceptor: %w", err)
+	}
+	if err := newAcceptor.Start(); err != nil {
+		return fmt.Errorf("reload Start: %w", err)
+	}
+	s.acceptor = newAcceptor
+	s.cfg.Counterparties = snap
+	s.logger.Info("mci-edge-fix reload",
+		slog.Int("counterparties", len(snap)))
+	return nil
+}
+
 // Server — mci-edge-fix 의 lifecycle.
 //
 // quickfix.Acceptor 를 wrap. ctx.Done() 시 Stop().
 type Server struct {
-	cfg            Config
-	logger         *slog.Logger
-	app            *fixApp
-	acceptor       *quickfix.Acceptor
-	cpWatcher      *EtcdCounterpartyWatcher
-	cpEtcdCli      *clientv3.Client
+	cfg       Config
+	logger    *slog.Logger
+	app       *fixApp
+	acceptor  *quickfix.Acceptor
+	cpWatcher *EtcdCounterpartyWatcher
+	cpEtcdCli *clientv3.Client
+	reloadMu  sync.Mutex // Reload 직렬화
 }
 
 // Config — Server 옵션.

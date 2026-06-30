@@ -10,6 +10,8 @@ import (
 
 	"github.com/quickfixgo/field"
 	"github.com/quickfixgo/fix44/newordersingle"
+	"github.com/quickfixgo/fix44/ordercancelreplacerequest"
+	"github.com/quickfixgo/fix44/ordercancelrequest"
 	"github.com/quickfixgo/quickfix"
 	"github.com/quickfixgo/tag"
 )
@@ -176,11 +178,6 @@ func (a *fixApp) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix
 	if err != nil {
 		return nil
 	}
-	if msgType != "D" {
-		// Phase A 는 NewOrderSingle 만. 그 외는 BusinessMessageReject.
-		return quickfix.NewBusinessMessageRejectError(
-			"Phase A 미지원 메시지", 0, nil)
-	}
 
 	a.mu.RLock()
 	p, ok := a.active[sid.String()]
@@ -189,12 +186,26 @@ func (a *fixApp) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix
 		return quickfix.NewBusinessMessageRejectError("session 미인증", 0, nil)
 	}
 
-	nos := newordersingle.FromMessage(msg)
-	env, mapErr := mapNewOrderSingle(nos)
+	// Phase C — 35=D/F/G 모두 같은 alias 로 dispatch. envelope.Op 가 분기.
+	var env OrderEnvelope
+	var mapErr error
+	switch msgType {
+	case "D":
+		env, mapErr = mapNewOrderSingle(newordersingle.FromMessage(msg))
+	case "F":
+		env, mapErr = mapOrderCancelRequest(ordercancelrequest.FromMessage(msg))
+	case "G":
+		env, mapErr = mapOrderCancelReplaceRequest(ordercancelreplacerequest.FromMessage(msg))
+	default:
+		// 그 외는 미지원 — BusinessMessageReject.
+		return quickfix.NewBusinessMessageRejectError(
+			"미지원 메시지 type="+msgType, 0, nil)
+	}
 	if mapErr != nil {
 		a.ordersRejected.Add(1)
-		a.logger.Warn("NewOrderSingle 변환 실패",
+		a.logger.Warn("FIX message 변환 실패",
 			slog.String("sender", sid.TargetCompID),
+			slog.String("msg_type", msgType),
 			slog.Any("error", mapErr))
 		return quickfix.NewBusinessMessageRejectError(mapErr.Error(), 0, nil)
 	}
@@ -202,13 +213,15 @@ func (a *fixApp) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix
 
 	// PoC default — forwarder 없음. envelope log 만.
 	if a.forwarder == nil {
-		a.logger.Info("NewOrderSingle 수신 (envelope log 모드)",
+		a.logger.Info("FIX order 수신 (envelope log 모드)",
 			slog.String("sender", sid.TargetCompID),
+			slog.String("op", env.Op),
 			slog.String("symbol", env.Symbol),
 			slog.String("side", env.Side),
 			slog.Float64("qty", env.Qty),
 			slog.Float64("price", env.Price),
-			slog.String("client_order_id", env.ClientOrderID))
+			slog.String("client_order_id", env.ClientOrderID),
+			slog.String("orig_client_order_id", env.OrigClientOrderID))
 		return nil
 	}
 

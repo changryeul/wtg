@@ -19,6 +19,8 @@ import (
 	"github.com/quickfixgo/enum"
 	"github.com/quickfixgo/field"
 	"github.com/quickfixgo/fix44/newordersingle"
+	"github.com/quickfixgo/fix44/ordercancelreplacerequest"
+	"github.com/quickfixgo/fix44/ordercancelrequest"
 	"github.com/quickfixgo/quickfix"
 	"github.com/shopspring/decimal"
 )
@@ -431,6 +433,130 @@ func TestFixServer_AliasAndRawFix(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatalf("httptest receive timeout — Stats=%+v", srv.Stats())
+	}
+}
+
+// Phase C — Cancel(35=F) + Replace(35=G) 가 envelope.Op 분기로 처리.
+func TestFixServer_CancelAndReplace(t *testing.T) {
+	port := pickFreePort(t)
+
+	received := make(chan map[string]any, 4)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.NewDecoder(bytes.NewReader(body)).Decode(&m)
+		received <- m
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	cfg := DefaultConfig()
+	cfg.ListenPort = port
+	cfg.TxForwardURL = ts.URL
+	cfg.Counterparties = map[string]Counterparty{
+		"ECN_C": {
+			Password: "secret-pw", Channel: "FIX", Site: "HQ", Tier: "VIP",
+			Usid: "ECN_C", OrderAlias: "ECN_C_LIFECYCLE",
+		},
+	}
+	srv, _ := startServer(t, cfg)
+	iniApp, _ := startInitiator(t, port, "ECN_C", "WTG")
+	select {
+	case <-iniApp.logonDone:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("Logon timeout — Stats=%+v", srv.Stats())
+	}
+
+	sid := quickfix.SessionID{BeginString: "FIX.4.4", SenderCompID: "ECN_C", TargetCompID: "WTG"}
+
+	// 1) OrderCancelRequest (35=F).
+	cr := ordercancelrequest.New(
+		field.NewOrigClOrdID("ORD-ORIG-001"),
+		field.NewClOrdID("CANCEL-001"),
+		field.NewSide(enum.Side_SELL),
+		field.NewTransactTime(time.Now()),
+	)
+	cr.SetSymbol("USD/KRW")
+	cr.SetOrderID("ENG-001")
+	if err := quickfix.SendToTarget(cr, sid); err != nil {
+		t.Fatalf("send Cancel: %v", err)
+	}
+	verifyCRMessage(t, received, "cancel", "CANCEL-001", "ORD-ORIG-001", "ECN_C_LIFECYCLE")
+
+	// 2) OrderCancelReplaceRequest (35=G) — qty 변경.
+	rr := ordercancelreplacerequest.New(
+		field.NewOrigClOrdID("ORD-ORIG-002"),
+		field.NewClOrdID("REPLACE-002"),
+		field.NewSide(enum.Side_BUY),
+		field.NewTransactTime(time.Now()),
+		field.NewOrdType(enum.OrdType_LIMIT),
+	)
+	rr.SetSymbol("EUR/USD")
+	rr.SetOrderQty(decimal.NewFromInt(2000000), 0) // 변경된 수량
+	rr.SetPrice(decimal.NewFromFloat(1.0900), 4)
+	rr.SetOrderID("ENG-002")
+	if err := quickfix.SendToTarget(rr, sid); err != nil {
+		t.Fatalf("send Replace: %v", err)
+	}
+	got := verifyCRMessage(t, received, "replace", "REPLACE-002", "ORD-ORIG-002", "ECN_C_LIFECYCLE")
+	data, _ := got["data"].(map[string]any)
+	if qty, _ := data["qty"].(float64); qty != 2000000 {
+		t.Errorf("replace qty=%v, want 2000000", qty)
+	}
+	if px, _ := data["price"].(float64); px != 1.09 {
+		t.Errorf("replace price=%v, want 1.09", px)
+	}
+}
+
+func verifyCRMessage(t *testing.T, received chan map[string]any, wantOp, wantClOrdID, wantOrigClOrdID, wantAlias string) map[string]any {
+	t.Helper()
+	select {
+	case got := <-received:
+		if got["alias"] != wantAlias {
+			t.Errorf("alias=%v, want %s", got["alias"], wantAlias)
+		}
+		data, _ := got["data"].(map[string]any)
+		if data["op"] != wantOp {
+			t.Errorf("op=%v, want %s", data["op"], wantOp)
+		}
+		if data["client_order_id"] != wantClOrdID {
+			t.Errorf("client_order_id=%v, want %s", data["client_order_id"], wantClOrdID)
+		}
+		if data["orig_client_order_id"] != wantOrigClOrdID {
+			t.Errorf("orig_client_order_id=%v, want %s", data["orig_client_order_id"], wantOrigClOrdID)
+		}
+		return got
+	case <-time.After(3 * time.Second):
+		t.Fatalf("receive timeout for op=%s", wantOp)
+		return nil
+	}
+}
+
+// Phase C — Reload (SIGHUP 시뮬레이션). policy 의 새 CID 가 reload 후 active.
+func TestFixServer_Reload(t *testing.T) {
+	port := pickFreePort(t)
+	cfg := DefaultConfig()
+	cfg.ListenPort = port
+	cfg.Counterparties = map[string]Counterparty{
+		"CP_OLD": {Password: "secret-pw", Channel: "FIX", Site: "HQ", Tier: "VIP", Usid: "OLD"},
+	}
+	srv, _ := startServer(t, cfg)
+
+	// 등록 안 된 CID 의 initiator — settings 단계에서 차단 (LogonReject 도달 X).
+	// reload 전엔 connect 불가.
+
+	// policy 에 새 CP 추가 (etcd 시뮬 — staticPolicy 라 직접 추가 불가, memory 로 전환 필요).
+	// 본 테스트는 staticPolicy 의 한계 — Reload 가 cfg.Counterparties snapshot 으로
+	// settings 재빌드 OK 만 검증.
+	if err := srv.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	// reload 후에도 기존 CP_OLD 의 logon 정상.
+	iniApp, _ := startInitiator(t, port, "CP_OLD", "WTG")
+	select {
+	case <-iniApp.logonDone:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("reload 후 logon 실패 — Stats=%+v", srv.Stats())
 	}
 }
 

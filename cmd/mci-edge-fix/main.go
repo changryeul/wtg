@@ -30,6 +30,8 @@ func main() {
 		txForward    = flag.String("tx-forward", "", "/v1/tx backend base URL (예: http://mci-api:8080). 빈값=envelope log 만")
 		logLevel     = flag.String("log-level", "info", "log level: debug/info/warn/error")
 		statsAddr    = flag.String("stats", "", "HTTP /stats listen 주소 (예: 127.0.0.1:5002). 빈값=비활성")
+		etcdEps      = flag.String("etcd", "", "etcd endpoints (콤마 구분). Phase B 동적 counterparty 등록. 빈값=정적 seed 만")
+		etcdPrefix   = flag.String("etcd-counterparties-prefix", "wtg/fix/counterparties/", "etcd counterparty prefix")
 	)
 	var seedCPs multiCP
 	flag.Var(&seedCPs, "seed-cp", "정적 counterparty seed. 형식: 'ID=PASSWORD,SITE,TIER,USID' (반복 가능)")
@@ -43,6 +45,8 @@ func main() {
 	cfg.HeartBtInt = *heartBtInt
 	cfg.TxForwardURL = *txForward
 	cfg.Counterparties = seedCPs.parsed
+	cfg.EtcdEndpoints = *etcdEps
+	cfg.EtcdCounterpartiesPrefix = *etcdPrefix
 
 	srv, err := fix.NewServer(cfg, logger)
 	if err != nil {

@@ -12,18 +12,28 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/quickfixgo/quickfix"
+
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+// CounterpartySnapshot — admin 진단용 정책 스냅샷 노출.
+func (s *Server) CounterpartySnapshot() map[string]Counterparty {
+	return s.app.policy.Snapshot()
+}
 
 // Server — mci-edge-fix 의 lifecycle.
 //
 // quickfix.Acceptor 를 wrap. ctx.Done() 시 Stop().
 type Server struct {
-	cfg      Config
-	logger   *slog.Logger
-	app      *fixApp
-	acceptor *quickfix.Acceptor
+	cfg            Config
+	logger         *slog.Logger
+	app            *fixApp
+	acceptor       *quickfix.Acceptor
+	cpWatcher      *EtcdCounterpartyWatcher
+	cpEtcdCli      *clientv3.Client
 }
 
 // Config — Server 옵션.
@@ -37,9 +47,17 @@ type Config struct {
 	// HeartBtInt — Heartbeat 주기 (초). default 30.
 	HeartBtInt int
 
-	// Counterparties — 정적 counterparty seed. Phase A 의 단순화 — etcd watch
-	// 는 Phase B. map key = SenderCompID (외부 client 의 49=).
+	// Counterparties — 정적 counterparty seed. Phase A 호환 — etcd 비활성
+	// 환경에서 즉시 시작 가능. EtcdEndpoints 가 채워지면 etcd 정책이 우선.
 	Counterparties map[string]Counterparty
+
+	// EtcdEndpoints + EtcdCounterpartiesPrefix — Phase B 의 동적 정책. 채워지면
+	// CounterpartyPolicy 의 etcd watcher 가동 + 정적 Counterparties 는 무시.
+	// 빈값이면 정적 seed 만 사용 (backward compat).
+	//
+	// etcd schema: <prefix><SenderCompID> = JSON Counterparty
+	EtcdEndpoints           string
+	EtcdCounterpartiesPrefix string // default "wtg/fix/counterparties/"
 
 	// TxForwardURL — `/v1/tx` 호출 backend (mci-api). 빈값이면 envelope 을
 	// log 만 (envelope wire 검증 모드 — Phase A PoC default).
@@ -72,9 +90,10 @@ type Counterparty struct {
 // DefaultConfig.
 func DefaultConfig() Config {
 	return Config{
-		ListenPort:   5001,
-		SenderCompID: "WTG",
-		HeartBtInt:   30,
+		ListenPort:               5001,
+		SenderCompID:             "WTG",
+		HeartBtInt:               30,
+		EtcdCounterpartiesPrefix: "wtg/fix/counterparties/",
 	}
 }
 
@@ -94,7 +113,22 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	if cfg.SenderCompID == "" {
 		cfg.SenderCompID = "WTG"
 	}
-	app := newFixApp(cfg, logger)
+	// policy 결정 — etcd 이면 MemoryCounterpartyPolicy + watcher (Start 에서 가동),
+	// 아니면 정적 staticPolicy.
+	var policy CounterpartyPolicy
+	var memPolicy *MemoryCounterpartyPolicy
+	if cfg.EtcdEndpoints != "" {
+		memPolicy = NewMemoryCounterpartyPolicy()
+		// 정적 seed 가 있으면 첫 snapshot 으로 채움 — etcd 초기 load 가 그 위에
+		// Replace 한다 (etcd 가 권위 출처).
+		if len(cfg.Counterparties) > 0 {
+			memPolicy.Replace(cfg.Counterparties)
+		}
+		policy = memPolicy
+	} else {
+		policy = &staticPolicy{m: cfg.Counterparties}
+	}
+	app := newFixApp(cfg, logger, policy)
 
 	settings, err := buildSettings(cfg)
 	if err != nil {
@@ -111,28 +145,83 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 		return nil, fmt.Errorf("NewAcceptor: %w", err)
 	}
 
-	return &Server{
+	s := &Server{
 		cfg:      cfg,
 		logger:   logger,
 		app:      app,
 		acceptor: acceptor,
-	}, nil
+	}
+	// etcd watcher 준비 (start 는 Server.Start 에서).
+	if memPolicy != nil {
+		s.cpWatcher = nil // Start 시점에 etcd dial 후 채움
+	}
+	return s, nil
 }
 
-// Start — quickfix acceptor listen 시작 + ctx.Done() 까지 유지.
+// Start — quickfix acceptor listen 시작 + etcd watcher (있다면) + ctx.Done() 까지 유지.
 //
 // 블로킹. 호출자가 별도 goroutine 에서 호출하거나 main 마지막에 둠.
 func (s *Server) Start(ctx context.Context) error {
+	// etcd policy watcher 가동 (EtcdEndpoints 가 채워졌고 app.policy 가
+	// MemoryCounterpartyPolicy 인 경우).
+	if err := s.startCounterpartyWatcher(ctx); err != nil {
+		s.logger.Warn("counterparty etcd watcher 실패 — 정적 seed 만",
+			slog.Any("err", err))
+	}
+
 	if err := s.acceptor.Start(); err != nil {
 		return fmt.Errorf("acceptor.Start: %w", err)
 	}
 	s.logger.Info("mci-edge-fix listen 시작",
 		slog.Int("port", s.cfg.ListenPort),
 		slog.String("sender", s.cfg.SenderCompID),
-		slog.Int("counterparties", len(s.cfg.Counterparties)))
+		slog.Int("counterparties_seed", len(s.cfg.Counterparties)),
+		slog.String("etcd", s.cfg.EtcdEndpoints))
 	<-ctx.Done()
 	s.acceptor.Stop()
+	if s.cpWatcher != nil {
+		s.cpWatcher.Stop()
+	}
+	if s.cpEtcdCli != nil {
+		_ = s.cpEtcdCli.Close()
+	}
 	s.logger.Info("mci-edge-fix 종료")
+	return nil
+}
+
+// startCounterpartyWatcher — etcd 활성 환경에서 dial + watcher Start.
+func (s *Server) startCounterpartyWatcher(ctx context.Context) error {
+	if s.cfg.EtcdEndpoints == "" {
+		return nil
+	}
+	memPolicy, ok := s.app.policy.(*MemoryCounterpartyPolicy)
+	if !ok {
+		return nil
+	}
+	eps := strings.Split(s.cfg.EtcdEndpoints, ",")
+	for i, e := range eps {
+		eps[i] = strings.TrimSpace(e)
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   eps,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("etcd dial: %w", err)
+	}
+	prefix := s.cfg.EtcdCounterpartiesPrefix
+	if prefix == "" {
+		prefix = "wtg/fix/counterparties/"
+	}
+	w := NewEtcdCounterpartyWatcher(cli, prefix, memPolicy, s.logger)
+	if err := w.Start(ctx); err != nil {
+		_ = cli.Close()
+		return fmt.Errorf("watcher Start: %w", err)
+	}
+	s.cpEtcdCli = cli
+	s.cpWatcher = w
+	s.logger.Info("CounterpartyPolicy etcd watcher 활성",
+		slog.String("prefix", prefix))
 	return nil
 }
 
@@ -165,19 +254,20 @@ EndTime=00:00:00
 ResetOnLogon=Y
 `, cfg.ListenPort, cfg.SenderCompID, cfg.HeartBtInt)
 
+	// quickfix 의 [SESSION] TargetCompID 는 명시 매칭만 (와일드카드 미지원).
+	// 따라서 cfg.Counterparties + (etcd 초기 snapshot) 모두 [SESSION] block 으로
+	// 등록. Phase B 의 runtime password 변경은 policy 가 처리하지만, 새 CID 의
+	// 등록은 mci-edge-fix 재시작 (또는 SIGHUP) 필요 — Phase C 작업.
 	if len(cfg.Counterparties) == 0 {
-		// 단일 와일드카드 session — Phase A 의 PoC 모드. 누가 붙어도 fixApp 의
-		// FromAdmin 에서 cfg.Counterparties 검증 후 reject.
-		fmt.Fprintf(&b, "\n[SESSION]\nTargetCompID=*\n")
-	} else {
-		// 등록된 모든 counterparty 의 [SESSION] block.
-		for cid := range cfg.Counterparties {
-			cid = strings.TrimSpace(cid)
-			if cid == "" {
-				continue
-			}
-			fmt.Fprintf(&b, "\n[SESSION]\nTargetCompID=%s\n", cid)
+		// PoC / dev — seed 없으면 placeholder. 운영은 seed 필수.
+		fmt.Fprintf(&b, "\n[SESSION]\nTargetCompID=PLACEHOLDER\n")
+	}
+	for cid := range cfg.Counterparties {
+		cid = strings.TrimSpace(cid)
+		if cid == "" {
+			continue
 		}
+		fmt.Fprintf(&b, "\n[SESSION]\nTargetCompID=%s\n", cid)
 	}
 
 	settings, err := quickfix.ParseSettings(&b)

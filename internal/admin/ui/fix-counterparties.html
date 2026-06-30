@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>FIX 카운터파티 등록 — mci-admin</title>
+<style>
+  body { font-family: -apple-system, Pretendard, "Apple SD Gothic Neo", sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2733; }
+  h1 { font-size: 20px; border-bottom: 2px solid #1f4e79; padding-bottom: 8px; color: #1f4e79; }
+  h2 { font-size: 16px; color: #2e5496; margin-top: 24px; }
+  .card { border: 1px solid #e3e8ef; border-radius: 8px; padding: 14px; margin: 12px 0; background: #f7f9fc; }
+  label { display: block; font-size: 12px; color: #5b6675; margin-top: 8px; }
+  input[type=text], input[type=password] { width: 100%; padding: 8px; border: 1px solid #ccd; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 13px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  button { padding: 8px 14px; border: none; border-radius: 4px; background: #1f4e79; color: #fff; font-weight: 600; cursor: pointer; margin-right: 8px; margin-top: 12px; }
+  button.danger { background: #c0392b; }
+  button:hover { opacity: 0.9; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  th, td { border: 1px solid #e3e8ef; padding: 8px; text-align: left; }
+  th { background: #1f4e79; color: #fff; }
+  tr:nth-child(even) { background: #f6f8fb; }
+  .help { font-size: 12px; color: #5b6675; margin-top: 4px; }
+  .msg { padding: 8px 12px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+  .msg.ok { background: #e1f5ee; color: #0f6e56; }
+  .msg.err { background: #fdf0e8; color: #a8551f; }
+  .actions { white-space: nowrap; }
+  code { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+  <h1>FIX 카운터파티 등록</h1>
+  <p class="help">
+    mci-edge-fix 가 외부 FIX 카운터파티 (기관 / ECN / MM) 의 Logon 검증에 사용.
+    SenderCompID + Password + Profile (Channel/Site/Tier) + Usid 명시.
+    Password 변경은 mci-edge-fix watch 로 즉시 반영. 새 SenderCompID 추가는
+    mci-edge-fix 재시작 필요 (Phase C).
+  </p>
+
+  <div class="card">
+    <h2>등록 / 수정</h2>
+    <label>SenderCompID (운영자 임의 부여, 공백/슬래시/제어문자 금지, 64자 이내)</label>
+    <input type="text" id="cid" placeholder="ECN_DEUTSCHE_01" autocomplete="off">
+
+    <label>Password</label>
+    <input type="password" id="pw" placeholder="********" autocomplete="off">
+
+    <div class="row">
+      <div>
+        <label>Channel</label>
+        <input type="text" id="channel" placeholder="FIX" value="FIX">
+      </div>
+      <div>
+        <label>Site (HQ / BRANCH)</label>
+        <input type="text" id="site" placeholder="HQ">
+      </div>
+      <div>
+        <label>Tier (VIP / GOLD / STD)</label>
+        <input type="text" id="tier" placeholder="VIP">
+      </div>
+    </div>
+
+    <label>Usid (log/audit 의 일상 ID)</label>
+    <input type="text" id="usid" placeholder="ECN_DEUTSCHE_01">
+
+    <button onclick="savePut()">저장 (PUT)</button>
+    <button class="danger" onclick="delOne()">삭제 (DELETE)</button>
+    <button onclick="reload()">목록 새로고침</button>
+    <div id="msg"></div>
+  </div>
+
+  <h2>현재 등록 (<span id="count">0</span>건)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:20%">SenderCompID</th>
+        <th style="width:18%">Profile</th>
+        <th style="width:24%">Usid</th>
+        <th style="width:10%">Password</th>
+        <th style="width:14%">동작</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+<script>
+const API = "/v1/admin/fix-counterparties";
+
+function showMsg(t, ok) {
+  const m = document.getElementById("msg");
+  m.className = "msg " + (ok ? "ok" : "err");
+  m.textContent = t;
+  setTimeout(() => { m.textContent = ""; m.className = ""; }, 3500);
+}
+
+function buildRow(c) {
+  const tr = document.createElement("tr");
+  const td1 = document.createElement("td");
+  const code = document.createElement("code");
+  code.textContent = c.sender_comp_id;
+  td1.appendChild(code);
+
+  const td2 = document.createElement("td");
+  td2.textContent = (c.channel || "") + "." + (c.site || "") + "." + (c.tier || "");
+
+  const td3 = document.createElement("td");
+  td3.textContent = c.usid || "";
+
+  const td4 = document.createElement("td");
+  td4.textContent = c.password || "***";
+
+  const td5 = document.createElement("td");
+  td5.className = "actions";
+  const btn = document.createElement("button");
+  btn.textContent = "편집";
+  btn.addEventListener("click", () => loadEdit(c.sender_comp_id));
+  td5.appendChild(btn);
+
+  tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+  tr.appendChild(td4); tr.appendChild(td5);
+  return tr;
+}
+
+async function reload() {
+  try {
+    const r = await fetch(API);
+    if (!r.ok) throw new Error("status " + r.status);
+    const d = await r.json();
+    document.getElementById("count").textContent = d.count;
+    const tb = document.getElementById("rows");
+    tb.replaceChildren();
+    (d.counterparties || []).forEach(c => tb.appendChild(buildRow(c)));
+  } catch (e) {
+    showMsg("목록 조회 실패: " + e.message, false);
+  }
+}
+
+async function loadEdit(cid) {
+  try {
+    const r = await fetch(API + "/" + encodeURIComponent(cid));
+    if (!r.ok) throw new Error("status " + r.status);
+    const c = await r.json();
+    document.getElementById("cid").value = c.sender_comp_id;
+    document.getElementById("pw").value = c.password || "";
+    document.getElementById("channel").value = c.channel || "FIX";
+    document.getElementById("site").value = c.site || "";
+    document.getElementById("tier").value = c.tier || "";
+    document.getElementById("usid").value = c.usid || "";
+    window.scrollTo(0, 0);
+  } catch (e) {
+    showMsg("조회 실패: " + e.message, false);
+  }
+}
+
+async function savePut() {
+  const cid = document.getElementById("cid").value.trim();
+  if (!cid) { showMsg("SenderCompID 필요", false); return; }
+  const body = {
+    password: document.getElementById("pw").value,
+    channel:  document.getElementById("channel").value.trim() || "FIX",
+    site:     document.getElementById("site").value.trim(),
+    tier:     document.getElementById("tier").value.trim(),
+    usid:     document.getElementById("usid").value.trim() || cid,
+  };
+  try {
+    const r = await fetch(API + "/" + encodeURIComponent(cid), {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.message || "status " + r.status);
+    showMsg("저장 완료: " + d.sender_comp_id, true);
+    reload();
+  } catch (e) {
+    showMsg("저장 실패: " + e.message, false);
+  }
+}
+
+async function delOne() {
+  const cid = document.getElementById("cid").value.trim();
+  if (!cid) { showMsg("SenderCompID 필요", false); return; }
+  if (!confirm(cid + " 의 FIX counterparty 등록을 삭제할까요?")) return;
+  try {
+    const r = await fetch(API + "/" + encodeURIComponent(cid), {method: "DELETE"});
+    if (!r.ok) {
+      const d = await r.json();
+      throw new Error(d.message || "status " + r.status);
+    }
+    showMsg("삭제 완료: " + cid, true);
+    ["cid","pw","channel","site","tier","usid"].forEach(id => document.getElementById(id).value = "");
+    document.getElementById("channel").value = "FIX";
+    reload();
+  } catch (e) {
+    showMsg("삭제 실패: " + e.message, false);
+  }
+}
+
+reload();
+</script>
+</body>
+</html>

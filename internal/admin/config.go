@@ -99,6 +99,10 @@ type Config struct {
 	// EtcdCustomerPairsPrefix 와 일치해야 한다.
 	EtcdCustomerPairsPrefix string // default "wtg/customers/"
 
+	// FIX 카운터파티 등록 etcd prefix. mci-edge-fix 의 EtcdCounterpartiesPrefix
+	// 와 일치해야 한다.
+	EtcdFixCounterpartiesPrefix string // default "wtg/fix/counterparties/"
+
 	// PromURL — Prometheus base URL (예: "http://prometheus:9090"). 채우면
 	// admin UI "운영 모니터링" 페이지에서 metric 카드 노출. 빈값이면 페이지
 	// 표시는 되지만 카드가 503 처리.
@@ -390,6 +394,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.EtcdQuoteIDEnginesPrefix, "etcd-quoteid-engines-prefix", cfg.EtcdQuoteIDEnginesPrefix, "etcd QuoteID engine allowlist prefix (default wtg/quoteid/engines/)")
 	fs.StringVar(&cfg.EtcdRateLimitPrefix, "etcd-ratelimit-prefix", cfg.EtcdRateLimitPrefix, "etcd rate limit 정책 prefix (default wtg/ratelimit/)")
 	fs.StringVar(&cfg.EtcdCustomerPairsPrefix, "etcd-customer-pairs-prefix", cfg.EtcdCustomerPairsPrefix, "고객별 ws 구독 허용 pair allowlist etcd prefix (default wtg/customers/)")
+	fs.StringVar(&cfg.EtcdFixCounterpartiesPrefix, "etcd-fix-counterparties-prefix", cfg.EtcdFixCounterpartiesPrefix, "FIX 카운터파티 등록 etcd prefix (default wtg/fix/counterparties/)")
 	fs.StringVar(&cfg.PromURL, "prom-url", cfg.PromURL, "Prometheus base URL — 채우면 admin UI 운영 모니터링 페이지 활성 (예: http://prometheus:9090)")
 	fs.StringVar(&cfg.GrafanaURL, "grafana-url", cfg.GrafanaURL, "Grafana base URL — 채우면 admin UI 에 firing alert 표시 (예: http://grafana:3000)")
 	fs.StringVar(&cfg.GrafanaUser, "grafana-user", cfg.GrafanaUser, "Grafana Basic auth 사용자명 (옵션)")

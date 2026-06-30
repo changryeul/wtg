@@ -25,6 +25,10 @@ type fixApp struct {
 	cfg    Config
 	logger *slog.Logger
 
+	// policy — runtime counterparty 검증. etcd 활성이면 MemoryCounterpartyPolicy,
+	// 아니면 staticPolicy.
+	policy CounterpartyPolicy
+
 	// active : 로그온 통과한 session 의 (sessionID → Principal) 매핑.
 	mu     sync.RWMutex
 	active map[string]Principal
@@ -56,10 +60,11 @@ type OrderForwarder interface {
 	Forward(ctx context.Context, p Principal, env OrderEnvelope) error
 }
 
-func newFixApp(cfg Config, logger *slog.Logger) *fixApp {
+func newFixApp(cfg Config, logger *slog.Logger, policy CounterpartyPolicy) *fixApp {
 	app := &fixApp{
 		cfg:    cfg,
 		logger: logger,
+		policy: policy,
 		active: make(map[string]Principal),
 	}
 	if cfg.TxForwardURL != "" {
@@ -107,8 +112,8 @@ func (a *fixApp) FromAdmin(msg *quickfix.Message, sid quickfix.SessionID) quickf
 	if msgType != "A" {
 		return nil
 	}
-	// Logon (35=A).
-	cp, ok := a.cfg.Counterparties[sid.TargetCompID]
+	// Logon (35=A) — policy lookup (etcd 동적 / 정적 seed 통일).
+	cp, ok := a.policy.Lookup(sid.TargetCompID)
 	if !ok {
 		a.logonReject.Add(1)
 		a.logger.Warn("FIX logon reject — counterparty 미등록",

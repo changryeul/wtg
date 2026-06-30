@@ -351,7 +351,8 @@ go get github.com/quickfixgo/fix44/...
 | Phase | 범위 | 추정 |
 |---|---|---|
 | **A — 주문 in (단방향)** | mci-edge-fix 신설 + Logon + NewOrderSingle → `/v1/tx` 까지. ExecutionReport 동기 (New 39=0) 만. drop copy 없음. | ✓ **완료** (`cmd/mci-edge-fix/` + `internal/edge/fix/`, E2E 3 케이스 PASS) |
-| **B — 체결 out (양방향)** | mci-push HTTP push 의 channel=FIX routing + mci-edge-fix 의 push receive endpoint + 35=8 비동기 송신 + ResendRequest 처리. | **1주** |
+| **B-1 — etcd watch + admin CRUD** | counterparty 등록 dynamic 갱신 + admin UI/REST | ✓ **완료** (`internal/edge/fix/counterparty_policy.go` + `internal/admin/admin_fix_counterparties.go` + `ui/fix-counterparties.html`) |
+| **B-2 — 체결 out (양방향)** | mci-push HTTP push 의 channel=FIX routing + mci-edge-fix 의 push receive endpoint + 35=8 비동기 송신 + OrdRejReason 매핑 + ResendRequest 처리. | 3~5일 |
 | **C — Cancel/Replace + 운영 가시화** | 35=F/G 매핑 + mci-admin UI counterparty CRUD + reject 카운터 dashboard + audit log. | **3~5일** |
 | **D — 운영 강화** | TLS / mTLS, FileStore 영속, 다중 인스턴스 sticky LB, 모니터링 (session 상태 / heartbeat 결손 등). | **1주** |
 

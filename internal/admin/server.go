@@ -360,6 +360,12 @@ func (s *Server) Start(ctx context.Context) error {
 		Logger: s.logger,
 		Audit:  s.audit,
 	}
+	fixCpDeps := &FixCounterpartiesDeps{
+		Cli:    s.etcdShared,
+		Prefix: s.cfg.EtcdFixCounterpartiesPrefix,
+		Logger: s.logger,
+		Audit:  s.audit,
+	}
 	marginDeps := &MarginRecomputeDeps{
 		Cli:     s.etcdShared,
 		Pool:    s.chartPool,
@@ -446,6 +452,13 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /v1/admin/customer-pairs/{customer_id}", GetCustomerPairs(customerPairsDeps))
 	mux.HandleFunc("PUT /v1/admin/customer-pairs/{customer_id}", PutCustomerPairs(customerPairsDeps))
 	mux.HandleFunc("DELETE /v1/admin/customer-pairs/{customer_id}", DeleteCustomerPairs(customerPairsDeps))
+
+	// FIX 카운터파티 등록 — mci-edge-fix 가 watch 로 password 동적 갱신.
+	// 새 CID 등록은 mci-edge-fix 재시작 필요 (quickfix settings 한계 — Phase C).
+	mux.HandleFunc("GET /v1/admin/fix-counterparties", ListFixCounterparties(fixCpDeps))
+	mux.HandleFunc("GET /v1/admin/fix-counterparties/{cid}", GetFixCounterparty(fixCpDeps))
+	mux.HandleFunc("PUT /v1/admin/fix-counterparties/{cid}", PutFixCounterparty(fixCpDeps))
+	mux.HandleFunc("DELETE /v1/admin/fix-counterparties/{cid}", DeleteFixCounterparty(fixCpDeps))
 
 	// Prometheus query proxy — 운영 모니터링 페이지가 사용.
 	promDeps := &PromProxyDeps{

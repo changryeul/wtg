@@ -1040,12 +1040,14 @@
           </div>
         </div>
 
-        <!-- Quote (시세) — mci-push ws 에 자동 connect, 통화쌍별 호가/체결 시각화 -->
+        <!-- Quote (시세) — edge-price ws 에 connect, 통화쌍별 호가(bid/ask) 실시간.
+             체결(trade) 은 본 페이지에서 다루지 않음 — FX dealer stream 특성상 시장 전체
+             체결 tape 이 없음. 본인 주문의 체결은 「매매 감사」 페이지 (mci-push 파이프라인). -->
         <div id="page-quote" class="page hidden space-y-4">
           <div class="flex items-center justify-between">
             <div>
-              <h3 class="text-lg font-semibold">시세</h3>
-              <p class="text-sm text-slate-400">mci-push 가 broadcast 한 시세를 실시간으로 표시. quote-forwarder 가 broker 로 publish 한 envelope 을 통화쌍 별로 모아 호가창과 최근 체결을 갱신.</p>
+              <h3 class="text-lg font-semibold">시세 (호가)</h3>
+              <p class="text-sm text-slate-400">edge-price 가 fan-out 하는 FX dealer stream 을 실시간으로 표시. quote-forwarder → BestConsumer → PricingConsumer → ws 로 흐른 <b>bid/ask</b> 만 다룸. 체결(trade)은 다른 파이프라인(매매엔진 → mci-push) — 「매매 감사」 페이지에서 본인 주문 체결 확인.</p>
             </div>
             <div class="flex items-center gap-2 text-xs">
               <span class="text-slate-400 uppercase tracking-widest text-[10px]">상태</span>
@@ -1101,7 +1103,6 @@
               <span>총 메시지 <span id="q-stat-total" class="font-mono text-slate-200">0</span></span>
               <span>tick/sec <span id="q-stat-rate" class="font-mono text-slate-200">0</span></span>
               <span>통화쌍 <span id="q-stat-symbols" class="font-mono text-slate-200">0</span></span>
-              <span>체결 <span id="q-stat-trades" class="font-mono text-slate-200">0</span></span>
               <span>customer quote <span id="q-stat-quotes" class="font-mono text-accent-400">0</span></span>
               <span>5L quote <span id="q-stat-quotes-5l" class="font-mono text-indigo-400">0</span></span>
             </div>
@@ -1115,16 +1116,6 @@
             </div>
           </div>
 
-          <!-- 최근 체결 -->
-          <div class="border-gradient rounded-2xl">
-            <div class="px-4 py-3 border-b border-ink-700/60 flex items-center justify-between">
-              <div class="text-xs uppercase tracking-widest text-slate-400">최근 체결 (최대 50)</div>
-              <span class="text-xs text-slate-500" id="q-trades-count">0</span>
-            </div>
-            <div id="q-trades-list" class="p-4 space-y-1 font-mono text-xs max-h-[40vh] overflow-auto">
-              <div class="text-slate-500 text-center py-2">체결 없음</div>
-            </div>
-          </div>
         </div>
 
         <!-- 통화 마스터 (currency) — view-only. DB CMG005M → fx-sync → etcd → mci-price. -->
@@ -10744,24 +10735,24 @@ function wsmonRenderEntry(e, jsonOnly) {
     ts, srcChip, ar, tx);
 }
 
-// ───────── Quote (시세) ─────────
+// ───────── Quote (시세, 호가 전용) ─────────
 //
-// quote-forwarder 가 broker 로 broadcast 한 시세 envelope 을 mci-push ws 에서 받아
-// 통화쌍별로 모아 호가창 + 최근 체결 리스트를 갱신한다.
+// edge-price ws 로부터 FX dealer stream (bid/ask) 을 받아 통화쌍별 호가창 을
+// 갱신. 체결(trade) 은 이 페이지에서 다루지 않음 — dealer stream 특성상 시장
+// 전체 tape 이 없고, 개인 주문 체결은 mci-push (매매 감사 페이지) 파이프라인.
 //
 // envelope 형식 (quote-forwarder 의 quoteEnvelope):
 //   { ts, feed, seq, msgtype: "snapshot"|"incremental",
 //     symbol?, sender?, target?, entries: [{action?, type, symbol?, px, qty}] }
 
+// 시세 (호가) — bid/ask 만. 체결(trade) 은 mci-push 파이프라인 (매매 감사 페이지).
 const quoteState = {
   sock: null, wired: false,
-  symbols: new Map(),   // symbol → { feed, ts, bid, bidQty, ask, askQty, last, lastQty, prevBid, prevAsk, custBid/Ask (P3), cust5Bid/Ask (P4 5L) }
-  trades: [],           // 최근 체결 (최대 50)
+  symbols: new Map(),   // symbol → { feed, ts, bid, bidQty, ask, askQty, prevBid, prevAsk, custBid/Ask (P3), cust5Bid/Ask (P4 5L) }
   allowed: null,        // q-pairs 기반 필터 set — null 이면 모두 허용. {sym→true} (USDKRW + USD/KRW 둘 다)
   total: 0, rate: 0, rateBucket: 0, rateTimer: null,
   quotesReceived: 0,    // Profile-only customer quote (SubscribeQuote 경로)
   quotes5LReceived: 0,  // 5-Layer customer quote (SubscribeCustomerQuote 경로 — P4c)
-  TRADE_LIMIT: 50,
 };
 
 function initQuote() {
@@ -10771,13 +10762,11 @@ function initQuote() {
     $("#q-disconnect").onclick = quoteDisconnect;
     $("#q-clear").onclick = () => {
       quoteState.symbols.clear();
-      quoteState.trades = [];
       quoteState.total = 0;
       quoteState.quotesReceived = 0;
       quoteState.quotes5LReceived = 0;
-      quoteRender(); quoteRenderTrades();
+      quoteRender();
       $("#q-stat-total").textContent = "0";
-      $("#q-stat-trades").textContent = "0";
       $("#q-stat-quotes").textContent = "0";
       $("#q-stat-quotes-5l").textContent = "0";
     };
@@ -10926,7 +10915,7 @@ function applyCustomerQuote(q) {
   if (!row) {
     // BEST tick 이 먼저 와야 row 가 생기지만, customer quote 가 먼저 와도 빈 row 생성.
     row = { feed: "BEST", ts: "", bid: 0, bidQty: 0, ask: 0, askQty: 0,
-            last: 0, lastQty: 0, prevBid: 0, prevAsk: 0, prevLast: 0, priceHistory: [] };
+            prevBid: 0, prevAsk: 0, priceHistory: [] };
     quoteState.symbols.set(sym, row);
   }
   row.profile = (q.chan || "") + "." + (q.site || "") + "." + (q.tier || "");
@@ -10962,7 +10951,7 @@ function applyBestTick(env, fallbackSym) {
   let row = quoteState.symbols.get(sym);
   if (!row) {
     row = { feed: env.src || "BEST", ts: env.ts, bid: 0, bidQty: 0, ask: 0, askQty: 0,
-            last: 0, lastQty: 0, prevBid: 0, prevAsk: 0, prevLast: 0, priceHistory: [] };
+            prevBid: 0, prevAsk: 0, priceHistory: [] };
     quoteState.symbols.set(sym, row);
   }
   row.feed = env.src || row.feed;
@@ -10987,8 +10976,8 @@ function applyQuoteEnvelope(env) {
     let row = quoteState.symbols.get(sym);
     if (!row) {
       row = { feed, ts: env.ts, bid: 0, bidQty: 0, ask: 0, askQty: 0,
-              last: 0, lastQty: 0, prevBid: 0, prevAsk: 0, prevLast: 0,
-              priceHistory: [] };  // sparkline 용 — 최근 N 틱 mid price (last 가 비면 (bid+ask)/2)
+              prevBid: 0, prevAsk: 0,
+              priceHistory: [] };  // sparkline 용 — 최근 N 틱 mid price ((bid+ask)/2)
       quoteState.symbols.set(sym, row);
     }
     row.feed = feed;
@@ -11000,20 +10989,12 @@ function applyQuoteEnvelope(env) {
     }
     if (e.type === "bid") { row.prevBid = row.bid; row.bid = e.px || 0; row.bidQty = e.qty || 0; }
     else if (e.type === "ask") { row.prevAsk = row.ask; row.ask = e.px || 0; row.askQty = e.qty || 0; }
-    else if (e.type === "trade") {
-      row.prevLast = row.last;
-      row.last = e.px || 0;
-      row.lastQty = e.qty || 0;
-      // 최근 체결 리스트에 prepend
-      quoteState.trades.unshift({ ts: env.ts, feed, sym, px: e.px || 0, qty: e.qty || 0 });
-      if (quoteState.trades.length > quoteState.TRADE_LIMIT)
-        quoteState.trades.length = quoteState.TRADE_LIMIT;
-      $("#q-stat-trades").textContent = String(quoteState.trades.length);
-      quoteRenderTrades();
-    }
-    // sparkline 데이터 — last 가 있으면 last, 아니면 (bid+ask)/2.
-    // bid 또는 ask 만 갱신되어도 history 한 점 추가 (snapshot 바뀜 시각화).
-    const px = row.last || (row.bid && row.ask ? (row.bid + row.ask) / 2 : (row.bid || row.ask));
+    // trade entry 는 무시 — quote-forwarder 가 not_a_quote 로 이미 skip. 이 페이지는
+    // dealer stream (호가) 전용. 개인 체결은 「매매 감사」 페이지 (mci-push 경로).
+
+    // sparkline 데이터 — (bid+ask)/2 mid price. bid 또는 ask 만 갱신되어도 history
+    // 한 점 추가 (snapshot 바뀜 시각화).
+    const px = (row.bid && row.ask ? (row.bid + row.ask) / 2 : (row.bid || row.ask));
     if (px) {
       row.priceHistory.push(px);
       if (row.priceHistory.length > 60) row.priceHistory.shift();
@@ -11041,11 +11022,12 @@ function quoteRender() {
     card.appendChild(head);
 
     const spreadTxt = (r.ask && r.bid) ? "spread " + (r.ask - r.bid).toFixed(4) : "";
-    const grid3 = h("div", { class: "grid grid-cols-3 gap-2 text-xs font-mono" });
-    grid3.appendChild(quoteCell("BID", r.bid, r.bidQty, r.bid - r.prevBid, "text-good"));
-    grid3.appendChild(quoteCell("LAST", r.last, r.lastQty, r.last - r.prevLast, "text-accent-400"));
-    grid3.appendChild(quoteCell("ASK", r.ask, r.askQty, r.ask - r.prevAsk, "text-bad"));
-    card.appendChild(grid3);
+    // dealer stream 은 bid/ask 만. LAST 는 시장 전체 체결 tape 이 없어서 표시 X
+    // (mid price 로 대신하면 오히려 오해 소지 — spread 로 정보 표시).
+    const grid2 = h("div", { class: "grid grid-cols-2 gap-2 text-xs font-mono" });
+    grid2.appendChild(quoteCell("BID", r.bid, r.bidQty, r.bid - r.prevBid, "text-good"));
+    grid2.appendChild(quoteCell("ASK", r.ask, r.askQty, r.ask - r.prevAsk, "text-bad"));
+    card.appendChild(grid2);
 
     // Profile-only customer quote row (P3 — HQ+Site) — SubscribeQuote 경로.
     if (typeof r.custBid === "number" && typeof r.custAsk === "number") {
@@ -11165,27 +11147,6 @@ function quoteCell(label, px, qty, diff, baseCls) {
     wrap.appendChild(h("div", { class: "text-[10px] font-mono mt-0.5 " + cls, text: arrow + " " + Math.abs(diff).toFixed(4) }));
   }
   return wrap;
-}
-
-function quoteRenderTrades() {
-  const wrap = $("#q-trades-list");
-  if (!wrap) return;
-  $("#q-trades-count").textContent = String(quoteState.trades.length);
-  wrap.replaceChildren();
-  if (quoteState.trades.length === 0) {
-    wrap.appendChild(h("div", { class: "text-slate-500 text-center py-2", text: "체결 없음" }));
-    return;
-  }
-  for (const t of quoteState.trades) {
-    const ts = (() => { try { return new Date(t.ts).toLocaleTimeString("ko-KR", { hour12: false }); } catch (_) { return t.ts; } })();
-    const row = h("div", { class: "flex items-center gap-3" });
-    row.appendChild(h("span", { class: "text-slate-500 w-20 shrink-0", text: ts }));
-    row.appendChild(h("span", { class: "text-slate-400 w-16 shrink-0", text: t.feed }));
-    row.appendChild(h("span", { class: "text-slate-200 w-24 shrink-0", text: t.sym }));
-    row.appendChild(h("span", { class: "text-accent-400 w-24 shrink-0 text-right", text: t.px.toFixed(4) }));
-    row.appendChild(h("span", { class: "text-slate-400 text-right", text: (t.qty || 0).toLocaleString() }));
-    wrap.appendChild(row);
-  }
 }
 
 // ───────── Init / Wire ─────────

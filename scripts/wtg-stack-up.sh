@@ -209,11 +209,15 @@ if [ "$WITH_MD" = "1" ]; then
   else
     echo "==> mci-edge-md: etcd URL 못 잡음 — 정적 seed 만 사용"
   fi
+  # upstream (Phase B-2a) — mci-price gRPC 로 SubscribeQuote. 스택 부팅 시
+  # mci-price 는 --grpc :50051 로 뜬다.
+  MD_UPSTREAM="${MD_UPSTREAM:-127.0.0.1${GRPC_PRICE:-:50051}}"
   start mci-edge-md ./build/bin/mci-edge-md \
     --port "${MD_PORT:-5011}" \
     --stats "${MD_STATS:-127.0.0.1:5012}" \
     --sender "${MD_SENDER:-WTG_MD}" \
     --seed-cp "$MD_SEED_CP" \
+    --upstream "$MD_UPSTREAM" \
     "${MD_ETCD_ARGS[@]}" \
     --log-level info
 fi

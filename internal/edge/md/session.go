@@ -10,13 +10,15 @@ import (
 	"github.com/quickfixgo/tag"
 )
 
-// fixApp — mci-edge-md 의 quickfix.Application. Phase A 는 Logon + MDR(35=V)
-// 처리 → 즉시 스냅샷(35=W) 응답. Phase B/C 에서 upstream stream + updates.
+// fixApp — mci-edge-md 의 quickfix.Application. Phase B-2a: MDR → 우선 upstream
+// (gRPC latest quote cache) 조회 → miss 시 static provider fallback. 증분
+// (35=X) 은 Phase B-2b.
 type fixApp struct {
 	cfg      Config
 	logger   *slog.Logger
 	policy   CounterpartyPolicy
 	provider *StaticQuoteProvider
+	upstream *GrpcQuoteSource // nil 가능 — Phase A 호환 (upstream 없이 static 만)
 
 	mu     sync.RWMutex
 	active map[string]Principal
@@ -40,12 +42,13 @@ type Principal struct {
 	Tier         string
 }
 
-func newFixApp(cfg Config, logger *slog.Logger, policy CounterpartyPolicy, provider *StaticQuoteProvider) *fixApp {
+func newFixApp(cfg Config, logger *slog.Logger, policy CounterpartyPolicy, provider *StaticQuoteProvider, upstream *GrpcQuoteSource) *fixApp {
 	return &fixApp{
 		cfg:      cfg,
 		logger:   logger,
 		policy:   policy,
 		provider: provider,
+		upstream: upstream,
 		active:   make(map[string]Principal),
 	}
 }
@@ -168,28 +171,52 @@ func (a *fixApp) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix
 		slog.String("sub_req_type", string(parsed.SubReqType)),
 		slog.Int("symbols", len(parsed.Symbols)))
 
-	// Phase A — SubReqType 무관 스냅샷 1회만 전송.
-	// Phase B 에서 SNAPSHOT_PLUS_UPDATES 시 upstream stream 연결 + 35=X 증분.
+	// Phase B-2a — SubReqType 무관 스냅샷 1회 전송. 우선 upstream cache 조회,
+	// miss 시 static provider fallback. Phase B-2b 에서 SNAPSHOT_PLUS_UPDATES 시
+	// session subscribe + 35=X 증분 fan-out.
 	for _, sym := range parsed.Symbols {
-		q, ok := a.provider.Get(sym)
-		if !ok {
-			a.symbolMissing.Add(1)
-			getMetrics().symbolMissing.WithLabelValues(sym).Inc()
-			a.logger.Warn("static quote 없음 — skip",
-				slog.String("symbol", sym))
+		var snap = tryBuildSnapshot(a, parsed.MDReqID, sym, sid)
+		if !snap {
 			continue
 		}
-		snap := BuildSnapshot(parsed.MDReqID, sym, q)
-		if sendErr := quickfix.SendToTarget(snap.ToMessage(), sid); sendErr != nil {
-			a.logger.Warn("스냅샷 송신 실패",
-				slog.String("symbol", sym),
-				slog.Any("err", sendErr))
-			continue
-		}
-		a.snapshotSent.Add(1)
-		getMetrics().snapshotSent.WithLabelValues(sym).Inc()
 	}
 	return nil
+}
+
+// tryBuildSnapshot — upstream cache 우선, static fallback. hit 여부 반환 (metric
+// / logging 편의).
+func tryBuildSnapshot(a *fixApp, mdReqID, sym string, sid quickfix.SessionID) bool {
+	if a.upstream != nil {
+		if cq, ok := a.upstream.Latest(sym); ok {
+			msg := BuildSnapshotFromCustomerQuote(mdReqID, cq)
+			if sendErr := quickfix.SendToTarget(msg.ToMessage(), sid); sendErr != nil {
+				a.logger.Warn("스냅샷(upstream) 송신 실패",
+					slog.String("symbol", sym), slog.Any("err", sendErr))
+				return false
+			}
+			a.snapshotSent.Add(1)
+			getMetrics().snapshotSent.WithLabelValues(sym).Inc()
+			return true
+		}
+	}
+	// static fallback.
+	q, ok := a.provider.Get(sym)
+	if !ok {
+		a.symbolMissing.Add(1)
+		getMetrics().symbolMissing.WithLabelValues(sym).Inc()
+		a.logger.Warn("quote 없음 (upstream miss + static miss) — skip",
+			slog.String("symbol", sym))
+		return false
+	}
+	msg := BuildSnapshot(mdReqID, sym, q)
+	if sendErr := quickfix.SendToTarget(msg.ToMessage(), sid); sendErr != nil {
+		a.logger.Warn("스냅샷(static) 송신 실패",
+			slog.String("symbol", sym), slog.Any("err", sendErr))
+		return false
+	}
+	a.snapshotSent.Add(1)
+	getMetrics().snapshotSent.WithLabelValues(sym).Inc()
+	return true
 }
 
 // snapshot — Stats 변환.

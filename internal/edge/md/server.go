@@ -28,6 +28,7 @@ type Server struct {
 	acceptor  *quickfix.Acceptor
 	cpWatcher *EtcdCounterpartyWatcher
 	cpEtcdCli *clientv3.Client
+	upstream  *GrpcQuoteSource // nil 가능 — Config.UpstreamAddr 비었을 때
 	reloadMu  sync.Mutex
 }
 
@@ -46,11 +47,25 @@ type Config struct {
 	// etcd snapshot 이 위에 덮음 (edge-fix 와 동일).
 	Counterparties map[string]Counterparty
 
-	// EtcdEndpoints + EtcdCounterpartiesPrefix — Phase B 동적 정책. edge-fix
+	// EtcdEndpoints + EtcdCounterpartiesPrefix — Phase B-1 동적 정책. edge-fix
 	// 와 동일 store (`wtg/fix/counterparties/`) 를 읽되 AllowsMD() 필터. 빈값
 	// 이면 정적 seed 만.
 	EtcdEndpoints            string
 	EtcdCounterpartiesPrefix string
+
+	// UpstreamAddr — Phase B-2a. mci-price 의 gRPC endpoint (예: 127.0.0.1:50051).
+	// 채워지면 PriceService.SubscribeQuote stream 유지 + 심볼별 최신 quote 캐시.
+	// MDR 응답 시 static provider 대신 이 캐시 우선. 빈값이면 static fallback 만.
+	UpstreamAddr string
+
+	// UpstreamSubscriberID — SubscribeQuote req 의 subscriber_id. 다중 인스턴스
+	// 구분용. 빈값이면 "mci-edge-md-<port>".
+	UpstreamSubscriberID string
+
+	// UpstreamProfileKeys — SubscribeQuote req 의 profile filter (예:
+	// "FIX.HQ.VIP"). Phase B-2a 는 편의로 빈 리스트 = 모두 수신. Phase C 에서
+	// 등록된 MD counterparty profile 의 합집합으로 자동 계산 예정.
+	UpstreamProfileKeys []string
 
 	// LogQuickfix — quickfix 내부 log 노출. default false.
 	LogQuickfix bool
@@ -107,7 +122,16 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	} else {
 		policy = &staticPolicy{m: cfg.Counterparties}
 	}
-	app := newFixApp(cfg, logger, policy, DefaultStaticProvider())
+	// upstream — 있으면 GrpcQuoteSource 준비 (Start 에서 goroutine).
+	var upstream *GrpcQuoteSource
+	if cfg.UpstreamAddr != "" {
+		subID := cfg.UpstreamSubscriberID
+		if subID == "" {
+			subID = fmt.Sprintf("mci-edge-md-%d", cfg.ListenPort)
+		}
+		upstream = NewGrpcQuoteSource(cfg.UpstreamAddr, subID, cfg.UpstreamProfileKeys, logger)
+	}
+	app := newFixApp(cfg, logger, policy, DefaultStaticProvider(), upstream)
 
 	settings, err := buildSettings(cfg)
 	if err != nil {
@@ -119,15 +143,19 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("NewAcceptor: %w", err)
 	}
-	return &Server{cfg: cfg, logger: logger, app: app, acceptor: acceptor}, nil
+	return &Server{cfg: cfg, logger: logger, app: app, acceptor: acceptor, upstream: upstream}, nil
 }
 
-// Start — etcd watcher (있다면) + quickfix acceptor 시작 + ctx.Done() 까지 유지.
-// 블로킹. 호출자가 별도 goroutine 또는 main 마지막에.
+// Start — etcd watcher + upstream quote loop + quickfix acceptor 시작 +
+// ctx.Done() 까지 유지. 블로킹.
 func (s *Server) Start(ctx context.Context) error {
 	if err := s.startCounterpartyWatcher(ctx); err != nil {
 		s.logger.Warn("MD counterparty etcd watcher 실패 — 정적 seed 만",
 			slog.Any("err", err))
+	}
+	// Phase B-2a — upstream stream 시작 (있다면).
+	if s.upstream != nil {
+		go s.upstream.StartLoop(ctx)
 	}
 	if err := s.acceptor.Start(); err != nil {
 		return fmt.Errorf("acceptor.Start: %w", err)
@@ -136,7 +164,8 @@ func (s *Server) Start(ctx context.Context) error {
 		slog.Int("port", s.cfg.ListenPort),
 		slog.String("sender", s.cfg.SenderCompID),
 		slog.Int("counterparties_seed", len(s.cfg.Counterparties)),
-		slog.String("etcd", s.cfg.EtcdEndpoints))
+		slog.String("etcd", s.cfg.EtcdEndpoints),
+		slog.String("upstream", s.cfg.UpstreamAddr))
 	<-ctx.Done()
 	s.acceptor.Stop()
 	if s.cpWatcher != nil {
@@ -147,6 +176,15 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.logger.Info("mci-edge-md 종료")
 	return nil
+}
+
+// UpstreamStats — 진단용 upstream 통계 (nil 가능).
+func (s *Server) UpstreamStats() *GrpcQuoteSourceStats {
+	if s.upstream == nil {
+		return nil
+	}
+	st := s.upstream.Stats()
+	return &st
 }
 
 // startCounterpartyWatcher — etcd 활성 환경에서 dial + watcher Start.

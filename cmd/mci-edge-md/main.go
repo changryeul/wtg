@@ -29,8 +29,11 @@ func main() {
 		heartBtInt   = flag.Int("heart", 30, "Heartbeat 주기 (초)")
 		logLevel     = flag.String("log-level", "info", "log level: debug/info/warn/error")
 		statsAddr    = flag.String("stats", "", "HTTP /stats listen 주소 (예: 127.0.0.1:5012). 빈값=비활성")
-		etcdEps      = flag.String("etcd", "", "etcd endpoints (콤마 구분). Phase B 동적 counterparty 등록. 빈값=정적 seed 만")
+		etcdEps      = flag.String("etcd", "", "etcd endpoints (콤마 구분). Phase B-1 동적 counterparty 등록. 빈값=정적 seed 만")
 		etcdPrefix   = flag.String("etcd-counterparties-prefix", "wtg/fix/counterparties/", "etcd counterparty prefix (edge-fix 와 동일 store 재사용)")
+		upstream     = flag.String("upstream", "", "Phase B-2a: mci-price gRPC endpoint (예: 127.0.0.1:50051). 빈값=static provider fallback 만")
+		subID        = flag.String("subscriber-id", "", "SubscribeQuote subscriber_id. 빈값=mci-edge-md-<port> 자동")
+		profileKeys  = flag.String("profile-keys", "", "SubscribeQuote profile filter (콤마 구분, 예: FIX.HQ.VIP,FIX.HQ.GOLD). 빈값=서버측 default(모두)")
 	)
 	var seedCPs multiCP
 	flag.Var(&seedCPs, "seed-cp", "정적 counterparty seed. 형식: 'ID=PASSWORD,SITE,TIER,USID' (반복 가능)")
@@ -45,6 +48,16 @@ func main() {
 	cfg.Counterparties = seedCPs.parsed
 	cfg.EtcdEndpoints = *etcdEps
 	cfg.EtcdCounterpartiesPrefix = *etcdPrefix
+	cfg.UpstreamAddr = *upstream
+	cfg.UpstreamSubscriberID = *subID
+	if *profileKeys != "" {
+		for _, k := range strings.Split(*profileKeys, ",") {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				cfg.UpstreamProfileKeys = append(cfg.UpstreamProfileKeys, k)
+			}
+		}
+	}
 
 	srv, err := md.NewServer(cfg, logger)
 	if err != nil {

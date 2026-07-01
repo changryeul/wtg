@@ -9,6 +9,8 @@ import (
 	"github.com/quickfixgo/fix44/marketdatarequest"
 	"github.com/quickfixgo/fix44/marketdatasnapshotfullrefresh"
 	"github.com/shopspring/decimal"
+
+	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
 
 // ParsedMDR — MDR (35=V) 파싱 결과. Phase A 는 필수 필드만 뽑음.
@@ -115,4 +117,38 @@ func BuildSnapshot(mdReqID, symbol string, q StaticQuote) marketdatasnapshotfull
 
 	msg.SetNoMDEntries(entries)
 	return msg
+}
+
+// BuildSnapshotFromCustomerQuote — mci-price 의 CustomerQuote (proto) 로 스냅샷
+// 조립. Phase B-2a upstream 경로.
+//
+// scale — FX 관례상 JPY/KRW/CNY pair 는 2, 그 외는 4. Phase C 에서 symbol
+// catalog (etcd) 로 정확한 tick_size 조회 예정.
+// size — CustomerQuote 는 tradable size 정보가 없어 하드코딩 1_000_000 (dealer
+// convention). Phase C 에서 profile 별 override.
+func BuildSnapshotFromCustomerQuote(mdReqID string, cq *wtgpb.CustomerQuote) marketdatasnapshotfullrefresh.MarketDataSnapshotFullRefresh {
+	q := StaticQuote{
+		Bid:   cq.GetBid(),
+		Ask:   cq.GetAsk(),
+		Scale: pairScale(cq.GetPair()),
+		Size:  1_000_000,
+	}
+	return BuildSnapshot(mdReqID, cq.GetPair(), q)
+}
+
+// pairScale — 심볼로 price scale (소수점 자리) 추정. quote currency 가
+// JPY/KRW/CNY 이면 2, 그 외 4. FX 관례 (dealer default). Phase C 에서 symbol
+// catalog 로 대체.
+func pairScale(pair string) int32 {
+	parts := strings.Split(pair, "/")
+	if len(parts) != 2 {
+		return 4
+	}
+	quote := strings.ToUpper(strings.TrimSpace(parts[1]))
+	switch quote {
+	case "JPY", "KRW", "CNY", "TWD", "IDR", "VND":
+		return 2
+	default:
+		return 4
+	}
 }

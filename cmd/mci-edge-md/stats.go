@@ -28,7 +28,12 @@ func startStatsServer(addr string, srv *md.Server, logger *slog.Logger) {
 	}
 	mux.HandleFunc("/stats", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(srv.Stats())
+		// stats + upstream stats 합쳐 하나로.
+		payload := map[string]any{
+			"session":  srv.Stats(),
+			"upstream": srv.UpstreamStats(),
+		}
+		_ = json.NewEncoder(w).Encode(payload)
 	}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -1,86 +1,260 @@
 package md
 
-import "sync"
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"strings"
+	"sync/atomic"
+	"time"
 
-// Counterparty — MD counterparty 1개의 인증·라우팅 정보. Phase A 는 최소 필드
-// (Password / Usid) 만. Phase B 에서 mdReqRoleSet / mdAllowedPairs 추가 예정.
+	clientv3 "go.etcd.io/etcd/client/v3"
+)
+
+// Counterparty — MD counterparty 1개의 인증·라우팅 정보.
+//
+// etcd store 는 edge-fix 와 동일 key (`wtg/fix/counterparties/<CID>`).
+// JSON 태그는 edge-fix.Counterparty 와 forward-compatible — 새 필드
+// (MdReqRoleSet / MdAllowedPairs) 는 옵션이라 미지원 클라이언트는 무시.
+//
+// mci-edge-md 는 초기 로드 시 MdReqRoleSet 에 "MD" 가 있는 항목만 accept.
+// 그 외는 edge-fix 전용 등록으로 간주하고 skip.
 type Counterparty struct {
-	// Password — Logon (35=A) tag 554 검증. 빈값이면 검증 skip (dev only).
 	Password string `json:"password"`
+	Channel  string `json:"channel"`
+	Site     string `json:"site"`
+	Tier     string `json:"tier"`
+	Usid     string `json:"usid"`
 
-	// Profile — Principal.Channel/Site/Tier. Phase B 에서 mci-price 의
-	// SubscribeQuote(profile_key) 로 upstream 을 붙일 때 사용.
-	Channel string `json:"channel"`
-	Site    string `json:"site"`
-	Tier    string `json:"tier"`
+	// MdReqRoleSet — 이 카운터파티가 열 수 있는 채널. 예: ["MD"], ["ORDER","MD"].
+	// 비어있으면 mci-edge-md 는 skip (default = ORDER only).
+	MdReqRoleSet []string `json:"md_req_role_set,omitempty"`
 
-	// Usid — log / audit 의 일상 ID.
-	Usid string `json:"usid"`
+	// MdAllowedPairs — 구독 허용 pair whitelist. 비어있으면 profile 전체 허용
+	// (Phase B 는 필터 skip, Phase C 에서 반영).
+	MdAllowedPairs []string `json:"md_allowed_pairs,omitempty"`
 }
 
-// CounterpartyPolicy — runtime 카운터파티 정책 조회 (Logon 시).
-//
-// Phase A 는 staticPolicy 만. Phase B 에서 etcd watch 로 MemoryCounterpartyPolicy
-// 추가 예정 (mci-edge-fix 와 동일 store 재사용 검토).
+// AllowsMD — MdReqRoleSet 에 "MD" 가 포함되면 true. 대소문자 무시.
+func (c Counterparty) AllowsMD() bool {
+	for _, r := range c.MdReqRoleSet {
+		if strings.EqualFold(strings.TrimSpace(r), "MD") {
+			return true
+		}
+	}
+	return false
+}
+
+// CounterpartyPolicy — runtime lookup.
 type CounterpartyPolicy interface {
 	Lookup(senderCompID string) (Counterparty, bool)
 	Snapshot() map[string]Counterparty
 }
 
-// staticPolicy — 부팅 시 seed 로 정지된 정책. reload 없이는 안 바뀜.
+// MemoryCounterpartyPolicy — atomic.Pointer swap 으로 lock 없는 다중 reader.
+// edge-fix.MemoryCounterpartyPolicy 와 동일 패턴.
+type MemoryCounterpartyPolicy struct {
+	snap atomic.Pointer[map[string]Counterparty]
+}
+
+func NewMemoryCounterpartyPolicy() *MemoryCounterpartyPolicy {
+	p := &MemoryCounterpartyPolicy{}
+	empty := map[string]Counterparty{}
+	p.snap.Store(&empty)
+	return p
+}
+
+func (p *MemoryCounterpartyPolicy) Lookup(cid string) (Counterparty, bool) {
+	s := p.snap.Load()
+	if s == nil {
+		return Counterparty{}, false
+	}
+	cp, ok := (*s)[cid]
+	return cp, ok
+}
+
+func (p *MemoryCounterpartyPolicy) Replace(m map[string]Counterparty) {
+	cp := make(map[string]Counterparty, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	p.snap.Store(&cp)
+}
+
+func (p *MemoryCounterpartyPolicy) Set(cid string, cp Counterparty) {
+	old := p.snap.Load()
+	n := make(map[string]Counterparty, len(*old)+1)
+	for k, v := range *old {
+		n[k] = v
+	}
+	n[cid] = cp
+	p.snap.Store(&n)
+}
+
+func (p *MemoryCounterpartyPolicy) Delete(cid string) {
+	old := p.snap.Load()
+	if _, ok := (*old)[cid]; !ok {
+		return
+	}
+	n := make(map[string]Counterparty, len(*old)-1)
+	for k, v := range *old {
+		if k == cid {
+			continue
+		}
+		n[k] = v
+	}
+	p.snap.Store(&n)
+}
+
+func (p *MemoryCounterpartyPolicy) Snapshot() map[string]Counterparty {
+	s := p.snap.Load()
+	if s == nil {
+		return map[string]Counterparty{}
+	}
+	out := make(map[string]Counterparty, len(*s))
+	for k, v := range *s {
+		out[k] = v
+	}
+	return out
+}
+
+// staticPolicy — Phase A 호환 — 부팅 seed 만.
 type staticPolicy struct {
 	m map[string]Counterparty
 }
 
-func (p *staticPolicy) Lookup(cid string) (Counterparty, bool) {
-	if p.m == nil {
-		return Counterparty{}, false
-	}
-	cp, ok := p.m[cid]
+func (s *staticPolicy) Lookup(cid string) (Counterparty, bool) {
+	cp, ok := s.m[cid]
 	return cp, ok
 }
 
-func (p *staticPolicy) Snapshot() map[string]Counterparty {
-	out := make(map[string]Counterparty, len(p.m))
-	for k, v := range p.m {
+func (s *staticPolicy) Snapshot() map[string]Counterparty {
+	out := make(map[string]Counterparty, len(s.m))
+	for k, v := range s.m {
 		out[k] = v
 	}
 	return out
 }
 
-// MemoryCounterpartyPolicy — Phase B 대비 skeleton. etcd watcher 가 Replace 로
-// 갱신. Phase A 는 사용 X — staticPolicy 로 우회.
-type MemoryCounterpartyPolicy struct {
-	mu sync.RWMutex
-	m  map[string]Counterparty
+// EtcdCounterpartyWatcher — etcd prefix 아래 counterparty 등록을 watch.
+// edge-fix 와 동일 store (`wtg/fix/counterparties/`) 를 읽되 AllowsMD() 필터.
+type EtcdCounterpartyWatcher struct {
+	client *clientv3.Client
+	prefix string
+	policy *MemoryCounterpartyPolicy
+	logger *slog.Logger
+	cancel context.CancelFunc
 }
 
-func NewMemoryCounterpartyPolicy() *MemoryCounterpartyPolicy {
-	return &MemoryCounterpartyPolicy{m: make(map[string]Counterparty)}
-}
-
-func (p *MemoryCounterpartyPolicy) Replace(next map[string]Counterparty) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.m = make(map[string]Counterparty, len(next))
-	for k, v := range next {
-		p.m[k] = v
+func NewEtcdCounterpartyWatcher(cli *clientv3.Client, prefix string,
+	policy *MemoryCounterpartyPolicy, logger *slog.Logger) *EtcdCounterpartyWatcher {
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &EtcdCounterpartyWatcher{
+		client: cli, prefix: prefix, policy: policy, logger: logger,
 	}
 }
 
-func (p *MemoryCounterpartyPolicy) Lookup(cid string) (Counterparty, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	cp, ok := p.m[cid]
-	return cp, ok
+// Start — initial load + watch goroutine.
+//
+// Filter: AllowsMD() 인 항목만 policy 에 반영. 그 외는 skip (edge-fix 전용).
+func (w *EtcdCounterpartyWatcher) Start(ctx context.Context) error {
+	resp, err := w.client.Get(ctx, w.prefix, clientv3.WithPrefix())
+	if err != nil {
+		return err
+	}
+	init := make(map[string]Counterparty, len(resp.Kvs))
+	skipped := 0
+	for _, kv := range resp.Kvs {
+		cid := strings.TrimPrefix(string(kv.Key), w.prefix)
+		if cid == "" {
+			continue
+		}
+		var cp Counterparty
+		if err := json.Unmarshal(kv.Value, &cp); err != nil {
+			w.logger.Warn("counterparty JSON parse 실패 — 무시",
+				slog.String("cid", cid), slog.Any("error", err))
+			continue
+		}
+		if !cp.AllowsMD() {
+			skipped++
+			continue
+		}
+		init[cid] = cp
+	}
+	w.policy.Replace(init)
+	w.logger.Info("MD CounterpartyPolicy 초기 로드",
+		slog.Int("count", len(init)),
+		slog.Int("skipped_non_md", skipped),
+		slog.String("prefix", w.prefix))
+
+	wctx, cancel := context.WithCancel(ctx)
+	w.cancel = cancel
+	go w.watchLoop(wctx, resp.Header.Revision+1)
+	return nil
 }
 
-func (p *MemoryCounterpartyPolicy) Snapshot() map[string]Counterparty {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	out := make(map[string]Counterparty, len(p.m))
-	for k, v := range p.m {
-		out[k] = v
+func (w *EtcdCounterpartyWatcher) Stop() {
+	if w.cancel != nil {
+		w.cancel()
 	}
-	return out
+}
+
+func (w *EtcdCounterpartyWatcher) watchLoop(ctx context.Context, rev int64) {
+	backoff := time.Second
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		ch := w.client.Watch(ctx, w.prefix,
+			clientv3.WithPrefix(),
+			clientv3.WithRev(rev))
+		for resp := range ch {
+			if err := resp.Err(); err != nil {
+				w.logger.Warn("MD counterparty watch error — 재시도",
+					slog.Any("error", err), slog.Duration("backoff", backoff))
+				time.Sleep(backoff)
+				if backoff < 30*time.Second {
+					backoff *= 2
+				}
+				break
+			}
+			backoff = time.Second
+			for _, ev := range resp.Events {
+				cid := strings.TrimPrefix(string(ev.Kv.Key), w.prefix)
+				if cid == "" {
+					continue
+				}
+				switch ev.Type {
+				case clientv3.EventTypePut:
+					var cp Counterparty
+					if err := json.Unmarshal(ev.Kv.Value, &cp); err != nil {
+						w.logger.Warn("MD counterparty JSON parse 실패",
+							slog.String("cid", cid), slog.Any("error", err))
+						continue
+					}
+					if !cp.AllowsMD() {
+						// MD role 사라진 경우 기존 있으면 제거.
+						w.policy.Delete(cid)
+						w.logger.Info("counterparty MD role 제거 — policy 에서 삭제",
+							slog.String("cid", cid))
+						continue
+					}
+					w.policy.Set(cid, cp)
+					w.logger.Info("MD counterparty PUT",
+						slog.String("cid", cid),
+						slog.String("profile", cp.Channel+"."+cp.Site+"."+cp.Tier),
+						slog.Int("allowed_pairs", len(cp.MdAllowedPairs)))
+				case clientv3.EventTypeDelete:
+					w.policy.Delete(cid)
+					w.logger.Info("MD counterparty DELETE", slog.String("cid", cid))
+				}
+			}
+			rev = resp.Header.Revision + 1
+		}
+	}
 }

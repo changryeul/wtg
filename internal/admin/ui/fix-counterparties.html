@@ -65,6 +65,17 @@
     <input type="text" id="order_alias" placeholder="FIX_NEW_ORDER (빈값=default)">
     <div class="help">빈값이면 mci-edge-fix 가 <code>FIX_NEW_ORDER</code> default 사용. ECN 별 alias 등록 시 매매 엔진이 다른 transaction 으로 dispatch.</div>
 
+    <label style="margin-top:16px">채널 권한 (MdReqRoleSet — 이 카운터파티가 열 수 있는 채널)</label>
+    <div style="display:flex;gap:16px;padding:6px 0;font-size:13px">
+      <label style="display:inline-flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="role_order" checked>ORDER (mci-edge-fix — 주문 세션)</label>
+      <label style="display:inline-flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="role_md">MD (mci-edge-md — 시세 세션)</label>
+    </div>
+    <div class="help">둘 다 체크하면 카운터파티가 같은 SenderCompID 로 두 세션 (edge-fix + edge-md) 을 열 수 있습니다. MD 만 체크하면 시세 전용.</div>
+
+    <label>MdAllowedPairs (구독 허용 pair whitelist — MD 채널만 해당. 콤마 구분, 빈값=전체 허용)</label>
+    <input type="text" id="md_allowed_pairs" placeholder="USD/KRW,EUR/USD,GBP/USD">
+    <div class="help">Phase C 에서 mci-edge-md 가 이 whitelist 로 MDR symbol 필터. Phase B-1 은 저장/전달만.</div>
+
     <button onclick="savePut()">저장 (PUT)</button>
     <button class="danger" onclick="delOne()">삭제 (DELETE)</button>
     <button onclick="reload()">목록 새로고침</button>
@@ -139,12 +150,14 @@
   <table>
     <thead>
       <tr>
-        <th style="width:18%">SenderCompID</th>
-        <th style="width:16%">Profile</th>
-        <th style="width:20%">Usid</th>
-        <th style="width:18%">OrderAlias</th>
-        <th style="width:10%">Password</th>
-        <th style="width:14%">동작</th>
+        <th style="width:16%">SenderCompID</th>
+        <th style="width:12%">Profile</th>
+        <th style="width:14%">Usid</th>
+        <th style="width:14%">OrderAlias</th>
+        <th style="width:10%">Roles</th>
+        <th style="width:16%">MdAllowedPairs</th>
+        <th style="width:8%">Password</th>
+        <th style="width:10%">동작</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
@@ -219,6 +232,18 @@ function buildRow(c) {
   aliasCode.textContent = c.order_alias || "FIX_NEW_ORDER";
   tdAlias.appendChild(aliasCode);
 
+  // Roles — 미지정이면 ORDER 로 표시 (backward compat).
+  const tdRoles = document.createElement("td");
+  const rs = (c.md_req_role_set && c.md_req_role_set.length) ? c.md_req_role_set : ["ORDER"];
+  tdRoles.textContent = rs.join(",");
+
+  // MdAllowedPairs — 빈 배열은 "(all)" 표시.
+  const tdPairs = document.createElement("td");
+  tdPairs.textContent = (c.md_allowed_pairs && c.md_allowed_pairs.length)
+    ? c.md_allowed_pairs.join(",") : "(all)";
+  tdPairs.style.fontFamily = "ui-monospace, monospace";
+  tdPairs.style.fontSize = "12px";
+
   const td4 = document.createElement("td");
   td4.textContent = c.password || "***";
 
@@ -230,7 +255,8 @@ function buildRow(c) {
   td5.appendChild(btn);
 
   tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
-  tr.appendChild(tdAlias); tr.appendChild(td4); tr.appendChild(td5);
+  tr.appendChild(tdAlias); tr.appendChild(tdRoles); tr.appendChild(tdPairs);
+  tr.appendChild(td4); tr.appendChild(td5);
   return tr;
 }
 
@@ -260,6 +286,11 @@ async function loadEdit(cid) {
     document.getElementById("tier").value = c.tier || "";
     document.getElementById("usid").value = c.usid || "";
     document.getElementById("order_alias").value = c.order_alias || "";
+    // 채널 권한 복원.
+    const roles = new Set((c.md_req_role_set || []).map(s => (s || "").toUpperCase()));
+    document.getElementById("role_order").checked = roles.has("ORDER") || roles.size === 0;
+    document.getElementById("role_md").checked = roles.has("MD");
+    document.getElementById("md_allowed_pairs").value = (c.md_allowed_pairs || []).join(",");
     window.scrollTo(0, 0);
   } catch (e) {
     showMsg("조회 실패: " + e.message, false);
@@ -269,13 +300,22 @@ async function loadEdit(cid) {
 async function savePut() {
   const cid = document.getElementById("cid").value.trim();
   if (!cid) { showMsg("SenderCompID 필요", false); return; }
+  // MdReqRoleSet — 체크박스 상태 → 배열.
+  const roles = [];
+  if (document.getElementById("role_order").checked) roles.push("ORDER");
+  if (document.getElementById("role_md").checked) roles.push("MD");
+  // MdAllowedPairs — 콤마 구분 + trim.
+  const pairsRaw = document.getElementById("md_allowed_pairs").value.trim();
+  const pairs = pairsRaw ? pairsRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
   const body = {
-    password:    document.getElementById("pw").value,
-    channel:     document.getElementById("channel").value.trim() || "FIX",
-    site:        document.getElementById("site").value.trim(),
-    tier:        document.getElementById("tier").value.trim(),
-    usid:        document.getElementById("usid").value.trim() || cid,
-    order_alias: document.getElementById("order_alias").value.trim(),
+    password:         document.getElementById("pw").value,
+    channel:          document.getElementById("channel").value.trim() || "FIX",
+    site:             document.getElementById("site").value.trim(),
+    tier:             document.getElementById("tier").value.trim(),
+    usid:             document.getElementById("usid").value.trim() || cid,
+    order_alias:      document.getElementById("order_alias").value.trim(),
+    md_req_role_set:  roles,
+    md_allowed_pairs: pairs,
   };
   try {
     const r = await fetch(API + "/" + encodeURIComponent(cid), {
@@ -303,8 +343,10 @@ async function delOne() {
       throw new Error(d.message || "status " + r.status);
     }
     showMsg("삭제 완료: " + cid, true);
-    ["cid","pw","channel","site","tier","usid","order_alias"].forEach(id => document.getElementById(id).value = "");
+    ["cid","pw","channel","site","tier","usid","order_alias","md_allowed_pairs"].forEach(id => document.getElementById(id).value = "");
     document.getElementById("channel").value = "FIX";
+    document.getElementById("role_order").checked = true;
+    document.getElementById("role_md").checked = false;
     reload();
   } catch (e) {
     showMsg("삭제 실패: " + e.message, false);

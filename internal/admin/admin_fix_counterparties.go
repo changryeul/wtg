@@ -60,15 +60,25 @@ type fixCpEntry struct {
 	// OrderAlias — Phase B Layer 2. 카운터파티별 매매 alias. 빈값이면 mci-edge-fix
 	// 가 default "FIX_NEW_ORDER" 사용 (Phase A 호환).
 	OrderAlias string `json:"order_alias,omitempty"`
+
+	// MdReqRoleSet — mci-edge-md Phase B-1. 이 카운터파티가 열 수 있는 채널.
+	// 예: ["MD"] / ["ORDER","MD"]. 비어있으면 edge-fix 전용 (기본).
+	MdReqRoleSet []string `json:"md_req_role_set,omitempty"`
+
+	// MdAllowedPairs — mci-edge-md 구독 허용 pair whitelist. 비어있으면 profile
+	// 전체 허용 (Phase B 는 필터 skip 예정, Phase C 에서 반영).
+	MdAllowedPairs []string `json:"md_allowed_pairs,omitempty"`
 }
 
 type fixCpPutRequest struct {
-	Password   string `json:"password"`
-	Channel    string `json:"channel"`
-	Site       string `json:"site"`
-	Tier       string `json:"tier"`
-	Usid       string `json:"usid"`
-	OrderAlias string `json:"order_alias"`
+	Password       string   `json:"password"`
+	Channel        string   `json:"channel"`
+	Site           string   `json:"site"`
+	Tier           string   `json:"tier"`
+	Usid           string   `json:"usid"`
+	OrderAlias     string   `json:"order_alias"`
+	MdReqRoleSet   []string `json:"md_req_role_set"`
+	MdAllowedPairs []string `json:"md_allowed_pairs"`
 }
 
 // validateSenderCompID — FIX SenderCompID. ASCII, 공백/슬래시/제어문자 금지,
@@ -99,7 +109,60 @@ func normalizeFixCp(req fixCpPutRequest) fixCpPutRequest {
 	req.Tier = strings.TrimSpace(req.Tier)
 	req.Usid = strings.TrimSpace(req.Usid)
 	req.OrderAlias = strings.TrimSpace(req.OrderAlias)
+
+	// MdReqRoleSet — trim + upper case + dedup + validate (ORDER / MD 만 허용).
+	req.MdReqRoleSet = normalizeRoleSet(req.MdReqRoleSet)
+	// MdAllowedPairs — trim + dedup.
+	req.MdAllowedPairs = normalizeStringSet(req.MdAllowedPairs)
 	return req
+}
+
+// normalizeRoleSet — trim + upper + dedup. 미지원 role 은 무음 제거.
+func normalizeRoleSet(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.ToUpper(strings.TrimSpace(s))
+		if s == "" || (s != "ORDER" && s != "MD") {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// normalizeStringSet — trim + dedup (원본 순서 유지).
+func normalizeStringSet(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // ListFixCounterparties — GET /v1/admin/fix-counterparties
@@ -130,13 +193,15 @@ func ListFixCounterparties(deps *FixCounterpartiesDeps) http.HandlerFunc {
 				continue
 			}
 			out = append(out, fixCpEntry{
-				SenderCompID: cid,
-				Password:     "***", // list 응답엔 마스킹
-				Channel:      cp.Channel,
-				Site:         cp.Site,
-				Tier:         cp.Tier,
-				Usid:         cp.Usid,
-				OrderAlias:   cp.OrderAlias,
+				SenderCompID:   cid,
+				Password:       "***", // list 응답엔 마스킹
+				Channel:        cp.Channel,
+				Site:           cp.Site,
+				Tier:           cp.Tier,
+				Usid:           cp.Usid,
+				OrderAlias:     cp.OrderAlias,
+				MdReqRoleSet:   cp.MdReqRoleSet,
+				MdAllowedPairs: cp.MdAllowedPairs,
 			})
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].SenderCompID < out[j].SenderCompID })
@@ -177,13 +242,15 @@ func GetFixCounterparty(deps *FixCounterpartiesDeps) http.HandlerFunc {
 		}
 		// 단건 조회엔 password 전체 노출 (admin UI 편집용). 운영 audit 의 대상.
 		writeJSON(w, http.StatusOK, fixCpEntry{
-			SenderCompID: cid,
-			Password:     cp.Password,
-			Channel:      cp.Channel,
-			Site:         cp.Site,
-			Tier:         cp.Tier,
-			Usid:         cp.Usid,
-			OrderAlias:   cp.OrderAlias,
+			SenderCompID:   cid,
+			Password:       cp.Password,
+			Channel:        cp.Channel,
+			Site:           cp.Site,
+			Tier:           cp.Tier,
+			Usid:           cp.Usid,
+			OrderAlias:     cp.OrderAlias,
+			MdReqRoleSet:   cp.MdReqRoleSet,
+			MdAllowedPairs: cp.MdAllowedPairs,
 		})
 	}
 }
@@ -227,25 +294,30 @@ func PutFixCounterparty(deps *FixCounterpartiesDeps) http.HandlerFunc {
 				Resource: "fix_counterparty",
 				Usid:     principalUsid(r),
 				Attrs: map[string]any{
-					"sender_comp_id": cid,
-					"channel":        req.Channel,
-					"site":           req.Site,
-					"tier":           req.Tier,
-					"usid":           req.Usid,
+					"sender_comp_id":   cid,
+					"channel":          req.Channel,
+					"site":             req.Site,
+					"tier":             req.Tier,
+					"usid":             req.Usid,
+					"md_req_role_set":  req.MdReqRoleSet,
+					"md_allowed_pairs": len(req.MdAllowedPairs),
 				},
 			})
 		}
 		deps.Logger.Info("fix counterparty PUT",
 			slog.String("cid", cid),
-			slog.String("profile", req.Channel+"."+req.Site+"."+req.Tier))
+			slog.String("profile", req.Channel+"."+req.Site+"."+req.Tier),
+			slog.Any("md_role_set", req.MdReqRoleSet))
 		writeJSON(w, http.StatusOK, fixCpEntry{
-			SenderCompID: cid,
-			Password:     "***", // 응답엔 마스킹
-			Channel:      req.Channel,
-			Site:         req.Site,
-			Tier:         req.Tier,
-			Usid:         req.Usid,
-			OrderAlias:   req.OrderAlias,
+			SenderCompID:   cid,
+			Password:       "***", // 응답엔 마스킹
+			Channel:        req.Channel,
+			Site:           req.Site,
+			Tier:           req.Tier,
+			Usid:           req.Usid,
+			OrderAlias:     req.OrderAlias,
+			MdReqRoleSet:   req.MdReqRoleSet,
+			MdAllowedPairs: req.MdAllowedPairs,
 		})
 	}
 }

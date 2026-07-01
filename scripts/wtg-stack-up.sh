@@ -186,17 +186,35 @@ if [ "$WITH_FIX" = "1" ]; then
     --log-level info
 fi
 
-# mci-edge-md (--with-md) — FIX 4.4 시세 DMZ gateway (Phase A skeleton).
-# 정적 카운터파티 seed 만. 하드코딩 quote 로 35=W 응답. Phase B 는 etcd + gRPC upstream.
+# mci-edge-md (--with-md) — FIX 4.4 시세 DMZ gateway.
+# Phase B-1: --with-fix 와 동일한 admin embedded etcd URL 을 재사용하여
+# `wtg/fix/counterparties/` 를 공유. MdReqRoleSet 에 "MD" 있는 항목만 accept.
+# 정적 seed 는 fallback (env MD_SEED_CP override).
 if [ "$WITH_MD" = "1" ]; then
-  # Phase A 는 etcd 미연결. seed 는 env 로 override 가능 (미지정 시 데모용 1개).
-  # 형식: 'ID=PASSWORD,SITE,TIER,USID' (반복 가능하려면 MD_SEED_CP1/CP2/... 로 확장 예정)
+  # ETCD_URL — --with-fix 블록에서 이미 poll 로 결정되어 있으면 재사용.
+  # 없으면 여기서 poll (예: --with-md 만 지정한 경우).
+  if [ -z "${ETCD_URL:-}" ]; then
+    for i in {1..20}; do
+      ETCD_URL=$(grep -oE '"client_url":"http://127\.0\.0\.1:[0-9]+"' logs/mci-admin.log 2>/dev/null \
+                 | head -1 | grep -oE 'http://127\.0\.0\.1:[0-9]+' || true)
+      [ -n "${ETCD_URL:-}" ] && break
+      sleep 0.5
+    done
+  fi
   MD_SEED_CP="${MD_SEED_CP:-ECN_MD_TEST_01=test-pw,HQ,VIP,ECN_MD_TEST_01}"
+  MD_ETCD_ARGS=()
+  if [ -n "${ETCD_URL:-}" ]; then
+    MD_ETCD_ARGS=(--etcd "$ETCD_URL")
+    echo "==> mci-edge-md: etcd_url=$ETCD_URL"
+  else
+    echo "==> mci-edge-md: etcd URL 못 잡음 — 정적 seed 만 사용"
+  fi
   start mci-edge-md ./build/bin/mci-edge-md \
     --port "${MD_PORT:-5011}" \
     --stats "${MD_STATS:-127.0.0.1:5012}" \
     --sender "${MD_SENDER:-WTG_MD}" \
     --seed-cp "$MD_SEED_CP" \
+    "${MD_ETCD_ARGS[@]}" \
     --log-level info
 fi
 

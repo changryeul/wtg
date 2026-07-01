@@ -14,17 +14,21 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/quickfixgo/quickfix"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // Server — mci-edge-md lifecycle. quickfix.Acceptor wrap.
 type Server struct {
-	cfg      Config
-	logger   *slog.Logger
-	app      *fixApp
-	acceptor *quickfix.Acceptor
-	reloadMu sync.Mutex
+	cfg       Config
+	logger    *slog.Logger
+	app       *fixApp
+	acceptor  *quickfix.Acceptor
+	cpWatcher *EtcdCounterpartyWatcher
+	cpEtcdCli *clientv3.Client
+	reloadMu  sync.Mutex
 }
 
 // Config — Server 옵션.
@@ -38,20 +42,27 @@ type Config struct {
 	// HeartBtInt — Heartbeat 주기 (초).
 	HeartBtInt int
 
-	// Counterparties — 정적 seed. Phase A 는 이거만. Phase B 는 etcd watch 로
-	// 교체.
+	// Counterparties — 정적 seed. Phase A 호환. EtcdEndpoints 가 채워지면
+	// etcd snapshot 이 위에 덮음 (edge-fix 와 동일).
 	Counterparties map[string]Counterparty
 
-	// LogQuickfix — quickfix 내부 log 노출 (Phase B). default false.
+	// EtcdEndpoints + EtcdCounterpartiesPrefix — Phase B 동적 정책. edge-fix
+	// 와 동일 store (`wtg/fix/counterparties/`) 를 읽되 AllowsMD() 필터. 빈값
+	// 이면 정적 seed 만.
+	EtcdEndpoints            string
+	EtcdCounterpartiesPrefix string
+
+	// LogQuickfix — quickfix 내부 log 노출. default false.
 	LogQuickfix bool
 }
 
-// DefaultConfig — Phase A 기본값.
+// DefaultConfig — 기본값.
 func DefaultConfig() Config {
 	return Config{
-		ListenPort:   5011,
-		SenderCompID: "WTG_MD",
-		HeartBtInt:   30,
+		ListenPort:               5011,
+		SenderCompID:             "WTG_MD",
+		HeartBtInt:               30,
+		EtcdCounterpartiesPrefix: "wtg/fix/counterparties/",
 	}
 }
 
@@ -82,7 +93,20 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 		cfg.SenderCompID = "WTG_MD"
 	}
 
-	policy := &staticPolicy{m: cfg.Counterparties}
+	// policy 선택 — etcd 이면 MemoryCounterpartyPolicy + Start 에서 watcher 가동.
+	// 아니면 staticPolicy (Phase A 호환).
+	var policy CounterpartyPolicy
+	var memPolicy *MemoryCounterpartyPolicy
+	if cfg.EtcdEndpoints != "" {
+		memPolicy = NewMemoryCounterpartyPolicy()
+		// 정적 seed 를 첫 snapshot 으로 (etcd 초기 load 가 그 위에 Replace).
+		if len(cfg.Counterparties) > 0 {
+			memPolicy.Replace(cfg.Counterparties)
+		}
+		policy = memPolicy
+	} else {
+		policy = &staticPolicy{m: cfg.Counterparties}
+	}
 	app := newFixApp(cfg, logger, policy, DefaultStaticProvider())
 
 	settings, err := buildSettings(cfg)
@@ -98,18 +122,66 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	return &Server{cfg: cfg, logger: logger, app: app, acceptor: acceptor}, nil
 }
 
-// Start — quickfix acceptor 시작 + ctx.Done() 까지 유지. 블로킹.
+// Start — etcd watcher (있다면) + quickfix acceptor 시작 + ctx.Done() 까지 유지.
+// 블로킹. 호출자가 별도 goroutine 또는 main 마지막에.
 func (s *Server) Start(ctx context.Context) error {
+	if err := s.startCounterpartyWatcher(ctx); err != nil {
+		s.logger.Warn("MD counterparty etcd watcher 실패 — 정적 seed 만",
+			slog.Any("err", err))
+	}
 	if err := s.acceptor.Start(); err != nil {
 		return fmt.Errorf("acceptor.Start: %w", err)
 	}
 	s.logger.Info("mci-edge-md listen 시작",
 		slog.Int("port", s.cfg.ListenPort),
 		slog.String("sender", s.cfg.SenderCompID),
-		slog.Int("counterparties_seed", len(s.cfg.Counterparties)))
+		slog.Int("counterparties_seed", len(s.cfg.Counterparties)),
+		slog.String("etcd", s.cfg.EtcdEndpoints))
 	<-ctx.Done()
 	s.acceptor.Stop()
+	if s.cpWatcher != nil {
+		s.cpWatcher.Stop()
+	}
+	if s.cpEtcdCli != nil {
+		_ = s.cpEtcdCli.Close()
+	}
 	s.logger.Info("mci-edge-md 종료")
+	return nil
+}
+
+// startCounterpartyWatcher — etcd 활성 환경에서 dial + watcher Start.
+func (s *Server) startCounterpartyWatcher(ctx context.Context) error {
+	if s.cfg.EtcdEndpoints == "" {
+		return nil
+	}
+	memPolicy, ok := s.app.policy.(*MemoryCounterpartyPolicy)
+	if !ok {
+		return nil
+	}
+	eps := strings.Split(s.cfg.EtcdEndpoints, ",")
+	for i, e := range eps {
+		eps[i] = strings.TrimSpace(e)
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   eps,
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("etcd dial: %w", err)
+	}
+	prefix := s.cfg.EtcdCounterpartiesPrefix
+	if prefix == "" {
+		prefix = "wtg/fix/counterparties/"
+	}
+	w := NewEtcdCounterpartyWatcher(cli, prefix, memPolicy, s.logger)
+	if err := w.Start(ctx); err != nil {
+		_ = cli.Close()
+		return fmt.Errorf("watcher Start: %w", err)
+	}
+	s.cpEtcdCli = cli
+	s.cpWatcher = w
+	s.logger.Info("MD CounterpartyPolicy etcd watcher 활성",
+		slog.String("prefix", prefix))
 	return nil
 }
 
@@ -126,8 +198,11 @@ func (s *Server) CounterpartySnapshot() map[string]Counterparty {
 // Provider — 진단/테스트용 provider 조회.
 func (s *Server) Provider() *StaticQuoteProvider { return s.app.provider }
 
-// Reload — Phase C 대비. Phase A 는 seed 재갱신만 (실제 SIGHUP 은 아직 미연결).
-// mci-edge-fix.Reload 와 동일 시그니처 유지.
+// Reload — SIGHUP handler. 현재 policy snapshot 으로 settings 재빌드 + acceptor
+// 재시작. 신규 CID 등록 시 [SESSION] block 이 부팅 시 seed 만 잡기 때문에 필요.
+// 짧은 (수 초) 재로그온 윈도우 발생 — 시장 마감 시간 등 적용 권장.
+//
+// thread-safe. SIGHUP handler 또는 admin endpoint 에서 호출.
 func (s *Server) Reload() (retErr error) {
 	s.reloadMu.Lock()
 	defer s.reloadMu.Unlock()

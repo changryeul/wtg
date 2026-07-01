@@ -153,11 +153,18 @@ type Config struct {
 	BestDedupEnabled            bool
 	BestDedupTickSizeMultiplier float64
 
-	// AlgoStream (Phase A) — 시스템 트레이딩 (내부 algo 봇) 전용 시세 stream.
-	// SubscribeQuote/Subscribe 와 격리된 채널. from_seq > 0 backfill 은 Phase B.
-	// default off — algo 봇 요구 있을 때만 활성.
+	// AlgoStream (Phase A~C) — 시스템 트레이딩 (내부 algo 봇) 전용 시세 stream.
+	// SubscribeQuote/Subscribe 와 격리된 채널.
 	AlgoStreamEnabled bool
 	AlgoRingSize      int // 심볼별 ring buffer 크기 (Phase B backfill 용). default 100_000.
+
+	// AlgoClientBufferSize — per-client channel 깊이. 폭주 시 흡수. default 1024.
+	// 큰 값 = drop 덜 발생하지만 slow client 감지 늦어짐. Phase C.
+	AlgoClientBufferSize int
+
+	// AlgoSlowClientTimeout — buffer 가 채워지고 회복 없으면 disconnect. 0 이면
+	// disconnect 없음 (drop 만). default 5s. Phase C.
+	AlgoSlowClientTimeout time.Duration
 
 	// ─── CrossRateConsumer (cross pair 합성 — direct leg 두 개로 cross 산식 적용) ──
 	//
@@ -321,8 +328,10 @@ func DefaultConfig() Config {
 		BestDedupTickSizeMultiplier: 1.0,
 
 		// algo stream default off. AlgoRingSize 는 활성 시 default 100k.
-		AlgoStreamEnabled: false,
-		AlgoRingSize:      100_000,
+		AlgoStreamEnabled:     false,
+		AlgoRingSize:          100_000,
+		AlgoClientBufferSize:  1024,
+		AlgoSlowClientTimeout: 5 * time.Second,
 
 		CrossMaxStaleness:   30 * time.Second,
 		CrossDebounceWindow: 10 * time.Millisecond,
@@ -569,6 +578,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.Float64Var(&cfg.BestDedupTickSizeMultiplier, "dedup-tick-size-multiplier", cfg.BestDedupTickSizeMultiplier, "below-tick dedup 임계값 배수. 0=exact-match 만, 1.0=1 tick 미만 skip")
 	fs.BoolVar(&cfg.AlgoStreamEnabled, "algo-stream", cfg.AlgoStreamEnabled, "AlgoStream (SubscribeAlgo) 활성 — 내부 algo 봇 전용 시세 stream (default off)")
 	fs.IntVar(&cfg.AlgoRingSize, "algo-ring-size", cfg.AlgoRingSize, "AlgoStream 심볼별 ring buffer 크기 (Phase B backfill 용). default 100_000")
+	fs.IntVar(&cfg.AlgoClientBufferSize, "algo-client-buffer", cfg.AlgoClientBufferSize, "AlgoStream per-client channel 깊이 (Phase C). default 1024")
+	fs.DurationVar(&cfg.AlgoSlowClientTimeout, "algo-slow-timeout", cfg.AlgoSlowClientTimeout, "AlgoStream slow client disconnect 임계 (Phase C). 0=disconnect 없음. default 5s")
 	fs.DurationVar(&cfg.CrossMaxStaleness, "cross-staleness", cfg.CrossMaxStaleness, "cross leg quote 가 이 시간 이상 갱신 없으면 cross emit 차단 (0=30s 기본)")
 	fs.DurationVar(&cfg.CrossDebounceWindow, "cross-debounce", cfg.CrossDebounceWindow, "cross emit 의 같은 pair 중복 차단 윈도우 (0=10ms 기본)")
 	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (etcd 비활성 시)")

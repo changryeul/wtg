@@ -2,6 +2,7 @@ package price
 
 import (
 	"testing"
+	"time"
 
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
@@ -91,6 +92,107 @@ func TestAlgoRing_SnapshotGap(t *testing.T) {
 	}
 	if oldest != 4 {
 		t.Errorf("oldest=%d want 4", oldest)
+	}
+}
+
+// Phase C — slow client 감지: firstDropAt 이 timeout 지나면 evictSlowSubs 가
+// sub.done 을 close 하고 카운터 증가.
+func TestAlgoServer_EvictSlowClient(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{
+		RingSize:          10,
+		ClientBufferSize:  1,
+		SlowClientTimeout: 100 * time.Millisecond,
+	})
+	defer s.Stop()
+
+	sub := &algoSub{
+		clientID:  "slow-test",
+		symbolSet: map[string]struct{}{},
+		ch:        make(chan *wtgpb.AlgoQuote, 1),
+		done:      make(chan struct{}),
+	}
+	s.subsMu.Lock()
+	s.subs[sub] = struct{}{}
+	s.subsMu.Unlock()
+
+	// 인위적으로 200ms 전 firstDropAt — timeout(100ms) 초과 상태.
+	sub.firstDropAt.Store(time.Now().Add(-200 * time.Millisecond).UnixNano())
+
+	s.evictSlowSubs()
+
+	select {
+	case <-sub.done:
+		// OK — close 됨
+	case <-time.After(10 * time.Millisecond):
+		t.Fatal("done 이 close 안 됨 (evict 실패)")
+	}
+	if got := s.disconnectedSlow.Load(); got != 1 {
+		t.Errorf("disconnectedSlow=%d want 1", got)
+	}
+	if !sub.slowFired.Load() {
+		t.Errorf("slowFired=false want true")
+	}
+}
+
+// Phase C — firstDropAt 이 있지만 timeout 미만이면 evict 안 함.
+func TestAlgoServer_EvictSkippedIfWithinTimeout(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{
+		SlowClientTimeout: 500 * time.Millisecond,
+	})
+	defer s.Stop()
+
+	sub := &algoSub{
+		clientID:  "borderline",
+		symbolSet: map[string]struct{}{},
+		ch:        make(chan *wtgpb.AlgoQuote, 1),
+		done:      make(chan struct{}),
+	}
+	s.subsMu.Lock()
+	s.subs[sub] = struct{}{}
+	s.subsMu.Unlock()
+
+	// 50ms 전 firstDropAt — timeout(500ms) 미만 → evict 안 해야.
+	sub.firstDropAt.Store(time.Now().Add(-50 * time.Millisecond).UnixNano())
+
+	s.evictSlowSubs()
+
+	select {
+	case <-sub.done:
+		t.Fatal("done 이 잘못 close 됨 (아직 timeout 안 됨)")
+	default:
+	}
+	if got := s.disconnectedSlow.Load(); got != 0 {
+		t.Errorf("disconnectedSlow=%d want 0", got)
+	}
+}
+
+// Phase C — firstDropAt=0 (정상 상태) 이면 skip.
+func TestAlgoServer_EvictSkippedIfHealthy(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{
+		SlowClientTimeout: 100 * time.Millisecond,
+	})
+	defer s.Stop()
+
+	sub := &algoSub{
+		clientID:  "healthy",
+		symbolSet: map[string]struct{}{},
+		ch:        make(chan *wtgpb.AlgoQuote, 1),
+		done:      make(chan struct{}),
+	}
+	s.subsMu.Lock()
+	s.subs[sub] = struct{}{}
+	s.subsMu.Unlock()
+
+	// firstDropAt=0 — 정상.
+	s.evictSlowSubs()
+
+	select {
+	case <-sub.done:
+		t.Fatal("정상 sub 인데 done close 됨")
+	default:
+	}
+	if got := s.disconnectedSlow.Load(); got != 0 {
+		t.Errorf("disconnectedSlow=%d want 0", got)
 	}
 }
 

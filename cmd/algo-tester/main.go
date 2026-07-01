@@ -35,7 +35,8 @@ func main() {
 		clientID = flag.String("client-id", "algo-tester", "clientID (다중 인스턴스 구분)")
 		symbols  = flag.String("symbols", "USDKRW", "구독 심볼 CSV (빈값=모든 심볼)")
 		fromSeq  = flag.Int64("from-seq", 0, "재접속 backfill (Phase B). Phase A 는 반드시 0")
-		duration = flag.Duration("duration", 30*time.Second, "테스트 실행 시간. 0=Ctrl-C 까지")
+		duration  = flag.Duration("duration", 30*time.Second, "테스트 실행 시간. 0=Ctrl-C 까지")
+		slowSleep = flag.Duration("slow-sleep", 0, "매 recv 후 sleep — slow client 시뮬. 예: 100ms")
 	)
 	flag.Parse()
 
@@ -98,6 +99,9 @@ func main() {
 			fmt.Printf("[#%06d] %s seq=%d bid=%.5f ask=%.5f lat=%.2fms bf=%v%s\n",
 				recv, q.GetSym(), q.GetSeq(), q.GetBid(), q.GetAsk(),
 				latencyMs, q.GetIsBackfill(), gap)
+		}
+		if *slowSleep > 0 {
+			time.Sleep(*slowSleep)
 		}
 	}
 

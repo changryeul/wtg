@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 
@@ -44,6 +45,11 @@ type AlgoStreamServer struct {
 	subsMu sync.RWMutex
 	subs   map[*algoSub]struct{} // 전체 subscriber (심볼별 필터는 각 sub 내부).
 
+	// Phase C — per-client isolation.
+	clientBufSize int
+	slowTimeout   time.Duration // 0 = disconnect 비활성
+	stopWatch     chan struct{} // watcher goroutine 종료 signal
+
 	// 카운터.
 	subscribersActive atomic.Int64
 	ticksEmitted      atomic.Uint64
@@ -51,6 +57,7 @@ type AlgoStreamServer struct {
 	backfillEmitted   atomic.Uint64 // Phase B — replay 로 보낸 tick 누적
 	backfillGaps      atomic.Uint64 // Phase B — sequence_gap 반환한 요청 누적
 	dedupSkipped      atomic.Uint64 // Phase B — replay 후 live 시 중복 skip 누적
+	disconnectedSlow  atomic.Uint64 // Phase C — slow client timeout 으로 끊은 수
 }
 
 // algoSub — 활성 subscribe stream 의 상태.
@@ -59,6 +66,17 @@ type algoSub struct {
 	symbolSet  map[string]struct{} // 빈 map = 모두 허용
 	ch         chan *wtgpb.AlgoQuote
 	dropsLocal atomic.Uint64
+
+	// Phase C — slow client 감지. firstDropAt = 첫 drop 시각 (unix nano). 0 =
+	// 정상. successful send 마다 0 으로 리셋 (일시적 폭주 후 회복은 허용).
+	// watcher goroutine 이 (now - firstDropAt) > slowTimeout 이면 disconnect.
+	firstDropAt atomic.Int64
+
+	// done — watcher 가 close() 하면 SubscribeAlgo 의 for-select 가 나감.
+	done chan struct{}
+
+	// timeout 판정된 여부 (double-close 방지 + status 반환 판정).
+	slowFired atomic.Bool
 }
 
 // algoRing — 심볼별 최근 N tick 을 원형 저장. Phase B backfill 지원.
@@ -127,21 +145,93 @@ func (r *algoRing) snapshot(fromSeq int64) (ticks []wtgpb.AlgoQuote, oldest int6
 	return ticks, oldest, false
 }
 
-// NewAlgoStreamServer — logger nil 이면 slog.Default(). ringSize 는 심볼별
-// 저장할 tick 수. 0 이면 default 100_000.
-func NewAlgoStreamServer(logger *slog.Logger, ringSize int) *AlgoStreamServer {
+// AlgoStreamOptions — NewAlgoStreamServer 옵션. 0 값은 default 로 대체.
+type AlgoStreamOptions struct {
+	RingSize          int           // 심볼별 ring buffer 크기 (default 100_000)
+	ClientBufferSize  int           // per-client channel 깊이 (default 1024)
+	SlowClientTimeout time.Duration // slow client disconnect 임계 (default 5s, 0=비활성)
+}
+
+// NewAlgoStreamServer — logger nil 이면 slog.Default(). watcher goroutine 은
+// SlowClientTimeout > 0 이면 자동 시작.
+func NewAlgoStreamServer(logger *slog.Logger, opts AlgoStreamOptions) *AlgoStreamServer {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if ringSize <= 0 {
-		ringSize = 100_000
+	if opts.RingSize <= 0 {
+		opts.RingSize = 100_000
 	}
-	return &AlgoStreamServer{
-		logger:   logger,
-		seqGens:  make(map[string]*atomic.Uint64),
-		rings:    make(map[string]*algoRing),
-		ringSize: ringSize,
-		subs:     make(map[*algoSub]struct{}),
+	if opts.ClientBufferSize <= 0 {
+		opts.ClientBufferSize = 1024
+	}
+	s := &AlgoStreamServer{
+		logger:        logger,
+		seqGens:       make(map[string]*atomic.Uint64),
+		rings:         make(map[string]*algoRing),
+		ringSize:      opts.RingSize,
+		subs:          make(map[*algoSub]struct{}),
+		clientBufSize: opts.ClientBufferSize,
+		slowTimeout:   opts.SlowClientTimeout,
+		stopWatch:     make(chan struct{}),
+	}
+	if opts.SlowClientTimeout > 0 {
+		go s.watchLoop()
+	}
+	return s
+}
+
+// Stop — watcher goroutine 종료. mci-price shutdown 시 호출 권장 (nice-to-have).
+func (s *AlgoStreamServer) Stop() {
+	select {
+	case <-s.stopWatch:
+		// already closed
+	default:
+		close(s.stopWatch)
+	}
+}
+
+// watchLoop — 500ms 주기로 sub 순회, slow client timeout 검사. Phase C.
+func (s *AlgoStreamServer) watchLoop() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopWatch:
+			return
+		case <-ticker.C:
+			s.evictSlowSubs()
+		}
+	}
+}
+
+func (s *AlgoStreamServer) evictSlowSubs() {
+	nowNs := time.Now().UnixNano()
+	thresholdNs := s.slowTimeout.Nanoseconds()
+	// snapshot sub 리스트 (하 동안 subsMu 짧게).
+	s.subsMu.RLock()
+	list := make([]*algoSub, 0, len(s.subs))
+	for sub := range s.subs {
+		list = append(list, sub)
+	}
+	s.subsMu.RUnlock()
+	for _, sub := range list {
+		firstDrop := sub.firstDropAt.Load()
+		if firstDrop == 0 {
+			continue
+		}
+		if nowNs-firstDrop < thresholdNs {
+			continue
+		}
+		if !sub.slowFired.CompareAndSwap(false, true) {
+			continue
+		}
+		s.disconnectedSlow.Add(1)
+		s.logger.Warn("algo slow client — disconnect",
+			slog.String("client_id", sub.clientID),
+			slog.Uint64("drops_local", sub.dropsLocal.Load()),
+			slog.Int64("first_drop_ns", firstDrop),
+			slog.Int64("age_ms", (nowNs-firstDrop)/1_000_000))
+		close(sub.done)
 	}
 }
 
@@ -176,8 +266,8 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 
 	s.ticksEmitted.Add(1)
 
-	// active subscriber 에게 fan-out. non-blocking (Phase A). Phase C 에서
-	// timeout + isolation.
+	// active subscriber 에게 fan-out. non-blocking — 다른 sub 격리.
+	// Phase C: drop 시 firstDropAt 기록 (watcher 가 timeout 판정에 사용).
 	s.subsMu.RLock()
 	for sub := range s.subs {
 		if len(sub.symbolSet) > 0 {
@@ -187,9 +277,13 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 		}
 		select {
 		case sub.ch <- q:
+			// send OK — 만약 slow 상태였으면 리셋 (일시적 폭주 회복 관대 정책).
+			sub.firstDropAt.Store(0)
 		default:
 			sub.dropsLocal.Add(1)
 			s.sendDrops.Add(1)
+			// 첫 drop 이면 시각 기록 (지속 drop watcher 가 판정).
+			sub.firstDropAt.CompareAndSwap(0, time.Now().UnixNano())
 		}
 	}
 	s.subsMu.RUnlock()
@@ -245,7 +339,8 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 	sub := &algoSub{
 		clientID:  req.GetClientId(),
 		symbolSet: make(map[string]struct{}, len(req.GetSymbols())),
-		ch:        make(chan *wtgpb.AlgoQuote, 1024), // Phase C 에서 tunable.
+		ch:        make(chan *wtgpb.AlgoQuote, s.clientBufSize),
+		done:      make(chan struct{}),
 	}
 	for _, sym := range req.GetSymbols() {
 		if sym != "" {
@@ -311,6 +406,11 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-sub.done:
+			// Phase C — watcher 가 slow 판정 → 정중히 종료.
+			return status.Errorf(codes.Aborted,
+				"slow_client_timeout — buffer 폭주 %v 이상 지속. drops=%d. 재접속 시 from_seq 재개 권장",
+				s.slowTimeout, sub.dropsLocal.Load())
 		case q := <-sub.ch:
 			// dedup: replay 이미 한 seq 는 skip. 심볼별 최종 replay seq 이하는
 			// 이미 client 가 backfill 로 받았음.
@@ -352,8 +452,10 @@ type AlgoStats struct {
 	BackfillEmitted   uint64 `json:"backfill_emitted"`
 	BackfillGaps      uint64 `json:"backfill_gaps"`
 	DedupSkipped      uint64 `json:"dedup_skipped"`
+	DisconnectedSlow  uint64 `json:"disconnected_slow"`
 	SymbolsWithRing   int    `json:"symbols_with_ring"`
 	RingSize          int    `json:"ring_size"`
+	ClientBufSize     int    `json:"client_buffer_size"`
 }
 
 func (s *AlgoStreamServer) Stats() AlgoStats {
@@ -367,8 +469,10 @@ func (s *AlgoStreamServer) Stats() AlgoStats {
 		BackfillEmitted:   s.backfillEmitted.Load(),
 		BackfillGaps:      s.backfillGaps.Load(),
 		DedupSkipped:      s.dedupSkipped.Load(),
+		DisconnectedSlow:  s.disconnectedSlow.Load(),
 		SymbolsWithRing:   syms,
 		RingSize:          s.ringSize,
+		ClientBufSize:     s.clientBufSize,
 	}
 }
 

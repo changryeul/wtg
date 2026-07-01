@@ -241,11 +241,17 @@ func main() {
 	// downstream 으로 등록 → 매 tick 을 심볼별 monotonic seq + per-symbol ring
 	// 에 저장 후 subscriber 에게 fan-out. Phase B 에서 from_seq > 0 backfill.
 	if grpcSrv != nil && cfg.AlgoStreamEnabled {
-		algoSrv := price.NewAlgoStreamServer(logger, cfg.AlgoRingSize)
+		algoSrv := price.NewAlgoStreamServer(logger, price.AlgoStreamOptions{
+			RingSize:          cfg.AlgoRingSize,
+			ClientBufferSize:  cfg.AlgoClientBufferSize,
+			SlowClientTimeout: cfg.AlgoSlowClientTimeout,
+		})
 		srv.AddConsumer(algoSrv)
 		grpcSrv.AttachAlgo(algoSrv)
 		logger.Info("AlgoStream 활성 — SubscribeAlgo",
-			slog.Int("ring_size", cfg.AlgoRingSize))
+			slog.Int("ring_size", cfg.AlgoRingSize),
+			slog.Int("client_buffer", cfg.AlgoClientBufferSize),
+			slog.Duration("slow_timeout", cfg.AlgoSlowClientTimeout))
 	}
 
 	// QuoteID stack (pkg/quoteid) — Generator + Registry. cfg.QuoteIDInstance

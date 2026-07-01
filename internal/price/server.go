@@ -306,6 +306,9 @@ func (s *Server) QuoteValidator() *QuoteValidationServer { return s.quoteValidat
 // Metrics — Prometheus Registry 노출. main.go 가 validator 에 주입 시 사용.
 func (s *Server) Metrics() *metrics.Registry { return s.metrics }
 
+// Best — BestConsumer 노출 (P6Metrics 등록용). BestEnabled=false 면 nil.
+func (s *Server) Best() *BestConsumer { return s.best }
+
 // GRPCServer 는 현재 attached 된 GRPCServer 를 반환 (Start 이후 자동생성 포함).
 // nil 이면 활성화되지 않은 상태.
 func (s *Server) GRPCServer() *GRPCServer { return s.grpcSrv }

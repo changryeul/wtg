@@ -87,4 +87,28 @@ func TestRegisterP6Metrics_NoDoubleRegister(t *testing.T) {
 	}
 }
 
+// BestConsumer 등록 — dedup 카운터 6개 노출 확인.
+func TestRegisterP6Metrics_BestExposed(t *testing.T) {
+	reg := metrics.NewRegistry()
+	bc := NewBestConsumer(BestOptions{
+		Dedup: DedupOptions{Enabled: true, TickSizeMultiplier: 1.0},
+	})
+	if err := RegisterP6Metrics(reg, P6MetricsOpts{Best: bc}); err != nil {
+		t.Fatal(err)
+	}
+	body := scrapeMetrics(t, reg)
+	expects := []string{
+		"wtg_best_emitted_total",
+		"wtg_best_dedup_dropped_same_price_total",
+		"wtg_best_dedup_dropped_below_tick_total",
+		"wtg_best_rejected_quotes_total",
+		"wtg_best_dedup_enabled 1",
+	}
+	for _, m := range expects {
+		if !strings.Contains(body, m) {
+			t.Errorf("metric 누락: %s", m)
+		}
+	}
+}
+
 // scrapeMetrics 는 quote_validation_metrics_test.go 에 정의됨 — 재사용.

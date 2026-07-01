@@ -427,10 +427,11 @@ func main() {
 		Pricing:  pc,
 		Currency: currencyMaster,
 		Pair:     pairMaster,
+		Best:     srv.Best(),
 	}); err != nil {
 		logger.Warn("P6 메트릭 등록 실패", slog.Any("error", err))
 	} else {
-		logger.Info("P6 metrics 등록 — wtg_cross_*, wtg_pricing_*, wtg_master_*")
+		logger.Info("P6 metrics 등록 — wtg_cross_*, wtg_pricing_*, wtg_master_*, wtg_best_*")
 	}
 
 	// S3 swap 메트릭 — swap_lock 발급 + ValidateSwap/ConsumeSwap RPC + partial-race.

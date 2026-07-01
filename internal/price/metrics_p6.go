@@ -14,6 +14,7 @@ type P6MetricsOpts struct {
 	Currency *pricing.CurrencyMaster
 	Pair     *pricing.PairMaster
 	Quote    *QuoteValidationServer // quoteid validation stats (옵션)
+	Best     *BestConsumer          // best dedup 카운터 (옵션)
 }
 
 // RegisterP6Metrics — P6 인프라 (cross-rate / 마진 5L / master) 의 Prometheus
@@ -148,6 +149,43 @@ func RegisterP6Metrics(reg *metrics.Registry, opts P6MetricsOpts) error {
 				}
 			}
 			return float64(n)
+		})); err != nil {
+			return err
+		}
+	}
+
+	// BestConsumer — dedup 카운터 (same-price / below-tick / emitted).
+	if opts.Best != nil {
+		bc := opts.Best
+		bestGauges := []struct {
+			name, help string
+			fn         func() float64
+		}{
+			{"wtg_best_emitted_total", "BestConsumer 가 downstream 으로 fan-out 한 tick 누적",
+				func() float64 { return float64(bc.Stats().Dedup.Emitted) }},
+			{"wtg_best_dedup_dropped_same_price_total", "이전 emit 과 bid+ask 완전 동일이라 skip 한 tick 누적",
+				func() float64 { return float64(bc.Stats().Dedup.DroppedSamePrice) }},
+			{"wtg_best_dedup_dropped_below_tick_total", "bid/ask 변화가 tick_size 미만이라 skip 한 tick 누적",
+				func() float64 { return float64(bc.Stats().Dedup.DroppedBelowTick) }},
+			{"wtg_best_rejected_quotes_total", "invariant 위반 (bid<=0/ask<=0/bid>ask) 으로 reject 한 raw tick 누적",
+				func() float64 { return float64(bc.Stats().RejectedQuotes) }},
+		}
+		for _, g := range bestGauges {
+			if err := reg.Register(prometheus.NewGaugeFunc(
+				prometheus.GaugeOpts{Name: g.name, Help: g.help}, g.fn,
+			)); err != nil {
+				return err
+			}
+		}
+		// Enabled 플래그도 gauge 로 노출 (dashboard 에서 필터 편의).
+		if err := reg.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "wtg_best_dedup_enabled",
+			Help: "BestConsumer dedup 활성 여부 (1=on, 0=off)",
+		}, func() float64 {
+			if bc.Stats().Dedup.Enabled {
+				return 1
+			}
+			return 0
 		})); err != nil {
 			return err
 		}

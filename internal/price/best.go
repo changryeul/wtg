@@ -34,6 +34,42 @@ type BestOptions struct {
 
 	// Logger — nil 이면 slog.Default().
 	Logger *slog.Logger
+
+	// Dedup — same-price / below-tick 필터. default off. 자세히는 DedupOptions.
+	Dedup DedupOptions
+}
+
+// DedupOptions — best emit 전 값 기반 필터. FX 관례상 quiet market 에서 같은
+// bid/ask 가 반복 발행되면 downstream (Aggregator/PricingConsumer/gRPC) 이
+// 의미 없는 처리 반복. 활성 시 이전 emit 값과 비교해 skip.
+//
+// 두 단계:
+//  1. exact-match — 이전 emit 과 bid + ask 가 정확히 동일하면 skip.
+//  2. below-tick — TickSizeMultiplier > 0 이면 bid/ask 각 변화가 tick_size ×
+//     multiplier 미만이면 skip. 예: multiplier=1.0 이면 1 tick 미만 skip.
+//
+// default off — 잘못 튜닝 시 downstream 이 stale quote 위에서 결정. 운영 관측
+// 후 on 판단.
+type DedupOptions struct {
+	// Enabled — false 면 모든 dedup skip (기존 동작 유지).
+	Enabled bool
+
+	// TickSizeMultiplier — 0=exact-match 만. 1.0=1 tick 미만 skip. 음수 무효.
+	// 실제 tick size 는 심볼 → quote currency 로 추정 (JPY/KRW/CNY/TWD/IDR/VND=0.01,
+	// 그 외=0.0001) — Phase C 에서 SymbolEntry.TickSize override 노출 예정.
+	TickSizeMultiplier float64
+
+	// TickSizeOverride — 심볼별 tick_size 강제 (default 추정 대신). 빈 map 이면
+	// symbolQuoteTickSize() 로 fallback. 편의: Phase C 의 etcd 카탈로그 대신
+	// static seed 로 override 필요할 때만 사용.
+	TickSizeOverride map[string]float64
+}
+
+// lastEmit — dedup 필터에 쓰는 이전 emit 스냅샷.
+type lastEmit struct {
+	bid, ask float64
+	// hasValue — zero-value (첫 emit) 인지 구분.
+	hasValue bool
 }
 
 // BestConsumer 는 raw 다중시장 Tick 을 받아 best 호가를 산정해 downstream 으로
@@ -50,6 +86,13 @@ type BestConsumer struct {
 	// invariant 위반으로 reject 한 raw quote 수 — bid<=0 / ask<=0 / bid>ask.
 	// feed cooker / forwarder 의 데이터 sanity 진단. /v1/best-stats 노출 (후속).
 	rejectedQuotes atomic.Uint64
+
+	// dedup — enabled 면 emit 전 same-price / below-tick 필터.
+	dedup                 DedupOptions
+	lastEmitted           map[string]lastEmit // symbol → last emit (cache mu 로 보호)
+	dedupDroppedSame      atomic.Uint64
+	dedupDroppedBelowTick atomic.Uint64
+	emittedTotal          atomic.Uint64
 }
 
 type sourceQuote struct {
@@ -68,12 +111,89 @@ func NewBestConsumer(opts BestOptions, downstream ...TickConsumer) *BestConsumer
 	if stale == 0 {
 		stale = 30 * time.Second
 	}
+	d := opts.Dedup
+	if d.TickSizeMultiplier < 0 {
+		d.TickSizeMultiplier = 0
+	}
 	return &BestConsumer{
 		maxStaleness: stale,
 		logger:       logger,
 		cache:        make(map[string]map[string]sourceQuote),
 		downstream:   downstream,
+		dedup:        d,
+		lastEmitted:  make(map[string]lastEmit),
 	}
+}
+
+// shouldDedupLocked — dedup 필터. caller 가 mu 잡음. skip 하려면 true 반환.
+//
+// hasValue=false (첫 emit) 이면 절대 skip 안 함. exact-match 우선, 그다음
+// below-tick. tick_size 는 심볼별 override → symbolQuoteTickSize fallback.
+//
+// 반환값의 두 bool 은 각각 same-price / below-tick 계열 여부 (metric label).
+func (b *BestConsumer) shouldDedupLocked(symbol string, bid, ask float64) (skip, sameSp bool) {
+	if !b.dedup.Enabled {
+		return false, false
+	}
+	prev, ok := b.lastEmitted[symbol]
+	if !ok || !prev.hasValue {
+		return false, false
+	}
+	// exact-match — same-price.
+	if prev.bid == bid && prev.ask == ask {
+		return true, true
+	}
+	// below-tick — multiplier > 0 이면.
+	if b.dedup.TickSizeMultiplier > 0 {
+		ts := b.tickSizeFor(symbol)
+		if ts > 0 {
+			threshold := ts * b.dedup.TickSizeMultiplier
+			if absDiff(prev.bid, bid) < threshold && absDiff(prev.ask, ask) < threshold {
+				return true, false
+			}
+		}
+	}
+	return false, false
+}
+
+// tickSizeFor — override 우선, 없으면 심볼의 quote currency 로 추정.
+func (b *BestConsumer) tickSizeFor(symbol string) float64 {
+	if v, ok := b.dedup.TickSizeOverride[symbol]; ok && v > 0 {
+		return v
+	}
+	return symbolQuoteTickSize(symbol)
+}
+
+// symbolQuoteTickSize — 심볼 마지막 3자를 quote ccy 로 간주하고 tick_size 추정.
+// FX dealer convention: JPY/KRW/CNY/TWD/IDR/VND 는 0.01, 그 외 major/EM 은 0.0001.
+// 심볼 형식이 6자 미만이면 0 반환 (즉 below-tick dedup skip).
+func symbolQuoteTickSize(symbol string) float64 {
+	if len(symbol) < 6 {
+		return 0
+	}
+	quote := symbol[len(symbol)-3:]
+	// 대문자 정규화 (etc/symbols.json 은 uppercase 이나 안전 보정).
+	q := [3]byte{}
+	for i := 0; i < 3; i++ {
+		c := quote[i]
+		if c >= 'a' && c <= 'z' {
+			c -= 'a' - 'A'
+		}
+		q[i] = c
+	}
+	switch string(q[:]) {
+	case "JPY", "KRW", "CNY", "TWD", "IDR", "VND":
+		return 0.01
+	default:
+		return 0.0001
+	}
+}
+
+func absDiff(a, b float64) float64 {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }
 
 // AddDownstream 은 emit 대상 consumer 를 추가한다. Server.Start 가 호출하기
@@ -120,7 +240,22 @@ func (b *BestConsumer) OnTick(t *Tick) {
 	}
 	bySource[t.Source] = sourceQuote{bid: env.Bid, ask: env.Ask, ts: time.Now()}
 	bestBid, bestAsk, srcCount := b.recomputeLocked(bySource)
+	// dedup — emit 전 이전 값과 비교. skip 시 lastEmitted 갱신 안 함 (다음
+	// 실제 emit 시점이 정확한 delta 판정 기준).
+	skip, sameSp := b.shouldDedupLocked(t.Symbol, bestBid, bestAsk)
+	if !skip {
+		b.lastEmitted[t.Symbol] = lastEmit{bid: bestBid, ask: bestAsk, hasValue: true}
+	}
 	b.mu.Unlock()
+
+	if skip {
+		if sameSp {
+			b.dedupDroppedSame.Add(1)
+		} else {
+			b.dedupDroppedBelowTick.Add(1)
+		}
+		return
+	}
 
 	// 음수 = cross fallback 발동 (정보 보존용). hot path 는 절대값만 본다.
 	if srcCount == 0 {
@@ -153,6 +288,7 @@ func (b *BestConsumer) OnTick(t *Tick) {
 		Received: time.Now(),
 		Source:   SourceBest,
 	}
+	b.emittedTotal.Add(1)
 	for _, c := range b.downstream {
 		c.OnTick(best)
 	}
@@ -206,6 +342,19 @@ type BestStats struct {
 	// 운영 가시성 — invariant 위반으로 reject 한 raw quote 누적.
 	// 0 이 아니면 cooker / forwarder 의 데이터 sanity 점검 필요.
 	RejectedQuotes uint64 `json:"rejected_quotes"`
+
+	// Dedup — same-price / below-tick 필터 카운터. Enabled=false 면 모두 0.
+	Dedup BestDedupStats `json:"dedup"`
+}
+
+// BestDedupStats — dedup 필터 누적. Emit 은 실제로 fan-out 된 tick,
+// Dropped* 는 skip 된 tick.
+type BestDedupStats struct {
+	Enabled            bool    `json:"enabled"`
+	TickSizeMultiplier float64 `json:"tick_size_multiplier"`
+	Emitted            uint64  `json:"emitted"`
+	DroppedSamePrice   uint64  `json:"dropped_same_price"`
+	DroppedBelowTick   uint64  `json:"dropped_below_tick"`
 }
 
 type BestSymbolStat struct {
@@ -239,6 +388,13 @@ func (b *BestConsumer) Stats() BestStats {
 	out := BestStats{
 		Symbols:        make(map[string]BestSymbolStat, len(b.cache)),
 		RejectedQuotes: b.rejectedQuotes.Load(),
+		Dedup: BestDedupStats{
+			Enabled:            b.dedup.Enabled,
+			TickSizeMultiplier: b.dedup.TickSizeMultiplier,
+			Emitted:            b.emittedTotal.Load(),
+			DroppedSamePrice:   b.dedupDroppedSame.Load(),
+			DroppedBelowTick:   b.dedupDroppedBelowTick.Load(),
+		},
 	}
 	now := time.Now()
 	for sym, bySource := range b.cache {

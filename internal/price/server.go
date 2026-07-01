@@ -136,6 +136,10 @@ func NewServer(cfg Config, logger *slog.Logger, consumers ...TickConsumer) *Serv
 		s.best = NewBestConsumer(BestOptions{
 			MaxStaleness: cfg.BestMaxStaleness,
 			Logger:       logger,
+			Dedup: DedupOptions{
+				Enabled:            cfg.BestDedupEnabled,
+				TickSizeMultiplier: cfg.BestDedupTickSizeMultiplier,
+			},
 		}, consumers...)
 		s.consumers = []TickConsumer{s.best}
 	} else {

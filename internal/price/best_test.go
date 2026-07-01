@@ -534,3 +534,103 @@ func TestBestConsumer_ConcurrentSafe(t *testing.T) {
 		t.Errorf("active_sources=%d, want %d", st.ActiveSources, goroutines)
 	}
 }
+
+// TestBestConsumer_DedupDisabled_NoDrop — Enabled=false (default) 이면 같은
+// 가격도 매번 emit. 회귀 보호.
+func TestBestConsumer_DedupDisabled_NoDrop(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	for i := 0; i < 5; i++ {
+		bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10))
+	}
+	if got := len(c.snapshot()); got != 5 {
+		t.Fatalf("dedup disabled — emit 수=%d, want 5", got)
+	}
+	st := bc.Stats().Dedup
+	if st.Enabled || st.DroppedSamePrice != 0 || st.DroppedBelowTick != 0 {
+		t.Errorf("dedup 카운터 불일치: %+v", st)
+	}
+}
+
+// TestBestConsumer_Dedup_ExactMatchSkip — Enabled + Multiplier=0 이면 완전 동일
+// 값만 skip. 첫 emit 은 무조건 통과.
+func TestBestConsumer_Dedup_ExactMatchSkip(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{
+		Dedup: DedupOptions{Enabled: true, TickSizeMultiplier: 0},
+	}, c)
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10)) // emit
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10)) // skip (same)
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.01, 1380.10)) // emit (bid 다름)
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.01, 1380.10)) // skip
+
+	if got := len(c.snapshot()); got != 2 {
+		t.Fatalf("emit 수=%d, want 2 (2회 skip)", got)
+	}
+	st := bc.Stats().Dedup
+	if st.DroppedSamePrice != 2 {
+		t.Errorf("DroppedSamePrice=%d, want 2", st.DroppedSamePrice)
+	}
+	if st.Emitted != 2 {
+		t.Errorf("Emitted=%d, want 2", st.Emitted)
+	}
+}
+
+// TestBestConsumer_Dedup_BelowTickSkip — Multiplier=1.0. KRW 페어 tick_size=0.01.
+// 0.01 미만 변화 skip.
+func TestBestConsumer_Dedup_BelowTickSkip(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{
+		Dedup: DedupOptions{Enabled: true, TickSizeMultiplier: 1.0},
+	}, c)
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10)) // emit
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.001, 1380.10)) // skip — 0.001 < 0.01
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.005, 1380.10)) // skip — 0.005 < 0.01
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.02, 1380.10)) // emit — 0.02 ≥ 0.01
+
+	if got := len(c.snapshot()); got != 2 {
+		t.Fatalf("emit 수=%d, want 2", got)
+	}
+	st := bc.Stats().Dedup
+	if st.DroppedBelowTick != 2 {
+		t.Errorf("DroppedBelowTick=%d, want 2", st.DroppedBelowTick)
+	}
+}
+
+// TestBestConsumer_Dedup_EurUsdTickSize — quote=USD → tick_size=0.0001.
+// 4-decimal 필터 정확.
+func TestBestConsumer_Dedup_EurUsdTickSize(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{
+		Dedup: DedupOptions{Enabled: true, TickSizeMultiplier: 1.0},
+	}, c)
+	bc.OnTick(buildRaw("EURUSD", "SMB", 1.0850, 1.0852))   // emit
+	bc.OnTick(buildRaw("EURUSD", "SMB", 1.08505, 1.08525)) // skip — 둘 다 <0.0001
+	bc.OnTick(buildRaw("EURUSD", "SMB", 1.0860, 1.0862))   // emit — bid diff=0.001
+
+	if got := len(c.snapshot()); got != 2 {
+		st := bc.Stats().Dedup
+		t.Fatalf("emit 수=%d, want 2, got=%d, dedup=%+v", got, got, st)
+	}
+}
+
+// TestBestConsumer_Dedup_OverrideWins — TickSizeOverride 가 default 를 이김.
+func TestBestConsumer_Dedup_OverrideWins(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{
+		Dedup: DedupOptions{
+			Enabled:            true,
+			TickSizeMultiplier: 1.0,
+			TickSizeOverride:   map[string]float64{"USDKRW": 0.5}, // 매우 큰 tick
+		},
+	}, c)
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10)) // emit
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.20, 1380.20)) // skip — 0.2 < 0.5
+
+	if got := len(c.snapshot()); got != 1 {
+		t.Fatalf("emit 수=%d, want 1", got)
+	}
+	if bc.Stats().Dedup.DroppedBelowTick != 1 {
+		t.Errorf("DroppedBelowTick=%d, want 1", bc.Stats().Dedup.DroppedBelowTick)
+	}
+}

@@ -140,6 +140,19 @@ type Config struct {
 	BestEnabled      bool
 	BestMaxStaleness time.Duration // 0 이면 30s 기본, 음수면 stale 검사 비활성
 
+	// BestDedup* — Phase X-1: best emit 전 same-price / below-tick 필터.
+	// default off (미튜닝 시 stale quote 위험). 운영 관측 후 on.
+	//
+	// - BestDedupEnabled=true 로 활성
+	// - BestDedupTickSizeMultiplier=0 이면 exact-match 만
+	// - 1.0 이면 1 tick 미만 변화 skip. FX 관례 tick_size 는 quote currency 로
+	//   추정 (JPY/KRW/CNY/TWD/IDR/VND=0.01, 그 외=0.0001)
+	//
+	// 관측 카운터: /v1/best-stats 의 dedup.dropped_same_price / dropped_below_tick /
+	// emitted. dashboard 로 drop rate 판단 후 default on 여부 결정.
+	BestDedupEnabled            bool
+	BestDedupTickSizeMultiplier float64
+
 	// ─── CrossRateConsumer (cross pair 합성 — direct leg 두 개로 cross 산식 적용) ──
 	//
 	// PairMaster 에 cross 산식이 등록되면 활성. 두 leg 모두 fresh (CrossMaxStaleness
@@ -296,6 +309,10 @@ func DefaultConfig() Config {
 
 		BestEnabled:      true,
 		BestMaxStaleness: 30 * time.Second,
+
+		// dedup default off — 운영 관측 후 on 판단.
+		BestDedupEnabled:            false,
+		BestDedupTickSizeMultiplier: 1.0,
 
 		CrossMaxStaleness:   30 * time.Second,
 		CrossDebounceWindow: 10 * time.Millisecond,
@@ -538,6 +555,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.AggregatorSweepInterval, "agg-sweep", cfg.AggregatorSweepInterval, "Aggregator 만료 봉 sweeper 주기")
 	fs.BoolVar(&cfg.BestEnabled, "best", cfg.BestEnabled, "다중시장 best 호가 산정 활성 (raw tick 들을 합산해 합성 BEST 만 downstream 에 흘림)")
 	fs.DurationVar(&cfg.BestMaxStaleness, "best-staleness", cfg.BestMaxStaleness, "feed quote 가 이 시간 이상 갱신 없으면 best 계산에서 제외 (0=30s 기본, 음수=비활성)")
+	fs.BoolVar(&cfg.BestDedupEnabled, "dedup-same-price", cfg.BestDedupEnabled, "best emit 전 same-price / below-tick 필터 활성 (default off)")
+	fs.Float64Var(&cfg.BestDedupTickSizeMultiplier, "dedup-tick-size-multiplier", cfg.BestDedupTickSizeMultiplier, "below-tick dedup 임계값 배수. 0=exact-match 만, 1.0=1 tick 미만 skip")
 	fs.DurationVar(&cfg.CrossMaxStaleness, "cross-staleness", cfg.CrossMaxStaleness, "cross leg quote 가 이 시간 이상 갱신 없으면 cross emit 차단 (0=30s 기본)")
 	fs.DurationVar(&cfg.CrossDebounceWindow, "cross-debounce", cfg.CrossDebounceWindow, "cross emit 의 같은 pair 중복 차단 윈도우 (0=10ms 기본)")
 	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (etcd 비활성 시)")

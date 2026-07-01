@@ -32,6 +32,7 @@
 | **mci-edge-price** | 외부 ws fan-out (N 인스턴스) | `/v1/connections` + admin UI 「🔗 연결」 |
 | **end-to-end** | 특정 customer 추적 | admin UI 「🔍 Customer 검색」 |
 | **backpressure** | 큐 80% WARN 누적 + 이력 | admin UI 「⚠️ Backpressure 이력」 |
+| **BestConsumer dedup** | same-price / below-tick 필터 (§3.5) | `/v1/best-stats.dedup` + `wtg_best_*` metric + admin UI 「BEST 산정」 배지 |
 
 ---
 
@@ -203,6 +204,85 @@ curl http://mci-price:8082/v1/customers/crlee123@gmail.com
 - 50%+: 노랑 (notice)
 - 80%+: 빨강 (alert) — 자동 WARN 로그 동시 발생
 
+### 3.5. `/v1/best-stats` — BestConsumer + dedup 필터
+
+BestConsumer 는 raw 다중시장 tick 을 받아 `max(bid)` / `min(ask)` 로 합성 BEST tick
+을 downstream (Aggregator, PricingConsumer, gRPC) 으로 fan-out. `--dedup-same-price`
+로 활성 시 emit 전 이전 값과 비교해 same-price / below-tick 인 tick 을 필터해
+downstream 부하를 낮춘다.
+
+**flag** (mci-price):
+
+```
+--dedup-same-price                    # 필터 활성 (default off — 관측 우선)
+--dedup-tick-size-multiplier=1.0      # 0=exact-match 만, 1.0=1 tick 미만 skip
+```
+
+tick_size 는 심볼 마지막 3자 (quote currency) 로 추정 — JPY/KRW/CNY/TWD/IDR/VND=0.01,
+그 외=0.0001 (FX dealer convention). 정확한 값은 심볼 카탈로그 확장 (`SymbolEntry.TickSize`)
+후속 검토.
+
+**응답 (`dedup` 섹션 발췌)**:
+
+```json
+{
+  "dedup": {
+    "enabled": true,
+    "tick_size_multiplier": 1.0,
+    "emitted": 83,
+    "dropped_same_price": 0,
+    "dropped_below_tick": 19
+  },
+  "symbols": { ... }
+}
+```
+
+drop rate = `(dropped_same + dropped_below) / (emitted + dropped_same + dropped_below)`.
+
+**Prometheus metric** (P6Metrics, mci-price `/metrics`):
+
+| metric | 의미 |
+|---|---|
+| `wtg_best_emitted_total` | downstream 으로 fan-out 된 tick 누적 |
+| `wtg_best_dedup_dropped_same_price_total` | 이전 emit 과 완전 동일 값이라 skip |
+| `wtg_best_dedup_dropped_below_tick_total` | 변화가 tick_size × multiplier 미만이라 skip |
+| `wtg_best_rejected_quotes_total` | invariant 위반 (bid<=0 / ask<=0 / bid>ask) reject |
+| `wtg_best_dedup_enabled` | 1=on, 0=off — dashboard 필터 편의 |
+
+**Grafana panel query 예시**:
+
+```promql
+# drop rate (%) — quiet market 이면 급등
+100 * (
+  rate(wtg_best_dedup_dropped_same_price_total[1m])
+  + rate(wtg_best_dedup_dropped_below_tick_total[1m])
+) / (
+  rate(wtg_best_emitted_total[1m])
+  + rate(wtg_best_dedup_dropped_same_price_total[1m])
+  + rate(wtg_best_dedup_dropped_below_tick_total[1m])
+)
+
+# emit rate (초당) — downstream 실제 부하
+rate(wtg_best_emitted_total[1m])
+
+# raw reject rate — cooker/forwarder sanity
+rate(wtg_best_rejected_quotes_total[5m])
+```
+
+**admin UI**: 「BEST 산정」 카드 헤더에 배지 + 카운터가 실시간 표시. dedup off 이면
+회색 "dedup OFF" 배지 + 활성 방법 안내. on 이면 초록 "dedup ON × <multiplier>" +
+`emit / dropSame / dropBelow / dropRate` 한 줄.
+
+**튜닝 지침**:
+
+- 시작: default off 로 부팅 → dashboard 관측 → 정상 시장 시간대에도 drop rate
+  10~30% 이상이면 활성해 볼 만.
+- multiplier=1.0 (1 tick 미만 skip) 이 실무 안전. 0 (exact-match only) 은
+  효과 작음.
+- multiplier > 5 는 위험 — downstream 이 stale quote 위에서 결정할 수 있음.
+- 활성 후 `wtg_price_delivery_latency*` (있으면) 또는 downstream (mci-edge-price)
+  의 queue_depth 를 함께 관찰 — 낮아지면 dedup 이 유효.
+
 ---
 
 ## 4. mci-edge-price 진단 (다중 인스턴스)
@@ -349,6 +429,9 @@ curl http://edge:8083/v1/backpressure
 | `msg: "slow * 격리"` (subscriber/quote/customer-quote) | mci-price 로그 | drop 발생 + stream 격리 |
 | `msg: "slow consumer 격리"` (ws) | edge-price 로그 | ws send queue full |
 | `instance_errors` 비어있지 않음 (admin UI 「🔗 연결」) | UI | edge instance down |
+| `wtg_best_rejected_quotes_total > 0` | Prometheus | cooker/forwarder 가 invariant 위반 quote 발행 (bid<=0/ask<=0/bid>ask) — 데이터 sanity 점검 |
+| `wtg_best_dedup_enabled=1` + drop rate 지속 0 | Prometheus / admin UI | 활성이지만 효과 없음 — tick_size 튜닝 여지 또는 tickloop stale |
+| `wtg_best_dedup_enabled=1` + drop rate > 80% | Prometheus / admin UI | quiet market 또는 multiplier 너무 큼 — stale quote 위험, downstream 관측 (§3.5 튜닝 지침) |
 
 ---
 
@@ -366,3 +449,6 @@ curl http://edge:8083/v1/backpressure
 | `internal/admin/price_proxy.go` (`pricePathAllowlist`, `PriceCustomerLookupProxy`) | mci-price 통합 proxy |
 | `internal/admin/forwarder_proxy.go` (`ForwarderStatsProxy`) | quote-forwarder /stats proxy |
 | `internal/admin/ui/index.html` (page-subscribers / page-connections / page-customer-search / page-fwdstats / page-backpressure) | admin UI 5 신규 페이지 |
+| `internal/price/best.go` (`DedupOptions`, `shouldDedupLocked`, `symbolQuoteTickSize`) | BestConsumer same-price / below-tick 필터 로직 |
+| `internal/price/metrics_p6.go` (`P6MetricsOpts.Best`, `wtg_best_*` gauges) | dedup Prometheus 노출 |
+| `internal/admin/ui/index.html` (`renderBestStats` 의 dedup 배지 + 카운터) | admin UI dedup 상태 실시간 |

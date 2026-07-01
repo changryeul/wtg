@@ -34,6 +34,7 @@ const (
 	PriceService_RegisterCustomer_FullMethodName       = "/wtg.v1.PriceService/RegisterCustomer"
 	PriceService_SubscribeCustomerQuote_FullMethodName = "/wtg.v1.PriceService/SubscribeCustomerQuote"
 	PriceService_PublishTick_FullMethodName            = "/wtg.v1.PriceService/PublishTick"
+	PriceService_SubscribeAlgo_FullMethodName          = "/wtg.v1.PriceService/SubscribeAlgo"
 )
 
 // PriceServiceClient is the client API for PriceService service.
@@ -83,6 +84,19 @@ type PriceServiceClient interface {
 	//
 	// ack: 주기적 (batch) 으로 server 가 publisher 에 ack 회신 — backpressure / 통계용.
 	PublishTick(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Tick, PublishAck], error)
+	// SubscribeAlgo — 시스템 트레이딩 (내부 algo 봇) 전용 시세 stream.
+	//
+	// 일반 시세 (SubscribeQuote / Subscribe) 와 격리된 채널. 특징:
+	//   - drop 최소화 — per-client buffer + timeout (Phase C).
+	//   - 순서 보장 — 심볼별 monotonic seq. gap 없음.
+	//   - backfill — from_seq > 0 이면 심볼별 ring buffer 에서 재생 후 live
+	//     이어감 (Phase B). Phase A 는 from_seq=0 (지금부터) 만.
+	//   - latency — is_backfill=true tick 은 replay, false 는 live.
+	//   - profile 무관 — raw BEST bid/ask 만. margin 은 algo 가 자체 로직으로.
+	//
+	// Phase A 는 minimal skeleton — from_seq=0 만, ring buffer 는 신설되지만
+	// backfill 로직은 Phase B, per-client buffered isolation 은 Phase C.
+	SubscribeAlgo(ctx context.Context, in *AlgoSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AlgoQuote], error)
 }
 
 type priceServiceClient struct {
@@ -195,6 +209,25 @@ func (c *priceServiceClient) PublishTick(ctx context.Context, opts ...grpc.CallO
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PriceService_PublishTickClient = grpc.BidiStreamingClient[Tick, PublishAck]
 
+func (c *priceServiceClient) SubscribeAlgo(ctx context.Context, in *AlgoSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AlgoQuote], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &PriceService_ServiceDesc.Streams[6], PriceService_SubscribeAlgo_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[AlgoSubscribeRequest, AlgoQuote]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_SubscribeAlgoClient = grpc.ServerStreamingClient[AlgoQuote]
+
 // PriceServiceServer is the server API for PriceService service.
 // All implementations must embed UnimplementedPriceServiceServer
 // for forward compatibility.
@@ -242,6 +275,19 @@ type PriceServiceServer interface {
 	//
 	// ack: 주기적 (batch) 으로 server 가 publisher 에 ack 회신 — backpressure / 통계용.
 	PublishTick(grpc.BidiStreamingServer[Tick, PublishAck]) error
+	// SubscribeAlgo — 시스템 트레이딩 (내부 algo 봇) 전용 시세 stream.
+	//
+	// 일반 시세 (SubscribeQuote / Subscribe) 와 격리된 채널. 특징:
+	//   - drop 최소화 — per-client buffer + timeout (Phase C).
+	//   - 순서 보장 — 심볼별 monotonic seq. gap 없음.
+	//   - backfill — from_seq > 0 이면 심볼별 ring buffer 에서 재생 후 live
+	//     이어감 (Phase B). Phase A 는 from_seq=0 (지금부터) 만.
+	//   - latency — is_backfill=true tick 은 replay, false 는 live.
+	//   - profile 무관 — raw BEST bid/ask 만. margin 은 algo 가 자체 로직으로.
+	//
+	// Phase A 는 minimal skeleton — from_seq=0 만, ring buffer 는 신설되지만
+	// backfill 로직은 Phase B, per-client buffered isolation 은 Phase C.
+	SubscribeAlgo(*AlgoSubscribeRequest, grpc.ServerStreamingServer[AlgoQuote]) error
 	mustEmbedUnimplementedPriceServiceServer()
 }
 
@@ -269,6 +315,9 @@ func (UnimplementedPriceServiceServer) SubscribeCustomerQuote(*CustomerQuoteSubs
 }
 func (UnimplementedPriceServiceServer) PublishTick(grpc.BidiStreamingServer[Tick, PublishAck]) error {
 	return status.Error(codes.Unimplemented, "method PublishTick not implemented")
+}
+func (UnimplementedPriceServiceServer) SubscribeAlgo(*AlgoSubscribeRequest, grpc.ServerStreamingServer[AlgoQuote]) error {
+	return status.Error(codes.Unimplemented, "method SubscribeAlgo not implemented")
 }
 func (UnimplementedPriceServiceServer) mustEmbedUnimplementedPriceServiceServer() {}
 func (UnimplementedPriceServiceServer) testEmbeddedByValue()                      {}
@@ -349,6 +398,17 @@ func _PriceService_PublishTick_Handler(srv interface{}, stream grpc.ServerStream
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PriceService_PublishTickServer = grpc.BidiStreamingServer[Tick, PublishAck]
 
+func _PriceService_SubscribeAlgo_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(AlgoSubscribeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(PriceServiceServer).SubscribeAlgo(m, &grpc.GenericServerStream[AlgoSubscribeRequest, AlgoQuote]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type PriceService_SubscribeAlgoServer = grpc.ServerStreamingServer[AlgoQuote]
+
 // PriceService_ServiceDesc is the grpc.ServiceDesc for PriceService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -388,6 +448,11 @@ var PriceService_ServiceDesc = grpc.ServiceDesc{
 			Handler:       _PriceService_PublishTick_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "SubscribeAlgo",
+			Handler:       _PriceService_SubscribeAlgo_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "wtg/v1/price.proto",

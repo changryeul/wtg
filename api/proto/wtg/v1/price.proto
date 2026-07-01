@@ -59,6 +59,58 @@ service PriceService {
   //
   // ack: 주기적 (batch) 으로 server 가 publisher 에 ack 회신 — backpressure / 통계용.
   rpc PublishTick(stream Tick) returns (stream PublishAck);
+
+  // SubscribeAlgo — 시스템 트레이딩 (내부 algo 봇) 전용 시세 stream.
+  //
+  // 일반 시세 (SubscribeQuote / Subscribe) 와 격리된 채널. 특징:
+  //   - drop 최소화 — per-client buffer + timeout (Phase C).
+  //   - 순서 보장 — 심볼별 monotonic seq. gap 없음.
+  //   - backfill — from_seq > 0 이면 심볼별 ring buffer 에서 재생 후 live
+  //     이어감 (Phase B). Phase A 는 from_seq=0 (지금부터) 만.
+  //   - latency — is_backfill=true tick 은 replay, false 는 live.
+  //   - profile 무관 — raw BEST bid/ask 만. margin 은 algo 가 자체 로직으로.
+  //
+  // Phase A 는 minimal skeleton — from_seq=0 만, ring buffer 는 신설되지만
+  // backfill 로직은 Phase B, per-client buffered isolation 은 Phase C.
+  rpc SubscribeAlgo(AlgoSubscribeRequest) returns (stream AlgoQuote);
+}
+
+// AlgoSubscribeRequest — 시스템 트레이딩 client 의 구독 요청.
+message AlgoSubscribeRequest {
+  // 구독 clientid — 다중 인스턴스 구분 + admin 진단 (예: "hedge-bot-01").
+  string client_id = 1;
+
+  // 구독 심볼 리스트 (예: ["USDKRW","EURUSD"]). 빈 리스트=모든 심볼.
+  repeated string symbols = 2;
+
+  // Phase B — 이전 disconnect 후 재접속 시 seq gap fill. 0 이면 지금부터.
+  // > 0 이면 서버 ring buffer 에서 그 seq 다음부터 replay 후 live 이어감.
+  // ring 에서 밀려나간 seq 는 sequence_gap 에러 로 응답 (client 는 snapshot 로
+  // fallback).
+  int64 from_seq = 3;
+}
+
+// AlgoQuote — algo stream 의 1건. seq 는 심볼별 monotonic.
+message AlgoQuote {
+  // 심볼 (예: "USDKRW"). SymbolMap 의 external name.
+  string sym = 1;
+
+  // Best bid/ask (마진 미적용). BestConsumer 결과 그대로.
+  double bid = 2;
+  double ask = 3;
+
+  // seq — 심볼별 monotonic 증가. gap 감지 + backfill resume 기준.
+  int64 seq = 4;
+
+  // ts_source_unix_ns — 시세 발행 시각 (feed cooker 의 TS). latency 분해용.
+  int64 ts_source_unix_ns = 5;
+
+  // ts_wtg_unix_ns — WTG (mci-price BestConsumer) 처리 시각.
+  // latency = client_recv_ts - ts_wtg_unix_ns 로 fan-out 지연 측정.
+  int64 ts_wtg_unix_ns = 6;
+
+  // is_backfill — replay 중이면 true. live 이후는 false. Phase A 는 항상 false.
+  bool is_backfill = 7;
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와

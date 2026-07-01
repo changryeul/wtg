@@ -153,6 +153,12 @@ type Config struct {
 	BestDedupEnabled            bool
 	BestDedupTickSizeMultiplier float64
 
+	// AlgoStream (Phase A) — 시스템 트레이딩 (내부 algo 봇) 전용 시세 stream.
+	// SubscribeQuote/Subscribe 와 격리된 채널. from_seq > 0 backfill 은 Phase B.
+	// default off — algo 봇 요구 있을 때만 활성.
+	AlgoStreamEnabled bool
+	AlgoRingSize      int // 심볼별 ring buffer 크기 (Phase B backfill 용). default 100_000.
+
 	// ─── CrossRateConsumer (cross pair 합성 — direct leg 두 개로 cross 산식 적용) ──
 	//
 	// PairMaster 에 cross 산식이 등록되면 활성. 두 leg 모두 fresh (CrossMaxStaleness
@@ -313,6 +319,10 @@ func DefaultConfig() Config {
 		// dedup default off — 운영 관측 후 on 판단.
 		BestDedupEnabled:            false,
 		BestDedupTickSizeMultiplier: 1.0,
+
+		// algo stream default off. AlgoRingSize 는 활성 시 default 100k.
+		AlgoStreamEnabled: false,
+		AlgoRingSize:      100_000,
 
 		CrossMaxStaleness:   30 * time.Second,
 		CrossDebounceWindow: 10 * time.Millisecond,
@@ -557,6 +567,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&cfg.BestMaxStaleness, "best-staleness", cfg.BestMaxStaleness, "feed quote 가 이 시간 이상 갱신 없으면 best 계산에서 제외 (0=30s 기본, 음수=비활성)")
 	fs.BoolVar(&cfg.BestDedupEnabled, "dedup-same-price", cfg.BestDedupEnabled, "best emit 전 same-price / below-tick 필터 활성 (default off)")
 	fs.Float64Var(&cfg.BestDedupTickSizeMultiplier, "dedup-tick-size-multiplier", cfg.BestDedupTickSizeMultiplier, "below-tick dedup 임계값 배수. 0=exact-match 만, 1.0=1 tick 미만 skip")
+	fs.BoolVar(&cfg.AlgoStreamEnabled, "algo-stream", cfg.AlgoStreamEnabled, "AlgoStream (SubscribeAlgo) 활성 — 내부 algo 봇 전용 시세 stream (default off)")
+	fs.IntVar(&cfg.AlgoRingSize, "algo-ring-size", cfg.AlgoRingSize, "AlgoStream 심볼별 ring buffer 크기 (Phase B backfill 용). default 100_000")
 	fs.DurationVar(&cfg.CrossMaxStaleness, "cross-staleness", cfg.CrossMaxStaleness, "cross leg quote 가 이 시간 이상 갱신 없으면 cross emit 차단 (0=30s 기본)")
 	fs.DurationVar(&cfg.CrossDebounceWindow, "cross-debounce", cfg.CrossDebounceWindow, "cross emit 의 같은 pair 중복 차단 윈도우 (0=10ms 기본)")
 	fs.StringVar(&cfg.PricingFile, "pricing", cfg.PricingFile, "PricingTable JSON 파일 (etcd 비활성 시)")

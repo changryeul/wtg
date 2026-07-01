@@ -237,6 +237,17 @@ func main() {
 		srv.AttachGRPC(grpcSrv)
 	}
 
+	// Phase A (algo stream) — SubscribeAlgo 를 위한 별 서버. BestConsumer
+	// downstream 으로 등록 → 매 tick 을 심볼별 monotonic seq + per-symbol ring
+	// 에 저장 후 subscriber 에게 fan-out. Phase B 에서 from_seq > 0 backfill.
+	if grpcSrv != nil && cfg.AlgoStreamEnabled {
+		algoSrv := price.NewAlgoStreamServer(logger, cfg.AlgoRingSize)
+		srv.AddConsumer(algoSrv)
+		grpcSrv.AttachAlgo(algoSrv)
+		logger.Info("AlgoStream 활성 — SubscribeAlgo",
+			slog.Int("ring_size", cfg.AlgoRingSize))
+	}
+
 	// QuoteID stack (pkg/quoteid) — Generator + Registry. cfg.QuoteIDInstance
 	// 가 비어 있으면 비활성 (양쪽 nil 반환 → PricingConsumer 가 fallback).
 	quoteIDGen, quoteIDReg, quoteIDCloser := wireQuoteID(cfg, srv.Metrics(), logger)

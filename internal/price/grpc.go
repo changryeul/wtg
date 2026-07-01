@@ -65,6 +65,24 @@ type GRPCServer struct {
 	// PublishTick 통계.
 	publishAccepted atomic.Uint64
 	publishDropped  atomic.Uint64
+
+	// Phase A (algo stream) — SubscribeAlgo 를 위임하는 별 서버. AttachAlgo 로
+	// 주입. nil 이면 SubscribeAlgo 는 Unimplemented (embed 기본 동작).
+	algo *AlgoStreamServer
+}
+
+// AttachAlgo — algo stream server 주입. Server.AddConsumer(algo) 와 함께.
+func (g *GRPCServer) AttachAlgo(a *AlgoStreamServer) {
+	g.algo = a
+}
+
+// SubscribeAlgo — PriceService.SubscribeAlgo. algo 가 nil 이면 Unimplemented.
+func (g *GRPCServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
+	stream wtgpb.PriceService_SubscribeAlgoServer) error {
+	if g.algo == nil {
+		return g.UnimplementedPriceServiceServer.SubscribeAlgo(req, stream)
+	}
+	return g.algo.SubscribeAlgo(req, stream)
 }
 
 // AttachServer — PublishTick handler 가 dispatch 할 Server 주입.

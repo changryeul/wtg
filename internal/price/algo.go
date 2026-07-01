@@ -48,6 +48,9 @@ type AlgoStreamServer struct {
 	subscribersActive atomic.Int64
 	ticksEmitted      atomic.Uint64
 	sendDrops         atomic.Uint64
+	backfillEmitted   atomic.Uint64 // Phase B — replay 로 보낸 tick 누적
+	backfillGaps      atomic.Uint64 // Phase B — sequence_gap 반환한 요청 누적
+	dedupSkipped      atomic.Uint64 // Phase B — replay 후 live 시 중복 skip 누적
 }
 
 // algoSub — 활성 subscribe stream 의 상태.
@@ -58,8 +61,7 @@ type algoSub struct {
 	dropsLocal atomic.Uint64
 }
 
-// algoRing — 심볼별 최근 N tick 을 원형 저장. Phase B backfill 용.
-// Phase A 는 write 만 함 (Read/Replay 는 Phase B).
+// algoRing — 심볼별 최근 N tick 을 원형 저장. Phase B backfill 지원.
 type algoRing struct {
 	mu   sync.Mutex
 	buf  []wtgpb.AlgoQuote // capacity = ringSize
@@ -80,6 +82,49 @@ func (r *algoRing) push(q wtgpb.AlgoQuote) {
 		r.head = 0
 		r.full = true
 	}
+}
+
+// snapshot — from_seq 이후의 tick 을 seq 순으로 리턴.
+//
+// 반환:
+//   - ticks: seq > fromSeq 인 tick들 (오래된 → 최신 순)
+//   - oldest: ring 안 가장 오래된 seq (없으면 0). gap 판정용
+//   - gap: fromSeq 이 ring 밖으로 밀려나감 (client 가 놓친 부분 복구 불가)
+//
+// gap 발생 조건: fromSeq+1 < oldest (client 요구 이후 tick 이 이미 덮어써짐).
+// 이 때 caller 는 client 에 sequence_gap 에러를 리턴하고 snapshot 재구독을
+// 유도해야 함.
+//
+// fromSeq >= newest 이면 ticks 비어있고 gap=false. caller 는 그냥 live 이어감.
+func (r *algoRing) snapshot(fromSeq int64) (ticks []wtgpb.AlgoQuote, oldest int64, gap bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := len(r.buf)
+	var count, startIdx int
+	if r.full {
+		count = n
+		startIdx = r.head
+	} else {
+		count = r.head
+		startIdx = 0
+	}
+	if count == 0 {
+		return nil, 0, false
+	}
+	oldest = r.buf[startIdx].Seq
+	// gap: fromSeq+1 < oldest → client 가 놓친 tick 이 이미 덮어써짐.
+	// 예: oldest=105, fromSeq=100 → 101~104 손실 → gap.
+	if fromSeq+1 < oldest {
+		return nil, oldest, true
+	}
+	// 순회하며 seq > fromSeq 만 수집. buf 는 push 순서라 자연스레 seq 오름차순.
+	for i := 0; i < count; i++ {
+		idx := (startIdx + i) % n
+		if r.buf[idx].Seq > fromSeq {
+			ticks = append(ticks, r.buf[idx])
+		}
+	}
+	return ticks, oldest, false
 }
 
 // NewAlgoStreamServer — logger nil 이면 slog.Default(). ringSize 는 심볼별
@@ -183,26 +228,31 @@ func (s *AlgoStreamServer) ringFor(sym string) *algoRing {
 	return ring
 }
 
-// SubscribeAlgo — gRPC server 구현. RegisterAlgoService 로 mci-price gRPC 에 mount.
+// SubscribeAlgo — gRPC server 구현. Phase A 는 from_seq=0 (지금부터), Phase B
+// 는 from_seq > 0 시 ring 에서 replay (is_backfill=true) 후 live 이어감.
+//
+// Race-free 순서:
+//  1. sub 등록 (mu 잡음) — 이 순간부터 live tick 이 sub.ch 로 push 됨.
+//  2. from_seq > 0 이면 심볼별 ring.snapshot(from_seq) 로 replay 슬라이스 획득.
+//     - gap 발생 시 FailedPrecondition 반환 (client 는 snapshot 재구독 유도).
+//  3. replay 를 client 에 write (is_backfill=true). 이 사이 sub.ch 에는 live
+//     tick 이 buffer 로 쌓임.
+//  4. live 스트림 시작. 심볼별 replayEndSeq 로 dedup — sub.ch 에서 온 tick 이
+//     replay 범위와 겹치면 skip.
 func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 	stream wtgpb.PriceService_SubscribeAlgoServer) error {
-
-	// Phase A — from_seq > 0 backfill 미지원.
-	if req.GetFromSeq() > 0 {
-		return status.Error(codes.Unimplemented,
-			"backfill (from_seq > 0) 은 Phase B — Phase A 는 from_seq=0 만")
-	}
 
 	sub := &algoSub{
 		clientID:  req.GetClientId(),
 		symbolSet: make(map[string]struct{}, len(req.GetSymbols())),
-		ch:        make(chan *wtgpb.AlgoQuote, 1024), // Phase A default 1024. Phase C 에서 tunable.
+		ch:        make(chan *wtgpb.AlgoQuote, 1024), // Phase C 에서 tunable.
 	}
 	for _, sym := range req.GetSymbols() {
 		if sym != "" {
 			sub.symbolSet[sym] = struct{}{}
 		}
 	}
+	// 1) sub 등록 — 이 시점부터 새 tick 은 sub.ch 로 push.
 	s.subsMu.Lock()
 	s.subs[sub] = struct{}{}
 	s.subsMu.Unlock()
@@ -210,7 +260,8 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 
 	s.logger.Info("algo subscribe 시작",
 		slog.String("client_id", sub.clientID),
-		slog.Int("symbols", len(sub.symbolSet)))
+		slog.Int("symbols", len(sub.symbolSet)),
+		slog.Int64("from_seq", req.GetFromSeq()))
 
 	defer func() {
 		s.subsMu.Lock()
@@ -222,12 +273,51 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 			slog.Uint64("drops_local", sub.dropsLocal.Load()))
 	}()
 
+	// 2~3) backfill replay.
+	replayEndSeq := map[string]int64{}
+	if req.GetFromSeq() > 0 {
+		syms := s.replaySymbolList(sub.symbolSet)
+		for _, sym := range syms {
+			ring := s.ringFor(sym)
+			ticks, oldest, gap := ring.snapshot(req.GetFromSeq())
+			if gap {
+				s.backfillGaps.Add(1)
+				s.logger.Warn("algo backfill gap — snapshot 재구독 필요",
+					slog.String("client_id", sub.clientID),
+					slog.String("symbol", sym),
+					slog.Int64("from_seq", req.GetFromSeq()),
+					slog.Int64("oldest_available", oldest))
+				return status.Errorf(codes.FailedPrecondition,
+					"sequence_gap sym=%s from_seq=%d oldest_available=%d — from_seq=0 으로 재구독하여 snapshot 부터 시작",
+					sym, req.GetFromSeq(), oldest)
+			}
+			for i := range ticks {
+				q := ticks[i]
+				q.IsBackfill = true
+				if err := stream.Send(&q); err != nil {
+					return err
+				}
+				if q.Seq > replayEndSeq[sym] {
+					replayEndSeq[sym] = q.Seq
+				}
+				s.backfillEmitted.Add(1)
+			}
+		}
+	}
+
+	// 4) live 스트림.
 	ctx := stream.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case q := <-sub.ch:
+			// dedup: replay 이미 한 seq 는 skip. 심볼별 최종 replay seq 이하는
+			// 이미 client 가 backfill 로 받았음.
+			if end, ok := replayEndSeq[q.GetSym()]; ok && q.GetSeq() <= end {
+				s.dedupSkipped.Add(1)
+				continue
+			}
 			if err := stream.Send(q); err != nil {
 				return err
 			}
@@ -235,11 +325,33 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 	}
 }
 
+// replaySymbolList — replay 대상 심볼 리스트. sub.symbolSet 이 있으면 그
+// 심볼만, 없으면 (모든 심볼 구독) 현재 ring 등록된 모든 심볼.
+func (s *AlgoStreamServer) replaySymbolList(subSet map[string]struct{}) []string {
+	if len(subSet) > 0 {
+		out := make([]string, 0, len(subSet))
+		for sym := range subSet {
+			out = append(out, sym)
+		}
+		return out
+	}
+	s.mu.RLock()
+	out := make([]string, 0, len(s.rings))
+	for sym := range s.rings {
+		out = append(out, sym)
+	}
+	s.mu.RUnlock()
+	return out
+}
+
 // AlgoStats — 진단 스냅샷.
 type AlgoStats struct {
 	SubscribersActive int64  `json:"subscribers_active"`
 	TicksEmitted      uint64 `json:"ticks_emitted"`
 	SendDrops         uint64 `json:"send_drops"`
+	BackfillEmitted   uint64 `json:"backfill_emitted"`
+	BackfillGaps      uint64 `json:"backfill_gaps"`
+	DedupSkipped      uint64 `json:"dedup_skipped"`
 	SymbolsWithRing   int    `json:"symbols_with_ring"`
 	RingSize          int    `json:"ring_size"`
 }
@@ -252,6 +364,9 @@ func (s *AlgoStreamServer) Stats() AlgoStats {
 		SubscribersActive: s.subscribersActive.Load(),
 		TicksEmitted:      s.ticksEmitted.Load(),
 		SendDrops:         s.sendDrops.Load(),
+		BackfillEmitted:   s.backfillEmitted.Load(),
+		BackfillGaps:      s.backfillGaps.Load(),
+		DedupSkipped:      s.dedupSkipped.Load(),
 		SymbolsWithRing:   syms,
 		RingSize:          s.ringSize,
 	}

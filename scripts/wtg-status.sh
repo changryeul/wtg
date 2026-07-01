@@ -4,7 +4,7 @@
 #   ./scripts/wtg-status.sh           # 1회 스냅샷
 #   watch -tcn 2 ./scripts/wtg-status.sh   # 2초 주기 갱신
 set -u
-NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-fix mci-chart quote-forwarder prometheus wtg-dev-tickloop load-gen)
+NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-fix mci-edge-md mci-chart quote-forwarder prometheus wtg-dev-tickloop load-gen)
 printf "\033[1m=== WTG dev 스택 — %s ===\033[0m\n" "$(date '+%Y-%m-%d %H:%M:%S')"
 printf "%-22s %-8s %-8s %-12s %s\n" "프로세스" "PID" "상태" "RSS" "명령"
 for n in "${NAMES[@]}"; do
@@ -45,6 +45,8 @@ check "mci-price /price-stats"    "http://127.0.0.1:8082/v1/price-stats"
 check "mci-edge-price /metrics"   "http://127.0.0.1:8083/metrics"
 check "mci-edge-fix /stats"       "http://127.0.0.1:5002/stats"
 check "mci-edge-fix /metrics"     "http://127.0.0.1:5002/metrics"
+check "mci-edge-md /stats"        "http://127.0.0.1:5012/stats"
+check "mci-edge-md /metrics"      "http://127.0.0.1:5012/metrics"
 check "mci-chart /"               "http://127.0.0.1:8086/"
 check "quote-forwarder /stats"    "http://127.0.0.1:9091/stats"
 check "prometheus /-/ready"       "http://127.0.0.1:9095/-/ready"

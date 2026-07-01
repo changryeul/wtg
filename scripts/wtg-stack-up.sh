@@ -10,13 +10,15 @@
 #   ./scripts/wtg-stack-up.sh --with-swap-lock   # mci-price 에 --enable-swap-lock 추가
 #   ./scripts/wtg-stack-up.sh --with-broker      # docker mymqd (broker + test_service + WECHO) 같이
 #   ./scripts/wtg-stack-up.sh --with-api         # mci-api 까지 (broker 필요 → --with-broker 자동)
-#   ./scripts/wtg-stack-up.sh --with-fix         # mci-edge-fix (FIX 4.4 DMZ gateway)
+#   ./scripts/wtg-stack-up.sh --with-fix         # mci-edge-fix (FIX 4.4 주문 DMZ gateway)
+#   ./scripts/wtg-stack-up.sh --with-md          # mci-edge-md  (FIX 4.4 시세 DMZ gateway, Phase A skeleton)
 #   ./scripts/wtg-stack-up.sh --with-all         # 모든 컴포넌트 (chart 제외 — DB 의존)
 #
 # 환경변수 override :
 #   LISTEN_ADMIN=:9090  LISTEN_PRICE=:8082  LISTEN_API=:8080
 #   CHART_DSN="postgres://winwaysystems@localhost/wtg?sslmode=disable"
 #   BROKER_IMAGE=wtg-mymqd:arm64-trcid-fix    # 기본은 가장 최근 build 된 image 자동 선택
+#   ETCD_URL=http://127.0.0.1:2379            # --with-fix 시 admin embedded etcd 대신 외부 etcd 지정
 
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -30,6 +32,8 @@ WITH_PROM=0
 WITH_SWAP_LOCK=0
 WITH_BROKER=0
 WITH_API=0
+WITH_FIX=0
+WITH_MD=0
 for arg in "$@"; do
   case "$arg" in
     --with-chart)     WITH_CHART=1 ;;
@@ -39,7 +43,8 @@ for arg in "$@"; do
     --with-broker)    WITH_BROKER=1 ;;
     --with-api)       WITH_API=1; WITH_BROKER=1 ;;     # api 는 broker 필수
     --with-fix)       WITH_FIX=1 ;;
-    --with-all)       WITH_FORWARDER=1; WITH_PROM=1; WITH_SWAP_LOCK=1; WITH_BROKER=1; WITH_API=1; WITH_FIX=1 ;;
+    --with-md)        WITH_MD=1 ;;
+    --with-all)       WITH_FORWARDER=1; WITH_PROM=1; WITH_SWAP_LOCK=1; WITH_BROKER=1; WITH_API=1; WITH_FIX=1; WITH_MD=1 ;;
     *) echo "unknown arg: $arg"; exit 1 ;;
   esac
 done
@@ -47,7 +52,7 @@ done
 mkdir -p logs
 
 # 기존 host 서비스 종료 (idempotent)
-for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-fix quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
+for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-fix mci-edge-md quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
   pkill -f "build/bin/$svc" 2>/dev/null || true
 done
 pkill -f "wtg-dev-tickloop.py" 2>/dev/null || true
@@ -150,11 +155,25 @@ fi
 # mci-edge-fix (--with-fix) — FIX 4.4 DMZ gateway.
 # admin UI 의 /fix-counterparties.html 에서 carrier 등록 + fix-tester CLI 로 smoke.
 if [ "$WITH_FIX" = "1" ]; then
-  # admin 의 embedded etcd port 추출 — 부팅 직후 log 에 client_url 보임.
-  sleep 1
-  ETCD_URL=$(grep -o 'http://127.0.0.1:[0-9]*' logs/mci-admin.log 2>/dev/null | head -1)
-  ETCD_ARGS=()
-  [ -n "$ETCD_URL" ] && ETCD_ARGS=(--etcd "$ETCD_URL")
+  # admin embedded etcd URL 결정.
+  #   1) ETCD_URL 환경변수 우선 (외부 etcd 또는 알고 있는 dev port 강제).
+  #   2) 없으면 admin log 의 "client_url":"http://127.0.0.1:PORT" line 을 poll.
+  # 예전에는 sleep 1 + grep 1회로 URL 이 아직 안 찍힌 순간에 빈값을 잡아
+  # --etcd "" 로 조용히 부팅 → counterparty 0개 → SIGHUP 해도 반영 안 됨.
+  if [ -z "${ETCD_URL:-}" ]; then
+    for i in {1..20}; do
+      ETCD_URL=$(grep -oE '"client_url":"http://127\.0\.0\.1:[0-9]+"' logs/mci-admin.log 2>/dev/null \
+                 | head -1 | grep -oE 'http://127\.0\.0\.1:[0-9]+' || true)
+      [ -n "${ETCD_URL:-}" ] && break
+      sleep 0.5
+    done
+  fi
+  if [ -z "${ETCD_URL:-}" ]; then
+    echo "==> mci-edge-fix: admin embedded etcd URL 을 10초 안에 못 잡음"
+    echo "    ETCD_URL=http://127.0.0.1:PORT 로 명시 지정하거나 mci-admin 로그 확인"
+    exit 1
+  fi
+  echo "==> mci-edge-fix: etcd_url=$ETCD_URL"
   mkdir -p /tmp/wtg-fix-store
   start mci-edge-fix ./build/bin/mci-edge-fix \
     --port "${FIX_PORT:-5001}" \
@@ -163,7 +182,21 @@ if [ "$WITH_FIX" = "1" ]; then
     --tx-forward "${FIX_TX_FORWARD:-}" \
     --push-secret "${FIX_PUSH_SECRET:-dev-secret}" \
     --store-dir "${FIX_STORE_DIR:-/tmp/wtg-fix-store}" \
-    "${ETCD_ARGS[@]}" \
+    --etcd "$ETCD_URL" \
+    --log-level info
+fi
+
+# mci-edge-md (--with-md) — FIX 4.4 시세 DMZ gateway (Phase A skeleton).
+# 정적 카운터파티 seed 만. 하드코딩 quote 로 35=W 응답. Phase B 는 etcd + gRPC upstream.
+if [ "$WITH_MD" = "1" ]; then
+  # Phase A 는 etcd 미연결. seed 는 env 로 override 가능 (미지정 시 데모용 1개).
+  # 형식: 'ID=PASSWORD,SITE,TIER,USID' (반복 가능하려면 MD_SEED_CP1/CP2/... 로 확장 예정)
+  MD_SEED_CP="${MD_SEED_CP:-ECN_MD_TEST_01=test-pw,HQ,VIP,ECN_MD_TEST_01}"
+  start mci-edge-md ./build/bin/mci-edge-md \
+    --port "${MD_PORT:-5011}" \
+    --stats "${MD_STATS:-127.0.0.1:5012}" \
+    --sender "${MD_SENDER:-WTG_MD}" \
+    --seed-cp "$MD_SEED_CP" \
     --log-level info
 fi
 

@@ -153,6 +153,47 @@
 <script>
 const API = "/v1/admin/fix-counterparties";
 
+// index.html 과 동일 localStorage key — DevMode(X-WTG-User) / JWT 겸용.
+const LS_DEV   = "wtg_dev_mode";
+const LS_USER  = "wtg_user";
+const LS_TOKEN = "wtg_access_token";
+
+// authHeaders — index.html 의 helper 를 이 standalone 페이지에서도 재현.
+// admin API 는 인증 필수. 로그인 안 된 상태로 오면 헤더 없이 나가 401 남.
+function authHeaders() {
+  const h = {};
+  if (localStorage.getItem(LS_DEV) === "1") {
+    const u = localStorage.getItem(LS_USER) || "";
+    if (u) h["X-WTG-User"] = u;
+  } else {
+    const t = localStorage.getItem(LS_TOKEN) || "";
+    if (t) h["Authorization"] = "Bearer " + t;
+  }
+  return h;
+}
+
+function authHeadersWithJSON() {
+  return Object.assign({"Content-Type": "application/json"}, authHeaders());
+}
+
+// 로그인 안 되어 있으면 페이지 최상단에 크게 배너 표시 (textContent + DOM 조합, XSS 안전).
+function renderAuthBanner() {
+  const dev = localStorage.getItem(LS_DEV) === "1";
+  const has = dev ? !!localStorage.getItem(LS_USER) : !!localStorage.getItem(LS_TOKEN);
+  if (has) return true;
+  const banner = document.createElement("div");
+  banner.style.cssText = "background:#c0392b;color:#fff;padding:14px 18px;border-radius:6px;margin:8px 0 16px 0;font-size:14px;font-weight:600";
+  const t1 = document.createTextNode("⚠ 로그인이 안 된 상태입니다 — 저장/삭제/조회가 모두 401 로 실패합니다. ");
+  const a  = document.createElement("a");
+  a.href = "/";
+  a.textContent = "/ (관리자 로그인 페이지)";
+  a.style.cssText = "color:#fff;text-decoration:underline";
+  const t2 = document.createTextNode(" 로 이동해 DevMode 로 진입한 뒤 이 페이지를 새로고침하세요.");
+  banner.appendChild(t1); banner.appendChild(a); banner.appendChild(t2);
+  document.body.insertBefore(banner, document.body.firstChild);
+  return false;
+}
+
 function showMsg(t, ok) {
   const m = document.getElementById("msg");
   m.className = "msg " + (ok ? "ok" : "err");
@@ -195,7 +236,7 @@ function buildRow(c) {
 
 async function reload() {
   try {
-    const r = await fetch(API);
+    const r = await fetch(API, {headers: authHeaders()});
     if (!r.ok) throw new Error("status " + r.status);
     const d = await r.json();
     document.getElementById("count").textContent = d.count;
@@ -209,7 +250,7 @@ async function reload() {
 
 async function loadEdit(cid) {
   try {
-    const r = await fetch(API + "/" + encodeURIComponent(cid));
+    const r = await fetch(API + "/" + encodeURIComponent(cid), {headers: authHeaders()});
     if (!r.ok) throw new Error("status " + r.status);
     const c = await r.json();
     document.getElementById("cid").value = c.sender_comp_id;
@@ -239,7 +280,7 @@ async function savePut() {
   try {
     const r = await fetch(API + "/" + encodeURIComponent(cid), {
       method: "PUT",
-      headers: {"Content-Type": "application/json"},
+      headers: authHeadersWithJSON(),
       body: JSON.stringify(body),
     });
     const d = await r.json();
@@ -256,7 +297,7 @@ async function delOne() {
   if (!cid) { showMsg("SenderCompID 필요", false); return; }
   if (!confirm(cid + " 의 FIX counterparty 등록을 삭제할까요?")) return;
   try {
-    const r = await fetch(API + "/" + encodeURIComponent(cid), {method: "DELETE"});
+    const r = await fetch(API + "/" + encodeURIComponent(cid), {method: "DELETE", headers: authHeaders()});
     if (!r.ok) {
       const d = await r.json();
       throw new Error(d.message || "status " + r.status);
@@ -358,7 +399,7 @@ function genTesterCmd() {
 // 서버 측 admin config 에서 fix URL / listen / push_secret 받아 default 채움.
 async function loadFixConfig() {
   try {
-    const r = await fetch("/v1/admin/fix-config");
+    const r = await fetch("/v1/admin/fix-config", {headers: authHeaders()});
     if (!r.ok) return;
     const c = await r.json();
     if (c.fix_url) {
@@ -380,6 +421,7 @@ async function loadFixConfig() {
   if (el) el.addEventListener("input", () => el.dataset.userSet = "1");
 });
 
+renderAuthBanner();
 loadFixConfig();
 reload();
 </script>

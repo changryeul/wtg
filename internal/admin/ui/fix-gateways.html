@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>FIX 게이트웨이 상태 — mci-edge-fix + mci-edge-md</title>
+<style>
+  :root {
+    --bg: #f7f9fc;
+    --ink: #1f2733;
+    --muted: #5b6675;
+    --border: #e3e8ef;
+    --accent: #1f4e79;
+    --good: #0f6e56;
+    --bad: #c0392b;
+    --warn: #a8551f;
+  }
+  body { font-family: -apple-system, Pretendard, "Apple SD Gothic Neo", sans-serif; max-width: 1200px; margin: 20px auto; padding: 0 16px; color: var(--ink); background: var(--bg); }
+  h1 { font-size: 20px; border-bottom: 2px solid var(--accent); padding-bottom: 8px; color: var(--accent); }
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 12px 0; font-size: 13px; }
+  .toolbar label { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); }
+  input[type=text] { padding: 5px 8px; border: 1px solid #ccd; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; min-width: 220px; }
+  button { padding: 6px 12px; border: none; border-radius: 4px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; font-size: 12px; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:hover { opacity: 0.9; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: #fff; }
+  .card h2 { font-size: 15px; color: var(--accent); margin: 0 0 8px 0; display: flex; align-items: center; justify-content: space-between; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+  .status-dot.up { background: #22c55e; }
+  .status-dot.down { background: var(--bad); }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 3px 12px; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { font-family: ui-monospace, monospace; text-align: right; }
+  .kv .v.hot { color: var(--good); font-weight: 600; }
+  .kv .v.warn { color: var(--warn); }
+  .kv .v.bad { color: var(--bad); font-weight: 600; }
+  .card .footer { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); display: flex; gap: 10px; flex-wrap: wrap; }
+  .card .footer a { color: var(--accent); text-decoration: none; font-size: 12px; padding: 4px 10px; border: 1px solid var(--accent); border-radius: 4px; }
+  .card .footer a:hover { background: var(--accent); color: #fff; }
+  .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .err-banner { padding: 12px 16px; border-radius: 6px; background: var(--bad); color: #fff; margin: 12px 0; font-size: 13px; font-weight: 600; display: none; }
+  .updated { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+  .divider { border-top: 1px dashed var(--border); margin: 10px 0; padding-top: 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+<h1>FIX 게이트웨이 상태 — mci-edge-fix (주문) + mci-edge-md (시세)</h1>
+<p style="font-size:13px;color:var(--muted);margin:6px 0 12px">
+  두 DMZ FIX 게이트웨이의 실시간 카운터. mci-edge-fix 는 외부 카운터파티 주문
+  (NewOrderSingle / Cancel / Replace) + ExecutionReport drop copy 를 처리하고,
+  mci-edge-md 는 시세 구독 (MarketDataRequest / Snapshot) 을 처리. 두 서비스는
+  같은 counterparty 카탈로그 (etcd) 를 <code>md_req_role_set</code> 필드로
+  구분해서 공유.
+</p>
+
+<div id="err" class="err-banner"></div>
+
+<div class="toolbar">
+  <label>edge-fix stats <input type="text" id="fix_url" value="http://127.0.0.1:5002"></label>
+  <label>edge-md stats <input type="text" id="md_url" value="http://127.0.0.1:5012"></label>
+  <label><input type="checkbox" id="auto" checked> 자동 갱신 (5초)</label>
+  <button onclick="refreshAll()">지금 갱신</button>
+  <button class="ghost" onclick="location.reload()">전체 새로고침</button>
+  <span class="updated" id="updated"></span>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>
+      <span><span class="status-dot down" id="fix-dot"></span>mci-edge-fix — 주문 게이트웨이</span>
+      <span class="updated" id="fix-updated"></span>
+    </h2>
+    <div class="kv" id="fix-kv">
+      <div class="k">응답 대기중...</div><div class="v">—</div>
+    </div>
+    <div class="footer">
+      <a href="/fix-counterparties.html">카운터파티 등록/편집 →</a>
+      <a id="fix-metrics-link" href="#" target="_blank">/metrics ↗</a>
+      <a id="fix-stats-link" href="#" target="_blank">/stats ↗</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>
+      <span><span class="status-dot down" id="md-dot"></span>mci-edge-md — 시세 게이트웨이</span>
+      <span class="updated" id="md-updated"></span>
+    </h2>
+    <div class="kv" id="md-kv">
+      <div class="k">응답 대기중...</div><div class="v">—</div>
+    </div>
+    <div class="footer">
+      <a href="/fix-counterparties.html">카운터파티 등록 → (md_req_role_set=MD)</a>
+      <a id="md-metrics-link" href="#" target="_blank">/metrics ↗</a>
+      <a id="md-stats-link" href="#" target="_blank">/stats ↗</a>
+    </div>
+  </div>
+</div>
+
+<script>
+// mci-edge-{fix,md} 는 각각 :5002 / :5012 에서 /stats CORS 로 응답. admin
+// 페이지가 다른 port 라 브라우저는 preflight 를 함. stats.go 는 이미
+// Access-Control-Allow-Origin:* 설정.
+
+function fmt(n) {
+  if (n === null || n === undefined) return "—";
+  if (typeof n === "number") return n.toLocaleString();
+  return String(n);
+}
+
+// classify — 카운터 값 → CSS class (hot / warn / bad / normal).
+// 정책: reject/error 계열은 값 > 0 이면 bad. active_sessions/received 등은 > 0 이면 hot.
+function classify(name, v) {
+  if (v === 0 || v === null || v === undefined) return "";
+  const lname = name.toLowerCase();
+  if (lname.includes("reject") || lname.includes("error") || lname.includes("missing")) {
+    return "bad";
+  }
+  return "hot";
+}
+
+function renderKV(el, data, order) {
+  el.replaceChildren();
+  for (const key of order) {
+    const label = key.label || key;
+    const path = key.path || key;
+    const val = path.split(".").reduce((o, k) => (o == null ? null : o[k]), data);
+    const shown = (val === null || val === undefined) ? "—" : (typeof val === "number" ? val.toLocaleString() : String(val));
+    const k = document.createElement("div");
+    k.className = "k";
+    k.textContent = label;
+    const v = document.createElement("div");
+    v.className = "v " + classify(label, typeof val === "number" ? val : 0);
+    v.textContent = shown;
+    el.appendChild(k);
+    el.appendChild(v);
+  }
+}
+
+function insertDivider(el, text) {
+  const d = document.createElement("div");
+  d.className = "divider";
+  d.textContent = text;
+  d.style.gridColumn = "1 / -1";
+  el.appendChild(d);
+}
+
+async function loadFix() {
+  const base = document.getElementById("fix_url").value.replace(/\/$/, "");
+  document.getElementById("fix-metrics-link").href = base + "/metrics";
+  document.getElementById("fix-stats-link").href = base + "/stats";
+  try {
+    const r = await fetch(base + "/stats", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    document.getElementById("fix-dot").className = "status-dot up";
+    const el = document.getElementById("fix-kv");
+    renderKV(el, d, [
+      { label: "active_sessions (Logon 통과 세션)", path: "active_sessions" },
+      { label: "logon_ok", path: "logon_ok" },
+      { label: "logon_reject", path: "logon_reject" },
+    ]);
+    insertDivider(el, "주문 (35=D/F/G)");
+    renderKV_add(el, d, [
+      { label: "orders_received (신규+취소+정정)", path: "orders_received" },
+      { label: "orders_forwarded (/v1/tx 성공)", path: "orders_forwarded" },
+      { label: "orders_rejected", path: "orders_rejected" },
+    ]);
+    insertDivider(el, "ExecutionReport drop copy (35=8)");
+    renderKV_add(el, d, [
+      { label: "exec_report_sent", path: "exec_report_sent" },
+      { label: "exec_report_rejected", path: "exec_report_rejected" },
+    ]);
+    document.getElementById("fix-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    document.getElementById("fix-dot").className = "status-dot down";
+    document.getElementById("fix-kv").replaceChildren();
+    const k = document.createElement("div"); k.className = "k"; k.textContent = "연결 실패";
+    const v = document.createElement("div"); v.className = "v bad"; v.textContent = e.message;
+    document.getElementById("fix-kv").appendChild(k);
+    document.getElementById("fix-kv").appendChild(v);
+  }
+}
+
+// renderKV_add — 기존 el 에 이어서 k/v pair 추가 (구분선 뒤에 재사용).
+function renderKV_add(el, data, order) {
+  for (const key of order) {
+    const label = key.label || key;
+    const path = key.path || key;
+    const val = path.split(".").reduce((o, k) => (o == null ? null : o[k]), data);
+    const shown = (val === null || val === undefined) ? "—" : (typeof val === "number" ? val.toLocaleString() : String(val));
+    const k = document.createElement("div");
+    k.className = "k";
+    k.textContent = label;
+    const v = document.createElement("div");
+    v.className = "v " + classify(label, typeof val === "number" ? val : 0);
+    v.textContent = shown;
+    el.appendChild(k);
+    el.appendChild(v);
+  }
+}
+
+async function loadMD() {
+  const base = document.getElementById("md_url").value.replace(/\/$/, "");
+  document.getElementById("md-metrics-link").href = base + "/metrics";
+  document.getElementById("md-stats-link").href = base + "/stats";
+  try {
+    const r = await fetch(base + "/stats", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    document.getElementById("md-dot").className = "status-dot up";
+    const el = document.getElementById("md-kv");
+    // mci-edge-md 응답: { session: {...}, upstream: {...} } 두 섹션.
+    renderKV(el, d, [
+      { label: "active_sessions (Logon 통과 세션)", path: "session.active_sessions" },
+      { label: "logon_ok", path: "session.logon_ok" },
+      { label: "logon_reject", path: "session.logon_reject" },
+    ]);
+    insertDivider(el, "MarketDataRequest (35=V)");
+    renderKV_add(el, d, [
+      { label: "mdr_received", path: "session.mdr_received" },
+      { label: "mdr_rejected", path: "session.mdr_rejected" },
+    ]);
+    insertDivider(el, "Snapshot (35=W)");
+    renderKV_add(el, d, [
+      { label: "snapshot_sent", path: "session.snapshot_sent" },
+      { label: "symbol_missing (upstream+static 둘 다 miss)", path: "session.symbol_missing" },
+    ]);
+    insertDivider(el, "Upstream (mci-price gRPC SubscribeQuote)");
+    if (d.upstream) {
+      renderKV_add(el, d, [
+        { label: "received (upstream 총 quote)", path: "upstream.received" },
+        { label: "cache_size (심볼 수)", path: "upstream.cache_size" },
+        { label: "errors (stream 끊김 재시도)", path: "upstream.errors" },
+      ]);
+    } else {
+      const k = document.createElement("div");
+      k.className = "k";
+      k.textContent = "upstream 미연결";
+      k.style.gridColumn = "1 / -1";
+      k.style.color = "var(--warn)";
+      el.appendChild(k);
+    }
+    document.getElementById("md-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    document.getElementById("md-dot").className = "status-dot down";
+    document.getElementById("md-kv").replaceChildren();
+    const k = document.createElement("div"); k.className = "k"; k.textContent = "연결 실패";
+    const v = document.createElement("div"); v.className = "v bad"; v.textContent = e.message;
+    document.getElementById("md-kv").appendChild(k);
+    document.getElementById("md-kv").appendChild(v);
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([loadFix(), loadMD()]);
+  document.getElementById("updated").textContent = "마지막 갱신 " + new Date().toLocaleTimeString("ko-KR", { hour12: false });
+}
+
+let poller = null;
+function startPoller() {
+  if (poller) return;
+  poller = setInterval(refreshAll, 5000);
+}
+function stopPoller() {
+  if (poller) { clearInterval(poller); poller = null; }
+}
+document.getElementById("auto").addEventListener("change", (e) => {
+  if (e.target.checked) startPoller(); else stopPoller();
+});
+
+refreshAll();
+startPoller();
+</script>
+</body>
+</html>

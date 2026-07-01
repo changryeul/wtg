@@ -353,7 +353,18 @@
           <button data-page="swaplock"    class="nav-btn nav-item"><span class="nav-ico">🔁</span>FX swap 잠금 통계</button>
         </div>
 
-        <!-- 7. 외부 도구 — chart 별도 탭 열기 (SPA 전환 아님) -->
+        <!-- 7. FIX DMZ 게이트웨이 (mci-edge-fix / mci-edge-md) — SPA 아닌 별도 페이지 -->
+        <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">🔀 FIX 게이트웨이</div>
+        <div class="space-y-0.5 mb-3">
+          <a href="/fix-gateways.html" class="nav-item" title="mci-edge-fix (주문) + mci-edge-md (시세) 실시간 stats 통합 대시보드">
+            <span class="nav-ico">🛰</span>FIX 상태 (실시간)
+          </a>
+          <a href="/fix-counterparties.html" class="nav-item" title="카운터파티 등록/편집 + fix-tester CLI + ExecutionReport drop copy">
+            <span class="nav-ico">👤</span>FIX 카운터파티
+          </a>
+        </div>
+
+        <!-- 8. 외부 도구 — chart 별도 탭 열기 (SPA 전환 아님) -->
         <div class="px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500">🔗 외부 도구</div>
         <div class="space-y-0.5 mb-3">
           <a href="#" target="_blank" rel="noopener" class="nav-item" title="mci-chart — TradingView lightweight-charts UI (사내망 직접 접속)"

@@ -2598,9 +2598,14 @@ WEB.HQ.VIP</textarea>
 
           <!-- best-stats 테이블 — symbol 별 best bid/ask + feed source. -->
           <div class="border-gradient rounded-2xl overflow-hidden">
-            <div class="px-4 py-2 border-b border-ink-700/60 flex items-center justify-between">
+            <div class="px-4 py-2 border-b border-ink-700/60 flex items-center justify-between gap-4 flex-wrap">
               <div class="text-xs uppercase tracking-widest text-slate-400">BEST 산정 — symbol × source</div>
-              <span id="ps-best-count" class="text-xs text-slate-500 font-mono">0 symbol</span>
+              <div class="flex items-center gap-3 text-xs">
+                <!-- dedup 상태 배지 — BestConsumer 의 값 기반 필터. --dedup-same-price 로 활성. -->
+                <span id="ps-best-dedup-badge" class="hidden px-2 py-0.5 rounded-full font-mono"></span>
+                <span id="ps-best-dedup-stats" class="text-slate-500 font-mono"></span>
+                <span id="ps-best-count" class="text-slate-500 font-mono">0 symbol</span>
+              </div>
             </div>
             <div class="max-h-[60vh] overflow-auto">
               <table class="w-full text-sm">
@@ -9585,6 +9590,31 @@ function renderBestStats(d) {
   const tbody = $("#ps-best-tbody");
   const empty = $("#ps-best-empty");
   if (!tbody || !empty) return;
+
+  // dedup 배지 + 카운터 — BestConsumer 의 same-price / below-tick 필터 상태.
+  // enabled=false 면 배지 숨김. enabled=true 면 mult + drop rate 노출.
+  const dedup = (d && d.dedup) || {};
+  const badge = $("#ps-best-dedup-badge");
+  const stats = $("#ps-best-dedup-stats");
+  if (badge && stats) {
+    if (dedup.enabled) {
+      badge.classList.remove("hidden");
+      badge.className = "px-2 py-0.5 rounded-full font-mono bg-good/20 text-good";
+      badge.textContent = "dedup ON × " + (dedup.tick_size_multiplier ?? 0);
+      const emit = dedup.emitted || 0;
+      const dSame = dedup.dropped_same_price || 0;
+      const dBelow = dedup.dropped_below_tick || 0;
+      const total = emit + dSame + dBelow;
+      const rate = total ? ((dSame + dBelow) / total * 100).toFixed(1) : "0.0";
+      stats.textContent = `emit=${emit.toLocaleString()} · dropSame=${dSame.toLocaleString()} · dropBelow=${dBelow.toLocaleString()} · dropRate=${rate}%`;
+    } else {
+      badge.classList.remove("hidden");
+      badge.className = "px-2 py-0.5 rounded-full font-mono bg-ink-700/60 text-slate-400";
+      badge.textContent = "dedup OFF";
+      stats.textContent = "--dedup-same-price 로 활성";
+    }
+  }
+
   tbody.replaceChildren();
   const syms = (d && d.symbols) || {};
   const keys = Object.keys(syms).sort();

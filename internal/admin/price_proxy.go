@@ -22,6 +22,7 @@ var pricePathAllowlist = map[string]string{
 	"customers":    "/v1/customers",        // 등록된 customer digest
 	"backpressure": "/v1/backpressure",     // backpressure WARN history (N7)
 	"swap-stats":   "/v1/quote/swap/stats", // FX swap 잠금 카운터 (S3-e)
+	"metrics":      "/metrics",             // Prometheus text — admin UI Algo Stream 페이지 (Phase D)
 }
 
 // PriceStatsProxy — GET /v1/admin/price/{kind} — kind ∈ {price-stats, best-stats}.

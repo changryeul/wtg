@@ -351,6 +351,7 @@
           <button data-page="fwdstats" class="nav-btn nav-item"><span class="nav-ico">📡</span>forwarder 통계</button>
           <button data-page="backpressure" class="nav-btn nav-item"><span class="nav-ico">⚠️</span>Backpressure 이력</button>
           <button data-page="swaplock"    class="nav-btn nav-item"><span class="nav-ico">🔁</span>FX swap 잠금 통계</button>
+          <button data-page="algo"        class="nav-btn nav-item"><span class="nav-ico">🤖</span>Algo Stream</button>
         </div>
 
         <!-- 7. FIX DMZ 게이트웨이 (mci-edge-fix / mci-edge-md) — SPA 아닌 별도 페이지 -->
@@ -3053,6 +3054,37 @@ WEB.HQ.VIP</textarea>
           <div id="sw-error" class="text-xs text-slate-500"></div>
         </div>
 
+        <!-- ───── AlgoStream — 내부 algo 봇 전용 시세 stream ─────
+             mci-price 의 SubscribeAlgo gRPC 서비스 카운터. Phase A(live) +
+             Phase B(backfill) + Phase C(slow client isolation) 통합. -->
+        <div id="page-algo" class="page hidden space-y-4">
+          <div class="flex items-center gap-3 flex-wrap">
+            <h3 class="text-lg font-semibold">Algo Stream (SubscribeAlgo)</h3>
+            <label class="text-xs"><input type="checkbox" id="algo-auto" checked> 자동 새로고침 (2s)</label>
+            <button id="algo-refresh" class="px-2 py-1 text-xs border rounded">새로고침</button>
+            <span id="algo-updated" class="text-xs text-slate-500"></span>
+          </div>
+          <details class="text-xs text-slate-400 border border-slate-700/40 rounded p-2">
+            <summary class="cursor-pointer text-slate-300">이 페이지가 무엇을 보여주는가?</summary>
+            <div class="mt-2 space-y-1">
+              <div>🤖 <b>내부 algo 봇 전용 시세 stream</b> 의 실시간 카운터. edge-price ws (외부 고객용) 과 격리된 gRPC 채널.</div>
+              <ul class="list-disc pl-5">
+                <li><b>subscribers_active</b>: 지금 접속한 algo 클라이언트 수. 예상보다 낮으면 봇이 재접속 중이거나 crash.</li>
+                <li><b>ticks_emitted</b>: fan-out 된 live tick 누적. rate 로 실제 활동 판단.</li>
+                <li><b>send_drops</b>: per-client buffer 폭주 drop. <span class="text-amber-400">지속 증가 = slow client 존재</span>.</li>
+                <li><b>backfill_emitted</b>: 재접속 시 replay 한 tick. 정상 재접속 흐름.</li>
+                <li><b>backfill_gaps</b>: <span class="text-red-400">ring 밖 요청 → snapshot 재구독 유도한 세션 수</span>. 지속 증가 = ring_size 부족.</li>
+                <li><b>disconnected_slow</b>: <span class="text-red-400">slow client timeout evict 누적</span>. 정상은 0. 발생 시 client 로직 점검.</li>
+                <li><b>symbols_with_ring</b>: 지금까지 tick 이 흐른 심볼 수. ring_size 는 각 심볼별 capacity.</li>
+              </ul>
+              <div>운영 tip: <span class="text-accent-400">--algo-ring-size</span> 는 최대 disconnect 견딜 시간에 맞춰. 초당 100 tick/심볼 × 5분 = 30k 정도.</div>
+              <div>Prometheus metric: <code class="font-mono text-slate-300">wtg_algo_*</code> (curl /metrics 로 확인).</div>
+            </div>
+          </details>
+          <div id="algo-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm"></div>
+          <div id="algo-error" class="text-xs text-slate-500"></div>
+        </div>
+
         <!-- ───── forwarder 통계 — quote-forwarder /stats ─────
              received / published / invalid_quotes breakdown 시각화. 매 reject
              reason 별 카운터 + 각 feed → broker connection 정보. -->
@@ -3553,6 +3585,8 @@ function goPage(name) {
   if (name === "backpressure") initBackpressure();
   if (name !== "swaplock") stopSwaplockPoller();
   if (name === "swaplock") initSwaplock();
+  if (name !== "algo") stopAlgoPoller();
+  if (name === "algo") initAlgo();
 }
 
 // ───────── Dashboard ─────────
@@ -9506,6 +9540,106 @@ function renderSwaplock(s) {
       </table>
     </div>`;
   $("#sw-health").innerHTML = tbl;
+}
+
+// ─── AlgoStream (Phase D) ─────────────────────────────────────────────
+// mci-price 의 /metrics 에서 wtg_algo_* 를 파싱해 카드로 표시. 별도 REST
+// endpoint 없이 Prometheus text format 재활용.
+const algoState = { wired: false, poller: null, prevEmit: null, prevTs: 0 };
+
+function initAlgo() {
+  if (!algoState.wired) {
+    algoState.wired = true;
+    $("#algo-refresh").onclick = loadAlgo;
+    $("#algo-auto").addEventListener("change", (e) => {
+      if (e.target.checked) startAlgoPoller(); else stopAlgoPoller();
+    });
+  }
+  loadAlgo();
+  if ($("#algo-auto").checked) startAlgoPoller();
+}
+function startAlgoPoller() { if (!algoState.poller) algoState.poller = setInterval(loadAlgo, 2000); }
+function stopAlgoPoller()  { if (algoState.poller) { clearInterval(algoState.poller); algoState.poller = null; } }
+
+async function loadAlgo() {
+  $("#algo-error").textContent = "";
+  try {
+    const urls = ["/v1/admin/price/metrics", "http://" + location.hostname + ":8082/metrics"];
+    let body = null;
+    for (const u of urls) {
+      try {
+        const r = await fetch(u, { headers: authHeaders() });
+        if (r.ok) { body = await r.text(); break; }
+      } catch (_) {}
+    }
+    if (!body) throw new Error("mci-price /metrics 미응답 (--algo-stream 활성 확인)");
+    const m = parseAlgoMetrics(body);
+    renderAlgo(m);
+    $("#algo-updated").textContent = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+  } catch (e) {
+    $("#algo-error").textContent = e.message || "load error";
+    renderAlgo(null);
+  }
+}
+
+function parseAlgoMetrics(text) {
+  const out = {};
+  const wanted = [
+    "subscribers_active", "ticks_emitted_total", "send_drops_total",
+    "backfill_emitted_total", "backfill_gaps_total", "dedup_skipped_total",
+    "disconnected_slow_total", "symbols_with_ring", "ring_size", "client_buffer_size",
+  ];
+  for (const line of text.split("\n")) {
+    if (line.startsWith("#") || !line.startsWith("wtg_algo_")) continue;
+    const sp = line.indexOf(" ");
+    if (sp < 0) continue;
+    const name = line.slice(0, sp).replace(/^wtg_algo_/, "");
+    if (!wanted.includes(name)) continue;
+    out[name] = Number(line.slice(sp + 1)) || 0;
+  }
+  return out;
+}
+
+function renderAlgo(m) {
+  const wrap = $("#algo-cards");
+  if (!wrap) return;
+  wrap.replaceChildren();
+  if (!m) {
+    wrap.appendChild(h("div", { class: "col-span-full text-slate-500 text-sm text-center py-4",
+      text: "데이터 없음 — mci-price --algo-stream 활성 확인" }));
+    return;
+  }
+  const now = Date.now();
+  let rate = 0;
+  if (algoState.prevEmit != null && algoState.prevTs > 0) {
+    const dt = (now - algoState.prevTs) / 1000;
+    if (dt > 0) rate = Math.max(0, (m.ticks_emitted_total - algoState.prevEmit) / dt);
+  }
+  algoState.prevEmit = m.ticks_emitted_total;
+  algoState.prevTs = now;
+
+  const card = (label, value, tint) => {
+    const el = h("div", { class: "border-gradient rounded-xl p-3" });
+    el.appendChild(h("div", { class: "text-[10px] uppercase tracking-widest text-slate-400", text: label }));
+    const v = h("div", { class: "text-2xl font-mono mt-1 " + (tint || ""), text: (typeof value === "number" ? value.toLocaleString() : value) });
+    el.appendChild(v);
+    return el;
+  };
+  wrap.appendChild(card("subscribers active", m.subscribers_active || 0,
+    (m.subscribers_active > 0) ? "text-good" : "text-slate-500"));
+  wrap.appendChild(card("ticks emitted (총)", m.ticks_emitted_total || 0, "text-slate-200"));
+  wrap.appendChild(card("tick rate (초당)", rate.toFixed(1), "text-accent-400"));
+  wrap.appendChild(card("send drops", m.send_drops_total || 0,
+    (m.send_drops_total > 0) ? "text-amber-400" : "text-slate-500"));
+  wrap.appendChild(card("backfill emitted", m.backfill_emitted_total || 0, "text-slate-200"));
+  wrap.appendChild(card("backfill gaps", m.backfill_gaps_total || 0,
+    (m.backfill_gaps_total > 0) ? "text-bad" : "text-slate-500"));
+  wrap.appendChild(card("disconnected (slow)", m.disconnected_slow_total || 0,
+    (m.disconnected_slow_total > 0) ? "text-bad" : "text-slate-500"));
+  wrap.appendChild(card("dedup skipped", m.dedup_skipped_total || 0, "text-slate-500"));
+  wrap.appendChild(card("symbols in ring", m.symbols_with_ring || 0, "text-slate-200"));
+  wrap.appendChild(card("ring size (심볼별)", m.ring_size || 0, "text-slate-400"));
+  wrap.appendChild(card("client buffer size", m.client_buffer_size || 0, "text-slate-400"));
 }
 
 async function doCustomerSearch() {

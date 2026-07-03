@@ -111,4 +111,35 @@ func TestRegisterP6Metrics_BestExposed(t *testing.T) {
 	}
 }
 
+// AlgoStreamServer 등록 — Phase D 10개 gauge 노출 확인.
+func TestRegisterP6Metrics_AlgoExposed(t *testing.T) {
+	reg := metrics.NewRegistry()
+	as := NewAlgoStreamServer(nil, AlgoStreamOptions{
+		RingSize:         5000,
+		ClientBufferSize: 512,
+	})
+	defer as.Stop()
+	if err := RegisterP6Metrics(reg, P6MetricsOpts{Algo: as}); err != nil {
+		t.Fatal(err)
+	}
+	body := scrapeMetrics(t, reg)
+	expects := []string{
+		"wtg_algo_subscribers_active",
+		"wtg_algo_ticks_emitted_total",
+		"wtg_algo_send_drops_total",
+		"wtg_algo_backfill_emitted_total",
+		"wtg_algo_backfill_gaps_total",
+		"wtg_algo_dedup_skipped_total",
+		"wtg_algo_disconnected_slow_total",
+		"wtg_algo_symbols_with_ring",
+		"wtg_algo_ring_size 5000",
+		"wtg_algo_client_buffer_size 512",
+	}
+	for _, m := range expects {
+		if !strings.Contains(body, m) {
+			t.Errorf("metric 누락: %s", m)
+		}
+	}
+}
+
 // scrapeMetrics 는 quote_validation_metrics_test.go 에 정의됨 — 재사용.

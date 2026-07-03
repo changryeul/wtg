@@ -15,6 +15,7 @@ type P6MetricsOpts struct {
 	Pair     *pricing.PairMaster
 	Quote    *QuoteValidationServer // quoteid validation stats (옵션)
 	Best     *BestConsumer          // best dedup 카운터 (옵션)
+	Algo     *AlgoStreamServer      // AlgoStream (Phase D) 카운터 (옵션)
 }
 
 // RegisterP6Metrics — P6 인프라 (cross-rate / 마진 5L / master) 의 Prometheus
@@ -188,6 +189,43 @@ func RegisterP6Metrics(reg *metrics.Registry, opts P6MetricsOpts) error {
 			return 0
 		})); err != nil {
 			return err
+		}
+	}
+
+	// AlgoStream (Phase D) — 시스템 트레이딩 stream 카운터.
+	if opts.Algo != nil {
+		as := opts.Algo
+		algoGauges := []struct {
+			name, help string
+			fn         func() float64
+		}{
+			{"wtg_algo_subscribers_active", "현재 활성 algo subscriber 수",
+				func() float64 { return float64(as.Stats().SubscribersActive) }},
+			{"wtg_algo_ticks_emitted_total", "AlgoStream 이 fan-out 한 live tick 누적",
+				func() float64 { return float64(as.Stats().TicksEmitted) }},
+			{"wtg_algo_send_drops_total", "per-client buffer 폭주로 drop 한 tick 누적",
+				func() float64 { return float64(as.Stats().SendDrops) }},
+			{"wtg_algo_backfill_emitted_total", "backfill (is_backfill=true) 로 replay 한 tick 누적",
+				func() float64 { return float64(as.Stats().BackfillEmitted) }},
+			{"wtg_algo_backfill_gaps_total", "sequence_gap FailedPrecondition 반환 수",
+				func() float64 { return float64(as.Stats().BackfillGaps) }},
+			{"wtg_algo_dedup_skipped_total", "backfill 후 live dedup 으로 skip 한 tick 누적",
+				func() float64 { return float64(as.Stats().DedupSkipped) }},
+			{"wtg_algo_disconnected_slow_total", "slow client timeout 으로 disconnect 한 세션 누적",
+				func() float64 { return float64(as.Stats().DisconnectedSlow) }},
+			{"wtg_algo_symbols_with_ring", "ring buffer 활성 심볼 수 (지금까지 emit 된)",
+				func() float64 { return float64(as.Stats().SymbolsWithRing) }},
+			{"wtg_algo_ring_size", "심볼별 ring buffer capacity (설정값)",
+				func() float64 { return float64(as.Stats().RingSize) }},
+			{"wtg_algo_client_buffer_size", "per-client channel capacity (설정값)",
+				func() float64 { return float64(as.Stats().ClientBufSize) }},
+		}
+		for _, g := range algoGauges {
+			if err := reg.Register(prometheus.NewGaugeFunc(
+				prometheus.GaugeOpts{Name: g.name, Help: g.help}, g.fn,
+			)); err != nil {
+				return err
+			}
 		}
 	}
 

@@ -240,8 +240,9 @@ func main() {
 	// Phase A (algo stream) — SubscribeAlgo 를 위한 별 서버. BestConsumer
 	// downstream 으로 등록 → 매 tick 을 심볼별 monotonic seq + per-symbol ring
 	// 에 저장 후 subscriber 에게 fan-out. Phase B 에서 from_seq > 0 backfill.
+	var algoSrv *price.AlgoStreamServer
 	if grpcSrv != nil && cfg.AlgoStreamEnabled {
-		algoSrv := price.NewAlgoStreamServer(logger, price.AlgoStreamOptions{
+		algoSrv = price.NewAlgoStreamServer(logger, price.AlgoStreamOptions{
 			RingSize:          cfg.AlgoRingSize,
 			ClientBufferSize:  cfg.AlgoClientBufferSize,
 			SlowClientTimeout: cfg.AlgoSlowClientTimeout,
@@ -445,10 +446,11 @@ func main() {
 		Currency: currencyMaster,
 		Pair:     pairMaster,
 		Best:     srv.Best(),
+		Algo:     algoSrv,
 	}); err != nil {
 		logger.Warn("P6 메트릭 등록 실패", slog.Any("error", err))
 	} else {
-		logger.Info("P6 metrics 등록 — wtg_cross_*, wtg_pricing_*, wtg_master_*, wtg_best_*")
+		logger.Info("P6 metrics 등록 — wtg_cross_*, wtg_pricing_*, wtg_master_*, wtg_best_*, wtg_algo_*")
 	}
 
 	// S3 swap 메트릭 — swap_lock 발급 + ValidateSwap/ConsumeSwap RPC + partial-race.

@@ -1,0 +1,156 @@
+# WTG — GHCR build + EC2 SSH deploy.
+#
+# 흐름:
+#   master push → test → build (linux/amd64) → GHCR push (sha + latest)
+#                     → SSH deploy (docker compose pull + up -d)
+#
+# 수동 배포:
+#   Actions → Deploy to EC2 → Run workflow
+#
+# 필요 GitHub Secrets:
+#   SSH_HOST         — EC2 private IP (예: 10.0.1.106)
+#   SSH_USER         — SSH 사용자 (예: winway)
+#   SSH_KEY          — pem 파일 전체 내용 (BEGIN/END 포함)
+#   SSH_PORT         — (옵션) SSH 포트, default 22
+#   FIX_PUSH_SECRET  — mci-edge-fix drop copy 인증 (EC2 .env 로 전달)
+#
+# GHCR 은 GITHUB_TOKEN 로 자동 인증 (별도 PAT 불필요).
+# secret / dynamic 값은 env 로 뽑아 shell 에 안전 전달 (injection 방어).
+
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'CLAUDE.md'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false  # 배포는 취소하지 않음 (중간 상태 방지)
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/wtg
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: staticcheck / vet / fmt
+        run: make lint
+      - name: unit + race
+        run: make test-race
+
+  build-and-push:
+    name: Build & Push (GHCR)
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_sha: ${{ steps.meta.outputs.sha_short }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: sha short
+        id: meta
+        run: echo "sha_short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_short }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to EC2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync deploy files to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          source: "deploy/docker-compose.prod.yml,etc/*.json"
+          target: "/home/${{ secrets.SSH_USER }}/wtg/"
+          strip_components: 0
+          overwrite: true
+
+      - name: Compose pull + up
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          WTG_VERSION_ENV: ${{ needs.build-and-push.outputs.image_sha }}
+          FIX_PUSH_SECRET_ENV: ${{ secrets.FIX_PUSH_SECRET }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          # env 로 뽑은 값을 원격 shell 로 전달 (injection 방어).
+          envs: WTG_VERSION_ENV,FIX_PUSH_SECRET_ENV
+          script: |
+            set -euo pipefail
+            cd ~/wtg
+
+            # .env 파일 갱신 — 원격 shell 안의 env 변수를 그대로 사용.
+            cat > .env <<EOF
+            WTG_VERSION=$WTG_VERSION_ENV
+            BROKER_HOST=127.0.0.1
+            BROKER_PORT=11217
+            FIX_PUSH_SECRET=$FIX_PUSH_SECRET_ENV
+            EOF
+            chmod 600 .env
+
+            # pull 실패해도 기존 컨테이너 유지 (fail-safe).
+            docker compose -f deploy/docker-compose.prod.yml pull || {
+              echo "pull 실패 — 기존 컨테이너 유지" >&2
+              exit 1
+            }
+            docker compose -f deploy/docker-compose.prod.yml up -d
+
+            # 오래된 image 정리 (24h 지난 것).
+            docker image prune -f --filter "until=24h" || true
+
+            # 헬스체크 — 30초 대기 후 주요 endpoint 상태.
+            sleep 30
+            echo "=== health check ==="
+            for url in \
+              http://127.0.0.1:9090/ \
+              http://127.0.0.1:8082/v1/price-stats \
+              http://127.0.0.1:8083/metrics \
+              http://127.0.0.1:5002/stats \
+              http://127.0.0.1:5012/stats \
+            ; do
+              code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "$url" || echo "ERR")
+              printf "  %-45s HTTP %s\n" "$url" "$code"
+            done

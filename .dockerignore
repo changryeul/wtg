@@ -1,0 +1,40 @@
+# WTG Dockerfile build context 필터 — 큰 것 / 무관한 것 제외.
+
+# 로컬 build 산출물 — 컨테이너 안에서 다시 빌드.
+build/
+logs/
+tmp/
+
+# 로컬 dev-etcd 데이터.
+etcd-data/
+
+# git / editor / CI 아티팩트.
+.git/
+.github/
+.gitignore
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 문서 (이미지 크기만 늘리고 런타임 무관).
+docs/
+*.md
+CLAUDE.md
+AGENTS.md
+LICENSE
+
+# node/python (deploy/observability 안 사용) — 안전 필터.
+node_modules/
+__pycache__/
+*.pyc
+
+# deploy 자체 — 이미지 안 필요 없음.
+deploy/
+
+# 관측 스택 데이터.
+prom-data/
+
+# coverage.
+coverage.out
+coverage.html

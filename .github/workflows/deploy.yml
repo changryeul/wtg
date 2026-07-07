@@ -2,20 +2,26 @@
 #
 # 흐름:
 #   master push → test → build (linux/amd64) → GHCR push (sha + latest)
-#                     → SSH deploy (docker compose pull + up -d)
+#                     → SSH: rocky 로 접속 → sudo -u winway 로 컨테이너 관리
 #
-# 수동 배포:
-#   Actions → Deploy to EC2 → Run workflow
+# EC2 전제 (nh-fxallone-dev):
+#   - Rocky Linux 9.7 (x86_64)
+#   - Oracle Client + sqlplus + Pro-C (+ ORACLE_HOME) 이미 세팅
+#     (기존 nh-fxallone-server 프로젝트 실행 환경)
+#   - broker (mymqd) 는 winway 계정에서 running (127.0.0.1:11217)
+#   - SSH 는 rocky (sudoer) 로 접속
+#     실행/파일 소유는 winway (덜 특권한 앱 실행 유저)
 #
 # 필요 GitHub Secrets:
-#   SSH_HOST         — EC2 private IP (예: 10.0.1.106)
-#   SSH_USER         — SSH 사용자 (예: winway)
-#   SSH_KEY          — pem 파일 전체 내용 (BEGIN/END 포함)
+#   SSH_HOST         — EC2 private IP
+#   SSH_KEY          — winway-nh-fxallone-dev.pem 전체 내용 (BEGIN/END 포함)
 #   SSH_PORT         — (옵션) SSH 포트, default 22
-#   FIX_PUSH_SECRET  — mci-edge-fix drop copy 인증 (EC2 .env 로 전달)
+#   FIX_PUSH_SECRET  — mci-edge-fix drop copy 인증
+#
+# 고정값 (secret 아님):
+#   SSH_USER=rocky, DEPLOY_USER=winway (하드코드)
 #
 # GHCR 은 GITHUB_TOKEN 로 자동 인증 (별도 PAT 불필요).
-# secret / dynamic 값은 env 로 뽑아 shell 에 안전 전달 (injection 방어).
 
 name: Deploy to EC2
 
@@ -31,10 +37,12 @@ on:
 
 concurrency:
   group: deploy-${{ github.ref }}
-  cancel-in-progress: false  # 배포는 취소하지 않음 (중간 상태 방지)
+  cancel-in-progress: false
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/wtg
+  SSH_USER: rocky        # SSH 접속 유저 (Rocky AMI default sudoer)
+  DEPLOY_USER: winway    # 실제 컨테이너/파일 소유 유저
 
 jobs:
   test:
@@ -94,54 +102,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sync deploy files to EC2
+      # 1) rocky 홈 (staging 디렉토리) 로 파일 전송.
+      #    winway 홈으로 직접 scp 는 권한 문제라 rocky 로 받은 후 sudo mv.
+      - name: SCP deploy files (to rocky staging)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
+          username: ${{ env.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           source: "deploy/docker-compose.prod.yml,etc/*.json"
-          target: "/home/${{ secrets.SSH_USER }}/wtg/"
-          strip_components: 0
+          target: "/home/rocky/wtg-staging/"
           overwrite: true
 
-      - name: Compose pull + up
+      # 2) rocky 로 접속 → 파일을 winway 홈으로 이동 (sudo) → sudo -u winway 로
+      #    compose pull + up. env 는 remote shell 로 안전 전달.
+      - name: Move to winway + docker compose up
         uses: appleboy/ssh-action@v1.0.3
         env:
           WTG_VERSION_ENV: ${{ needs.build-and-push.outputs.image_sha }}
           FIX_PUSH_SECRET_ENV: ${{ secrets.FIX_PUSH_SECRET }}
+          DEPLOY_USER_ENV: ${{ env.DEPLOY_USER }}
         with:
           host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
+          username: ${{ env.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
-          # env 로 뽑은 값을 원격 shell 로 전달 (injection 방어).
-          envs: WTG_VERSION_ENV,FIX_PUSH_SECRET_ENV
+          envs: WTG_VERSION_ENV,FIX_PUSH_SECRET_ENV,DEPLOY_USER_ENV
           script: |
             set -euo pipefail
-            cd ~/wtg
 
-            # .env 파일 갱신 — 원격 shell 안의 env 변수를 그대로 사용.
+            # rocky 로 staging 파일 소유권을 winway 로 이동.
+            sudo mkdir -p "/home/${DEPLOY_USER_ENV}/wtg/deploy" "/home/${DEPLOY_USER_ENV}/wtg/etc"
+            sudo cp /home/rocky/wtg-staging/deploy/docker-compose.prod.yml "/home/${DEPLOY_USER_ENV}/wtg/deploy/"
+            sudo cp -r /home/rocky/wtg-staging/etc/. "/home/${DEPLOY_USER_ENV}/wtg/etc/"
+            sudo chown -R "${DEPLOY_USER_ENV}":"${DEPLOY_USER_ENV}" "/home/${DEPLOY_USER_ENV}/wtg"
+
+            # winway 로 .env 갱신 + docker compose. sudo -u -H (-H = winway HOME).
+            sudo -u "${DEPLOY_USER_ENV}" -H bash <<REMOTE
+            set -euo pipefail
+            cd ~/wtg
             cat > .env <<EOF
-            WTG_VERSION=$WTG_VERSION_ENV
+            WTG_VERSION=${WTG_VERSION_ENV}
             BROKER_HOST=127.0.0.1
             BROKER_PORT=11217
-            FIX_PUSH_SECRET=$FIX_PUSH_SECRET_ENV
+            FIX_PUSH_SECRET=${FIX_PUSH_SECRET_ENV}
             EOF
             chmod 600 .env
 
-            # pull 실패해도 기존 컨테이너 유지 (fail-safe).
             docker compose -f deploy/docker-compose.prod.yml pull || {
               echo "pull 실패 — 기존 컨테이너 유지" >&2
               exit 1
             }
             docker compose -f deploy/docker-compose.prod.yml up -d
-
-            # 오래된 image 정리 (24h 지난 것).
             docker image prune -f --filter "until=24h" || true
+            REMOTE
 
-            # 헬스체크 — 30초 대기 후 주요 endpoint 상태.
+            # rocky 로 헬스체크 (winway 안 필요, host network 라 어느 유저든 접근 가능).
             sleep 30
             echo "=== health check ==="
             for url in \

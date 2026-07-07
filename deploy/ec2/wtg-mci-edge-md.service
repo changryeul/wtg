@@ -1,0 +1,32 @@
+# WTG mci-edge-md — FIX 4.4 시세 gateway. flag 는 이전 docker-compose.prod.yml 과 동일.
+[Unit]
+Description=WTG mci-edge-md — FIX 4.4 시세 gateway (5011) + stats (5012)
+After=network-online.target wtg-etcd.service wtg-mci-price.service
+Wants=network-online.target wtg-etcd.service wtg-mci-price.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-allone-server/wtg
+EnvironmentFile=/home/winway/nh-allone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-allone-server/wtg/bin/mci-edge-md \
+    --port=5011 \
+    --stats=127.0.0.1:5012 \
+    --sender=WTG_MD \
+    --etcd=http://127.0.0.1:2379 \
+    --upstream=127.0.0.1:50051
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-edge-md
+
+[Install]
+WantedBy=multi-user.target

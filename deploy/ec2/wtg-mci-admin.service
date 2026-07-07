@@ -1,0 +1,32 @@
+# WTG mci-admin — 운영 콘솔. flag 는 이전 docker-compose.prod.yml 과 동일.
+[Unit]
+Description=WTG mci-admin — 운영 콘솔 (라우팅/정책/카탈로그 CRUD)
+After=network-online.target wtg-etcd.service
+Wants=network-online.target wtg-etcd.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-allone-server/wtg
+EnvironmentFile=/home/winway/nh-allone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-allone-server/wtg/bin/mci-admin \
+    --listen=:9090 \
+    --broker-host=${BROKER_HOST} \
+    --broker-port=${BROKER_PORT} \
+    --etcd=http://127.0.0.1:2379 \
+    --edge-urls=http://127.0.0.1:8083
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-admin
+
+[Install]
+WantedBy=multi-user.target

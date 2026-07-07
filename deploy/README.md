@@ -1,7 +1,16 @@
-# WTG EC2 배포 가이드 (Self-hosted GitHub Actions Runner)
+# WTG EC2 배포 가이드 (native binary + systemd, docker 미사용)
 
 로컬 mac 개발환경 → AWS EC2 (nh-fxallone-dev, Rocky Linux 9.7, t3.xlarge)
-배포. **GitHub Actions self-hosted runner** 기반.
+배포. **GitHub Actions self-hosted runner** + **native 바이너리 + systemd** 기반.
+
+## 설계 요약
+
+- **EC2 에는 docker 를 쓰지 않는다** (운영 결정). Go 는 cgo 없는 static
+  binary 라 GitHub-hosted 에서 크로스 빌드 (`CGO_ENABLED=0 GOOS=linux`) →
+  artifact 로 전달. EC2 에는 Go toolchain 도 불필요.
+- 서비스는 **systemd unit** (`deploy/ec2/*.service`, `User=winway`) 으로 상주.
+- etcd 도 **native 바이너리** — `setup-ec2.sh` 가 `/usr/local/bin` 에 1회 설치.
+- Test / build 는 GitHub-hosted (ubuntu-latest). Deploy 만 self-hosted.
 
 ## 왜 self-hosted runner
 
@@ -9,7 +18,6 @@
   public IP 대역이라 SG 관리 불가.
 - Self-hosted runner 는 사내 EC2 안에서 workflow 실행 → private IP 접근 OK,
   SSH secrets 불필요, 방화벽 rule 그대로 유지.
-- Test / build 는 여전히 GitHub-hosted (ubuntu-latest). Deploy 만 self-hosted.
 
 ## EC2 환경 전제
 
@@ -20,6 +28,20 @@
 - 앱 실행 유저: **winway** (덜 특권한 앱 유저)
 - Runner 실행 유저: **rocky** (sudoer 필요 — deploy job 이 sudo 사용)
 
+## 배포 위치 (`/home/winway/nh-allone-server/wtg/`)
+
+```
+/home/winway/nh-allone-server/wtg/
+├── bin/          # 서비스 바이너리 (CI 가 매 배포 갱신)
+├── bin.prev/     # 직전 배포 바이너리 (롤백용)
+├── etc/          # 카탈로그 (symbols/pricing/profiles.json — CI 가 갱신)
+├── data/
+│   ├── etcd/     # etcd data dir (운영 SoT — 배포와 무관하게 보존)
+│   └── fix/      # mci-edge-fix message store (FIX seq 보존)
+├── wtg.env       # BROKER_HOST/PORT + FIX_PUSH_SECRET (CI 가 Secret 으로 갱신, 600)
+└── VERSION       # 배포된 git sha (7자리)
+```
+
 ## 흐름 전체 그림
 
 ```
@@ -27,13 +49,15 @@
 ────────              ──────────────               ──────────────────────────
 git push master  →    test (ubuntu-latest)
                       ↓
-                      docker build (linux/amd64, ubuntu-latest)
+                      make build (linux/amd64,
+                      CGO_ENABLED=0, ubuntu-latest)
                       ↓
-                      GHCR push  ────────────→    deploy job (self-hosted):
-                                                  · actions/checkout
-                                                  · sudo cp → /home/winway/wtg/
-                                                  · sudo -u winway docker compose pull + up
-                                                  · curl 127.0.0.1 healthcheck
+                      artifact upload ──────→     deploy job (self-hosted):
+                                                  · checkout + artifact download
+                                                  · systemctl stop 'wtg-mci-*'
+                                                  · bin/etc/unit 설치 (sudo)
+                                                  · systemctl enable --now wtg-*
+                                                  · is-active + curl healthcheck
 ```
 
 ## 최초 1회 설정
@@ -52,18 +76,9 @@ bash setup-ec2.sh
 ```
 
 setup-ec2.sh 가 하는 일:
-- Docker + docker compose plugin 설치 (dnf)
-- winway 를 docker 그룹에 추가
-- `/home/winway/wtg/{deploy,etc,logs,tmp}` 디렉토리 생성
+- etcd native 바이너리 설치 (`/usr/local/bin/etcd`, `etcdctl`)
+- `/home/winway/nh-allone-server/wtg/{bin,etc,data/etcd,data/fix}` 생성
 - broker 상태 확인
-
-winway 세션 재로그인 (docker 그룹 활성):
-```bash
-exit
-ssh -i winway-nh-fxallone-dev.pem rocky@<private-ip>
-sudo su - winway
-docker ps  # 권한 없이 실행되면 OK
-```
 
 ### 2. GitHub Actions self-hosted runner 설치
 
@@ -71,7 +86,7 @@ docker ps  # 권한 없이 실행되면 OK
 - `https://github.com/changryeul/wtg/settings/actions/runners/new`
 - **Linux / x64** 선택 → 화면에 나오는 명령 복사
 
-**EC2 rocky 세션에서 (아직 로그인 상태)**:
+**EC2 rocky 세션에서**:
 ```bash
 mkdir -p ~/actions-runner && cd ~/actions-runner
 
@@ -98,26 +113,18 @@ sudo ./svc.sh status
 
 ### 3. GitHub Secrets
 
-이제 SSH 관련 secret 은 **불필요**. 남는 것 1개:
-
 | Secret | 값 |
 |---|---|
 | `FIX_PUSH_SECRET` | `openssl rand -hex 32` 결과 |
 
-이전에 등록한 `SSH_HOST` / `SSH_KEY` / `SSH_PORT` 는 삭제해도 됨 (안 참조).
+(이전 docker/SSH 흐름의 `SSH_HOST` / `SSH_KEY` / `SSH_PORT` 는 삭제해도 됨.)
 
-### 4. GHCR image 를 public 으로
-
-첫 배포 후:
-`https://github.com/changryeul?tab=packages` → **wtg** 패키지
-→ Package settings → **Change visibility to Public**
-
-(private 유지하고 싶으면 EC2 에서 `docker login ghcr.io` 추가.)
-
-### 5. 첫 배포
+### 4. 첫 배포
 
 `https://github.com/changryeul/wtg/actions`
 → **Deploy to EC2** → **Run workflow** → **master**
+
+systemd unit 설치 / 서비스 기동은 workflow 가 수행 — EC2 에서 수동 작업 없음.
 
 ## 이후 배포
 
@@ -125,18 +132,18 @@ sudo ./svc.sh status
 
 ## 배포된 서비스
 
-같은 EC2, network_mode: host:
+같은 EC2, 전부 host 프로세스 (systemd):
 
-| 서비스 | 포트 | 역할 |
+| systemd unit | 포트 | 역할 |
 |---|---|---|
-| broker (mymqd) | 11217 | 기존 (WTG 외부) |
-| etcd | 2379 | 카탈로그 SoT |
-| mci-price | 8082 / 50051 | 시세 코어 + AlgoStream |
-| mci-edge-price | 8083 | 사용자 ws fan-out |
-| mci-admin | 9090 | 운영 콘솔 |
-| mci-api | 8080 | /v1/tx |
-| mci-edge-fix | 5001 / 5002 | FIX 4.4 주문 |
-| mci-edge-md | 5011 / 5012 | FIX 4.4 시세 |
+| (broker, mymqd) | 11217 | 기존 (WTG 외부, winway 수동 관리) |
+| `wtg-etcd` | 2379 | 카탈로그 SoT (native etcd) |
+| `wtg-mci-price` | 8082 / 50051 | 시세 코어 + AlgoStream |
+| `wtg-mci-edge-price` | 8083 | 사용자 ws fan-out |
+| `wtg-mci-admin` | 9090 | 운영 콘솔 |
+| `wtg-mci-api` | 8080 | /v1/tx |
+| `wtg-mci-edge-fix` | 5001 / 5002 | FIX 4.4 주문 |
+| `wtg-mci-edge-md` | 5011 / 5012 | FIX 4.4 시세 |
 
 ## 사내 접근
 
@@ -149,19 +156,35 @@ sudo ./svc.sh status
 | 매매 REST | `http://<private-ip>:8080/v1/tx` |
 | Metrics | `http://<private-ip>:8082/metrics` |
 
-## 롤백
+## 운영 명령 (EC2)
 
-특정 git sha 로:
 ```bash
-ssh -i winway-nh-fxallone-dev.pem rocky@<private-ip>
-sudo su - winway
-cd ~/wtg
-sed -i 's/^WTG_VERSION=.*/WTG_VERSION=<이전 sha 7자리>/' .env
-docker compose -f deploy/docker-compose.prod.yml pull
-docker compose -f deploy/docker-compose.prod.yml up -d
+# 상태 / 로그
+sudo systemctl status 'wtg-*'
+sudo journalctl -u wtg-mci-price -f
+
+# 재시작 (전체 / 개별)
+sudo systemctl restart 'wtg-mci-*'
+sudo systemctl restart wtg-mci-price
+
+# 배포된 버전
+cat /home/winway/nh-allone-server/wtg/VERSION
 ```
 
-또는 GitHub Actions → Run workflow → 이전 커밋 sha.
+## 롤백
+
+직전 배포로 (bin.prev):
+```bash
+ssh -i winway-nh-fxallone-dev.pem rocky@<private-ip>
+sudo systemctl stop 'wtg-mci-*'
+sudo rm -rf /home/winway/nh-allone-server/wtg/bin
+sudo mv /home/winway/nh-allone-server/wtg/bin.prev /home/winway/nh-allone-server/wtg/bin
+sudo systemctl start wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
+  wtg-mci-api wtg-mci-edge-fix wtg-mci-edge-md
+```
+
+특정 커밋으로: GitHub Actions → Run workflow → 해당 커밋 sha 선택
+(또는 revert commit push).
 
 ## 트러블슈팅
 
@@ -184,25 +207,17 @@ sudo -v   # password prompt 없이 통과되어야
 
 ### 헬스체크 실패
 
+deploy job 이 inactive 서비스의 journal 마지막 40줄을 자동 출력. 직접 보려면:
 ```bash
-sudo su - winway
-cd ~/wtg
-docker compose -f deploy/docker-compose.prod.yml logs --tail 100 mci-price
-docker compose -f deploy/docker-compose.prod.yml ps
+sudo systemctl status 'wtg-*'
+sudo journalctl -u wtg-mci-price -n 100 --no-pager
 ```
 
 가장 흔한 원인:
 - broker 안 뜸 — `ss -tln | grep 11217`
-- etcd 컨테이너 crash — `docker logs wtg-etcd`
+- etcd 안 뜸 — `sudo journalctl -u wtg-etcd -n 50`
 - 카탈로그 파일 (etc/*.json) 문제 — 재배포로 갱신
-
-### GHCR image pull 실패
-
-Public 확인. private 이면:
-```bash
-sudo su - winway
-docker login ghcr.io -u <github-user> -p <PAT>
-```
+- `wtg.env` 누락/권한 — CI 가 매 배포 갱신 (600, winway)
 
 ## Runner 관리
 
@@ -228,11 +243,8 @@ journalctl -u actions.runner.changryeul-wtg.* -f
 tail -f ~/actions-runner/_diag/Runner_*.log
 ```
 
-## 관측 (선택)
+## 참고
 
-Prometheus + Grafana + Jaeger:
-```bash
-sudo su - winway
-cd /path/to/wtg
-docker compose -f deploy/observability/docker-compose.yml up -d
-```
+- `deploy/ec2/` — EC2 용 systemd unit (이 배포의 실체)
+- `deploy/systemd/` — 대형 HA/TLS 시나리오용 범용 템플릿 (docs/operations 참조용, 본 EC2 배포와 별개)
+- `deploy/observability/` — Prometheus/Grafana/Jaeger 스택 (선택, docker compose — EC2 가 아닌 별도 관측 호스트에서 실행)

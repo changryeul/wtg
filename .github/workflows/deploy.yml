@@ -1,22 +1,23 @@
-# WTG — GHCR build + Self-hosted runner deploy.
+# WTG — native binary build + self-hosted runner deploy (docker 미사용).
 #
 # 흐름:
-#   master push → test → build (linux/amd64, ubuntu-latest) → GHCR push
-#              → deploy (self-hosted runner on EC2) → docker compose up
+#   master push → test → build (linux/amd64 static binary, ubuntu-latest)
+#              → artifact 전달 → deploy (self-hosted runner on EC2)
+#              → /home/winway/nh-allone-server/wtg 설치 + systemctl restart
+#
+# 왜 native:
+#   - EC2 에는 docker 를 쓰지 않는다 (운영 결정). Go 는 cgo 없는 static
+#     binary 라 GitHub-hosted 에서 크로스 빌드 → artifact 로 전달하면
+#     EC2 에는 Go toolchain 도 불필요.
+#   - 서비스는 systemd unit (deploy/ec2/*.service, User=winway) 으로 상주.
+#     etcd 도 native 바이너리 (setup-ec2.sh 가 1회 설치).
 #
 # 왜 self-hosted:
 #   - EC2 는 private IP + 사내 CIDR 만 접근. GitHub-hosted runner 는 수천
-#     public IP 대역이라 SG 관리 불가.
-#   - self-hosted runner 는 사내 EC2 안에서 실행 → private IP 접근 OK,
-#     SSH secrets 불필요, 방화벽 그대로.
-#
-# Runner 는 rocky (sudoer) 로 실행. deploy job 은 sudo -u winway 로 컨테이너
-# 관리 (rocky 는 파일 배치 담당, winway 는 실 runtime).
+#     public IP 대역이라 SG 관리 불가. runner 는 EC2 안 (rocky, sudoer).
 #
 # 필요 GitHub Secrets:
 #   FIX_PUSH_SECRET  — mci-edge-fix drop copy 인증
-#
-# 이전에 필요했던 SSH_HOST / SSH_KEY / SSH_PORT 는 이제 불필요 (self-hosted).
 
 name: Deploy to EC2
 
@@ -35,7 +36,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/wtg
+  WTG_HOME: /home/winway/nh-allone-server/wtg
   DEPLOY_USER: winway
 
 jobs:
@@ -53,92 +54,106 @@ jobs:
       - name: unit + race
         run: make test-race
 
-  build-and-push:
-    name: Build & Push (GHCR)
+  build:
+    name: Build (linux/amd64 native)
     needs: test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      image_sha: ${{ steps.meta.outputs.sha_short }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: sha short
-        id: meta
-        run: echo "sha_short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
+      - uses: actions/setup-go@v5
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          go-version: '1.25'
+          cache: true
 
-      - name: Build & Push
-        uses: docker/build-push-action@v5
+      - name: Build static binaries
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 make build
+
+      # zip artifact 는 실행권한을 보존하지 않으므로 deploy 쪽에서 install -m 0755 로 복원.
+      - uses: actions/upload-artifact@v4
         with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_short }}
-            ${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          name: wtg-bin
+          path: build/bin/
+          retention-days: 7
+          if-no-files-found: error
 
   deploy:
     name: Deploy to EC2 (self-hosted)
-    needs: build-and-push
+    needs: build
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sync deploy files to winway home
+      - uses: actions/download-artifact@v4
+        with:
+          name: wtg-bin
+          path: artifact/bin
+
+      # 실행 중인 바이너리는 덮어쓸 수 없으므로 (text file busy) 먼저 정지.
+      # etcd 는 바이너리가 안 바뀌므로 유지 — 데이터/watch 연속성 보존.
+      - name: Stop WTG services
         run: |
           set -euo pipefail
-          sudo mkdir -p /home/${DEPLOY_USER}/wtg/deploy /home/${DEPLOY_USER}/wtg/etc
-          sudo cp deploy/docker-compose.prod.yml /home/${DEPLOY_USER}/wtg/deploy/
-          sudo cp -r etc/. /home/${DEPLOY_USER}/wtg/etc/
-          sudo chown -R ${DEPLOY_USER}:${DEPLOY_USER} /home/${DEPLOY_USER}/wtg
+          sudo systemctl stop 'wtg-mci-*'
 
-      - name: Compose pull + up (as winway)
+      - name: Install binaries + etc + systemd units
+        run: |
+          set -euo pipefail
+          sudo install -d -o "$DEPLOY_USER" -g "$DEPLOY_USER" \
+            "$WTG_HOME" "$WTG_HOME/bin" "$WTG_HOME/etc" \
+            "$WTG_HOME/data/etcd" "$WTG_HOME/data/fix"
+
+          # 롤백용 직전 바이너리 백업 (bin.prev)
+          if [ -n "$(ls -A "$WTG_HOME/bin" 2>/dev/null)" ]; then
+            sudo rm -rf "$WTG_HOME/bin.prev"
+            sudo cp -a "$WTG_HOME/bin" "$WTG_HOME/bin.prev"
+          fi
+
+          sudo install -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" \
+            artifact/bin/* "$WTG_HOME/bin/"
+          sudo cp -r etc/. "$WTG_HOME/etc/"
+          echo "${GITHUB_SHA::7}" | sudo tee "$WTG_HOME/VERSION" >/dev/null
+          sudo chown -R "$DEPLOY_USER":"$DEPLOY_USER" "$WTG_HOME/etc" "$WTG_HOME/VERSION"
+
+          sudo cp deploy/ec2/wtg-*.service /etc/systemd/system/
+          sudo systemctl daemon-reload
+
+      - name: Write env file
         env:
-          WTG_VERSION_ENV: ${{ needs.build-and-push.outputs.image_sha }}
           FIX_PUSH_SECRET_ENV: ${{ secrets.FIX_PUSH_SECRET }}
         run: |
           set -euo pipefail
-          # env 를 sudo 로 명시 전달 (sudoers env_reset 대응). heredoc 은 quoted
-          # 라 outer shell (rocky) 은 확장 안 하고, inner bash 가 확장 → injection
-          # 방어.
-          sudo \
-            WTG_VERSION_ENV="$WTG_VERSION_ENV" \
-            FIX_PUSH_SECRET_ENV="$FIX_PUSH_SECRET_ENV" \
-            -u "${DEPLOY_USER}" -H bash <<'REMOTE'
-          set -euo pipefail
-          cd ~/wtg
-          cat > .env <<EOF
-          WTG_VERSION=${WTG_VERSION_ENV}
-          BROKER_HOST=127.0.0.1
-          BROKER_PORT=11217
-          FIX_PUSH_SECRET=${FIX_PUSH_SECRET_ENV}
-          EOF
-          chmod 600 .env
+          umask 077
+          tmp=$(mktemp)
+          printf 'BROKER_HOST=127.0.0.1\nBROKER_PORT=11217\nFIX_PUSH_SECRET=%s\n' \
+            "$FIX_PUSH_SECRET_ENV" > "$tmp"
+          sudo install -m 0600 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$tmp" "$WTG_HOME/wtg.env"
+          rm -f "$tmp"
 
-          docker compose -f deploy/docker-compose.prod.yml pull || {
-            echo "pull 실패 — 기존 컨테이너 유지" >&2
-            exit 1
-          }
-          docker compose -f deploy/docker-compose.prod.yml up -d
-          docker image prune -f --filter "until=24h" || true
-          REMOTE
+      - name: Start services
+        run: |
+          set -euo pipefail
+          sudo systemctl enable --now wtg-etcd
+          sudo systemctl enable --now \
+            wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
+            wtg-mci-api wtg-mci-edge-fix wtg-mci-edge-md
 
       - name: Health check
         run: |
-          sleep 30
-          echo "=== health check ==="
+          set -euo pipefail
+          sleep 5
+          for svc in wtg-etcd wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
+                     wtg-mci-api wtg-mci-edge-fix wtg-mci-edge-md; do
+            if ! sudo systemctl is-active --quiet "$svc"; then
+              echo "::error::$svc inactive — 최근 로그:"
+              sudo journalctl -u "$svc" -n 40 --no-pager
+              exit 1
+            fi
+            echo "  $svc active"
+          done
+
+          sleep 25
+          echo "=== endpoint check ==="
+          fail=0
           for url in \
             http://127.0.0.1:9090/ \
             http://127.0.0.1:8082/v1/price-stats \
@@ -148,4 +163,6 @@ jobs:
           ; do
             code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "$url" || echo "ERR")
             printf "  %-45s HTTP %s\n" "$url" "$code"
+            [ "$code" = "200" ] || fail=1
           done
+          exit $fail

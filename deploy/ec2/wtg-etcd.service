@@ -1,0 +1,31 @@
+# WTG etcd — 운영 SoT (카탈로그 / 카운터파티 / 라우팅). native 바이너리 (docker 미사용).
+# 바이너리는 deploy/setup-ec2.sh 가 /usr/local/bin 에 설치.
+[Unit]
+Description=WTG etcd — 운영 SoT (카탈로그/카운터파티/라우팅)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=winway
+Group=winway
+ExecStart=/usr/local/bin/etcd \
+    --name=wtg-etcd-01 \
+    --data-dir=/home/winway/nh-allone-server/wtg/data/etcd \
+    --listen-client-urls=http://127.0.0.1:2379 \
+    --advertise-client-urls=http://127.0.0.1:2379 \
+    --listen-peer-urls=http://127.0.0.1:2380 \
+    --initial-advertise-peer-urls=http://127.0.0.1:2380 \
+    --initial-cluster=wtg-etcd-01=http://127.0.0.1:2380
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-etcd
+
+[Install]
+WantedBy=multi-user.target

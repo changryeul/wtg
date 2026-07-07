@@ -1,0 +1,30 @@
+# WTG mci-api — /v1/tx (매매 요청 → broker). flag 는 이전 docker-compose.prod.yml 과 동일.
+[Unit]
+Description=WTG mci-api — /v1/tx (매매 요청 → broker)
+After=network-online.target wtg-etcd.service
+Wants=network-online.target wtg-etcd.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-allone-server/wtg
+EnvironmentFile=/home/winway/nh-allone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-allone-server/wtg/bin/mci-api \
+    --listen=:8080 \
+    --broker-host=${BROKER_HOST} \
+    --broker-port=${BROKER_PORT}
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-api
+
+[Install]
+WantedBy=multi-user.target

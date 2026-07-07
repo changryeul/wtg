@@ -1,0 +1,36 @@
+# WTG mci-edge-fix — FIX 4.4 주문 gateway. flag 는 이전 docker-compose.prod.yml 과 동일.
+# FIX_PUSH_SECRET 은 wtg.env (CI 가 배포 시 GitHub Secret 으로 갱신).
+[Unit]
+Description=WTG mci-edge-fix — FIX 4.4 주문 gateway (5001) + stats (5002)
+After=network-online.target wtg-etcd.service wtg-mci-api.service
+Wants=network-online.target wtg-etcd.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-allone-server/wtg
+EnvironmentFile=/home/winway/nh-allone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-allone-server/wtg/bin/mci-edge-fix \
+    --port=5001 \
+    --stats=127.0.0.1:5002 \
+    --sender=WTG \
+    --tx-forward=http://127.0.0.1:8080/v1/tx \
+    --push-secret=${FIX_PUSH_SECRET} \
+    --store-dir=/home/winway/nh-allone-server/wtg/data/fix \
+    --etcd=http://127.0.0.1:2379 \
+    --log-level=info
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-edge-fix
+
+[Install]
+WantedBy=multi-user.target

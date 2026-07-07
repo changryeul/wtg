@@ -1,0 +1,31 @@
+# WTG mci-edge-price — 사용자 ws fan-out. flag 는 이전 docker-compose.prod.yml 과 동일.
+[Unit]
+Description=WTG mci-edge-price — 사용자 ws fan-out (quote/customer stream)
+After=network-online.target wtg-mci-price.service
+Wants=network-online.target wtg-mci-price.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-allone-server/wtg
+EnvironmentFile=/home/winway/nh-allone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-allone-server/wtg/bin/mci-edge-price \
+    --listen=:8083 \
+    --upstream=127.0.0.1:50051 \
+    --quote-stream \
+    --customer-stream
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-edge-price
+
+[Install]
+WantedBy=multi-user.target

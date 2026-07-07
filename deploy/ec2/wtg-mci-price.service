@@ -1,0 +1,40 @@
+# WTG mci-price — 시세 코어. flag 는 이전 docker-compose.prod.yml 과 동일.
+[Unit]
+Description=WTG mci-price — 시세 fan-out + BestConsumer + 마진 + AlgoStream
+After=network-online.target wtg-etcd.service
+Wants=network-online.target wtg-etcd.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-allone-server/wtg
+EnvironmentFile=/home/winway/nh-allone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-allone-server/wtg/bin/mci-price \
+    --listen=:8082 \
+    --grpc=:50051 \
+    --broker-host=${BROKER_HOST} \
+    --broker-port=${BROKER_PORT} \
+    --symbols=/home/winway/nh-allone-server/wtg/etc/symbols.json \
+    --pricing=/home/winway/nh-allone-server/wtg/etc/pricing.json \
+    --profiles=/home/winway/nh-allone-server/wtg/etc/profiles.json \
+    --etcd=http://127.0.0.1:2379 \
+    --enable-swap-lock \
+    --dedup-same-price \
+    --dedup-tick-size-multiplier=1.0 \
+    --algo-stream \
+    --algo-ring-size=100000
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-price
+
+[Install]
+WantedBy=multi-user.target

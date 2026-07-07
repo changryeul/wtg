@@ -154,6 +154,11 @@ TargetCompID=%s
 }
 
 // startServer — acceptor 가동 (별도 goroutine, ctx cancel 로 종료).
+//
+// 중요: cleanup 이 acceptor.Stop() 완료 (session UnregisterSession 포함) 까지
+// 대기. 안 그러면 다음 test 가 같은 SenderCompID/TargetCompID 로 NewAcceptor
+// 시 quickfix registry 에 이전 session 이 남아 "Duplicate SessionID" 반환.
+// (CI ubuntu 러너의 goroutine scheduling 이 로컬과 달라 노출됨.)
 func startServer(t *testing.T, cfg Config) (*Server, context.CancelFunc) {
 	t.Helper()
 	// 디버그 시 loudLogger(t) 로 교체.
@@ -162,8 +167,20 @@ func startServer(t *testing.T, cfg Config) (*Server, context.CancelFunc) {
 		t.Fatalf("NewServer: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = srv.Start(ctx) }()
-	t.Cleanup(cancel)
+	done := make(chan struct{})
+	go func() {
+		_ = srv.Start(ctx)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+			// acceptor.Stop() 완료 → session UnregisterSession 도 완료
+		case <-time.After(3 * time.Second):
+			t.Logf("startServer cleanup: Start() 3초 안 종료 안 됨 — 다음 test 에 잔존 세션 가능")
+		}
+	})
 	// listen 까지 잠시 대기.
 	time.Sleep(150 * time.Millisecond)
 	return srv, cancel

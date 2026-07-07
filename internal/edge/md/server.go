@@ -271,7 +271,8 @@ func (s *Server) Reload() (retErr error) {
 		return fmt.Errorf("reload Start: %w", err)
 	}
 	s.acceptor = newAcceptor
-	s.cfg.Counterparties = snap
+	// s.cfg.Counterparties 는 초기 seed 로만 보관. Reload 후엔 policy 가 SoT.
+	// (edge-fix 와 동일 — write 하면 Start goroutine 의 log read 와 race)
 	s.logger.Info("mci-edge-md reload",
 		slog.Int("counterparties", len(snap)))
 	return nil

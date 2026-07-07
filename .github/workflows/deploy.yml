@@ -1,27 +1,22 @@
-# WTG — GHCR build + EC2 SSH deploy.
+# WTG — GHCR build + Self-hosted runner deploy.
 #
 # 흐름:
-#   master push → test → build (linux/amd64) → GHCR push (sha + latest)
-#                     → SSH: rocky 로 접속 → sudo -u winway 로 컨테이너 관리
+#   master push → test → build (linux/amd64, ubuntu-latest) → GHCR push
+#              → deploy (self-hosted runner on EC2) → docker compose up
 #
-# EC2 전제 (nh-fxallone-dev):
-#   - Rocky Linux 9.7 (x86_64)
-#   - Oracle Client + sqlplus + Pro-C (+ ORACLE_HOME) 이미 세팅
-#     (기존 nh-fxallone-server 프로젝트 실행 환경)
-#   - broker (mymqd) 는 winway 계정에서 running (127.0.0.1:11217)
-#   - SSH 는 rocky (sudoer) 로 접속
-#     실행/파일 소유는 winway (덜 특권한 앱 실행 유저)
+# 왜 self-hosted:
+#   - EC2 는 private IP + 사내 CIDR 만 접근. GitHub-hosted runner 는 수천
+#     public IP 대역이라 SG 관리 불가.
+#   - self-hosted runner 는 사내 EC2 안에서 실행 → private IP 접근 OK,
+#     SSH secrets 불필요, 방화벽 그대로.
+#
+# Runner 는 rocky (sudoer) 로 실행. deploy job 은 sudo -u winway 로 컨테이너
+# 관리 (rocky 는 파일 배치 담당, winway 는 실 runtime).
 #
 # 필요 GitHub Secrets:
-#   SSH_HOST         — EC2 private IP
-#   SSH_KEY          — winway-nh-fxallone-dev.pem 전체 내용 (BEGIN/END 포함)
-#   SSH_PORT         — (옵션) SSH 포트, default 22
 #   FIX_PUSH_SECRET  — mci-edge-fix drop copy 인증
 #
-# 고정값 (secret 아님):
-#   SSH_USER=rocky, DEPLOY_USER=winway (하드코드)
-#
-# GHCR 은 GITHUB_TOKEN 로 자동 인증 (별도 PAT 불필요).
+# 이전에 필요했던 SSH_HOST / SSH_KEY / SSH_PORT 는 이제 불필요 (self-hosted).
 
 name: Deploy to EC2
 
@@ -41,8 +36,7 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/wtg
-  SSH_USER: rocky        # SSH 접속 유저 (Rocky AMI default sudoer)
-  DEPLOY_USER: winway    # 실제 컨테이너/파일 소유 유저
+  DEPLOY_USER: winway
 
 jobs:
   test:
@@ -96,78 +90,62 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: Deploy to EC2
+    name: Deploy to EC2 (self-hosted)
     needs: build-and-push
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
-      # 1) rocky 홈 (staging 디렉토리) 로 파일 전송.
-      #    winway 홈으로 직접 scp 는 권한 문제라 rocky 로 받은 후 sudo mv.
-      - name: SCP deploy files (to rocky staging)
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ env.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          source: "deploy/docker-compose.prod.yml,etc/*.json"
-          target: "/home/rocky/wtg-staging/"
-          overwrite: true
+      - name: Sync deploy files to winway home
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /home/${DEPLOY_USER}/wtg/deploy /home/${DEPLOY_USER}/wtg/etc
+          sudo cp deploy/docker-compose.prod.yml /home/${DEPLOY_USER}/wtg/deploy/
+          sudo cp -r etc/. /home/${DEPLOY_USER}/wtg/etc/
+          sudo chown -R ${DEPLOY_USER}:${DEPLOY_USER} /home/${DEPLOY_USER}/wtg
 
-      # 2) rocky 로 접속 → 파일을 winway 홈으로 이동 (sudo) → sudo -u winway 로
-      #    compose pull + up. env 는 remote shell 로 안전 전달.
-      - name: Move to winway + docker compose up
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Compose pull + up (as winway)
         env:
           WTG_VERSION_ENV: ${{ needs.build-and-push.outputs.image_sha }}
           FIX_PUSH_SECRET_ENV: ${{ secrets.FIX_PUSH_SECRET }}
-          DEPLOY_USER_ENV: ${{ env.DEPLOY_USER }}
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ env.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          envs: WTG_VERSION_ENV,FIX_PUSH_SECRET_ENV,DEPLOY_USER_ENV
-          script: |
-            set -euo pipefail
+        run: |
+          set -euo pipefail
+          # env 를 sudo 로 명시 전달 (sudoers env_reset 대응). heredoc 은 quoted
+          # 라 outer shell (rocky) 은 확장 안 하고, inner bash 가 확장 → injection
+          # 방어.
+          sudo \
+            WTG_VERSION_ENV="$WTG_VERSION_ENV" \
+            FIX_PUSH_SECRET_ENV="$FIX_PUSH_SECRET_ENV" \
+            -u "${DEPLOY_USER}" -H bash <<'REMOTE'
+          set -euo pipefail
+          cd ~/wtg
+          cat > .env <<EOF
+          WTG_VERSION=${WTG_VERSION_ENV}
+          BROKER_HOST=127.0.0.1
+          BROKER_PORT=11217
+          FIX_PUSH_SECRET=${FIX_PUSH_SECRET_ENV}
+          EOF
+          chmod 600 .env
 
-            # rocky 로 staging 파일 소유권을 winway 로 이동.
-            sudo mkdir -p "/home/${DEPLOY_USER_ENV}/wtg/deploy" "/home/${DEPLOY_USER_ENV}/wtg/etc"
-            sudo cp /home/rocky/wtg-staging/deploy/docker-compose.prod.yml "/home/${DEPLOY_USER_ENV}/wtg/deploy/"
-            sudo cp -r /home/rocky/wtg-staging/etc/. "/home/${DEPLOY_USER_ENV}/wtg/etc/"
-            sudo chown -R "${DEPLOY_USER_ENV}":"${DEPLOY_USER_ENV}" "/home/${DEPLOY_USER_ENV}/wtg"
+          docker compose -f deploy/docker-compose.prod.yml pull || {
+            echo "pull 실패 — 기존 컨테이너 유지" >&2
+            exit 1
+          }
+          docker compose -f deploy/docker-compose.prod.yml up -d
+          docker image prune -f --filter "until=24h" || true
+          REMOTE
 
-            # winway 로 .env 갱신 + docker compose. sudo -u -H (-H = winway HOME).
-            sudo -u "${DEPLOY_USER_ENV}" -H bash <<REMOTE
-            set -euo pipefail
-            cd ~/wtg
-            cat > .env <<EOF
-            WTG_VERSION=${WTG_VERSION_ENV}
-            BROKER_HOST=127.0.0.1
-            BROKER_PORT=11217
-            FIX_PUSH_SECRET=${FIX_PUSH_SECRET_ENV}
-            EOF
-            chmod 600 .env
-
-            docker compose -f deploy/docker-compose.prod.yml pull || {
-              echo "pull 실패 — 기존 컨테이너 유지" >&2
-              exit 1
-            }
-            docker compose -f deploy/docker-compose.prod.yml up -d
-            docker image prune -f --filter "until=24h" || true
-            REMOTE
-
-            # rocky 로 헬스체크 (winway 안 필요, host network 라 어느 유저든 접근 가능).
-            sleep 30
-            echo "=== health check ==="
-            for url in \
-              http://127.0.0.1:9090/ \
-              http://127.0.0.1:8082/v1/price-stats \
-              http://127.0.0.1:8083/metrics \
-              http://127.0.0.1:5002/stats \
-              http://127.0.0.1:5012/stats \
-            ; do
-              code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "$url" || echo "ERR")
-              printf "  %-45s HTTP %s\n" "$url" "$code"
-            done
+      - name: Health check
+        run: |
+          sleep 30
+          echo "=== health check ==="
+          for url in \
+            http://127.0.0.1:9090/ \
+            http://127.0.0.1:8082/v1/price-stats \
+            http://127.0.0.1:8083/metrics \
+            http://127.0.0.1:5002/stats \
+            http://127.0.0.1:5012/stats \
+          ; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "$url" || echo "ERR")
+            printf "  %-45s HTTP %s\n" "$url" "$code"
+          done

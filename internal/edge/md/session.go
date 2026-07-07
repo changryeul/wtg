@@ -24,12 +24,12 @@ type fixApp struct {
 	active map[string]Principal
 
 	// 카운터.
-	logonOK        atomic.Uint64
-	logonReject    atomic.Uint64
-	mdrReceived    atomic.Uint64
-	mdrRejected    atomic.Uint64
-	snapshotSent   atomic.Uint64
-	symbolMissing  atomic.Uint64
+	logonOK       atomic.Uint64
+	logonReject   atomic.Uint64
+	mdrReceived   atomic.Uint64
+	mdrRejected   atomic.Uint64
+	snapshotSent  atomic.Uint64
+	symbolMissing atomic.Uint64
 }
 
 // Principal — Logon 통과한 카운터파티. Phase B 에서 upstream SubscribeQuote
@@ -225,12 +225,12 @@ func (a *fixApp) snapshot() Stats {
 	active := len(a.active)
 	a.mu.RUnlock()
 	return Stats{
-		LogonOK:       a.logonOK.Load(),
-		LogonReject:   a.logonReject.Load(),
-		MDRReceived:   a.mdrReceived.Load(),
-		MDRRejected:   a.mdrRejected.Load(),
-		SnapshotSent:  a.snapshotSent.Load(),
-		SymbolMissing: a.symbolMissing.Load(),
+		LogonOK:        a.logonOK.Load(),
+		LogonReject:    a.logonReject.Load(),
+		MDRReceived:    a.mdrReceived.Load(),
+		MDRRejected:    a.mdrRejected.Load(),
+		SnapshotSent:   a.snapshotSent.Load(),
+		SymbolMissing:  a.symbolMissing.Load(),
 		ActiveSessions: active,
 	}
 }

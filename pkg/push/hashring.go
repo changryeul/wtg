@@ -103,6 +103,8 @@ func sha1Hash(s string) uint32 {
 }
 
 // fnvHash — backward compat. userIndex (hash mod N) 가 계속 사용.
+//
+//lint:ignore U1000 legacy hash helper — 옛 fan-out 경로 회귀 시 재사용.
 func fnvHash(s string) uint32 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(s))

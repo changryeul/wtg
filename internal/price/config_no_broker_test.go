@@ -9,9 +9,9 @@ import (
 // 시도하면 매번 fail 하므로 사전 차단.
 func TestLoadConfig_NoBroker_ForcesQuotePublishBrokerFalse(t *testing.T) {
 	tests := []struct {
-		name             string
-		args             []string
-		wantNoBroker     bool
+		name              string
+		args              []string
+		wantNoBroker      bool
 		wantPublishBroker bool
 	}{
 		{

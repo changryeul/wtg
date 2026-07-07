@@ -54,8 +54,8 @@ type pushTestResponse struct {
 // 운영 mci-admin 에선 enable 하지 말 것 (현재 조건 = mq != nil 이면 활성).
 // PushTestDeps — PushTestHandler 의 의존성. Phase-2 에 source toggle 추가.
 type PushTestDeps struct {
-	BrokerClient *mymq.Client     // broker source (legacy path). nil = broker source 비활성
-	HTTPClient   *pushsdk.Client  // mci-push HTTP source (Phase-2 신규). nil = http source 비활성
+	BrokerClient *mymq.Client    // broker source (legacy path). nil = broker source 비활성
+	HTTPClient   *pushsdk.Client // mci-push HTTP source (Phase-2 신규). nil = http source 비활성
 	Logger       *slog.Logger
 }
 

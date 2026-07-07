@@ -93,27 +93,27 @@ func ListSvcIOHeaders(reg *svcio.Registry) http.HandlerFunc {
 // SvcRuntimeStats — 운영 호출 통계. mci-api 의 alias-stats 를 svc code 단위로
 // 누계한 결과. 페이지 진입 시 한 번 조회 + UI 캐시.
 type SvcRuntimeStats struct {
-	Aliases       []string `json:"aliases"`         // 이 svc code 로 라우팅되는 alias 목록 (routing_key 매칭)
-	Calls         int64    `json:"calls"`           // 누적 호출수
-	Errors        int64    `json:"errors"`          // 누적 에러
-	AvgLatencyMs  float64  `json:"avg_latency_ms"`  // 가중 평균 (calls × avg)
-	MaxLatencyMs  float64  `json:"max_latency_ms"`  // 모든 alias 중 최대
-	ErrorRatePct  float64  `json:"error_rate_pct"`  // errors/calls × 100
-	LastCallUnix  int64    `json:"last_call_unix"`  // 모든 alias 중 최근 호출 시각
-	StatsAvailable bool    `json:"stats_available"` // false 면 mci-api 미접속 — UI 가 grey out
+	Aliases        []string `json:"aliases"`         // 이 svc code 로 라우팅되는 alias 목록 (routing_key 매칭)
+	Calls          int64    `json:"calls"`           // 누적 호출수
+	Errors         int64    `json:"errors"`          // 누적 에러
+	AvgLatencyMs   float64  `json:"avg_latency_ms"`  // 가중 평균 (calls × avg)
+	MaxLatencyMs   float64  `json:"max_latency_ms"`  // 모든 alias 중 최대
+	ErrorRatePct   float64  `json:"error_rate_pct"`  // errors/calls × 100
+	LastCallUnix   int64    `json:"last_call_unix"`  // 모든 alias 중 최근 호출 시각
+	StatsAvailable bool     `json:"stats_available"` // false 면 mci-api 미접속 — UI 가 grey out
 }
 
 // aliasStatsResponse — mci-api 의 /v1/admin/alias-stats 응답.
 type aliasStatsResponse struct {
 	Aliases []struct {
-		Alias         string  `json:"alias"`
-		Tier          string  `json:"tier"`
-		Calls         int64   `json:"calls"`
-		Errors        int64   `json:"errors"`
-		AvgLatencyMs  float64 `json:"avg_latency_ms"`
-		MaxLatencyMs  float64 `json:"max_latency_ms"`
-		ErrorRatePct  float64 `json:"error_rate_pct"`
-		LastCallUnix  int64   `json:"last_call_unix"`
+		Alias        string  `json:"alias"`
+		Tier         string  `json:"tier"`
+		Calls        int64   `json:"calls"`
+		Errors       int64   `json:"errors"`
+		AvgLatencyMs float64 `json:"avg_latency_ms"`
+		MaxLatencyMs float64 `json:"max_latency_ms"`
+		ErrorRatePct float64 `json:"error_rate_pct"`
+		LastCallUnix int64   `json:"last_call_unix"`
 	} `json:"aliases"`
 }
 
@@ -258,8 +258,8 @@ type testWireRequest struct {
 	Channel    string                 `json:"channel"`            // "WEB"/"MOB"/"HTS"/"ADM"/"EMP" 또는 빈 값
 	Exchange   string                 `json:"exchange,omitempty"` // 명시 시 spec.code 추론 우선. alias 미사용 직접 호출.
 	RoutingKey string                 `json:"routing_key,omitempty"`
-	Header     map[string]interface{} `json:"header,omitempty"` // 공통 헤더 (COMHDR 등) 의 필드 → 값. spec.HeaderType 이 비어있으면 무시.
-	Input      map[string]interface{} `json:"input"`            // SvcSpec.Input 필드 → 값
+	Header     map[string]interface{} `json:"header,omitempty"`  // 공통 헤더 (COMHDR 등) 의 필드 → 값. spec.HeaderType 이 비어있으면 무시.
+	Input      map[string]interface{} `json:"input"`             // SvcSpec.Input 필드 → 값
 	DryRun     bool                   `json:"dry_run,omitempty"` // true 면 wire 직렬화만 + broker 호출 skip. UI 의 ▶ 미리보기 용.
 }
 

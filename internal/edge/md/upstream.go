@@ -60,9 +60,9 @@ func (g *GrpcQuoteSource) Latest(sym string) (*wtgpb.CustomerQuote, bool) {
 
 // Stats — 진단용 스냅샷.
 type GrpcQuoteSourceStats struct {
-	Received   uint64 `json:"received"`
-	Errors     uint64 `json:"errors"`
-	CacheSize  int    `json:"cache_size"`
+	Received  uint64 `json:"received"`
+	Errors    uint64 `json:"errors"`
+	CacheSize int    `json:"cache_size"`
 }
 
 func (g *GrpcQuoteSource) Stats() GrpcQuoteSourceStats {

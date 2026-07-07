@@ -583,10 +583,10 @@ func TestBestConsumer_Dedup_BelowTickSkip(t *testing.T) {
 	bc := NewBestConsumer(BestOptions{
 		Dedup: DedupOptions{Enabled: true, TickSizeMultiplier: 1.0},
 	}, c)
-	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10)) // emit
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.00, 1380.10))  // emit
 	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.001, 1380.10)) // skip — 0.001 < 0.01
 	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.005, 1380.10)) // skip — 0.005 < 0.01
-	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.02, 1380.10)) // emit — 0.02 ≥ 0.01
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.02, 1380.10))  // emit — 0.02 ≥ 0.01
 
 	if got := len(c.snapshot()); got != 2 {
 		t.Fatalf("emit 수=%d, want 2", got)

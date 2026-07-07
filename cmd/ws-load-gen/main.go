@@ -20,7 +20,7 @@
 //
 // 정확도 주의:
 //   - macOS ulimit -n (default 256) 가 작아 1000+ 동시 연결은 raise 필요:
-//       ulimit -n 4096
+//     ulimit -n 4096
 //   - inter-arrival latency 는 OS 의 ms 해상도 timer 기준 — sub-ms 측정엔 부정확.
 package main
 

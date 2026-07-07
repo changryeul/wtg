@@ -31,10 +31,10 @@ import (
 
 func main() {
 	var (
-		target   = flag.String("target", "127.0.0.1:50051", "mci-price gRPC host:port")
-		clientID = flag.String("client-id", "algo-tester", "clientID (다중 인스턴스 구분)")
-		symbols  = flag.String("symbols", "USDKRW", "구독 심볼 CSV (빈값=모든 심볼)")
-		fromSeq  = flag.Int64("from-seq", 0, "재접속 backfill (Phase B). Phase A 는 반드시 0")
+		target    = flag.String("target", "127.0.0.1:50051", "mci-price gRPC host:port")
+		clientID  = flag.String("client-id", "algo-tester", "clientID (다중 인스턴스 구분)")
+		symbols   = flag.String("symbols", "USDKRW", "구독 심볼 CSV (빈값=모든 심볼)")
+		fromSeq   = flag.Int64("from-seq", 0, "재접속 backfill (Phase B). Phase A 는 반드시 0")
 		duration  = flag.Duration("duration", 30*time.Second, "테스트 실행 시간. 0=Ctrl-C 까지")
 		slowSleep = flag.Duration("slow-sleep", 0, "매 recv 후 sleep — slow client 시뮬. 예: 100ms")
 	)

@@ -112,20 +112,20 @@ type SwapLockMetrics interface {
 // NoopSwapLockMetrics — 테스트/단독 부팅 시 기본값.
 type NoopSwapLockMetrics struct{}
 
-func (NoopSwapLockMetrics) OnRequest()                            {}
-func (NoopSwapLockMetrics) OnSuccess()                            {}
-func (NoopSwapLockMetrics) OnPartialFailure(_, _ string)          {}
-func (NoopSwapLockMetrics) OnRevoke(_, _ string)                  {}
+func (NoopSwapLockMetrics) OnRequest()                   {}
+func (NoopSwapLockMetrics) OnSuccess()                   {}
+func (NoopSwapLockMetrics) OnPartialFailure(_, _ string) {}
+func (NoopSwapLockMetrics) OnRevoke(_, _ string)         {}
 
 // AtomicSwapLockMetrics — 단순 counter. mci-admin 페이지가 Snapshot 으로 노출.
 type AtomicSwapLockMetrics struct {
-	requests        atomic.Uint64
-	successes       atomic.Uint64
-	failNear        atomic.Uint64
-	failFar         atomic.Uint64
-	failSwapIndex   atomic.Uint64
-	revokeOK        atomic.Uint64
-	revokeFail      atomic.Uint64
+	requests      atomic.Uint64
+	successes     atomic.Uint64
+	failNear      atomic.Uint64
+	failFar       atomic.Uint64
+	failSwapIndex atomic.Uint64
+	revokeOK      atomic.Uint64
+	revokeFail    atomic.Uint64
 }
 
 func (m *AtomicSwapLockMetrics) OnRequest() { m.requests.Add(1) }

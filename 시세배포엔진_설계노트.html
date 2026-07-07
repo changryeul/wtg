@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>실시간 시세 배포 엔진 설계 노트 — forwarder + mci-price</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#fff;--fg:#1f2733;--muted:#5b6675;--line:#e3e8ef;--accent:#1f4e79;--accent2:#2e5496;
+    --chip-bg:#eef3f9;--chip-fg:#1f4e79;--code-bg:#0f1722;--code-fg:#d7e0ea;
+    --kw:#7aa2f7;--str:#9ece6a;--cmt:#6b7686;--sidebar:#f7f9fc;--ok:#1d9e75;--warn:#d8703a;--note:#2e5496;
+    --maxw:870px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",Pretendard,"Noto Sans KR",Segoe UI,Roboto,sans-serif;
+    font-size:16px;line-height:1.72}
+  .wrap{display:flex;align-items:flex-start;max-width:1280px;margin:0 auto}
+  nav.toc{position:sticky;top:0;height:100vh;overflow-y:auto;flex:0 0 270px;background:var(--sidebar);
+    border-right:1px solid var(--line);padding:26px 18px 60px}
+  nav.toc .brand{font-weight:800;color:var(--accent);font-size:15px;line-height:1.4;margin-bottom:4px}
+  nav.toc .sub{color:var(--muted);font-size:12px;margin-bottom:18px}
+  nav.toc a{display:block;color:#3b4554;text-decoration:none;font-size:13.5px;padding:5px 10px;border-radius:7px;
+    border-left:2px solid transparent;margin:1px 0}
+  nav.toc a.lv2{padding-left:22px;font-size:12.5px;color:#566}
+  nav.toc a:hover{background:#eaf0f8}
+  nav.toc a.active{background:#e4edf8;color:var(--accent);border-left-color:var(--accent);font-weight:600}
+  main{flex:1 1 auto;min-width:0;padding:46px 52px 120px;max-width:calc(var(--maxw) + 104px)}
+  .hdr{border-bottom:3px solid var(--accent);padding-bottom:18px;margin-bottom:8px}
+  .hdr h1{font-size:28px;margin:0 0 6px;color:var(--accent);letter-spacing:-.3px}
+  .hdr .meta{color:var(--muted);font-size:13px}
+  h2{font-size:22px;margin:46px 0 14px;color:var(--accent);padding-bottom:7px;border-bottom:1px solid var(--line);scroll-margin-top:14px}
+  h3{font-size:17px;margin:28px 0 8px;color:var(--accent2);scroll-margin-top:14px}
+  p{margin:11px 0}
+  .lead{font-size:16.5px;color:#36404c}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:6px 0}
+  strong{color:#16202c}
+  code{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:13px;background:var(--chip-bg);color:var(--chip-fg);padding:1.5px 6px;border-radius:5px;white-space:nowrap}
+  pre{background:var(--code-bg);color:var(--code-fg);border-radius:10px;padding:15px 17px;overflow-x:auto;font-size:13px;line-height:1.6;margin:14px 0;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;border:1px solid #1c2735}
+  pre .lbl{display:block;color:#8aa0b6;font-size:11px;margin-bottom:8px;letter-spacing:.4px;text-transform:uppercase}
+  pre code{background:none;color:inherit;padding:0;white-space:pre;font-size:13px}
+  .k{color:var(--kw)} .s{color:var(--str)} .c{color:var(--cmt);font-style:italic}
+  .box{border:1px solid var(--line);border-left:4px solid var(--note);background:#f6f9fd;border-radius:8px;padding:13px 16px;margin:16px 0}
+  .box.ok{border-left-color:var(--ok);background:#f1faf6}
+  .box.warn{border-left-color:var(--warn);background:#fdf6f1}
+  .box .t{font-weight:700;font-size:13px;letter-spacing:.3px;margin-bottom:3px;text-transform:uppercase;color:var(--note)}
+  .box.ok .t{color:var(--ok)} .box.warn .t{color:var(--warn)}
+  .box p{margin:4px 0}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--accent);color:#fff;font-weight:600;font-size:13px}
+  tr:nth-child(even) td{background:#f6f8fb}
+  td code{white-space:normal}
+  .tag{display:inline-block;font-size:11px;font-weight:700;border-radius:20px;padding:1px 8px;margin-right:5px}
+  .tag.done{background:#e1f5ee;color:#0f6e56} .tag.todo{background:#fdf0e8;color:#a8551f} .tag.opt{background:#eef0f3;color:#566}
+  .diagram{background:#fbfcfe;border:1px solid var(--line);border-radius:10px;padding:14px;margin:18px 0;text-align:center;overflow-x:auto}
+  .diagram .cap{display:block;color:var(--muted);font-size:12px;margin-top:6px}
+  .totop{position:fixed;right:20px;bottom:20px;background:var(--accent);color:#fff;border:none;width:42px;height:42px;border-radius:50%;font-size:18px;cursor:pointer;opacity:0;transition:.2s;box-shadow:0 3px 10px rgba(0,0,0,.2)}
+  .totop.show{opacity:.92}
+  @media (max-width:900px){nav.toc{display:none}main{padding:28px 20px 100px}}
+  @media print{nav.toc,.totop{display:none}main{max-width:none;padding:0}pre{background:#f4f6f8;color:#222}.k,.s,.c{color:#222}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" id="toc">
+  <div class="brand">실시간 시세 배포 엔진</div>
+  <div class="sub">설계 노트 · forwarder + mci-price</div>
+  <a href="#s1">1. 목적 · 범위</a>
+  <a href="#s2">2. 아키텍처</a>
+  <a href="#s3">3. 신뢰성 요건</a>
+  <a href="#s3-1" class="lv2">3.1 broker 천장 제거</a>
+  <a href="#s3-2" class="lv2">3.2 conflation backpressure</a>
+  <a href="#s3-3" class="lv2">3.3 정합성 (Source)</a>
+  <a href="#s3-4" class="lv2">3.4 유실 가시화 (seq gap)</a>
+  <a href="#s3-5" class="lv2">3.5 HA · 샤딩</a>
+  <a href="#s3-6" class="lv2">3.6 관측</a>
+  <a href="#s4">4. 보관 정책</a>
+  <a href="#s5">5. 현 상태 대비 갭</a>
+  <a href="#s6">6. 단계별 로드맵</a>
+  <a href="#s7">7. 부록</a>
+</nav>
+
+<main>
+  <div class="hdr">
+    <h1>실시간 시세 배포 엔진 설계 노트</h1>
+    <div class="meta">forwarder + mci-price · 대상: 엔지니어 · 2026-06-11 · 코드 기준 <code>cmd/quote-forwarder</code>, <code>internal/price</code></div>
+  </div>
+
+  <!-- 1 -->
+  <h2 id="s1">1. 목적 · 범위</h2>
+  <p class="lead">forwarder + mci-price를 <strong>실시간 FX 시세 배포 엔진</strong>으로 자리매김한다 — 수집 → best 산정 → 마진 → 배포까지. MDS(C 시장데이터 시스템)의 <strong>완전 대체가 아니라</strong>, 라이브 시세 가공·배포 역할만 WTG로 가져오는 것이 목표다.</p>
+  <p>전체 tick의 DB 영속(SOR)이나 query-server 조회 카탈로그 같은 무거운 책임은 범위에서 제외한다. 핵심 관심사는 <strong>영속이 아니라 안정성·정합성·저지연</strong>이다.</p>
+  <table>
+    <tr><th style="width:50%">In scope (배포 엔진의 책임)</th><th>Out of scope (MDS에 남김)</th></tr>
+    <tr><td>UDP FIX 수집 (forwarder)</td><td>raw tick/체결 Oracle 영속 (SOR)</td></tr>
+    <tr><td>다중시장 BEST 산정 (BestConsumer)</td><td>query-server 조회 카탈로그 (W9500S0x)</td></tr>
+    <tr><td>Profile별 마진 적용 (PricingConsumer)</td><td>개장/마감 배치 스케줄러</td></tr>
+    <tr><td>배포 — gRPC/edge → 고객, chart</td><td>OTP 인증 · FOS 로더</td></tr>
+    <tr><td>최신 시세 조회 (conflation) + 봉 집계</td><td>swap 레이트 · 차익(arbitrage) 전체 (필요 시 옵션)</td></tr>
+  </table>
+  <div class="box ok"><div class="t">핵심 관점</div>
+    <p>이 범위에서 forwarder + mci-price는 <strong>이미 거의 완성형</strong>이다. 앞으로 할 일은 기능 추가가 아니라 "배포 엔진으로서 믿을 만한가"를 굳히는 <strong>신뢰성 작업(3장)</strong>이다.</p>
+  </div>
+
+  <!-- 2 -->
+  <h2 id="s2">2. 아키텍처</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  LP["LP / feed<br/>(SMB·KMB·EBS…)"] -->|"UDP FIX"| FW["quote-forwarder<br/>(Go, UDP 수집·파싱)"]
+  FW -->|"gRPC PublishTick (권장)"| ING["mci-price<br/>IngestEnvelopes"]
+  FW -.->|"broker FCCast (legacy)"| BR["mymqd"] -.-> ING
+  ING --> CF["conflation<br/>(최신값 캐시)"]
+  ING --> BEST["BestConsumer<br/>max bid / min ask → BEST"]
+  BEST --> AGG["Aggregator<br/>OHLC 봉"]
+  BEST --> PC["PricingConsumer<br/>Profile 마진"]
+  BEST --> CR["CrossRateConsumer<br/>(옵션)"]
+  AGG --> TS["TimescaleDB<br/>(봉 영속)"]
+  AGG --> SB["gRPC SubscribeBar"] --> CHART["mci-chart"]
+  PC --> MQP["MultiQuotePublisher"]
+  MQP --> SQ["gRPC SubscribeQuote"] --> EDGE["mci-edge-price"] --> CUST["고객 ws"]
+  MQP -.->|"legacy"| BR
+    </pre>
+    <span class="cap">그림 2-1. 수집 → best → 마진 → 배포. 점선은 legacy/선택 경로(broker)</span>
+  </div>
+  <table>
+    <tr><th style="width:26%">컴포넌트</th><th>배포 엔진에서의 책임</th></tr>
+    <tr><td>quote-forwarder (Go)</td><td>UDP FIX 수집·파싱 → v1 envelope. gRPC PublishTick으로 mci-price 직접 push (broker 우회)</td></tr>
+    <tr><td>mci-price — Ingest/conflation</td><td>envelope 파싱 + 최신값 캐시. 모든 consumer로 dispatch</td></tr>
+    <tr><td>BestConsumer</td><td>per (Symbol, Source) 다중시장 best. 합성 BEST tick fan-out</td></tr>
+    <tr><td>PricingConsumer</td><td>활성 Profile별 마진 적용 → CustomerQuote</td></tr>
+    <tr><td>Aggregator</td><td>OHLC 봉(6 tf) → TimescaleDB + SubscribeBar</td></tr>
+    <tr><td>MultiQuotePublisher → edge</td><td>gRPC SubscribeQuote stream → mci-edge-price → 고객 ws</td></tr>
+  </table>
+
+  <!-- 3 -->
+  <h2 id="s3">3. 신뢰성 요건</h2>
+  <p class="lead">배포 엔진의 품질은 "유실 없이, 막히지 않고, 정확하게, 보이게" 흐르느냐로 결정된다. 6개 요건과 현 상태를 정리한다.</p>
+
+  <h3 id="s3-1">3.1 broker를 hot path에서 제거 <span class="tag done">대부분 완료</span></h3>
+  <p>broker publisher는 단일 thread라 고부하에서 천장(SIGABRT)에 걸린다(부하테스트 64k tick/s → delivery ~62%). 시세 수집 경로에서 가장 큰 불안정 요인이다.</p>
+  <div class="box ok"><div class="t">현 상태</div>
+    <p>forwarder <code>--publish-mode grpc</code>로 broker를 우회해 mci-price에 직접 push 가능. mci-price는 broker subscribe와 <strong>동일한 IngestEnvelopes hot path</strong>로 진입. <strong>모드만 grpc로 확인/고정</strong>하면 이 요건은 충족.</p>
+  </div>
+
+  <h3 id="s3-2">3.2 conflation 기반 backpressure <span class="tag todo">보강</span></h3>
+  <p>시세는 매매와 달리 <strong>최신값만 의미</strong>가 있다. 소비자가 뒤처지면 중간 tick을 버리고 최신만 유지해야 하며, <strong>절대 생산자를 block하지 않아야</strong> 한다.</p>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  P["생산자<br/>(forwarder)"] --> Q{"소비자가<br/>따라오나?"}
+  Q -->|"yes"| FWD["그대로 전달"]
+  Q -->|"no (느림)"| DROP["중간 tick drop<br/>최신만 유지 (conflate)"]
+  DROP --> M["메트릭에 기록<br/>(SubDrops · backpressure WARN)"]
+  Q -->|"심하게 느림"| ISO["slow consumer 격리<br/>(stream 종료)"]
+    </pre>
+    <span class="cap">그림 3-1. block 금지 · drop-to-latest · 격리 · 기록</span>
+  </div>
+  <p>현 코드엔 이미 conflation, bounded buffer(<code>SubBufferSize</code>/gRPC <code>bufSz</code>/<code>TickBufferSize</code>), non-blocking enqueue, slow-consumer 격리, 80% backpressure WARN이 있다. <strong>보강 포인트</strong>: PricingConsumer 비동기 buffer를 운영에서 켜고, 버퍼 크기를 부하에 맞게 튜닝하고, 어떤 경로도 동기 block이 없도록 점검.</p>
+
+  <h3 id="s3-3">3.3 정합성 — Source 누락 방지 <span class="tag todo">점검</span></h3>
+  <div class="box warn"><div class="t">조용한 유실 지점</div>
+    <p>BestConsumer는 <code>Tick.Source == ""</code>이면 그 tick을 <strong>버린다</strong>. forwarder가 envelope의 <code>src</code>를 안 채우면 <code>received</code>·conflation은 올라가지만 best·봉·마진·배포 어디에도 안 들어간다. 이 drop은 <code>price-stats.dropped</code>에 안 잡힌다.</p>
+  </div>
+  <p>판정자는 <code>GET /v1/best-stats</code> — 여기에 feed의 source(예: <code>SMB</code>)가 (symbol, source)로 보이면 정상 ingest. 안 보이면 Source 누락 drop이다. <strong>요건</strong>: forwarder가 모든 envelope에 <code>src</code>를 채우는 것을 계약으로 강제 + best-stats source 모니터.</p>
+
+  <h3 id="s3-4">3.4 유실 가시화 — seq gap <span class="tag todo">신규</span></h3>
+  <p>UDP는 재전송이 없어 손실은 막을 수 없다. 대신 envelope의 <code>seq</code>로 <strong>누락 구간을 메트릭으로 노출</strong>하면 "조용한 유실"이 "보이는 유실"이 된다. per-feed seq gap 카운터를 추가해 어느 feed가 얼마나 빠졌는지 관측.</p>
+
+  <h3 id="s3-5">3.5 HA · 샤딩 <span class="tag opt">필요 시</span></h3>
+  <p>mci-price/edge 다중 인스턴스 + 자동 재연결(이미 있음). 단일 인스턴스가 포화하면 <strong>심볼 단위 샤딩</strong>으로 처리 여유 확보(etcd 일관성, <code>docs/mci-price-ha.md</code>). 배포 엔진은 best 계산이 <code>O(profile)</code>이라 보통 한 인스턴스로도 여유가 크다 — 샤딩은 실제 포화 시에만.</p>
+
+  <h3 id="s3-6">3.6 관측 <span class="tag done">대부분 완료</span></h3>
+  <table>
+    <tr><th style="width:40%">지표</th><th>의미</th></tr>
+    <tr><td><code>/v1/price-stats</code> received/ticks/sub_drops/latency</td><td>수신량·backpressure·e2e 지연</td></tr>
+    <tr><td><code>/v1/best-stats</code> (source별)</td><td>feed가 best까지 들어왔는지 — 정합성 판정</td></tr>
+    <tr><td><code>/v1/subscribers</code> + 큐 깊이</td><td>배포 구독자·backpressure</td></tr>
+    <tr><td>forwarder <code>/stats</code> published / errors</td><td>수집·전송 건전성</td></tr>
+    <tr><td>(신규) per-feed seq gap</td><td>UDP 손실 가시화</td></tr>
+  </table>
+
+  <!-- 4 -->
+  <h2 id="s4">4. 보관 정책 (옵션 — 미정)</h2>
+  <p>배포 엔진은 raw tick을 영속할 이유가 적다. 3-tier로 나눠 필요한 만큼만 둔다.</p>
+  <table>
+    <tr><th style="width:22%">tier</th><th style="width:26%">저장</th><th>용도 / 비고</th></tr>
+    <tr><td>최신값</td><td>conflation (메모리)</td><td>현재가 조회·배포. 항상 필요, 이미 있음</td></tr>
+    <tr><td>봉(OHLC)</td><td>TimescaleDB (영속)</td><td>차트·조회. 현 Archiver 그대로(1m+)</td></tr>
+    <tr><td>raw tick</td><td>보관 안 함 / 짧은 ring</td><td>기본은 미보관. 디버그·재전송 확인용 최근 N초 ring만 선택적</td></tr>
+  </table>
+  <div class="box"><div class="t">권고</div>
+    <p><strong>최신값 + 봉</strong>이면 "배포 엔진 + 차트/조회"는 충분하다. raw tick 영속은 두지 않는 것을 기본값으로. 추후 규제/정산 요구가 생기면 그때 MDS의 SOR를 쓰거나 선택적 영속을 더한다 — <strong>보관 결정이 배포 엔진 설계를 막지 않는다.</strong></p>
+  </div>
+
+  <!-- 5 -->
+  <h2 id="s5">5. 현 상태 대비 갭</h2>
+  <table>
+    <tr><th style="width:30%">요건</th><th style="width:18%">현 상태</th><th>조치</th></tr>
+    <tr><td>broker 우회 (gRPC 직결)</td><td><span class="tag done">됨</span></td><td>forwarder를 <code>--publish-mode grpc</code>로 고정·확인</td></tr>
+    <tr><td>conflation / bounded buffer</td><td><span class="tag done">됨</span></td><td>PricingConsumer 비동기 buffer 운영 ON + 튜닝</td></tr>
+    <tr><td>Source 정합 (best drop 방지)</td><td><span class="tag todo">점검</span></td><td>forwarder <code>src</code> 강제 + best-stats source 모니터</td></tr>
+    <tr><td>seq gap 가시화</td><td><span class="tag todo">없음</span></td><td>per-feed seq gap 카운터 추가</td></tr>
+    <tr><td>slow consumer 격리</td><td><span class="tag done">됨</span></td><td>유지 (gRPC non-blocking + close)</td></tr>
+    <tr><td>HA / 샤딩</td><td><span class="tag opt">부분</span></td><td>다중 인스턴스 운영, 포화 시 심볼 샤딩</td></tr>
+    <tr><td>관측 메트릭</td><td><span class="tag done">대부분</span></td><td>seq gap·best-stats source 대시보드 추가</td></tr>
+    <tr><td>보관 정책</td><td><span class="tag opt">미정</span></td><td>최신+봉 기본, raw는 미보관(또는 ring) 결정</td></tr>
+  </table>
+
+  <!-- 6 -->
+  <h2 id="s6">6. 단계별 로드맵</h2>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  P1["1단계 · 즉시<br/>gRPC 직결 고정<br/>Source 정합 점검"]
+  P2["2단계 · 단기<br/>conflation/backpressure 보강<br/>seq gap 메트릭"]
+  P3["3단계 · 중기<br/>HA·심볼 샤딩<br/>대시보드"]
+  P4["4단계<br/>보관 정책 확정<br/>(최신+봉 기본)"]
+  P1 --> P2 --> P3 --> P4
+    </pre>
+    <span class="cap">그림 6-1. 안정성 우선 → 확장 → 보관 순</span>
+  </div>
+  <ol>
+    <li><strong>1단계 (즉시)</strong> — forwarder를 gRPC 직결 모드로 고정하고, <code>/v1/best-stats</code>로 feed source가 실제 ingest되는지 확인(Source 누락이면 forwarder <code>src</code> 수정). <em>이 둘만으로 "받지만 안 들어가는" 현 우려가 해소된다.</em></li>
+    <li><strong>2단계 (단기)</strong> — PricingConsumer 비동기 buffer ON + 버퍼 튜닝, 어떤 경로도 block 없도록 점검, per-feed seq gap 카운터 추가.</li>
+    <li><strong>3단계 (중기)</strong> — 부하에 따라 mci-price/edge 다중 인스턴스 + 심볼 샤딩, seq gap·source 대시보드.</li>
+    <li><strong>4단계</strong> — 보관 정책 확정(최신+봉 기본, raw 미보관/ring). 규제 요구 발생 시 SOR 연동 검토.</li>
+  </ol>
+
+  <!-- 7 -->
+  <h2 id="s7">7. 부록 — 코드 위치 · 점검 명령</h2>
+  <table>
+    <tr><th style="width:42%">위치</th><th>역할</th></tr>
+    <tr><td><code>cmd/quote-forwarder/main.go</code></td><td>UDP 수집 + publish-mode(broker/grpc/both)</td></tr>
+    <tr><td><code>internal/price/server.go</code></td><td>IngestEnvelopes hot path + conflation + HTTP</td></tr>
+    <tr><td><code>internal/price/best.go</code></td><td>BestConsumer (Source 검사 = best drop 지점)</td></tr>
+    <tr><td><code>internal/price/pricing_consumer.go</code></td><td>Profile 마진 + 비동기 buffer + MultiQuotePublisher</td></tr>
+    <tr><td><code>internal/price/grpc.go</code></td><td>SubscribeQuote/Bar + PublishTick + backpressure</td></tr>
+  </table>
+  <pre><span class="lbl">현 상태 점검 명령</span><code><span class="c"># forwarder 전송 모드 확인 (broker 인지 grpc 인지)</span>
+ps aux | grep <span class="s">'[q]uote-forwarder'</span>
+
+<span class="c"># feed 가 best 까지 실제로 들어오나 (Source 정합 판정)</span>
+curl -s 127.0.0.1:8082/v1/best-stats | jq .
+
+<span class="c"># 수신량·backpressure·지연</span>
+curl -s 127.0.0.1:8082/v1/price-stats | jq <span class="s">'.received, .sub_drops, .latency'</span>
+
+<span class="c"># 수집·전송 건전성</span>
+curl -s 127.0.0.1:9091/stats | grep -i publish</code></pre>
+  <p style="color:var(--muted);font-size:13px;margin-top:24px;border-top:1px solid var(--line);padding-top:12px">코드 인용은 작성 시점 기준. 범위는 "실시간 시세 배포 엔진"으로 한정하며 MDS 완전 대체가 아니다 — raw 영속·조회 카탈로그·스케줄러·OTP/FOS는 MDS 몫으로 남긴다.</p>
+</main>
+</div>
+<button class="totop" id="totop" title="맨 위로">↑</button>
+
+<script>
+  if(window.mermaid){
+    mermaid.initialize({startOnLoad:true,securityLevel:'loose',theme:'base',
+      themeVariables:{fontFamily:'-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif',
+        primaryColor:'#eef3f9',primaryBorderColor:'#1f4e79',primaryTextColor:'#16202c',
+        lineColor:'#7a93b0',secondaryColor:'#f1faf6',tertiaryColor:'#fdf6f1',fontSize:'13px'},
+      flowchart:{curve:'basis',useMaxWidth:true,htmlLabels:true}});
+  }
+  var links=[].slice.call(document.querySelectorAll('nav.toc a'));
+  var map={}; links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a;});
+  var spy=new IntersectionObserver(function(es){es.forEach(function(e){
+    if(e.isIntersecting){links.forEach(function(l){l.classList.remove('active');});var a=map[e.target.id];if(a)a.classList.add('active');}
+  });},{rootMargin:'0px 0px -80% 0px'});
+  document.querySelectorAll('main h2[id]').forEach(function(t){spy.observe(t);});
+  var btn=document.getElementById('totop');
+  addEventListener('scroll',function(){btn.classList.toggle('show',scrollY>500);});
+  btn.onclick=function(){scrollTo({top:0,behavior:'smooth'});};
+</script>
+</body>
+</html>

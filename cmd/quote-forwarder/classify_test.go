@@ -11,9 +11,9 @@ import (
 // 검증. 카운터 reset 을 위해 sub-test 순서대로.
 func TestClassifyInvalid_Reasons(t *testing.T) {
 	cases := []struct {
-		name      string
-		sym       string
-		bid, ask  float64
+		name       string
+		sym        string
+		bid, ask   float64
 		wantReason string
 	}{
 		{"missing_symbol", "", 156.4, 156.5, "missing_symbol"},

@@ -1,8 +1,8 @@
 package price
 
 import (
-	"testing"
 	"strings"
+	"testing"
 )
 
 func TestSplitPairsCSV(t *testing.T) {

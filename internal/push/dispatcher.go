@@ -68,9 +68,9 @@ type Dispatcher struct {
 	sendFailed      atomic.Uint64
 
 	// source 별 분리 카운터 — Phase-1 PoC 의 broker / HTTP source 가시화.
-	recvBroker      atomic.Uint64
-	recvHTTP        atomic.Uint64
-	dropInjectFull  atomic.Uint64 // HTTP inject channel full → drop
+	recvBroker     atomic.Uint64
+	recvHTTP       atomic.Uint64
+	dropInjectFull atomic.Uint64 // HTTP inject channel full → drop
 }
 
 // DispatcherOptions 는 Dispatcher 구성 의존성.

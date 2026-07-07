@@ -43,13 +43,17 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
 }
 
-// loudLogger — 디버그 PoC 용.
+// loudLogger — 디버그 PoC 용. flake 재현 시 특정 테스트에 주입해 사용.
+//
+//lint:ignore U1000 진단 헬퍼 — 상시 사용 안 하지만 flake 재현용으로 유지.
 func loudLogger(t *testing.T) *slog.Logger {
 	return slog.New(slog.NewTextHandler(&tWriter{t}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
+//lint:ignore U1000 loudLogger 용 t.Logf 어댑터.
 type tWriter struct{ t *testing.T }
 
+//lint:ignore U1000 io.Writer 구현.
 func (w *tWriter) Write(p []byte) (int, error) {
 	w.t.Logf("%s", strings.TrimRight(string(p), "\n"))
 	return len(p), nil

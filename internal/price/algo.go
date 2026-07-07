@@ -38,7 +38,7 @@ type AlgoStreamServer struct {
 	seqGens map[string]*atomic.Uint64 // symbol → seq counter
 
 	// per-symbol ring buffer (Phase B backfill 대비). Phase A 는 write 만.
-	rings map[string]*algoRing // symbol → ring
+	rings    map[string]*algoRing // symbol → ring
 	ringSize int
 
 	// active subscribers — 심볼별 subscriber set.
@@ -80,18 +80,21 @@ type algoSub struct {
 }
 
 // algoRing — 심볼별 최근 N tick 을 원형 저장. Phase B backfill 지원.
+//
+// AlgoQuote 는 protobuf message (내부 MessageState 에 sync.Mutex 포함) 라
+// 반드시 pointer 로만 다룸 — value copy 는 go vet lock-copy 위반.
 type algoRing struct {
 	mu   sync.Mutex
-	buf  []wtgpb.AlgoQuote // capacity = ringSize
-	head int               // 다음 쓸 위치
+	buf  []*wtgpb.AlgoQuote // capacity = ringSize
+	head int                // 다음 쓸 위치
 	full bool
 }
 
 func newAlgoRing(size int) *algoRing {
-	return &algoRing{buf: make([]wtgpb.AlgoQuote, size)}
+	return &algoRing{buf: make([]*wtgpb.AlgoQuote, size)}
 }
 
-func (r *algoRing) push(q wtgpb.AlgoQuote) {
+func (r *algoRing) push(q *wtgpb.AlgoQuote) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.buf[r.head] = q
@@ -114,7 +117,7 @@ func (r *algoRing) push(q wtgpb.AlgoQuote) {
 // 유도해야 함.
 //
 // fromSeq >= newest 이면 ticks 비어있고 gap=false. caller 는 그냥 live 이어감.
-func (r *algoRing) snapshot(fromSeq int64) (ticks []wtgpb.AlgoQuote, oldest int64, gap bool) {
+func (r *algoRing) snapshot(fromSeq int64) (ticks []*wtgpb.AlgoQuote, oldest int64, gap bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	n := len(r.buf)
@@ -129,7 +132,7 @@ func (r *algoRing) snapshot(fromSeq int64) (ticks []wtgpb.AlgoQuote, oldest int6
 	if count == 0 {
 		return nil, 0, false
 	}
-	oldest = r.buf[startIdx].Seq
+	oldest = r.buf[startIdx].GetSeq()
 	// gap: fromSeq+1 < oldest → client 가 놓친 tick 이 이미 덮어써짐.
 	// 예: oldest=105, fromSeq=100 → 101~104 손실 → gap.
 	if fromSeq+1 < oldest {
@@ -138,7 +141,7 @@ func (r *algoRing) snapshot(fromSeq int64) (ticks []wtgpb.AlgoQuote, oldest int6
 	// 순회하며 seq > fromSeq 만 수집. buf 는 push 순서라 자연스레 seq 오름차순.
 	for i := 0; i < count; i++ {
 		idx := (startIdx + i) % n
-		if r.buf[idx].Seq > fromSeq {
+		if r.buf[idx].GetSeq() > fromSeq {
 			ticks = append(ticks, r.buf[idx])
 		}
 	}
@@ -261,7 +264,7 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 
 	// ring buffer (Phase B backfill 용). 값 복사로 저장.
 	if ring := s.ringFor(t.Symbol); ring != nil {
-		ring.push(*q)
+		ring.push(q)
 	}
 
 	s.ticksEmitted.Add(1)
@@ -386,14 +389,23 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 					"sequence_gap sym=%s from_seq=%d oldest_available=%d — from_seq=0 으로 재구독하여 snapshot 부터 시작",
 					sym, req.GetFromSeq(), oldest)
 			}
-			for i := range ticks {
-				q := ticks[i]
-				q.IsBackfill = true
-				if err := stream.Send(&q); err != nil {
+			for _, orig := range ticks {
+				// ring 원본을 수정하면 다음 subscribe 에게도 backfill=true 로 보임.
+				// 새 message 로 재구성 (proto message 를 value copy 하면 lock 복사).
+				q := &wtgpb.AlgoQuote{
+					Sym:            orig.GetSym(),
+					Bid:            orig.GetBid(),
+					Ask:            orig.GetAsk(),
+					Seq:            orig.GetSeq(),
+					TsSourceUnixNs: orig.GetTsSourceUnixNs(),
+					TsWtgUnixNs:    orig.GetTsWtgUnixNs(),
+					IsBackfill:     true,
+				}
+				if err := stream.Send(q); err != nil {
 					return err
 				}
-				if q.Seq > replayEndSeq[sym] {
-					replayEndSeq[sym] = q.Seq
+				if q.GetSeq() > replayEndSeq[sym] {
+					replayEndSeq[sym] = q.GetSeq()
 				}
 				s.backfillEmitted.Add(1)
 			}
@@ -484,7 +496,9 @@ var _ wtgpb.PriceServiceServer = (*algoServiceAdapter)(nil)
 // 필요 없음 (본 서버는 SubscribeAlgo 만 구현). 실제 mci-price 에서는
 // grpcServer 가 이미 PriceService 를 mount 하고 있고, SubscribeAlgo 도 그
 // 서버에서 처리하므로 이 adapter 는 사용되지 않음. 인터페이스 확인용 no-op.
-type algoServiceAdapter struct{ wtgpb.UnimplementedPriceServiceServer }
+type algoServiceAdapter struct {
+	wtgpb.UnimplementedPriceServiceServer
+}
 
 // Guard against Context unused warning.
 var _ = context.Background

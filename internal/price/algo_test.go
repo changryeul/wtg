@@ -7,8 +7,8 @@ import (
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
 
-func mkQ(sym string, seq int64) wtgpb.AlgoQuote {
-	return wtgpb.AlgoQuote{Sym: sym, Seq: seq, Bid: 1.0, Ask: 1.1}
+func mkQ(sym string, seq int64) *wtgpb.AlgoQuote {
+	return &wtgpb.AlgoQuote{Sym: sym, Seq: seq, Bid: 1.0, Ask: 1.1}
 }
 
 // ring 이 비어있을 때 — ticks nil, gap=false.

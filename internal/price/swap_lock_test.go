@@ -130,8 +130,7 @@ func TestSwapLock_HappyPath(t *testing.T) {
 // failingRegistry — Put 을 지정 시점에 실패시키는 wrapper.
 type failingRegistry struct {
 	quoteid.Registry
-	failNthPut int             // 1-base. N 번째 Put 만 실패.
-	idx        quoteid.SwapIndex // SwapIndex 전달용.
+	failNthPut int // 1-base. N 번째 Put 만 실패.
 	putCount   int
 }
 

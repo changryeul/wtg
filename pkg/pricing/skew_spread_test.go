@@ -209,4 +209,3 @@ func TestApply_CustomerSkewSpread_Override(t *testing.T) {
 		t.Errorf("ask: got %.4f, want 1300.2400", cq.Ask)
 	}
 }
-

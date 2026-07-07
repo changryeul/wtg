@@ -53,17 +53,17 @@ const (
 //
 // 적용 산식 (Engine.Apply):
 //
-//	bid = raw.Bid + SkewAmount − BidAmount − SpreadAmount/2
-//	ask = raw.Ask + SkewAmount + AskAmount + SpreadAmount/2
+//		bid = raw.Bid + SkewAmount − BidAmount − SpreadAmount/2
+//		ask = raw.Ask + SkewAmount + AskAmount + SpreadAmount/2
 //
-//   - BidAmount   : raw.Bid 에서 차감될 양 (>= 0). 본점·영업점·고객 마진의 기본.
-//   - AskAmount   : raw.Ask 에 가산될 양 (>= 0). 본점·영업점·고객 마진의 기본.
-//   - SkewAmount  : bid/ask 둘 다 같은 부호로 shift. 딜러 인벤토리 헷지용
-//                   (예: USD 매수 누적 시 SkewAmount=+0.05 → 양쪽 5pip 위로
-//                   shift → 고객 매수 비싸게 / 고객 매도 비싸게 = 매도 유도).
-//                   양수/음수 모두 허용.
-//   - SpreadAmount: bid/ask 폭 추가 확대 (절반씩 양쪽). 변동성·유동성 부족 대응.
-//                   양수만 의미 있음 — 폭 축소 (음수) 는 운영상 사용 X.
+//	  - BidAmount   : raw.Bid 에서 차감될 양 (>= 0). 본점·영업점·고객 마진의 기본.
+//	  - AskAmount   : raw.Ask 에 가산될 양 (>= 0). 본점·영업점·고객 마진의 기본.
+//	  - SkewAmount  : bid/ask 둘 다 같은 부호로 shift. 딜러 인벤토리 헷지용
+//	                  (예: USD 매수 누적 시 SkewAmount=+0.05 → 양쪽 5pip 위로
+//	                  shift → 고객 매수 비싸게 / 고객 매도 비싸게 = 매도 유도).
+//	                  양수/음수 모두 허용.
+//	  - SpreadAmount: bid/ask 폭 추가 확대 (절반씩 양쪽). 변동성·유동성 부족 대응.
+//	                  양수만 의미 있음 — 폭 축소 (음수) 는 운영상 사용 X.
 //
 // 스왑포인트는 만기·금리차에 따라 부호가 바뀔 수 있으므로 SwapPoint 용으로
 // 사용할 때는 BidAmount/AskAmount 음수도 허용 (부호 포함 그대로 저장).

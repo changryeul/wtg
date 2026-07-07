@@ -73,9 +73,9 @@ func (c *swapLockCollector) Collect(ch chan<- prometheus.Metric) {
 // swapValidationCollector — ValidateSwap / ConsumeSwap RPC 의 status 별
 // 누적 + ConsumeSwap partial-race 별도 카운터.
 type swapValidationCollector struct {
-	src                   *QuoteValidationServer
-	validateDesc          *prometheus.Desc // labels: status
-	consumeDesc           *prometheus.Desc // labels: status
+	src                    *QuoteValidationServer
+	validateDesc           *prometheus.Desc // labels: status
+	consumeDesc            *prometheus.Desc // labels: status
 	consumePartialRaceDesc *prometheus.Desc
 }
 

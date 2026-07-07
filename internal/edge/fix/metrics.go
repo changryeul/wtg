@@ -108,6 +108,8 @@ func MetricsHandler() http.Handler {
 
 // syncMetrics — Stats snapshot 의 값을 Prometheus gauge 와 동기화 (atomic
 // counter 의 즉시 반영). counter 는 ++ 시점에 직접 inc 호출.
+//
+//lint:ignore U1000 카운터 동기화 helper — 향후 dashboard 재구성 시 사용 예정.
 func syncMetrics(stats Stats) {
 	m := getMetrics()
 	m.activeSessions.Set(float64(stats.ActiveSessions))

@@ -240,6 +240,8 @@ var _ OrderForwarder = (*httpForwarder)(nil)
 
 // quickfixMessageType helper — Phase A 진단용. message 가 NewOrderSingle 인지
 // 빠른 sanity check.
+//
+//lint:ignore U1000 진단 헬퍼 — Phase D 서비스 매트릭스 확장 시 재사용.
 func isNewOrderSingle(msg *quickfix.Message) bool {
 	t, err := msg.MsgType()
 	return err == nil && t == "D"

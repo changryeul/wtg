@@ -32,11 +32,11 @@ func putSwap(t *testing.T, reg *quoteid.MemoryRegistry, t0 time.Time, validity t
 	profile, _ := session.ParseProfileKey("WEB.BRANCH.VIP")
 	mkRec := func(id string) quoteid.Record {
 		return quoteid.Record{
-			QuoteID:    quoteid.QuoteID(id),
-			Pair:       "USD/KRW",
-			Profile:    profile,
-			Tenor:      "SPOT",
-			Bid:        1373.12, Ask: 1373.22,
+			QuoteID: quoteid.QuoteID(id),
+			Pair:    "USD/KRW",
+			Profile: profile,
+			Tenor:   "SPOT",
+			Bid:     1373.12, Ask: 1373.22,
 			IssuedAt:   t0.UnixNano(),
 			ValidUntil: t0.Add(validity).UnixNano(),
 			Sequence:   1, Issuer: "T",

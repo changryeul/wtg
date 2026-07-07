@@ -18,13 +18,13 @@ func MetricsHandler() http.Handler {
 
 // Prometheus metric — service-scoped 단일 인스턴스. lazy 초기화 (테스트 병렬 안전).
 type mdMetrics struct {
-	logon           *prometheus.CounterVec // labels: result=ok|reject
-	activeSessions  prometheus.Gauge
-	mdrReceived     prometheus.Counter
-	mdrRejected     *prometheus.CounterVec // labels: reason
-	snapshotSent    *prometheus.CounterVec // labels: symbol
-	symbolMissing   *prometheus.CounterVec // labels: symbol (요청은 왔지만 static provider 에 없음)
-	reload          *prometheus.CounterVec // labels: result=ok|fail
+	logon          *prometheus.CounterVec // labels: result=ok|reject
+	activeSessions prometheus.Gauge
+	mdrReceived    prometheus.Counter
+	mdrRejected    *prometheus.CounterVec // labels: reason
+	snapshotSent   *prometheus.CounterVec // labels: symbol
+	symbolMissing  *prometheus.CounterVec // labels: symbol (요청은 왔지만 static provider 에 없음)
+	reload         *prometheus.CounterVec // labels: result=ok|fail
 }
 
 var (

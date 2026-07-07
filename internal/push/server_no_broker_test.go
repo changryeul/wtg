@@ -27,9 +27,9 @@ func TestServer_NoBroker_BootAndHTTPPush(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.ListenAddr = addr
-	cfg.NoBroker = true            // ← 핵심
-	cfg.PushSecret = "testsecret"  // HTTP push 인증
-	cfg.DevMode = true             // ws / auth 우회
+	cfg.NoBroker = true           // ← 핵심
+	cfg.PushSecret = "testsecret" // HTTP push 인증
+	cfg.DevMode = true            // ws / auth 우회
 	cfg.LogLevel = "warn"
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

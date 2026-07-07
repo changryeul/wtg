@@ -32,13 +32,13 @@ import (
 // SpotSnapshotEntry — 단일 pair 의 spot 호가 + 마진 정보.
 type SpotSnapshotEntry struct {
 	Pair      string  `json:"pair"`
-	Bid       float64 `json:"bid"`         // customer-applied
-	Ask       float64 `json:"ask"`         // customer-applied
-	RawBid    float64 `json:"raw_bid"`     // 시장 BEST bid
-	RawAsk    float64 `json:"raw_ask"`     // 시장 BEST ask
-	Spread    float64 `json:"spread"`      // ask - bid (customer-applied)
-	RawSpread float64 `json:"raw_spread"`  // raw 시장 spread
-	Source    string  `json:"source"`      // "BEST" 또는 "CROSS"
+	Bid       float64 `json:"bid"`        // customer-applied
+	Ask       float64 `json:"ask"`        // customer-applied
+	RawBid    float64 `json:"raw_bid"`    // 시장 BEST bid
+	RawAsk    float64 `json:"raw_ask"`    // 시장 BEST ask
+	Spread    float64 `json:"spread"`     // ask - bid (customer-applied)
+	RawSpread float64 `json:"raw_spread"` // raw 시장 spread
+	Source    string  `json:"source"`     // "BEST" 또는 "CROSS"
 }
 
 // SpotSnapshot — 다중 pair 응답.

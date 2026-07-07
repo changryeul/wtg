@@ -10,15 +10,15 @@ import (
 //
 // 산식 (P6 — Skew/Spread 통합):
 //
-//	skewSum   = swap.Skew   + hq.Skew   + site.Skew
-//	spreadSum = swap.Spread + hq.Spread + site.Spread
-//	bid = raw.Bid + skewSum − (swap.Bid + hq.Bid + site.Bid) − spreadSum/2
-//	ask = raw.Ask + skewSum + (swap.Ask + hq.Ask + site.Ask) + spreadSum/2
+//		skewSum   = swap.Skew   + hq.Skew   + site.Skew
+//		spreadSum = swap.Spread + hq.Spread + site.Spread
+//		bid = raw.Bid + skewSum − (swap.Bid + hq.Bid + site.Bid) − spreadSum/2
+//		ask = raw.Ask + skewSum + (swap.Ask + hq.Ask + site.Ask) + spreadSum/2
 //
-//   - Bid 는 차감, Ask 는 가산 (마진 확대 = 고객 불리) 방향이 표준.
-//   - Skew 는 양쪽 (bid, ask) 동방향 shift — 딜러 인벤토리 헷지. 양수 = 양쪽 위로.
-//   - Spread 는 양쪽 폭 추가 확대 — 변동성/유동성 대응. 양수 = 폭 +.
-//   - 스왑포인트의 BidAmount/AskAmount 는 만기·금리차로 부호 반전 가능 — 그대로 합산.
+//	  - Bid 는 차감, Ask 는 가산 (마진 확대 = 고객 불리) 방향이 표준.
+//	  - Skew 는 양쪽 (bid, ask) 동방향 shift — 딜러 인벤토리 헷지. 양수 = 양쪽 위로.
+//	  - Spread 는 양쪽 폭 추가 확대 — 변동성/유동성 대응. 양수 = 폭 +.
+//	  - 스왑포인트의 BidAmount/AskAmount 는 만기·금리차로 부호 반전 가능 — 그대로 합산.
 //
 // backward compat: Skew/Spread 가 0 이면 기존 산식과 정확히 동일.
 //

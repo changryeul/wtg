@@ -65,7 +65,7 @@ func TestCSideWtgquery_W9501S01_HappyPath(t *testing.T) {
 				OpenedAt: openedAt, ClosedAt: closedAt,
 				OpenBid: 1378.50, OpenAsk: 1378.65,
 				HighBid: 1379.10, HighAsk: 1379.25,
-				LowBid:  1378.20, LowAsk:  1378.35,
+				LowBid: 1378.20, LowAsk: 1378.35,
 				CloseBid: 1378.80, CloseAsk: 1378.95,
 				TickCount: 12345,
 			},
@@ -123,7 +123,7 @@ func TestCSideWtgquery_W9501S01_MultiBar(t *testing.T) {
 			OpenedAt: op, ClosedAt: op.Add(24 * time.Hour),
 			OpenBid: 1378.0 + float64(i), OpenAsk: 1378.1 + float64(i),
 			HighBid: 1379.0 + float64(i), HighAsk: 1379.1 + float64(i),
-			LowBid:  1377.5 + float64(i), LowAsk:  1377.6 + float64(i),
+			LowBid: 1377.5 + float64(i), LowAsk: 1377.6 + float64(i),
 			CloseBid: 1378.5 + float64(i), CloseAsk: 1378.6 + float64(i),
 			TickCount: 100,
 		}

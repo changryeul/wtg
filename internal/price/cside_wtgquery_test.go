@@ -95,8 +95,8 @@ func TestCSideWtgquery_W9501S02_BEST(t *testing.T) {
 	for _, key := range []string{
 		"exnm        : BEST",
 		"symb        : USDKRW",
-		"bid         : 1378.65000 (source=B)",   // BEST = max(bid) = SMB
-		"ask         : 1378.69000 (source=B)",   // BEST = min(ask) = SMB
+		"bid         : 1378.65000 (source=B)", // BEST = max(bid) = SMB
+		"ask         : 1378.69000 (source=B)", // BEST = min(ask) = SMB
 		"bid_best    : 1378.65000",
 		"ask_best    : 1378.69000",
 	} {
@@ -128,7 +128,7 @@ func TestCSideWtgquery_W9501S02_BySource(t *testing.T) {
 		"exnm        : KMB",
 		"bid         : 1378.60000 (source=K)",
 		"ask         : 1378.72000 (source=K)",
-		"bid_best    : 1378.65000",   // BEST 는 SMB
+		"bid_best    : 1378.65000", // BEST 는 SMB
 		"ask_best    : 1378.69000",
 	} {
 		if !strings.Contains(string(out), key) {

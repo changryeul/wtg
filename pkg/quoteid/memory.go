@@ -16,7 +16,7 @@ import (
 type MemoryRegistry struct {
 	mu       sync.RWMutex
 	records  map[QuoteID]Record
-	consumed map[QuoteID]string // QuoteID → consumer_id (먼저 MarkConsumed 한 자)
+	consumed map[QuoteID]string    // QuoteID → consumer_id (먼저 MarkConsumed 한 자)
 	swaps    map[string]SwapRecord // S3-b — swap_id 인덱스 (SwapIndex 구현).
 	now      func() time.Time
 	grace    time.Duration

@@ -30,11 +30,11 @@ type HTTPPushRequest struct {
 
 // HTTPPushResponse — 발사 결과.
 type HTTPPushResponse struct {
-	Injected  bool   `json:"injected"`
-	Func      uint8  `json:"func"`
-	Subc      uint8  `json:"subc"`
-	User      string `json:"user,omitempty"`
-	BodySize  int    `json:"body_size"`
+	Injected bool   `json:"injected"`
+	Func     uint8  `json:"func"`
+	Subc     uint8  `json:"subc"`
+	User     string `json:"user,omitempty"`
+	BodySize int    `json:"body_size"`
 }
 
 // HTTPPushHandler — POST /v1/internal/push.

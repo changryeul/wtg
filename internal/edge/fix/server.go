@@ -125,7 +125,7 @@ type Config struct {
 	// 빈값이면 정적 seed 만 사용 (backward compat).
 	//
 	// etcd schema: <prefix><SenderCompID> = JSON Counterparty
-	EtcdEndpoints           string
+	EtcdEndpoints            string
 	EtcdCounterpartiesPrefix string // default "wtg/fix/counterparties/"
 
 	// TxForwardURL — `/v1/tx` 호출 backend (mci-api). 빈값이면 envelope 을

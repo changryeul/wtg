@@ -3,8 +3,9 @@
 // cside_e2e_test.go — C SDK (cside/wtgpush/sample) 의 wire 호환성 검증.
 //
 // 실행:
-//   make -C cside/wtgpush
-//   go test -tags=cside ./pkg/push/... -run CSide -v
+//
+//	make -C cside/wtgpush
+//	go test -tags=cside ./pkg/push/... -run CSide -v
 //
 // build tag 로 분리 — CI 의 기본 test 에선 skip (C 빌드 의존 X).
 // sample 바이너리가 cside/wtgpush/sample 에 있어야 함.

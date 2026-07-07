@@ -79,13 +79,13 @@ type QuoteValidationServer struct {
 
 	// S3-c — swap_id 인덱스 + swap 검증/소비 카운터. nil 이면 ValidateSwap /
 	// ConsumeSwap 이 Unimplemented 반환.
-	swapIdx               atomic.Pointer[quoteid.SwapIndex]
-	swapValidateTotal     atomic.Uint64
-	swapValidateOK        atomic.Uint64
-	swapValidateNotFound  atomic.Uint64
-	swapValidateExpired   atomic.Uint64
-	swapValidateConsumed  atomic.Uint64
-	swapValidateInternal  atomic.Uint64
+	swapIdx                atomic.Pointer[quoteid.SwapIndex]
+	swapValidateTotal      atomic.Uint64
+	swapValidateOK         atomic.Uint64
+	swapValidateNotFound   atomic.Uint64
+	swapValidateExpired    atomic.Uint64
+	swapValidateConsumed   atomic.Uint64
+	swapValidateInternal   atomic.Uint64
 	swapConsumeTotal       atomic.Uint64
 	swapConsumeOK          atomic.Uint64
 	swapConsumeAlready     atomic.Uint64

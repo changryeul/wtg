@@ -267,6 +267,8 @@ func (a *fixApp) snapshot() Stats {
 
 // fieldSymbol — quickfix.SymbolField 의 thin extract helper. type alias 가
 // quickfix import 노출을 줄임.
+//
+//lint:ignore U1000 typed 파싱 helper — 다른 fix message type 확장 시 재사용.
 func fieldSymbol(nos newordersingle.NewOrderSingle) (string, error) {
 	var s field.SymbolField
 	if err := nos.Get(&s); err != nil {

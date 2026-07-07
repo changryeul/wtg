@@ -60,11 +60,11 @@ type quoteMetrics struct {
 	// invalidQuote — fastExtractV1 가 ok=false 로 reject 한 envelope.
 	// reason label: "missing_symbol" | "non_positive_price" | "crossed_spread" | "other".
 	// 음수 가격(cooker random walk drift) 같은 운영 anomaly 를 alert 로 즉시 잡기 위함.
-	invalidQuote  *prometheus.CounterVec
-	bytes         *prometheus.CounterVec
-	rcvBuf        *prometheus.GaugeVec
-	batchSize     *prometheus.HistogramVec
-	queueDrops    *prometheus.CounterVec
+	invalidQuote *prometheus.CounterVec
+	bytes        *prometheus.CounterVec
+	rcvBuf       *prometheus.GaugeVec
+	batchSize    *prometheus.HistogramVec
+	queueDrops   *prometheus.CounterVec
 }
 
 func newQuoteMetrics(reg *metrics.Registry) *quoteMetrics {
@@ -160,9 +160,9 @@ func shouldLogRejectSample(key string, now time.Time) bool {
 //
 //   - missing_symbol     : 55= (Symbol) 누락
 //   - not_a_quote        : bid/ask 둘 다 미할당 (35=X trade message 등 — v1 envelope
-//                          path 는 snapshot 만 처리, trade 는 silent skip 의도)
+//     path 는 snapshot 만 처리, trade 는 silent skip 의도)
 //   - non_positive_price : bid<=0 또는 ask<=0 — 한쪽은 있지만 비정상 (cooker drift →
-//                          음수, scale 오류). 운영 alert 대상.
+//     음수, scale 오류). 운영 alert 대상.
 //   - crossed_spread     : ask < bid (cooker 의 spread 계산 오류 또는 stale pair)
 //   - other              : 위에 해당 안 되는 케이스 (보호용 fallback)
 func classifyInvalid(sym string, bid, ask float64) string {

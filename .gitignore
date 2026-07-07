@@ -46,3 +46,9 @@ cside/*/*.dSYM/
 /WTG_*.docx
 /WTG_*.pptx
 /watch.sh
+
+# 로컬 작업 임시 파일 (커밋 금지)
+outputs_tmp/
+*.pptx
+시세배포엔진_설계노트.html
+AGENTS.md

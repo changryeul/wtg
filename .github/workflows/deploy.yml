@@ -3,7 +3,7 @@
 # 흐름:
 #   master push → test → build (linux/amd64 static binary, ubuntu-latest)
 #              → artifact 전달 → deploy (self-hosted runner on EC2)
-#              → /home/winway/nh-allone-server/wtg 설치 + systemctl restart
+#              → /home/winway/nh-fxallone-server/wtg 설치 + systemctl restart
 #
 # 왜 native:
 #   - EC2 에는 docker 를 쓰지 않는다 (운영 결정). Go 는 cgo 없는 static
@@ -36,7 +36,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  WTG_HOME: /home/winway/nh-allone-server/wtg
+  WTG_HOME: /home/winway/nh-fxallone-server/wtg
   DEPLOY_USER: winway
 
 jobs:
@@ -113,6 +113,11 @@ jobs:
           sudo cp -r etc/. "$WTG_HOME/etc/"
           echo "${GITHUB_SHA::7}" | sudo tee "$WTG_HOME/VERSION" >/dev/null
           sudo chown -R "$DEPLOY_USER":"$DEPLOY_USER" "$WTG_HOME/etc" "$WTG_HOME/VERSION"
+
+          # 전체 소스 미러 (.git 포함) — 서버에서 열람 / git log / diff 용.
+          # artifact (다운로드한 바이너리) 만 제외. --delete 로 삭제 파일도 동기화.
+          sudo rsync -a --delete --exclude=/artifact \
+            --chown="$DEPLOY_USER":"$DEPLOY_USER" ./ "$WTG_HOME/src/"
 
           sudo cp deploy/ec2/wtg-*.service /etc/systemd/system/
           sudo systemctl daemon-reload

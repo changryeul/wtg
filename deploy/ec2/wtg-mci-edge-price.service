@@ -10,9 +10,9 @@ StartLimitIntervalSec=60
 Type=simple
 User=winway
 Group=winway
-WorkingDirectory=/home/winway/nh-allone-server/wtg
-EnvironmentFile=/home/winway/nh-allone-server/wtg/wtg.env
-ExecStart=/home/winway/nh-allone-server/wtg/bin/mci-edge-price \
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-price \
     --listen=:8083 \
     --upstream=127.0.0.1:50051 \
     --quote-stream \

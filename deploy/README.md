@@ -28,13 +28,14 @@
 - 앱 실행 유저: **winway** (덜 특권한 앱 유저)
 - Runner 실행 유저: **rocky** (sudoer 필요 — deploy job 이 sudo 사용)
 
-## 배포 위치 (`/home/winway/nh-allone-server/wtg/`)
+## 배포 위치 (`/home/winway/nh-fxallone-server/wtg/`)
 
 ```
-/home/winway/nh-allone-server/wtg/
+/home/winway/nh-fxallone-server/wtg/
 ├── bin/          # 서비스 바이너리 (CI 가 매 배포 갱신)
 ├── bin.prev/     # 직전 배포 바이너리 (롤백용)
 ├── etc/          # 카탈로그 (symbols/pricing/profiles.json — CI 가 갱신)
+├── src/          # 전체 소스 미러 (.git 포함 — CI 가 매 배포 동기화, 열람/diff 용)
 ├── data/
 │   ├── etcd/     # etcd data dir (운영 SoT — 배포와 무관하게 보존)
 │   └── fix/      # mci-edge-fix message store (FIX seq 보존)
@@ -77,7 +78,7 @@ bash setup-ec2.sh
 
 setup-ec2.sh 가 하는 일:
 - etcd native 바이너리 설치 (`/usr/local/bin/etcd`, `etcdctl`)
-- `/home/winway/nh-allone-server/wtg/{bin,etc,data/etcd,data/fix}` 생성
+- `/home/winway/nh-fxallone-server/wtg/{bin,etc,data/etcd,data/fix}` 생성
 - broker 상태 확인
 
 ### 2. GitHub Actions self-hosted runner 설치
@@ -168,7 +169,7 @@ sudo systemctl restart 'wtg-mci-*'
 sudo systemctl restart wtg-mci-price
 
 # 배포된 버전
-cat /home/winway/nh-allone-server/wtg/VERSION
+cat /home/winway/nh-fxallone-server/wtg/VERSION
 ```
 
 ## 롤백
@@ -177,8 +178,8 @@ cat /home/winway/nh-allone-server/wtg/VERSION
 ```bash
 ssh -i winway-nh-fxallone-dev.pem rocky@<private-ip>
 sudo systemctl stop 'wtg-mci-*'
-sudo rm -rf /home/winway/nh-allone-server/wtg/bin
-sudo mv /home/winway/nh-allone-server/wtg/bin.prev /home/winway/nh-allone-server/wtg/bin
+sudo rm -rf /home/winway/nh-fxallone-server/wtg/bin
+sudo mv /home/winway/nh-fxallone-server/wtg/bin.prev /home/winway/nh-fxallone-server/wtg/bin
 sudo systemctl start wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
   wtg-mci-api wtg-mci-edge-fix wtg-mci-edge-md
 ```

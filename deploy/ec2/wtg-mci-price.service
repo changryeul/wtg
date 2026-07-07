@@ -10,16 +10,16 @@ StartLimitIntervalSec=60
 Type=simple
 User=winway
 Group=winway
-WorkingDirectory=/home/winway/nh-allone-server/wtg
-EnvironmentFile=/home/winway/nh-allone-server/wtg/wtg.env
-ExecStart=/home/winway/nh-allone-server/wtg/bin/mci-price \
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-price \
     --listen=:8082 \
     --grpc=:50051 \
     --broker-host=${BROKER_HOST} \
     --broker-port=${BROKER_PORT} \
-    --symbols=/home/winway/nh-allone-server/wtg/etc/symbols.json \
-    --pricing=/home/winway/nh-allone-server/wtg/etc/pricing.json \
-    --profiles=/home/winway/nh-allone-server/wtg/etc/profiles.json \
+    --symbols=/home/winway/nh-fxallone-server/wtg/etc/symbols.json \
+    --pricing=/home/winway/nh-fxallone-server/wtg/etc/pricing.json \
+    --profiles=/home/winway/nh-fxallone-server/wtg/etc/profiles.json \
     --etcd=http://127.0.0.1:2379 \
     --enable-swap-lock \
     --dedup-same-price \

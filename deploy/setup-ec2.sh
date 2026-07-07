@@ -14,7 +14,7 @@
 #
 # 이 스크립트가 하는 일:
 #   1. etcd native 바이너리 설치 (/usr/local/bin — systemd 로 실행)
-#   2. /home/winway/nh-allone-server/wtg/ 디렉토리 + 권한 세팅
+#   2. /home/winway/nh-fxallone-server/wtg/ 디렉토리 + 권한 세팅
 #   3. broker 상태 확인
 #   4. firewalld 샘플 안내 (주석)
 #
@@ -25,7 +25,7 @@
 set -euo pipefail
 
 ETCD_VER=v3.5.21
-WTG_HOME=/home/winway/nh-allone-server/wtg
+WTG_HOME=/home/winway/nh-fxallone-server/wtg
 
 BLUE='\033[1;34m'
 GREEN='\033[1;32m'
@@ -49,7 +49,15 @@ if ! id winway >/dev/null 2>&1; then
 fi
 ok "winway 계정 존재"
 
-step "2. etcd native 바이너리 설치 (${ETCD_VER})"
+step "2. rsync 확인 (소스 미러 동기화용)"
+if command -v rsync >/dev/null 2>&1; then
+  ok "rsync 설치됨"
+else
+  sudo dnf install -y rsync
+  ok "rsync 설치 완료"
+fi
+
+step "3. etcd native 바이너리 설치 (${ETCD_VER})"
 if command -v etcd >/dev/null 2>&1; then
   ok "etcd 이미 설치됨: $(etcd --version | head -1)"
 else
@@ -62,20 +70,20 @@ else
   ok "etcd + etcdctl → /usr/local/bin"
 fi
 
-step "3. ${WTG_HOME} 디렉토리 생성"
+step "4. ${WTG_HOME} 디렉토리 생성"
 sudo install -d -o winway -g winway \
   "$WTG_HOME" "$WTG_HOME/bin" "$WTG_HOME/etc" \
   "$WTG_HOME/data/etcd" "$WTG_HOME/data/fix"
 ok "$(sudo ls -la "$WTG_HOME" | head -8)"
 
-step "4. broker (mymqd) :11217 확인"
+step "5. broker (mymqd) :11217 확인"
 if ss -tln 2>/dev/null | grep -q ":11217 "; then
   ok "broker :11217 running"
 else
   warn "broker :11217 안 떠 있음 — WTG 는 broker 필수 (mymqd 부팅 후 재확인)"
 fi
 
-step "5. 방화벽 (firewalld) 사내 CIDR 만 열기 — 샘플"
+step "6. 방화벽 (firewalld) 사내 CIDR 만 열기 — 샘플"
 # 실제 사내 대역으로 조정 필요. 예시는 주석 처리.
 # sudo firewall-cmd --permanent --zone=trusted --add-source=10.0.0.0/16
 # sudo firewall-cmd --permanent --zone=trusted --add-port=9090/tcp   # mci-admin

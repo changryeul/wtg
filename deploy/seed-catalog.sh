@@ -36,5 +36,13 @@ PYEOF
   echo "  put $k"
 done
 
+echo "==> FIX 테스트 counterparty (개발 환경용 — 운영 전환 시 이 블록 제거)"
+"$ETCDCTL" --endpoints="$EP" put wtg/fix/counterparties/ECN_TEST_01 \
+  '{"password":"test-pw","channel":"FIX","site":"HQ","tier":"VIP","usid":"ECN_TEST_01"}' >/dev/null
+echo "  put wtg/fix/counterparties/ECN_TEST_01 (주문 5001)"
+"$ETCDCTL" --endpoints="$EP" put wtg/fix/counterparties/ECN_MD_TEST_01 \
+  '{"password":"test-pw","channel":"FIX","site":"HQ","tier":"VIP","usid":"ECN_MD_TEST_01","md_req_role_set":["MD"]}' >/dev/null
+echo "  put wtg/fix/counterparties/ECN_MD_TEST_01 (시세 5011, md_req_role_set=[MD])"
+
 echo "==> 확인"
 "$ETCDCTL" --endpoints="$EP" get wtg/ --prefix --keys-only | grep -v '^$' | sed 's/^/  /'

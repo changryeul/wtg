@@ -21,7 +21,8 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-fix \
     --push-secret=${FIX_PUSH_SECRET} \
     --store-dir=/home/winway/nh-fxallone-server/wtg/data/fix \
     --etcd=http://127.0.0.1:2379 \
-    --log-level=info
+    --log-level=info \
+    --seed-cp=ECN_TEST_01=test-pw,HQ,VIP,ECN_TEST_01
 
 Restart=on-failure
 RestartSec=10

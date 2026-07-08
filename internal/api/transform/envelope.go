@@ -119,7 +119,7 @@ func (e *Envelope) BuildFrame(ckey uint32, usid, traceIDHex string, reg routing.
 		exchange = rule.Exchange
 		rkey = rule.RoutingKey
 	}
-	body := []byte(e.Data)
+	body := DataBytes(e.Data)
 	in := &mymq.FrameInput{
 		Func:    mymq.FCTran,
 		Subc:    mymq.SubTranMsg,
@@ -165,4 +165,22 @@ func FromReply(reply *mymq.Reply) *Envelope {
 		}
 	}
 	return env
+}
+
+// DataBytes 는 envelope 의 data 필드를 frame body bytes 로 변환한다.
+//
+//   - JSON 문자열 (`"..."`) → 문자열 내용 그대로 (따옴표/이스케이프 해제).
+//     고정폭 전문 (COMHDR+struct) 을 문자열로 실어 보내는 경로 — 따옴표가
+//     body 에 섞이면 전 필드가 1바이트씩 밀린다.
+//   - JSON object / array / 숫자 등 → raw JSON bytes 그대로 (JSON 엔진용).
+//   - 비어있으면 빈 body.
+func DataBytes(data json.RawMessage) []byte {
+	if len(data) == 0 {
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		return []byte(s)
+	}
+	return []byte(data)
 }

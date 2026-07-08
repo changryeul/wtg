@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
+	"github.com/winwaysystems/wtg/internal/api/transform"
 	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/session"
@@ -107,7 +108,9 @@ func Login(deps *Deps) http.HandlerFunc {
 			Keyc: mymq.KeySend,
 			Xchg: exchange,
 			Rkey: routingKey,
-			Body: []byte(req.Data),
+			// data 가 JSON 문자열이면 내용을, object 면 raw JSON 을 body 로
+			// (고정폭 전문에 따옴표가 섞이면 전 필드가 밀림 — transform.DataBytes).
+			Body: transform.DataBytes(req.Data),
 			// Cookie 미첨부 — LOGON 은 cookie 발급 트랜잭션.
 		}
 

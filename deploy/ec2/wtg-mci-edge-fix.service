@@ -4,8 +4,8 @@
 Description=WTG mci-edge-fix — FIX 4.4 주문 gateway (5001) + stats (5002)
 After=network-online.target wtg-etcd.service wtg-mci-api.service
 Wants=network-online.target wtg-etcd.service
-StartLimitBurst=5
-StartLimitIntervalSec=60
+# broker/etcd 늦게 떠도 자동 복구되도록 start limit 해제 (무한 재시도)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -24,7 +24,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-fix \
     --log-level=info
 
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 TimeoutStopSec=30
 LimitNOFILE=65536
 

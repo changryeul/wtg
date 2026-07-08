@@ -3,8 +3,8 @@
 Description=WTG mci-api — /v1/tx (매매 요청 → broker)
 After=network-online.target wtg-etcd.service
 Wants=network-online.target wtg-etcd.service
-StartLimitBurst=5
-StartLimitIntervalSec=60
+# broker/etcd 늦게 떠도 자동 복구되도록 start limit 해제 (무한 재시도)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -18,7 +18,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-api \
     --broker-port=${BROKER_PORT}
 
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 TimeoutStopSec=30
 LimitNOFILE=65536
 

@@ -93,7 +93,7 @@ jobs:
       - name: Stop WTG services
         run: |
           set -euo pipefail
-          sudo systemctl stop 'wtg-mci-*'
+          sudo systemctl stop 'wtg-mci-*' 'wtg-quote-*' 'wtg-dev-*'
 
       - name: Install binaries + etc + systemd units
         run: |
@@ -150,14 +150,16 @@ jobs:
           sudo systemctl enable --now wtg-etcd
           sudo systemctl enable --now \
             wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
-            wtg-mci-api wtg-mci-edge-fix wtg-mci-edge-md
+            wtg-mci-api wtg-mci-edge-fix wtg-mci-edge-md \
+            wtg-quote-forwarder wtg-dev-feed
 
       - name: Health check
         run: |
           set -euo pipefail
           sleep 5
           for svc in wtg-etcd wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
-                     wtg-mci-api wtg-mci-edge-fix wtg-mci-edge-md; do
+                     wtg-mci-api wtg-mci-edge-fix wtg-mci-edge-md \
+                     wtg-quote-forwarder wtg-dev-feed; do
             if ! sudo systemctl is-active --quiet "$svc"; then
               echo "::error::$svc inactive — 최근 로그:"
               sudo journalctl -u "$svc" -n 40 --no-pager
@@ -175,6 +177,7 @@ jobs:
             http://127.0.0.1:8083/metrics \
             http://127.0.0.1:5002/stats \
             http://127.0.0.1:5012/stats \
+            http://127.0.0.1:9091/metrics \
           ; do
             code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "$url" || echo "ERR")
             printf "  %-45s HTTP %s\n" "$url" "$code"

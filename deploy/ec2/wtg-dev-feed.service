@@ -1,0 +1,36 @@
+# WTG dev-feed — load-gen 데모 시세 (UI/클라이언트 개발 환경용).
+# 2 feed × 6 pair × 5 tick/s = 60 tick/s 저부하. quote-forwarder 의 UDP 로 송신.
+# 실 cooker 피드 전환 시: 이 unit 파일을 deploy/ec2/ 에서 삭제 후 재배포
+# (또는 임시로 sudo systemctl disable --now wtg-dev-feed — 단 재배포 시 재활성).
+[Unit]
+Description=WTG dev-feed — load-gen 데모 시세 (개발용, 실 피드 전환 시 제거)
+After=wtg-quote-forwarder.service
+Wants=wtg-quote-forwarder.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/load-gen \
+    --target=127.0.0.1 \
+    --feeds=SMB:30044,KMB:30045 \
+    --pairs=USDKRW,EURKRW,JPYKRW,EURUSD,USDJPY,GBPUSD \
+    --rate=5 \
+    --duration=24h \
+    --sample=60s \
+    --stats=http://127.0.0.1:8082/v1/price-stats \
+    --best=http://127.0.0.1:8082/v1/best-stats
+
+# duration 만료 시 정상 종료 (exit 0) → always 로 재기동해 상시 피드 유지
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-dev-feed
+
+[Install]
+WantedBy=multi-user.target

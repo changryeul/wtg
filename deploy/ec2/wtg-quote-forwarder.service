@@ -1,0 +1,33 @@
+# WTG quote-forwarder — UDP FIX 4.4 시세 수신 → broker publish (PRICE exchange).
+# feed 2개 (SMB/KMB) 수신 — BestConsumer 다중시장 best 산정 경로 활성.
+[Unit]
+Description=WTG quote-forwarder — UDP FIX 시세 → broker publish (SMB/KMB)
+After=network-online.target wtg-mci-price.service
+Wants=network-online.target wtg-mci-price.service
+# broker 늦게 떠도 자동 복구되도록 start limit 해제 (무한 재시도)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/quote-forwarder \
+    --multi=SMB:30044,KMB:30045 \
+    --bind=127.0.0.1 \
+    --broker-host=${BROKER_HOST} \
+    --broker-port=${BROKER_PORT} \
+    --metrics=127.0.0.1:9091
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-quote-forwarder
+
+[Install]
+WantedBy=multi-user.target

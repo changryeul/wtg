@@ -145,6 +145,8 @@ systemd unit 설치 / 서비스 기동은 workflow 가 수행 — EC2 에서 수
 | `wtg-mci-api` | 8080 | /v1/tx |
 | `wtg-mci-edge-fix` | 5001 / 5002 | FIX 4.4 주문 |
 | `wtg-mci-edge-md` | 5011 / 5012 | FIX 4.4 시세 |
+| `wtg-quote-forwarder` | UDP 30044/30045, 9091 (stats) | UDP 시세 → broker publish (SMB/KMB 2-feed) |
+| `wtg-dev-feed` | — | **개발용** load-gen 데모 시세 60 tick/s. 실 cooker 전환 시 unit 파일 삭제 후 재배포 |
 
 ## 사내 접근
 

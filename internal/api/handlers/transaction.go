@@ -174,6 +174,18 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			frame.Cookie = p.Cookie
 		}
 
+		// svc I/O 명세 기반 자동 marshalling — data 가 JSON object 이고
+		// routing_key 의 명세가 있으면 COMHDR+Input 고정폭으로 조립 (wire.go).
+		wireBody, wireSpec, wireErr := wireBuildBody(deps.SvcIO, frame.Rkey, p.Usid, env.Header, env.Data)
+		if wireErr != nil {
+			recordAlias(true)
+			writeError(w, http.StatusBadRequest, "wire_marshal", wireErr.Error())
+			return
+		}
+		if wireBody != nil {
+			frame.Body = wireBody
+		}
+
 		callCtx, cancel := context.WithTimeout(r.Context(), deps.CallTimeout)
 		defer cancel()
 		// OTel span — broker call wrap. tracer 등록 안 된 환경은 no-op.
@@ -216,6 +228,20 @@ func Transaction(deps *Deps) http.HandlerFunc {
 
 		recordAlias(false)
 		recordTx(http.StatusOK, 0)
+
+		// 명세 적용 요청이면 응답도 [COMHDR][Output] 파싱해서 JSON 으로.
+		// 파싱 실패 시 raw passthrough 폴백 (엔진 응답 형식이 다를 수 있음).
+		if wireSpec != nil {
+			if hdrMap, outMap, perr := wireParseReply(wireSpec, reply.Body); perr == nil {
+				out := transform.FromReply(reply)
+				out.Header = hdrMap
+				if b, merr := json.Marshal(outMap); merr == nil {
+					out.Data = b
+				}
+				writeJSON(w, http.StatusOK, out)
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, transform.FromReply(reply))
 	}
 }

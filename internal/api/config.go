@@ -52,6 +52,13 @@ type Config struct {
 	// session_id Bearer 만. public key 는 edge 서비스의 --jwt-pub 으로 배포.
 	JWTKeyFile string
 
+	// SvcIncDir / SvcCommonHeaderFile — svc I/O 명세 (C 헤더) 디렉토리.
+	// 채워지면 /v1/tx·/v1/login 의 data(JSON object) 를 [COMHDR][Input]
+	// 고정폭 전문으로 자동 조립하고 응답도 필드별 JSON 으로 파싱한다.
+	// mci-admin 의 --svc-inc-dir / --svc-common-header 와 동일 형식.
+	SvcIncDir           string
+	SvcCommonHeaderFile string
+
 	// 로그 레벨 ("debug" / "info" / "warn" / "error"). 기본 "info".
 	LogLevel string
 
@@ -295,6 +302,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.Instance, "instance", cfg.Instance, "다중 인스턴스 일련번호 (0=비활성)")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드 — JWT 검증 우회")
 	fs.StringVar(&cfg.JWTKeyFile, "jwt-key", cfg.JWTKeyFile, "RS256 JWT 발급용 RSA private key PEM (비면 session_id Bearer 만)")
+	fs.StringVar(&cfg.SvcIncDir, "svc-inc-dir", cfg.SvcIncDir, "매매 svc 헤더 디렉터리 (콤마 구분) — data JSON object 자동 전문 조립")
+	fs.StringVar(&cfg.SvcCommonHeaderFile, "svc-common-header", cfg.SvcCommonHeaderFile, "공통 transaction 헤더 파일 (comhdr.h)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (예: otel-collector:4317). 비면 비활성")
 	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")

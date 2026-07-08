@@ -23,6 +23,7 @@ import (
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/policy"
 	"github.com/winwaysystems/wtg/pkg/routing"
+	"github.com/winwaysystems/wtg/pkg/svcio"
 	"github.com/winwaysystems/wtg/pkg/tlsutil"
 )
 
@@ -345,6 +346,25 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.cfg.TxRingSize > 0 {
 		txRing = handlers.NewTxRing(s.cfg.TxRingSize)
 	}
+	// svc I/O 명세 — C 헤더 부팅 시 인덱싱 (mci-admin 과 동일 패턴).
+	// 채워지면 /v1/tx·/v1/login 의 data(JSON object) 자동 전문 조립 활성.
+	var svcReg *svcio.Registry
+	if s.cfg.SvcIncDir != "" {
+		svcReg = svcio.NewRegistry()
+		if s.cfg.SvcCommonHeaderFile != "" {
+			if err := svcReg.LoadHeaderFile(s.cfg.SvcCommonHeaderFile, s.logger); err != nil {
+				s.logger.Warn("svcio 공통 헤더 로드 실패",
+					slog.String("path", s.cfg.SvcCommonHeaderFile), slog.Any("err", err))
+			}
+		}
+		svcReg.SetDirHeaderDefault("win/src/inc/trn", "COMHDR")
+		if loaded, failed, err := svcReg.LoadDirs(s.cfg.SvcIncDir, s.logger); err != nil {
+			s.logger.Warn("svcio 헤더 인덱싱 실패", slog.Any("err", err))
+		} else {
+			s.logger.Info("svc I/O 명세 로드 — data JSON object 자동 전문 조립 활성",
+				slog.Int("loaded", loaded), slog.Int("failed", failed))
+		}
+	}
 	deps := &handlers.Deps{
 		MQ:           mq,
 		CallTimeout:  s.cfg.BrokerCallTimeout,
@@ -357,6 +377,7 @@ func (s *Server) Start(ctx context.Context) error {
 		UserProfiles: upResolver,
 		AliasMetrics: aliasMetrics,
 		TxRing:       txRing,
+		SvcIO:        svcReg,
 	}
 	// Idempotency-Key 처리 — Redis (다중 인스턴스 공유) 또는 Memory (단일).
 	if s.cfg.IdempotencyEnabled {

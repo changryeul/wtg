@@ -36,6 +36,11 @@ PYEOF
   echo "  put $k"
 done
 
+echo "==> 라우팅 alias (transaction alias → exchange/routing_key)"
+"$ETCDCTL" --endpoints="$EP" put wtg/routes/W1101T01 \
+  '{"alias":"W1101T01","exchange":"dom","routing_key":"W1101T01","active":true,"comment":"공인인증 테스트 트랜잭션 (dev)"}' >/dev/null
+echo "  put wtg/routes/W1101T01 → dom/W1101T01"
+
 echo "==> user-profiles (usid→Site/Tier — login JWT claims 용)"
 "$ETCDCTL" --endpoints="$EP" put wtg/auth/user-profiles/tester01 \
   '{"site":"HQ","tier":"VIP"}' >/dev/null

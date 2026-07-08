@@ -21,7 +21,9 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-api \
     --broker-port=${BROKER_PORT} \
     --etcd=http://127.0.0.1:2379 \
     --user-profiles-prefix=wtg/auth/user-profiles/ \
-    --jwt-key=/home/winway/nh-fxallone-server/wtg/etc/jwt-private.pem
+    --jwt-key=/home/winway/nh-fxallone-server/wtg/etc/jwt-private.pem \
+    --svc-common-header=/home/winway/nh-fxallone-server/win/src/inc/com/comhdr.h \
+    --svc-inc-dir=/home/winway/nh-fxallone-server/win/src/inc/trn
 
 Restart=on-failure
 RestartSec=10

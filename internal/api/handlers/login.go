@@ -34,6 +34,10 @@ type LoginRequest struct {
 	Site string          `json:"site,omitempty"`
 	Tier string          `json:"tier,omitempty"`
 	Data json.RawMessage `json:"data,omitempty"`
+
+	// Header — svc I/O 명세 활성 시의 COMHDR 값 (usid 등). data 가 JSON
+	// object 이고 routing_key 의 명세가 있으면 [COMHDR][Input] 으로 자동 조립.
+	Header map[string]interface{} `json:"header,omitempty"`
 }
 
 // LoginResponse 는 POST /v1/login 출력.
@@ -110,7 +114,7 @@ func Login(deps *Deps) http.HandlerFunc {
 			Rkey: routingKey,
 			// data 가 JSON 문자열이면 내용을, object 면 raw JSON 을 body 로
 			// (고정폭 전문에 따옴표가 섞이면 전 필드가 밀림 — transform.DataBytes).
-			Body: transform.DataBytes(req.Data),
+			Body: loginBody(deps, routingKey, req),
 			// Cookie 미첨부 — LOGON 은 cookie 발급 트랜잭션.
 		}
 
@@ -288,4 +292,15 @@ func cookieUsid(c *mymq.Cookie) string {
 		}
 	}
 	return string(c.Usid[:])
+}
+
+// loginBody 는 login 요청의 frame body 를 만든다.
+// svc I/O 명세가 있고 data 가 JSON object 면 [COMHDR][Input] 자동 조립
+// (usid 는 아직 인증 전이므로 클라이언트 header 의 usid 사용 — 실검증은
+// 엔진의 LOGON 트랜잭션 책임, auth.md 위임 원칙). 그 외엔 DataBytes 규칙.
+func loginBody(deps *Deps, routingKey string, req LoginRequest) []byte {
+	if body, _, err := wireBuildBody(deps.SvcIO, routingKey, "", req.Header, req.Data); err == nil && body != nil {
+		return body
+	}
+	return transform.DataBytes(req.Data)
 }

@@ -45,6 +45,11 @@ type Envelope struct {
 	Nkey       string          `json:"nkey,omitempty"`
 	Data       json.RawMessage `json:"data,omitempty"`
 
+	// Header — svc I/O 명세 (--svc-inc-dir) 활성 시의 COMHDR 필드.
+	// 요청: 기본값 위에 overlay 할 값 (usid/trxc 는 서버 강제).
+	// 응답: 엔진이 돌려준 COMHDR 파싱 결과 (rcod/mesg/eflg 등).
+	Header map[string]interface{} `json:"header,omitempty"`
+
 	// 응답 전용 필드.
 	Errn uint32 `json:"errn,omitempty"`
 	Errm string `json:"errm,omitempty"`

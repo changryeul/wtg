@@ -19,6 +19,7 @@ import (
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/policy"
 	"github.com/winwaysystems/wtg/pkg/routing"
+	"github.com/winwaysystems/wtg/pkg/svcio"
 )
 
 // Caller 는 mymq.Client 의 동기 RPC 인터페이스 (테스트 mock 가능).
@@ -85,6 +86,10 @@ type Deps struct {
 	// TxRing — 최근 N 건 매매 audit ring (in-memory). nil 이면 미수집.
 	// /v1/admin/recent-tx 에서 snapshot 노출 — mci-admin 의 매매 감사 dashboard.
 	TxRing *TxRing
+
+	// SvcIO — svc I/O 명세 registry (--svc-inc-dir 부팅 옵션). nil 이면 자동
+	// marshalling 비활성 — data 는 항상 raw passthrough (wire.go 참조).
+	SvcIO *svcio.Registry
 }
 
 // writeJSON 은 표준 JSON 응답 헬퍼. 에러 발생 시 access log 가 캡처하므로

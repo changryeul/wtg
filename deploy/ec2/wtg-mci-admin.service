@@ -12,12 +12,19 @@ User=winway
 Group=winway
 WorkingDirectory=/home/winway/nh-fxallone-server/wtg
 EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+# --dev: 엔진 LOGON (cookie 발급) 구현 전까지 UI 진입용 (X-WTG-User 신뢰).
+#        9090 은 SG 로 개발자 IP 만 허용 전제. 엔진 로그인 완성 후 제거.
+# --svc-*: win/src/inc 의 C 헤더를 파싱해 "전문/명세" 페이지 + test-wire
+#          (COMHDR 조립 → broker Call → 응답 파싱) 활성화.
 ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-admin \
     --listen=:9090 \
     --broker-host=${BROKER_HOST} \
     --broker-port=${BROKER_PORT} \
     --etcd=http://127.0.0.1:2379 \
-    --edge-urls=http://127.0.0.1:8083
+    --edge-urls=http://127.0.0.1:8083 \
+    --dev \
+    --svc-common-header=/home/winway/nh-fxallone-server/win/src/inc/com/comhdr.h \
+    --svc-inc-dir=/home/winway/nh-fxallone-server/win/src/inc/trn
 
 Restart=on-failure
 RestartSec=10

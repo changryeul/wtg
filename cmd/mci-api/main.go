@@ -22,6 +22,7 @@ import (
 	"syscall"
 
 	"github.com/winwaysystems/wtg/internal/api"
+	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/otelinit"
 )
 
@@ -66,6 +67,18 @@ func main() {
 	}
 
 	srv := api.NewServer(cfg, logger)
+
+	// JWT 발급 — --jwt-key 채워지면 login 이 access_token 발급 + refresh 활성.
+	if cfg.JWTKeyFile != "" {
+		iss, ver, err := auth.IssuerFromPrivateKeyFile(cfg.JWTKeyFile, "wtg-1")
+		if err != nil {
+			logger.Error("JWT private key 로드 실패", slog.String("path", cfg.JWTKeyFile), slog.Any("error", err))
+			os.Exit(2)
+		}
+		srv.SetJWT(iss, ver)
+		logger.Info("JWT 발급 활성", slog.String("key", cfg.JWTKeyFile))
+	}
+
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("mci-api 종료", slog.Any("error", err))
 		os.Exit(1)

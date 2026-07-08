@@ -36,6 +36,14 @@ PYEOF
   echo "  put $k"
 done
 
+echo "==> user-profiles (usid→Site/Tier — login JWT claims 용)"
+"$ETCDCTL" --endpoints="$EP" put wtg/auth/user-profiles/tester01 \
+  '{"site":"HQ","tier":"VIP"}' >/dev/null
+echo "  put wtg/auth/user-profiles/tester01 (HQ/VIP)"
+"$ETCDCTL" --endpoints="$EP" put wtg/auth/user-profiles/admin01 \
+  '{"site":"HQ","tier":"VIP"}' >/dev/null
+echo "  put wtg/auth/user-profiles/admin01 (HQ/VIP)"
+
 echo "==> FIX 테스트 counterparty (개발 환경용 — 운영 전환 시 이 블록 제거)"
 "$ETCDCTL" --endpoints="$EP" put wtg/fix/counterparties/ECN_TEST_01 \
   '{"password":"test-pw","channel":"FIX","site":"HQ","tier":"VIP","usid":"ECN_TEST_01"}' >/dev/null

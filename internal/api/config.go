@@ -47,6 +47,11 @@ type Config struct {
 	// 운영에서는 반드시 false.
 	DevMode bool
 
+	// JWTKeyFile — RS256 발급용 RSA private key PEM 경로. 채워지면 login 이
+	// access_token (JWT) 을 발급하고 /v1/refresh 가 활성화된다. 비면 기존
+	// session_id Bearer 만. public key 는 edge 서비스의 --jwt-pub 으로 배포.
+	JWTKeyFile string
+
 	// 로그 레벨 ("debug" / "info" / "warn" / "error"). 기본 "info".
 	LogLevel string
 
@@ -289,6 +294,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.ApplName, "appl", cfg.ApplName, "ApplName")
 	fs.IntVar(&cfg.Instance, "instance", cfg.Instance, "다중 인스턴스 일련번호 (0=비활성)")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드 — JWT 검증 우회")
+	fs.StringVar(&cfg.JWTKeyFile, "jwt-key", cfg.JWTKeyFile, "RS256 JWT 발급용 RSA private key PEM (비면 session_id Bearer 만)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (예: otel-collector:4317). 비면 비활성")
 	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")

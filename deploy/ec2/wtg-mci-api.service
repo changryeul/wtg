@@ -12,10 +12,15 @@ User=winway
 Group=winway
 WorkingDirectory=/home/winway/nh-fxallone-server/wtg
 EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+# --etcd: user-profiles (usid→Site/Tier) watch + 라우팅 룰 동기화.
+# --jwt-key: RS256 발급 — login 이 access_token 반환, /v1/refresh 활성.
+#            키는 setup-ec2.sh 가 1회 생성 (jwt-private.pem / jwt-public.pem).
 ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-api \
     --listen=:8080 \
     --broker-host=${BROKER_HOST} \
-    --broker-port=${BROKER_PORT}
+    --broker-port=${BROKER_PORT} \
+    --etcd=http://127.0.0.1:2379 \
+    --jwt-key=/home/winway/nh-fxallone-server/wtg/etc/jwt-private.pem
 
 Restart=on-failure
 RestartSec=10

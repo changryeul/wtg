@@ -16,7 +16,8 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-price \
     --listen=:8083 \
     --upstream=127.0.0.1:50051 \
     --quote-stream \
-    --customer-stream
+    --customer-stream \
+    --jwt-pub=/home/winway/nh-fxallone-server/wtg/etc/jwt-public.pem
 
 Restart=on-failure
 RestartSec=10

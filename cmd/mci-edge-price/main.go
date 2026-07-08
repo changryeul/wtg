@@ -31,6 +31,7 @@ import (
 	"syscall"
 
 	edgeprice "github.com/winwaysystems/wtg/internal/edge/price"
+	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/otelinit"
 )
 
@@ -63,6 +64,18 @@ func main() {
 	}
 
 	srv := edgeprice.NewServer(cfg, logger)
+
+	// JWT 검증 — --jwt-pub 채워지면 ws 가 access_token 을 RS256 검증.
+	if cfg.JWTPubFile != "" {
+		ver, err := auth.VerifierFromPublicKeyFile(cfg.JWTPubFile)
+		if err != nil {
+			logger.Error("JWT public key 로드 실패", slog.String("path", cfg.JWTPubFile), slog.Any("error", err))
+			os.Exit(2)
+		}
+		srv.SetJWTVerifier(ver)
+		logger.Info("JWT 검증 활성", slog.String("pub", cfg.JWTPubFile))
+	}
+
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("mci-edge-price 종료", slog.Any("error", err))
 		os.Exit(1)

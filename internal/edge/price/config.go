@@ -39,6 +39,10 @@ type Config struct {
 	// 인증 모드.
 	DevMode bool
 
+	// JWTPubFile — RS256 검증용 RSA public key PEM 경로 (mci-api --jwt-key
+	// 의 공개키). 채워지면 ws 가 access_token JWT 를 검증한다.
+	JWTPubFile string
+
 	// WebSocket 옵션.
 	WsPingInterval time.Duration
 	WsPongTimeout  time.Duration
@@ -284,6 +288,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.UpstreamGRPC, "upstream", cfg.UpstreamGRPC, "Internal mci-price gRPC endpoint")
 	fs.StringVar(&cfg.SubscriberID, "subscriber-id", cfg.SubscriberID, "edge 인스턴스 식별자")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드 — JWT 검증 우회")
+	fs.StringVar(&cfg.JWTPubFile, "jwt-pub", cfg.JWTPubFile, "RS256 JWT 검증용 RSA public key PEM (mci-api --jwt-key 의 공개키)")
 	fs.IntVar(&cfg.SendQueueSize, "send-queue", cfg.SendQueueSize, "ws 클라이언트별 send queue 크기")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨")
 	fs.DurationVar(&cfg.DialTimeout, "dial-timeout", cfg.DialTimeout, "gRPC dial timeout")

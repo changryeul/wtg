@@ -76,14 +76,27 @@ sudo install -d -o winway -g winway \
   "$WTG_HOME/data/etcd" "$WTG_HOME/data/fix"
 ok "$(sudo ls -la "$WTG_HOME" | head -8)"
 
-step "5. broker (mymqd) :11217 확인"
+step "5. SELinux fcontext 등록 (systemd 가 홈 안 바이너리/설정 접근 허용)"
+if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; then
+  command -v semanage >/dev/null 2>&1 || sudo dnf install -y -q policycoreutils-python-utils
+  sudo semanage fcontext -a -t bin_t     "$WTG_HOME/bin(/.*)?"    2>/dev/null || true
+  sudo semanage fcontext -a -t etc_t     "$WTG_HOME/wtg\\.env"    2>/dev/null || true
+  sudo semanage fcontext -a -t etc_t     "$WTG_HOME/etc(/.*)?"    2>/dev/null || true
+  sudo semanage fcontext -a -t var_lib_t "$WTG_HOME/data(/.*)?"   2>/dev/null || true
+  sudo restorecon -R "$WTG_HOME"
+  ok "bin_t / etc_t / var_lib_t fcontext 등록 + restorecon"
+else
+  ok "SELinux 비활성 — skip"
+fi
+
+step "6. broker (mymqd) :11217 확인"
 if ss -tln 2>/dev/null | grep -q ":11217 "; then
   ok "broker :11217 running"
 else
   warn "broker :11217 안 떠 있음 — WTG 는 broker 필수 (mymqd 부팅 후 재확인)"
 fi
 
-step "6. 방화벽 (firewalld) 사내 CIDR 만 열기 — 샘플"
+step "7. 방화벽 (firewalld) 사내 CIDR 만 열기 — 샘플"
 # 실제 사내 대역으로 조정 필요. 예시는 주석 처리.
 # sudo firewall-cmd --permanent --zone=trusted --add-source=10.0.0.0/16
 # sudo firewall-cmd --permanent --zone=trusted --add-port=9090/tcp   # mci-admin

@@ -134,6 +134,16 @@ jobs:
           sudo install -m 0600 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$tmp" "$WTG_HOME/wtg.env"
           rm -f "$tmp"
 
+      # SELinux (Rocky 9 Enforcing): 홈 안에 새로 쓴 파일은 user_home_t 라
+      # systemd 가 exec/read 거부. setup-ec2.sh 가 등록한 fcontext 룰
+      # (bin_t / etc_t / var_lib_t) 을 매 배포 후 재적용.
+      - name: SELinux 라벨 복원
+        run: |
+          set -euo pipefail
+          if command -v restorecon >/dev/null 2>&1; then
+            sudo restorecon -R "$WTG_HOME"
+          fi
+
       - name: Start services
         run: |
           set -euo pipefail

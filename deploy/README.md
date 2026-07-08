@@ -215,10 +215,26 @@ sudo journalctl -u wtg-mci-price -n 100 --no-pager
 ```
 
 가장 흔한 원인:
-- broker 안 뜸 — `ss -tln | grep 11217`
+- broker 안 뜸 — `ss -tln | grep 11217`. mci-price / mci-admin / mci-api 는
+  broker 연결 실패 시 종료 → systemd 가 재시도 (`connection refused` 로그).
+  broker 기동되면 자동 복구.
 - etcd 안 뜸 — `sudo journalctl -u wtg-etcd -n 50`
 - 카탈로그 파일 (etc/*.json) 문제 — 재배포로 갱신
 - `wtg.env` 누락/권한 — CI 가 매 배포 갱신 (600, winway)
+
+### SELinux 로 서비스 기동 실패
+
+`Failed to run 'start' task: Permission denied` / `Failed to load environment
+files: Permission denied` (result 'resources') 는 SELinux — 홈 디렉토리 안
+파일이 `user_home_t` 라벨이라 systemd 가 exec/read 거부.
+
+setup-ec2.sh §5 가 fcontext 룰 (bin→`bin_t`, etc/wtg.env→`etc_t`,
+data→`var_lib_t`) 을 등록하고, deploy job 이 매 배포 후 `restorecon -R` 로
+재적용한다. 수동 확인:
+```bash
+sudo ls -Z /home/winway/nh-fxallone-server/wtg/bin/mci-price  # bin_t 여야 정상
+sudo restorecon -R /home/winway/nh-fxallone-server/wtg        # 라벨 재적용
+```
 
 ## Runner 관리
 

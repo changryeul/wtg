@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding/korean"
 	"golang.org/x/text/transform"
@@ -17,8 +18,12 @@ import (
 // byte 배치 그대로 만들어 mci 경유로 broker 에 송신, 응답 byte 를 Output layout
 // 으로 다시 parse.
 //
+// 전문 인코딩 원칙 (2026-07-08 운영 결정): UTF-8 통일.
+//   - 송신: UTF-8 그대로 (변환 없음). char[N] 절단 시 rune 경계 보존.
+//   - 수신: UTF-8 valid 면 그대로, 아니면 CP949 fallback (레거시 응답 호환).
+//
 // 1차 prototype 범위 (실측 830 헤더 압도적 다수가 이 패턴):
-//   - char[N] 필드 — 우측 공백 fill, CP949 인코딩 (한글 호환)
+//   - char[N] 필드 — 우측 공백 fill
 //   - 단일 nested struct (orec[1]) — children 직렬화 후 그대로 추가
 //   - 가변 grid (orec[]) — Output 만 — rcnt 필드 (각 record 직전의 count) 로
 //     반복 횟수 결정해서 parse
@@ -103,16 +108,7 @@ func writeFields(buf *bytes.Buffer, fields []Field, input map[string]interface{}
 			continue
 		}
 		v := strFromInput(input, f.Name)
-		encoded, err := encodeCP949(v)
-		if err != nil {
-			return fmt.Errorf("svcio: 필드 %s CP949 인코딩 실패: %w", f.Name, err)
-		}
-		if len(encoded) > sz {
-			encoded = encoded[:sz]
-		} else if len(encoded) < sz {
-			pad := bytes.Repeat([]byte{' '}, sz-len(encoded))
-			encoded = append(encoded, pad...)
-		}
+		encoded := encodeWire(v, sz)
 		buf.Write(encoded)
 	}
 	return nil
@@ -179,10 +175,7 @@ func readFields(buf []byte, off int, fields []Field, out map[string]interface{})
 		} else {
 			raw = nil
 		}
-		decoded, err := decodeCP949(raw)
-		if err != nil {
-			return cursor, fmt.Errorf("svcio: 필드 %s CP949 디코딩 실패: %w", f.Name, err)
-		}
+		decoded := decodeWire(raw)
 		// 양측 공백/null trim — legacy 가 좌측 padding 으로 우측 정렬한 numeric
 		// 필드 (rcnt 같은) 와 우측 padding 의 text 필드 모두 깨끗이 회복.
 		decoded = strings.Trim(decoded, " \x00")
@@ -250,25 +243,41 @@ func nestedRows(in map[string]interface{}, key string) []map[string]interface{} 
 	return nil
 }
 
-func encodeCP949(s string) ([]byte, error) {
-	if s == "" {
-		return nil, nil
+// encodeWire — 전문 필드 값을 UTF-8 그대로 char[N] 에 배치 (우측 공백 fill).
+// N 초과 시 절단하되 UTF-8 rune 경계를 보존한다 (다중바이트 문자 중간 절단 방지).
+func encodeWire(s string, size int) []byte {
+	b := []byte(s)
+	if len(b) > size {
+		b = b[:size]
+		// 절단이 rune 중간에 걸리면 해당 rune 시작까지 되돌린다.
+		for len(b) > 0 && !utf8.Valid(b) {
+			b = b[:len(b)-1]
+		}
 	}
-	r := transform.NewReader(strings.NewReader(s), korean.EUCKR.NewEncoder())
-	return io.ReadAll(r)
+	out := make([]byte, size)
+	copy(out, b)
+	for i := len(b); i < size; i++ {
+		out[i] = ' '
+	}
+	return out
 }
 
-func decodeCP949(b []byte) (string, error) {
+// decodeWire — 수신 필드 bytes 를 문자열로. UTF-8 valid 면 그대로 (통일 원칙),
+// 아니면 CP949(EUC-KR superset) 변환 시도 (레거시 응답 호환). 그마저 실패하면
+// raw byte string 그대로 (손상 없이 통과).
+func decodeWire(b []byte) string {
 	if len(b) == 0 {
-		return "", nil
+		return ""
+	}
+	if utf8.Valid(b) {
+		return string(b)
 	}
 	r := transform.NewReader(bytes.NewReader(b), korean.EUCKR.NewDecoder())
 	out, err := io.ReadAll(r)
 	if err != nil {
-		// 디코딩 실패 — 일부 깨진 byte 가 있을 수 있음. byte string 그대로 반환.
-		return string(b), nil
+		return string(b)
 	}
-	return string(out), nil
+	return string(out)
 }
 
 // ErrSpecRequired — Serialize/Deserialize 에 spec 비어있을 때.

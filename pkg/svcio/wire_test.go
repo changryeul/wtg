@@ -180,3 +180,43 @@ func TestSerialize_Truncates(t *testing.T) {
 		t.Errorf("buf=%q want 'ABC'", string(buf))
 	}
 }
+
+// 전문 인코딩 UTF-8 통일 (2026-07-08) — 한글 왕복 + rune 경계 절단 + CP949 fallback.
+func TestWireEncodingUTF8(t *testing.T) {
+	// 1. UTF-8 왕복 — 한글이 그대로 보존.
+	fields := []Field{{Name: "mesg", CType: "char", Size: 40, Comment: "메시지"}}
+	buf, err := Serialize(fields, map[string]interface{}{"mesg": "DB System 장애 입니다."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Deserialize(fields, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["mesg"] != "DB System 장애 입니다." {
+		t.Errorf("UTF-8 왕복 불일치: %q", out["mesg"])
+	}
+
+	// 2. char[N] 절단이 rune 중간에 걸리면 경계까지 되돌림 — invalid UTF-8 생성 금지.
+	small := []Field{{Name: "nm", CType: "char", Size: 4, Comment: "이름"}}
+	buf2, err := Serialize(small, map[string]interface{}{"nm": "가나"}) // UTF-8 6B > 4
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buf2) != 4 {
+		t.Fatalf("길이 %d, want 4", len(buf2))
+	}
+	if got := strings.Trim(string(buf2), " "); got != "가" {
+		t.Errorf("rune 경계 절단 실패: %q (raw=% x)", got, buf2)
+	}
+
+	// 3. 레거시 CP949 응답 fallback — EUC-KR bytes 도 올바르게 복원.
+	euckr := []byte{0xB0, 0xA1, 0xB3, 0xAA} // "가나" (EUC-KR)
+	out3, err := Deserialize([]Field{{Name: "nm", CType: "char", Size: 4}}, euckr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out3["nm"] != "가나" {
+		t.Errorf("CP949 fallback 실패: %q", out3["nm"])
+	}
+}

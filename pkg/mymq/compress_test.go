@@ -72,9 +72,9 @@ func TestDecompressTruncated(t *testing.T) {
 }
 
 func TestDecompressUnsupportedAlgo(t *testing.T) {
-	// MLZO 와 LZIV 는 미지원.
+	// LZIV 만 미지원 (MLZO 는 lzo.go 로 지원 — lzo_test.go 에서 검증).
 	frame := []byte{0, 0, 0, 4, 'a', 'b', 'c', 'd'}
-	for _, z := range []Zipf{ZipfMlzo, ZipfLziv, Zipf(99)} {
+	for _, z := range []Zipf{ZipfLziv, Zipf(99)} {
 		_, err := Decompress(frame, z)
 		if !errors.Is(err, ErrUnsupportedZipf) {
 			t.Errorf("zipf=%d → ErrUnsupportedZipf 기대, got %v", z, err)
@@ -97,7 +97,7 @@ func TestIsZipfSupported(t *testing.T) {
 	}{
 		{ZipfNone, true},
 		{ZipfZlib, true},
-		{ZipfMlzo, false},
+		{ZipfMlzo, true},
 		{ZipfLziv, false},
 		{Zipf(255), false},
 	}

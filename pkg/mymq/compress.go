@@ -47,7 +47,8 @@ func Decompress(src []byte, zipf Zipf) ([]byte, error) {
 	case ZipfZlib:
 		return decompressZlib(payload, origSize)
 	case ZipfMlzo:
-		return nil, fmt.Errorf("%w: MLZO (mini-LZO 라이브러리 미통합)", ErrUnsupportedZipf)
+		// 운영 기본값 (mq_send.c: zipf=1). 순수 Go LZO1X 디코더 — lzo.go.
+		return decompressLZO1X(payload, origSize)
 	case ZipfLziv:
 		return nil, fmt.Errorf("%w: LZIV", ErrUnsupportedZipf)
 	default:
@@ -78,10 +79,10 @@ func decompressZlib(payload []byte, origSize uint32) ([]byte, error) {
 }
 
 // IsZipfSupported 는 주어진 압축 방식이 WTG 에서 디코딩 가능한지 보고한다.
-// Phase 1 시점: NONE, ZLIB 만 true.
+// NONE / ZLIB / MLZO (운영 기본) 지원. LZIV 만 미지원.
 func IsZipfSupported(zipf Zipf) bool {
 	switch zipf {
-	case ZipfNone, ZipfZlib:
+	case ZipfNone, ZipfZlib, ZipfMlzo:
 		return true
 	}
 	return false

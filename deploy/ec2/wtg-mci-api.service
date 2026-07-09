@@ -12,6 +12,9 @@ User=winway
 Group=winway
 WorkingDirectory=/home/winway/nh-fxallone-server/wtg
 EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+# dev EC2 한정 — tx 전문 debug 로그 (wtg.env 는 CI 가 매 배포 덮어쓰므로 여기 고정).
+# 운영 전환 시 이 줄 제거.
+Environment=WTG_API_LOG_LEVEL=debug
 # --etcd: user-profiles (usid→Site/Tier) watch + 라우팅 룰 동기화.
 # --jwt-key: RS256 발급 — login 이 access_token 반환, /v1/refresh 활성.
 #            키는 setup-ec2.sh 가 1회 생성 (jwt-private.pem / jwt-public.pem).

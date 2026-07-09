@@ -91,6 +91,22 @@ else
   ok "jwt-private.pem (600) + jwt-public.pem 생성"
 fi
 
+step "5b. edge TLS 자가서명 cert 생성 (mci-edge-api 8090 — dev 전용, 1회)"
+if sudo test -f "$WTG_HOME/etc/edge-tls.crt"; then
+  ok "edge-tls.crt 이미 존재"
+else
+  sudo -u winway bash -c "
+    umask 077
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+      -subj '/CN=wtg-edge-dev' \
+      -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+      -keyout '$WTG_HOME/etc/edge-tls.key' \
+      -out '$WTG_HOME/etc/edge-tls.crt' 2>/dev/null
+    chmod 600 '$WTG_HOME/etc/edge-tls.key'
+    chmod 644 '$WTG_HOME/etc/edge-tls.crt'"
+  ok "edge-tls.crt + edge-tls.key 생성 (자가서명 — 운영 전환 시 정식 인증서로 교체)"
+fi
+
 step "6. SELinux fcontext 등록 (systemd 가 홈 안 바이너리/설정 접근 허용)"
 if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; then
   command -v semanage >/dev/null 2>&1 || sudo dnf install -y -q policycoreutils-python-utils

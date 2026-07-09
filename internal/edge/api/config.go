@@ -84,6 +84,11 @@ type Config struct {
 	TLSKeyFile      string
 	TLSClientCAFile string
 
+	// JWTPublicKeyFile — access JWT 검증용 RSA public key PEM.
+	// 채워지면 edge 가 Authorization Bearer 를 검증 (운영 경로).
+	// 비고 DevMode 도 아니면 인증 수단이 없어 전부 401 — 부팅 시 경고.
+	JWTPublicKeyFile string
+
 	// Upstream mTLS — DMZ → Internal 호출 시 클라이언트 인증서.
 	// (TLSUpstreamCertFile, TLSUpstreamKeyFile, TLSUpstreamCAFile, TLSUpstreamServerName)
 	TLSUpstreamCertFile   string
@@ -144,6 +149,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_EAPI_TLS_KEY"); v != "" {
 		cfg.TLSKeyFile = v
 	}
+	if v := os.Getenv("WTG_EAPI_JWT_PUBLIC_KEY"); v != "" {
+		cfg.JWTPublicKeyFile = v
+	}
 	if v := os.Getenv("WTG_EAPI_TLS_CLIENT_CA"); v != "" {
 		cfg.TLSClientCAFile = v
 	}
@@ -182,6 +190,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.IntVar(&cfg.RateLimitRedisDB, "ratelimit-redis-db", cfg.RateLimitRedisDB, "Redis DB index")
 	fs.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "외부 TLS 서버 cert PEM (있으면 HTTPS)")
 	fs.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "외부 TLS 서버 key PEM")
+	fs.StringVar(&cfg.JWTPublicKeyFile, "jwt-public-key", cfg.JWTPublicKeyFile, "access JWT 검증용 RSA public key PEM (운영 인증 경로)")
 	fs.StringVar(&cfg.TLSClientCAFile, "tls-client-ca", cfg.TLSClientCAFile, "외부 mTLS 클라이언트 CA bundle")
 	fs.StringVar(&cfg.TLSUpstreamCertFile, "upstream-tls-cert", cfg.TLSUpstreamCertFile, "Internal upstream mTLS 클라이언트 cert")
 	fs.StringVar(&cfg.TLSUpstreamKeyFile, "upstream-tls-key", cfg.TLSUpstreamKeyFile, "Internal upstream mTLS 클라이언트 key")

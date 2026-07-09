@@ -1,0 +1,38 @@
+# WTG mci-edge-api — DMZ REST gateway. 외부 (HTS/web) 클라이언트 종단.
+# TLS 종단 + JWT 검증 + rate-limit 후 Internal mci-api (8080) 로 forward.
+#
+# TLS cert 는 dev 자가서명 — setup-ec2.sh 가 1회 생성 (etc/edge-tls.{crt,key}).
+# 운영 전환 시 정식 인증서로 교체 + --allow-cidrs 로 접근 CIDR 제한할 것.
+[Unit]
+Description=WTG mci-edge-api — DMZ REST gateway (8090, TLS+JWT) → mci-api
+After=network-online.target wtg-mci-api.service
+Wants=network-online.target
+# upstream 늦게 떠도 자동 복구되도록 start limit 해제 (무한 재시도)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-api \
+    --listen=:8090 \
+    --upstream=http://127.0.0.1:8080 \
+    --jwt-public-key=/home/winway/nh-fxallone-server/wtg/etc/jwt-public.pem \
+    --tls-cert=/home/winway/nh-fxallone-server/wtg/etc/edge-tls.crt \
+    --tls-key=/home/winway/nh-fxallone-server/wtg/etc/edge-tls.key \
+    --etcd=http://127.0.0.1:2379 \
+    --log-level=info
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-edge-api
+
+[Install]
+WantedBy=multi-user.target

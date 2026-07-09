@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	edgeapi "github.com/winwaysystems/wtg/internal/edge/api"
+	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/otelinit"
 )
 
@@ -58,6 +59,18 @@ func main() {
 	}
 
 	srv := edgeapi.NewServer(cfg, logger)
+	// JWT 검증기 — 운영 인증 경로. public key 파일이 주어지면 Bearer 검증 활성.
+	if cfg.JWTPublicKeyFile != "" {
+		ver, err := auth.VerifierFromPublicKeyFile(cfg.JWTPublicKeyFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mci-edge-api: JWT public key 로드 실패: %v\n", err)
+			os.Exit(2)
+		}
+		srv.SetJWTVerifier(ver)
+		logger.Info("JWT 검증 활성", slog.String("public_key", cfg.JWTPublicKeyFile))
+	} else if !cfg.DevMode {
+		logger.Warn("JWT public key 도 DevMode 도 아님 — 모든 요청이 401 로 거부됨")
+	}
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("mci-edge-api 종료", slog.Any("error", err))
 		os.Exit(1)

@@ -537,6 +537,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /v1/admin/tx-test", TxTestProxy(s.cfg.UpstreamAPIURL, s.logger))
 	// 대시보드 "MCI 프로세스 상태" — 각 서비스 진단 endpoint 병렬 ping.
 	mux.HandleFunc("GET /v1/admin/mci-health", MciHealth(s.cfg.MciHealthTargets))
+	// WS 모니터 reverse-proxy — 브라우저가 서비스 포트에 직접 못 닿는 원격
+	// 운영에서도 admin 포트 하나로 ws 모니터링 (Upgrade 통과).
+	mux.HandleFunc("GET /v1/admin/wsmon/{svc}/{rest...}", WsmonProxy(s.cfg.WsmonTargets, s.logger))
 	// alias × tier 통계 — mci-api 의 /v1/admin/alias-stats 로 reverse proxy.
 	// UI 의 운영 대시보드에서 alias 별 calls/latency/error_rate × tier 분리 관찰.
 	mux.HandleFunc("GET /v1/admin/alias-stats", UpstreamProxy(s.cfg.UpstreamAPIURL, "/v1/admin/alias-stats", s.logger))

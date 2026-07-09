@@ -948,7 +948,7 @@
           <div>
             <h3 class="text-lg font-semibold">WebSocket 모니터</h3>
             <p class="text-sm text-slate-400">여러 ws endpoint 를 동시에 모니터링. 각 endpoint 칩에서 개별 연결/해제, 또는 전체 일괄 제어.</p>
-            <p class="text-xs text-amber-500/80 mt-1">⚠ 브라우저가 각 서비스 포트로 <b>직접</b> 연결합니다 (admin 경유 아님) — 브라우저 위치에서 해당 포트가 방화벽/SG 로 열려 있고, 해당 서비스가 이 호스트에 배포되어 있어야 연결됩니다.</p>
+            <p class="text-xs text-slate-500 mt-1">admin 의 ws proxy (/v1/admin/wsmon) 경유 — 서비스별 포트 개방 불필요. 단 해당 서비스가 배포되어 있어야 연결됩니다 (미배포 서비스는 upstream unreachable).</p>
           </div>
 
           <!-- Endpoint chips — 5개 endpoint 카드. 클릭으로 토글 (해당 endpoint 만), 우측 버튼으로 전체 일괄. -->
@@ -10729,17 +10729,16 @@ function renderAuditEntry(e) {
 // B/sec / peak / drop).
 
 let wsmonInited = false;
-// host 는 admin UI 를 서빙하는 호스트를 따라간다 — 과거 localhost 하드코딩은
-// 브라우저와 서비스가 같은 머신일 때만 동작 (원격 admin 접속 시 전부 실패).
-// 주의: 브라우저 → 각 서비스 포트 직결 구조라, 브라우저 위치에서 해당 포트가
-// 방화벽/SG 로 열려 있어야 한다 (admin 경유 아님).
-const WSMON_HOST = location.hostname || "localhost";
+// admin 의 ws reverse-proxy (/v1/admin/wsmon/{svc}/...) 경유 — 브라우저는
+// admin 포트 하나만 닿으면 되고, 서비스별 포트를 방화벽/SG 에 열 필요가 없다.
+// (과거: ws://localhost:<포트> 직결 → 원격 admin 접속 시 전부 실패)
+const WSMON_BASE = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/v1/admin/wsmon";
 const WSMON_ENDPOINTS = [
-  { id: "mci-push",   label: "mci-push (8081)",       color: "indigo",  url: `ws://${WSMON_HOST}:8081/v1/subscribe` },
-  { id: "edge-price", label: "edge-price (8083)",     color: "accent",  url: `ws://${WSMON_HOST}:8083/v1/subscribe` },
-  { id: "edge-push",  label: "edge-push (8084)",      color: "violet",  url: `ws://${WSMON_HOST}:8084/v1/subscribe` },
-  { id: "mci-chart",  label: "mci-chart (8086) 봉",   color: "amber",   url: `ws://${WSMON_HOST}:8086/v1/chart/stream` },
-  { id: "edge-chart", label: "edge-chart (8087) DMZ", color: "teal",    url: `ws://${WSMON_HOST}:8087/v1/chart/stream` },
+  { id: "mci-push",   label: "mci-push (8081)",       color: "indigo",  url: `${WSMON_BASE}/mci-push/v1/subscribe` },
+  { id: "edge-price", label: "edge-price (8083)",     color: "accent",  url: `${WSMON_BASE}/edge-price/v1/subscribe` },
+  { id: "edge-push",  label: "edge-push (8084)",      color: "violet",  url: `${WSMON_BASE}/edge-push/v1/subscribe` },
+  { id: "mci-chart",  label: "mci-chart (8086) 봉",   color: "amber",   url: `${WSMON_BASE}/mci-chart/v1/chart/stream` },
+  { id: "edge-chart", label: "edge-chart (8087) DMZ", color: "teal",    url: `${WSMON_BASE}/edge-chart/v1/chart/stream` },
 ];
 const wsmon = {
   endpoints: {}, // id → { def, sock, state, total, bytesWindow, dropped }

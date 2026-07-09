@@ -161,6 +161,13 @@ func isPublicPath(path string) bool {
 // authenticate 는 요청에서 Principal 을 추출한다.
 func authenticate(r *http.Request, cfg AuthConfig) (*Principal, error) {
 	if cfg.DevMode {
+		// DevMode 여도 Bearer + JWTVerifier 가 있으면 JWT 검증을 우선 시도 —
+		// dev 환경에서 X-WTG-User 경로와 운영 JWT 경로가 공존한다.
+		// 무효 토큰은 X-WTG-User 로 조용히 강등하지 않고 그대로 401
+		// (잘못된 토큰이 dev 헤더 뒤에 숨는 것을 방지).
+		if cfg.JWTVerifier != nil && r.Header.Get("Authorization") != "" {
+			return authenticateJWT(r, cfg.JWTVerifier, cfg.SessionStore)
+		}
 		usid := r.Header.Get(HeaderEdgeUser)
 		if usid == "" {
 			return nil, errMissingUser

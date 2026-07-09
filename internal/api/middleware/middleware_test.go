@@ -451,3 +451,83 @@ func TestAuthDevModeOverridesSessionStore(t *testing.T) {
 		t.Errorf("DevMode 우선순위 실패: %+v", p)
 	}
 }
+
+// DevMode 여도 JWTVerifier + Bearer 헤더가 있으면 JWT 검증 우선 —
+// dev 환경에서 X-WTG-User 경로와 운영 JWT 경로가 공존한다.
+func TestAuthDevModeJWTBearerPreferred(t *testing.T) {
+	priv, _ := auth.GenerateRSAKeyPair(2048)
+	iss, _ := auth.NewIssuer(auth.IssuerOptions{KeyID: "k1", PrivateKey: priv})
+	ver, _ := auth.NewVerifier(auth.VerifierOptions{Keys: auth.SingleKey{Key: &priv.PublicKey}})
+	store := newSessionStoreWith(t, &auth.Session{
+		ID: "sess-dev-jwt", Usid: "trader01", Channel: "WEB",
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	tok, err := iss.Sign(auth.Claims{
+		SID: "sess-dev-jwt", Usid: "trader01",
+		EXP: time.Now().Add(15 * time.Minute).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mw := Auth(AuthConfig{DevMode: true, JWTVerifier: ver, SessionStore: store, Logger: discardLogger()})
+	var p *Principal
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p = PrincipalFromContext(r.Context())
+	}))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/orders", nil)
+	req.Header.Set("Authorization", "Bearer "+tok) // X-WTG-User 없이 JWT 만
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if p == nil || p.SessionID != "sess-dev-jwt" || p.Usid != "trader01" {
+		t.Errorf("Principal: %+v", p)
+	}
+}
+
+// DevMode + JWTVerifier 구성이어도 Bearer 가 없으면 기존 X-WTG-User fallback.
+func TestAuthDevModeNoBearerFallsBackToHeader(t *testing.T) {
+	priv, _ := auth.GenerateRSAKeyPair(2048)
+	ver, _ := auth.NewVerifier(auth.VerifierOptions{Keys: auth.SingleKey{Key: &priv.PublicKey}})
+
+	mw := Auth(AuthConfig{DevMode: true, JWTVerifier: ver, Logger: discardLogger()})
+	var p *Principal
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p = PrincipalFromContext(r.Context())
+	}))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/orders", nil)
+	req.Header.Set("X-WTG-User", "devuser")
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if p == nil || p.Usid != "devuser" {
+		t.Errorf("Principal: %+v", p)
+	}
+}
+
+// DevMode 에서 무효 JWT 는 X-WTG-User 로 조용히 강등하지 않고 그대로 401 —
+// 잘못된 토큰이 dev 헤더 뒤에 숨는 것을 방지.
+func TestAuthDevModeBadJWTNotDowngraded(t *testing.T) {
+	priv, _ := auth.GenerateRSAKeyPair(2048)
+	ver, _ := auth.NewVerifier(auth.VerifierOptions{Keys: auth.SingleKey{Key: &priv.PublicKey}})
+
+	mw := Auth(AuthConfig{DevMode: true, JWTVerifier: ver, Logger: discardLogger()})
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("무효 JWT 인데 핸들러가 호출됨")
+	}))
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/orders", nil)
+	req.Header.Set("Authorization", "Bearer not-a-jwt")
+	req.Header.Set("X-WTG-User", "devuser") // 있어도 강등 금지
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status=%d, want 401", rr.Code)
+	}
+}

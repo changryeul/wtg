@@ -266,3 +266,14 @@ func TestValidatePattern(t *testing.T) {
 		t.Error("중간 * 가 통과됨")
 	}
 }
+
+// 요청 alias 에 * 가 오면 (패턴 rule 자체를 직접 호출) 거부 —
+// 정확 매칭이 패턴 rule 을 잡으면 rkey 빈값 frame 이 broker 로 나간다.
+func TestResolveRejectsWildcardAlias(t *testing.T) {
+	reg := NewInMemoryRegistry(nil)
+	_ = reg.Put(&Rule{Alias: "W11*", Exchange: "dom", Active: true}, "op")
+
+	if _, err := Resolve(reg, "W11*"); err == nil {
+		t.Error("패턴 alias 직접 호출이 허용됨 — rkey 빈값 frame 위험")
+	}
+}

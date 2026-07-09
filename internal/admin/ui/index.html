@@ -3956,6 +3956,21 @@ function renderRoutes() {
       text: "▶ 테스트",
     });
     testBtn.onclick = () => {
+      // 패턴 rule 은 직접 호출 대상이 아님 — 매칭될 실제 alias 를 받아 테스트.
+      if ((r.alias || "").endsWith("*")) {
+        const prefix = r.alias.slice(0, -1);
+        const concrete = prompt(
+          "패턴 rule 은 직접 호출할 수 없습니다.\n이 패턴에 매칭될 실제 transaction code 를 입력하세요:", prefix);
+        if (!concrete || concrete.endsWith("*")) return;
+        goPage("tester");
+        testerLoadPreset({
+          method: "POST",
+          path: "/v1/admin/tx-test",
+          body: { alias: concrete, data: "" },
+        });
+        toast("API 테스터로 이동 — alias=" + concrete + " (패턴 " + r.alias + " 경유)");
+        return;
+      }
       // 라우팅 화면 상단 select 의 형식 + 채널 읽기.
       const fmt = ($("#routes-test-format") || {}).value || "API";
       const ch = ($("#routes-test-channel") || {}).value || "";

@@ -190,6 +190,12 @@ func Resolve(reg Registry, alias string) (*Rule, error) {
 	if reg == nil || alias == "" {
 		return nil, ErrRouteNotFound
 	}
+	// 요청 alias 의 * 는 거부 — 패턴 rule 을 직접 호출하면 정확 매칭이
+	// rkey 빈값 rule 을 그대로 반환해 빈 rkey frame 이 broker 로 나간다.
+	// 패턴은 매칭 규칙이지 호출 대상이 아니다.
+	if strings.ContainsRune(alias, '*') {
+		return nil, ErrRouteNotFound
+	}
 	rule, err := reg.Get(alias)
 	if err == nil {
 		if !rule.Active {

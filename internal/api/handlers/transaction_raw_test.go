@@ -3,8 +3,10 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
@@ -137,5 +139,52 @@ func TestTransactionRawModePolicyDeny(t *testing.T) {
 		map[string]string{"X-WTG-Exchange": "dom", "X-WTG-Routing-Key": "W3100T01"}, []byte("msg"))
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("status: %d, want 503 (kill switch)", rr.Code)
+	}
+}
+
+// debug 레벨에서 송수신 전문 preview 가 로그에 남고, info 레벨(운영 기본)
+// 에서는 전문이 로그에 노출되지 않는다 (계좌/비밀번호 등 민감정보 보호).
+func TestTransactionDebugWireLog(t *testing.T) {
+	reqMsg := []byte("W3100T01  reqbody")
+	repMsg := []byte("W3100T01  repbody")
+	caller := &fakeCaller{
+		reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+			return &mymq.Reply{Body: repMsg}, nil
+		},
+	}
+
+	run := func(level slog.Level) string {
+		var buf bytes.Buffer
+		deps := quietDeps(caller)
+		deps.Logger = slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: level}))
+		doRawTx(t, deps, map[string]string{
+			"X-WTG-Exchange": "dom", "X-WTG-Routing-Key": "W3100T01"}, reqMsg)
+		return buf.String()
+	}
+
+	dbg := run(slog.LevelDebug)
+	if !strings.Contains(dbg, "tx 전문 송신") || !strings.Contains(dbg, "reqbody") {
+		t.Errorf("debug 송신 전문 로그 누락:\n%s", dbg)
+	}
+	if !strings.Contains(dbg, "tx 전문 수신") || !strings.Contains(dbg, "repbody") {
+		t.Errorf("debug 수신 전문 로그 누락:\n%s", dbg)
+	}
+
+	info := run(slog.LevelInfo)
+	if strings.Contains(info, "reqbody") || strings.Contains(info, "repbody") {
+		t.Errorf("info 레벨에 전문 노출:\n%s", info)
+	}
+}
+
+// bodyPreview — 비인쇄 바이트 escape + truncate 동작.
+func TestBodyPreview(t *testing.T) {
+	got := bodyPreview(append([]byte("AB"), 0xB0, 0xA1), 100)
+	if !strings.Contains(got, "AB") || !strings.Contains(got, `\xb0\xa1`) {
+		t.Errorf("escape: %q", got)
+	}
+	long := bytes.Repeat([]byte("x"), 600)
+	got = bodyPreview(long, 512)
+	if !strings.Contains(got, "…(600 bytes)") {
+		t.Errorf("truncate 표기: %q", got)
 	}
 }

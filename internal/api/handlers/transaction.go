@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -22,6 +23,29 @@ import (
 	"github.com/winwaysystems/wtg/pkg/policy"
 	"github.com/winwaysystems/wtg/pkg/svcio"
 )
+
+// bodyPreview — 전문 debug 로그용 preview. 비인쇄 바이트는 \xNN 로 escape,
+// max 바이트 초과분은 잘라내고 전체 길이를 표기한다. 민감정보가 담길 수 있어
+// 반드시 debug 레벨에서만 사용할 것 (운영 기본 info 에서는 미출력).
+func bodyPreview(b []byte, max int) string {
+	total := len(b)
+	truncated := total > max
+	if truncated {
+		b = b[:max]
+	}
+	var sb strings.Builder
+	for _, c := range b {
+		if c >= 0x20 && c < 0x7f {
+			sb.WriteByte(c)
+		} else {
+			fmt.Fprintf(&sb, `\x%02x`, c)
+		}
+	}
+	if truncated {
+		fmt.Fprintf(&sb, "…(%d bytes)", total)
+	}
+	return sb.String()
+}
 
 // writeRawError — raw 전문 모드의 에러 응답: text/plain 본문 + X-WTG-Errn 헤더.
 // errm 은 한글일 수 있어 HTTP 헤더 대신 본문으로 전달한다 (헤더는 latin-1 제약).
@@ -227,6 +251,19 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			wireSpec = spec
 		}
 
+		// 전문 debug 로그 — WTG_API_LOG_LEVEL=debug 에서만. 송수신 body 를
+		// byte-정확 preview 로 남겨 passthrough/조립 결과를 눈으로 검증한다.
+		if deps.Logger.Enabled(r.Context(), slog.LevelDebug) {
+			deps.Logger.DebugContext(r.Context(), "tx 전문 송신",
+				slog.Bool("raw", rawMode),
+				slog.String("xchg", frame.Xchg),
+				slog.String("rkey", frame.Rkey),
+				slog.Int("body_len", len(frame.Body)),
+				slog.String("body", bodyPreview(frame.Body, 600)),
+				slog.String("rid", middleware.RequestIDFromContext(r.Context())),
+			)
+		}
+
 		callCtx, cancel := context.WithTimeout(r.Context(), deps.CallTimeout)
 		defer cancel()
 		// OTel span — broker call wrap. tracer 등록 안 된 환경은 no-op.
@@ -260,6 +297,16 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			}
 			fail(status, code, msg, errn)
 			return
+		}
+
+		if deps.Logger.Enabled(r.Context(), slog.LevelDebug) {
+			deps.Logger.DebugContext(r.Context(), "tx 전문 수신",
+				slog.Bool("raw", rawMode),
+				slog.Uint64("errn", uint64(reply.Errn)),
+				slog.Int("body_len", len(reply.Body)),
+				slog.String("body", bodyPreview(reply.Body, 600)),
+				slog.String("rid", middleware.RequestIDFromContext(r.Context())),
+			)
 		}
 
 		// raw 모드 응답 — output 전문이 있으면 errn 무관하게 바이트 그대로

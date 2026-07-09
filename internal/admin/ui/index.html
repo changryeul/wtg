@@ -3967,7 +3967,7 @@ function renderRoutes() {
           method: "POST",
           path: "/v1/admin/tx-test",
           body: { alias: concrete, data: "" },
-        });
+        }, { forceBody: true });
         toast("API 테스터로 이동 — alias=" + concrete + " (패턴 " + r.alias + " 경유)");
         return;
       }
@@ -3991,7 +3991,7 @@ function renderRoutes() {
         method: "POST",
         path: "/v1/admin/tx-test",
         body: { alias: r.alias, data: "" },
-      });
+      }, { forceBody: true });
       const tch = $("#t-channel");
       if (tch) {
         tch.value = ch;
@@ -5349,13 +5349,15 @@ function readTesterHeaders() {
   return out;
 }
 
-function testerLoadPreset(p) {
+function testerLoadPreset(p, opts = {}) {
   $("#t-method").value = p.method;
   $("#t-path").value = p.path;
   const id = presetIdOf(p);
   currentPresetId = id;
   const saved = loadSavedBody(id);
-  if (saved !== undefined) {
+  // forceBody — deep-link (svcio/라우팅 → "이걸 테스트") 는 명시 의도이므로
+  // 저장된 이전 body 가 preset 을 덮어쓰지 않는다 (낡은 body 부활 방지).
+  if (saved !== undefined && !opts.forceBody) {
     $("#t-body").value = saved;
   } else {
     $("#t-body").value = p.body ? JSON.stringify(p.body, null, 2) : "";
@@ -8095,7 +8097,7 @@ async function initSvcIO() {
           method: "POST",
           path: "/v1/admin/tx-test",
           body,
-        });
+        }, { forceBody: true });
         toast("API 테스터 — " + (rule ? "alias=" + rule.alias : "raw envelope (" + spec.code + ")"));
       }, 50);
     };

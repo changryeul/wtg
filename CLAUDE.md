@@ -200,6 +200,8 @@ etc/                     # 운영 설정 (symbols.json, profiles.json, pricing.j
 
 `data` 가 JSON 객체이면 `pkg/svcio` 가 svc I/O 헤더 명세 (`win/src/inc/trn/WnnnnSnn.h` 파싱) 기반으로 고정폭 전문을 자동 조립하고, 응답도 역방향 파싱해 JSON 으로 돌려준다. 엔진의 LZO1X (MLZO) 압축 응답은 `pkg/mymq` 가 자동 해제.
 
+**raw 전문 모드 (emp/hts 레거시)**: `Content-Type: application/octet-stream` + `X-WTG-Alias` (또는 `X-WTG-Exchange`/`-Routing-Key`) 헤더로 호출하면 body 전문 바이트를 무변형 통과, 응답도 output 전문 그대로 + `X-WTG-Errn` 헤더 (errn≠0 여도 전문 있으면 200 — 레거시는 COMHDR 로 판단). CP949 무손상. 상세는 `docs/routing.md` §5.
+
 ### 2. Push (unsolicited fan-out) — 두 트랙 병행
 
 **트랙 A: broker representative receiver (legacy / 매매 엔진 발 publish)**

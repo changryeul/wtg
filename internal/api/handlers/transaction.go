@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -16,8 +18,19 @@ import (
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/internal/api/transform"
 	"github.com/winwaysystems/wtg/pkg/idempotency"
+	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/policy"
+	"github.com/winwaysystems/wtg/pkg/svcio"
 )
+
+// writeRawError — raw 전문 모드의 에러 응답: text/plain 본문 + X-WTG-Errn 헤더.
+// errm 은 한글일 수 있어 HTTP 헤더 대신 본문으로 전달한다 (헤더는 latin-1 제약).
+func writeRawError(w http.ResponseWriter, status int, errn uint32, msg string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-WTG-Errn", strconv.FormatUint(uint64(errn), 10))
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(msg))
+}
 
 // extractSymbol 은 envelope.Data (raw JSON) 안의 symbol 필드를 추출한다.
 //
@@ -62,13 +75,32 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "bad_body", err.Error())
 			return
 		}
+		// raw 전문 모드 (emp/hts 채널) — Content-Type: application/octet-stream
+		// 이면 body 는 고정폭 전문 바이트 그대로 (JSON envelope 없음), 대상은
+		// X-WTG-Alias 또는 X-WTG-Exchange/-Routing-Key 헤더로 지정한다.
+		// 응답도 엔진 output 전문 바이트 그대로 — 인코딩(CP949 등) 무손상 통과.
+		rawMode := strings.HasPrefix(r.Header.Get("Content-Type"), "application/octet-stream")
 		var env transform.Envelope
-		if err := json.Unmarshal(bodyBytes, &env); err != nil {
+		if rawMode {
+			env = transform.Envelope{
+				Alias:      r.Header.Get("X-WTG-Alias"),
+				Exchange:   r.Header.Get("X-WTG-Exchange"),
+				RoutingKey: r.Header.Get("X-WTG-Routing-Key"),
+			}
+		} else if err := json.Unmarshal(bodyBytes, &env); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_json", err.Error())
 			return
 		}
+		// 에러 응답 — raw 모드는 text/plain + X-WTG-Errn, JSON 모드는 기존 envelope.
+		fail := func(status int, code, msg string, errn uint32) {
+			if rawMode {
+				writeRawError(w, status, errn, msg)
+				return
+			}
+			writeError(w, status, code, msg)
+		}
 		if err := env.ValidateRequest(); err != nil {
-			writeError(w, http.StatusBadRequest, "validation", err.Error())
+			fail(http.StatusBadRequest, "validation", err.Error(), 0)
 			return
 		}
 		// alias 별 호출 시작 시각 — 응답 직전까지 latency 측정.
@@ -147,7 +179,7 @@ func Transaction(deps *Deps) http.HandlerFunc {
 					status = http.StatusServiceUnavailable
 				}
 				recordAlias(true)
-				writeError(w, status, d.Reason, d.Message)
+				fail(status, d.Reason, d.Message, 0)
 				return
 			}
 		}
@@ -162,11 +194,15 @@ func Transaction(deps *Deps) http.HandlerFunc {
 		if err != nil {
 			recordAlias(true)
 			if errors.Is(err, transform.ErrUnknownAlias) {
-				writeError(w, http.StatusNotFound, "unknown_alias", err.Error())
+				fail(http.StatusNotFound, "unknown_alias", err.Error(), 0)
 				return
 			}
-			writeError(w, http.StatusBadRequest, "build_frame", err.Error())
+			fail(http.StatusBadRequest, "build_frame", err.Error(), 0)
 			return
+		}
+		// raw 모드 — 클라이언트가 보낸 전문 바이트를 무변형으로 body 에.
+		if rawMode {
+			frame.Body = bodyBytes
 		}
 		// SessionMode 면 Principal 에 cookie_t 가 들어와 있다 — 매매 엔진 권한
 		// 검증에 필요. DevMode 에서는 nil 이라 attach 안 됨.
@@ -176,14 +212,19 @@ func Transaction(deps *Deps) http.HandlerFunc {
 
 		// svc I/O 명세 기반 자동 marshalling — data 가 JSON object 이고
 		// routing_key 의 명세가 있으면 COMHDR+Input 고정폭으로 조립 (wire.go).
-		wireBody, wireSpec, wireErr := wireBuildBody(deps.SvcIO, frame.Rkey, p.Usid, env.Header, env.Data)
-		if wireErr != nil {
-			recordAlias(true)
-			writeError(w, http.StatusBadRequest, "wire_marshal", wireErr.Error())
-			return
-		}
-		if wireBody != nil {
-			frame.Body = wireBody
+		// raw 모드는 클라이언트가 전문을 직접 조립하므로 적용하지 않는다.
+		var wireSpec *svcio.SvcSpec
+		if !rawMode {
+			wireBody, spec, wireErr := wireBuildBody(deps.SvcIO, frame.Rkey, p.Usid, env.Header, env.Data)
+			if wireErr != nil {
+				recordAlias(true)
+				writeError(w, http.StatusBadRequest, "wire_marshal", wireErr.Error())
+				return
+			}
+			if wireBody != nil {
+				frame.Body = wireBody
+			}
+			wireSpec = spec
 		}
 
 		callCtx, cancel := context.WithTimeout(r.Context(), deps.CallTimeout)
@@ -212,7 +253,32 @@ func Transaction(deps *Deps) http.HandlerFunc {
 			status, code, msg := mapBrokerError(err)
 			recordAlias(true)
 			recordTx(status, 0)
-			writeError(w, status, code, msg)
+			var me *mymq.Error
+			var errn uint32
+			if errors.As(err, &me) {
+				errn = me.Errn
+			}
+			fail(status, code, msg, errn)
+			return
+		}
+
+		// raw 모드 응답 — output 전문이 있으면 errn 무관하게 바이트 그대로
+		// (레거시는 COMHDR eflg/mesg 로 판단, errn 은 X-WTG-Errn 헤더 병기).
+		// 전문 없는 transport 에러만 HTTP status 로 매핑.
+		if rawMode {
+			if mqErr := reply.AsError(); mqErr != nil && len(reply.Body) == 0 {
+				status, _, msg := mapBrokerError(mqErr)
+				recordAlias(true)
+				recordTx(status, reply.Errn)
+				writeRawError(w, status, reply.Errn, msg)
+				return
+			}
+			recordAlias(reply.Errn != 0)
+			recordTx(http.StatusOK, reply.Errn)
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("X-WTG-Errn", strconv.FormatUint(uint64(reply.Errn), 10))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(reply.Body)
 			return
 		}
 

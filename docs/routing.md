@@ -208,6 +208,35 @@ type Rule struct {
   "data": "..." }
 ```
 
+### 요청 형태 세 번째 — raw 전문 모드 (emp/hts 레거시 채널)
+
+JSON envelope 없이 고정폭 전문 바이트를 **그대로** 주고받는 모드.
+레거시 cs-native 클라이언트 (EMP/HTS) 가 기존 전문 조립 코드를 유지한 채
+WTG 를 경유하기 위한 경로 — 정책 (kill switch / rate-limit / 감사) 은
+JSON 모드와 동일한 핸들러를 지나므로 자동 적용된다.
+
+```
+POST /v1/tx
+Content-Type: application/octet-stream
+Authorization: Bearer <jwt>
+X-WTG-Alias: W3100T01                  # 또는 X-WTG-Exchange + X-WTG-Routing-Key
+<body = COMHDR+Input 전문 바이트 그대로>
+
+응답 200
+Content-Type: application/octet-stream
+X-WTG-Errn: 0                          # broker errn (비즈니스 에러여도 body 는 전문 그대로)
+<body = 엔진 output 전문 바이트 그대로>
+```
+
+- **무변형 통과**: 요청/응답 body 를 WTG 가 해석·변환하지 않는다 — CP949 등
+  레거시 인코딩도 무손상. svc I/O 자동 조립 (svcio) 은 이 모드에서 비활성.
+- **에러 규약**: 엔진 output 전문이 있으면 errn≠0 이어도 HTTP 200 + body 그대로
+  (레거시는 COMHDR 의 eflg/mesg 로 판단). 전문 자체가 없는 transport 에러
+  (MB-1002 등) 만 HTTP status 매핑 + text/plain 본문 + `X-WTG-Errn` 헤더.
+- **채널**: 로그인 시 `channel: "EMP" | "HTS"` (pkg/session). COMHDR 의 chnl[2]
+  업무 코드는 클라이언트가 전문 안에 직접 채운다 — 엔진이 헤더값을 신뢰
+  (W3100A01.pc "Header확인" 패턴).
+
 ---
 
 ## 6. 별칭 사전 = Registry

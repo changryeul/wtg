@@ -32,6 +32,8 @@ const (
 	ChannelCS     Channel = "CS"
 	ChannelFIX    Channel = "FIX"
 	ChannelAdmin  Channel = "ADM" // 운영 콘솔 — 시세 publish 대상 아님
+	ChannelEMP    Channel = "EMP" // 레거시 EMP — raw 전문 passthrough (/v1/tx octet-stream)
+	ChannelHTS    Channel = "HTS" // 레거시 HTS — raw 전문 passthrough (/v1/tx octet-stream)
 	// 주의: 모든 Channel 값은 ≤3자로 유지한다. Profile.Key() 결과가
 	// mymq routing-key 한도 (LRkey=16바이트) 안에 들어가야 한다.
 	// 최악: 3(Channel) + 1 + 6(BRANCH) + 1 + 4(GOLD) = 15 bytes.

@@ -22,6 +22,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-admin \
     --broker-port=${BROKER_PORT} \
     --etcd=http://127.0.0.1:2379 \
     --edge-urls=http://127.0.0.1:8083 \
+    --upstream-api=http://127.0.0.1:8080 \
     --dev \
     --svc-common-header=/home/winway/nh-fxallone-server/win/src/inc/com/comhdr.h \
     --svc-inc-dir=/home/winway/nh-fxallone-server/win/src/inc/trn

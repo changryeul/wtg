@@ -214,3 +214,53 @@ func io_ReadAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
 		}
 	}
 }
+
+// /v1/login /v1/refresh 은 인증 bootstrap — Principal 없이도 upstream 으로
+// forward 되어야 한다 (그렇지 않으면 edge 로는 로그인 자체가 불가능한 닭-달걀).
+// 단 그 외 경로는 여전히 Principal 필수.
+func TestEdgeForwardsLoginWithoutAuth(t *testing.T) {
+	priv, _ := auth.GenerateRSAKeyPair(2048)
+	ver, _ := auth.NewVerifier(auth.VerifierOptions{Keys: auth.SingleKey{Key: &priv.PublicKey}})
+
+	var hits atomic.Value
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Store(r.URL.Path)
+		w.Write([]byte(`{"session_id":"s"}`))
+	}))
+	defer upstream.Close()
+
+	cfg := DefaultConfig()
+	cfg.UpstreamURL = upstream.URL
+	cfg.MaxRequestBody = 0
+	srv := NewServer(cfg, quietLogger())
+	srv.SetJWTVerifier(ver)
+	handler, _ := srv.BuildHandler()
+	edgeSrv := httptest.NewServer(handler)
+	defer edgeSrv.Close()
+
+	for _, path := range []string{"/v1/login", "/v1/refresh"} {
+		hits.Store("")
+		resp, err := http.Post(edgeSrv.URL+path, "application/json", strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: status=%d, want 200 (무인증 forward)", path, resp.StatusCode)
+		}
+		if hits.Load() != path {
+			t.Errorf("%s: upstream 도달 실패 (hit=%q)", path, hits.Load())
+		}
+	}
+
+	// 그 외 경로는 여전히 인증 필수 — upstream 에 도달하면 안 됨.
+	hits.Store("")
+	resp, _ := http.Post(edgeSrv.URL+"/v1/tx", "application/json", strings.NewReader("{}"))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("/v1/tx 무인증: status=%d, want 401", resp.StatusCode)
+	}
+	if hits.Load() != "" {
+		t.Errorf("/v1/tx 무인증인데 upstream 도달: %q", hits.Load())
+	}
+}

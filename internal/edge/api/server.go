@@ -312,14 +312,25 @@ func (s *Server) buildProxy(upstream *url.URL) *httputil.ReverseProxy {
 	return proxy
 }
 
+// authBootstrapPath — 인증 이전에 호출되는 bootstrap 경로. Principal 없이
+// upstream forward 를 허용한다 (아니면 edge 로는 로그인 자체가 불가능한
+// 닭-달걀). 주의: middleware 의 public path 전체 (/metrics /healthz
+// /v1/internal/* 등) 를 열면 내부 endpoint 가 DMZ 밖으로 노출되므로 딱 두
+// 경로만. brute-force 는 IP 키 rate-limit 이 동일하게 적용되어 방어.
+func authBootstrapPath(path string) bool {
+	return path == "/v1/login" || path == "/v1/refresh"
+}
+
 // proxyHandler 는 인증 통과한 요청을 ReverseProxy 로 위임.
 func (s *Server) proxyHandler(proxy *httputil.ReverseProxy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 인증된 Principal 이 없으면 forward 하지 않음 (Auth 미들웨어 통과 안된 경우).
 		// /v1/ping 은 별도 핸들러로 분리되어 여기 도달 안 함.
 		if p := middleware.PrincipalFromContext(r.Context()); p == nil || p.Usid == "" {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "인증 필요")
-			return
+			if !authBootstrapPath(r.URL.Path) {
+				writeJSONError(w, http.StatusUnauthorized, "unauthorized", "인증 필요")
+				return
+			}
 		}
 		proxy.ServeHTTP(w, r)
 	}

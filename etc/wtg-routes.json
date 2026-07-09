@@ -1,0 +1,11 @@
+{
+  "routes": [
+    {
+      "alias": "W11*",
+      "exchange": "dom",
+      "routing_key": "",
+      "active": true,
+      "comment": "dom 도메인 패턴 노출 — W11 계열 svc 전체 (rkey=요청 alias 그대로)"
+    }
+  ]
+}

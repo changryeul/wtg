@@ -4024,7 +4024,9 @@ function renderRoutes() {
       h("td", { class: "px-4 py-3" }, toggleBtn),
       rcvTd,
       h("td", { class: "px-4 py-3 text-xs text-slate-400 font-mono",
-                text: r.updated_at ? new Date(r.updated_at).toLocaleString("ko-KR") : "-" }),
+                // zero-time (정적 시드 산출물) 은 "1.1.1 오전..." 으로 깨져 보임 — "-" 처리.
+                text: (() => { const d = r.updated_at ? new Date(r.updated_at) : null;
+                               return d && d.getFullYear() > 2000 ? d.toLocaleString("ko-KR") : "-"; })() }),
       h("td", { class: "px-4 py-3 text-right space-x-1" }, testBtn, editBtn, delBtn),
     );
     tb.appendChild(tr);

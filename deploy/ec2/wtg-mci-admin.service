@@ -24,6 +24,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-admin \
     --edge-urls=http://127.0.0.1:8083 \
     --upstream-api=http://127.0.0.1:8080 \
     --dev \
+    --dev-routes-file=/home/winway/nh-fxallone-server/wtg/etc/wtg-routes.json \
     --svc-common-header=/home/winway/nh-fxallone-server/win/src/inc/com/comhdr.h \
     --svc-inc-dir=/home/winway/nh-fxallone-server/win/src/inc/trn
 

@@ -26,6 +26,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-api \
     --broker-host=${BROKER_HOST} \
     --broker-port=${BROKER_PORT} \
     --dev \
+    --dev-routes-file=/home/winway/nh-fxallone-server/wtg/etc/wtg-routes.json \
     --etcd=http://127.0.0.1:2379 \
     --user-profiles-prefix=wtg/auth/user-profiles/ \
     --jwt-key=/home/winway/nh-fxallone-server/wtg/etc/jwt-private.pem \

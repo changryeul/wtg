@@ -208,6 +208,26 @@ type Rule struct {
   "data": "..." }
 ```
 
+### 패턴 rule — 도메인 단위 노출 정책
+
+개별 transaction 마다 rule 을 만드는 대신, alias 끝에 `*` 를 붙인 **prefix
+패턴 rule** 하나로 svc 계열 전체를 커버한다. 근거는 엔진 기동 구성
+(`mymq.tab` 의 `-e<exchange>` 그룹) — 노출 결정을 svc 단위가 아니라
+업무 도메인 단위로 내린다.
+
+```
+alias="W11*", exchange="dom", routing_key=""   ← W11 로 시작하는 모든 alias 허용
+                                                  (rkey 빈값 = 요청 alias 그대로)
+```
+
+- **우선순위**: 정확 매칭 > 패턴 (longest prefix). `W1101T01` 개별 rule 이
+  있으면 그것이 `W11*` 를 이긴다 — 개명/차단 예외는 개별 rule 로.
+- **비활성 패턴** 은 매칭에서 제외 — 도메인 전체 차단 스위치로 쓸 수 있다.
+- rule 테이블의 역할: ① trxc→exchange 좌표, ② 외부 노출 allowlist,
+  ③ active 스위치, ④ 이름 계약. 패턴 rule 은 ①②③ 을 몇 줄로 처리한다.
+- 라우팅 페이지의 "수신" 컬럼이 rule 별 broker whois (수신 AP 유무) 를
+  표시 — MB-1002 를 호출 전에 화면에서 예방.
+
 ### 요청 형태 세 번째 — raw 전문 모드 (emp/hts 레거시 채널)
 
 JSON envelope 없이 고정폭 전문 바이트를 **그대로** 주고받는 모드.

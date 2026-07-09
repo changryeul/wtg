@@ -33,6 +33,12 @@ type Rule struct {
 	UpdatedBy  string    `json:"updated_by,omitempty"` // admin Usid
 }
 
+// IsPattern — trailing "*" 를 가진 prefix 패턴 rule 인지.
+// 예: "W11*" 는 W11 로 시작하는 모든 alias 를 커버 (도메인 단위 노출 정책).
+func (r *Rule) IsPattern() bool {
+	return strings.HasSuffix(r.Alias, "*")
+}
+
 // 표준 에러 sentinel.
 var (
 	ErrAliasRequired   = errors.New("routing: alias 필수")
@@ -55,7 +61,12 @@ func (r *Rule) Validate() error {
 	if len(r.Alias) > 64 || strings.ContainsAny(r.Alias, " \t\r\n/") {
 		return ErrAliasInvalid
 	}
-	if r.RoutingKey == "" {
+	// * 는 패턴 rule 의 trailing 1개만 허용 ("W11*"). 중간/복수 * 는 거부.
+	if i := strings.IndexByte(r.Alias, '*'); i >= 0 && i != len(r.Alias)-1 {
+		return ErrAliasInvalid
+	}
+	// 패턴 rule 은 rkey 생략 가능 — 빈값이면 Resolve 시 요청 alias 가 rkey.
+	if r.RoutingKey == "" && !r.IsPattern() {
 		return ErrRkeyRequired
 	}
 	if len(r.Exchange) > mymq.LXchg {
@@ -180,11 +191,41 @@ func Resolve(reg Registry, alias string) (*Rule, error) {
 		return nil, ErrRouteNotFound
 	}
 	rule, err := reg.Get(alias)
-	if err != nil {
+	if err == nil {
+		if !rule.Active {
+			return nil, ErrRouteNotFound
+		}
+		return rule, nil
+	}
+	if !errors.Is(err, ErrRouteNotFound) {
 		return nil, err
 	}
-	if !rule.Active {
+	// 정확 매칭 없음 — 패턴 rule (trailing *) 로 fallback. 가장 긴 prefix 승리.
+	// rkey 빈 패턴은 요청 alias 를 rkey 로 (svc code 계열 일괄 노출).
+	var best *Rule
+	for _, r := range reg.List() {
+		if !r.Active || !r.IsPattern() {
+			continue
+		}
+		prefix := strings.TrimSuffix(r.Alias, "*")
+		if !strings.HasPrefix(alias, prefix) {
+			continue
+		}
+		if best == nil || len(prefix) > len(strings.TrimSuffix(best.Alias, "*")) {
+			best = r
+		}
+	}
+	if best == nil {
 		return nil, ErrRouteNotFound
 	}
-	return rule, nil
+	resolved := *best
+	resolved.Alias = alias
+	if resolved.RoutingKey == "" {
+		resolved.RoutingKey = alias
+	}
+	// 패턴 유래 rkey 는 Put 검증을 안 거치므로 wire 한도 방어.
+	if len(resolved.RoutingKey) > mymq.LRkey {
+		return nil, ErrRkeyTooLong
+	}
+	return &resolved, nil
 }

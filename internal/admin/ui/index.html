@@ -546,6 +546,7 @@
                   <th class="text-left px-4 py-3 font-medium">Exchange</th>
                   <th class="text-left px-4 py-3 font-medium">Routing Key</th>
                   <th class="text-left px-4 py-3 font-medium">Active</th>
+                  <th class="text-left px-4 py-3 font-medium" title="broker whois — 지금 이 rkey 를 수신할 엔진 AP 가 있는가">수신</th>
                   <th class="text-left px-4 py-3 font-medium">Updated</th>
                   <th class="text-right px-4 py-3 font-medium"></th>
                 </tr>
@@ -3300,7 +3301,7 @@ WEB.HQ.VIP</textarea>
         </div>
         <div>
           <label class="block text-xs uppercase tracking-wider text-slate-400 mb-1">Routing Key</label>
-          <input id="rf-rkey" required maxlength="16"
+          <input id="rf-rkey" maxlength="16" placeholder="패턴 rule (alias 끝 *) 은 비우면 alias 그대로"
             class="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 focus:border-accent-500 outline-none font-mono text-sm" />
         </div>
       </div>
@@ -4003,17 +4004,54 @@ function renderRoutes() {
       } catch (e) { toast(e.message, "err"); }
     };
 
+    // 수신 상태 셀 — 렌더 후 whois 로 비동기 채움 (fillRouteReceivers).
+    const isPattern = (r.alias || "").endsWith("*");
+    const rcvTd = h("td", {
+      class: "px-4 py-3 text-xs font-mono text-slate-500 route-rcv",
+      dataset: { rkey: isPattern ? "" : (r.routing_key || "") },
+      text: isPattern ? "패턴" : "…",
+      title: isPattern ? "패턴 rule — 개별 svc 는 호출 시점에 resolve" : "",
+    });
+
     const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
       h("td", { class: "px-4 py-3 font-mono " + (r.active ? "" : "text-slate-500"), text: r.alias }),
       h("td", { class: "px-4 py-3 font-mono text-slate-300", text: r.exchange || "-" }),
-      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: r.routing_key }),
+      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: r.routing_key || "(alias 그대로)" }),
       h("td", { class: "px-4 py-3" }, toggleBtn),
+      rcvTd,
       h("td", { class: "px-4 py-3 text-xs text-slate-400 font-mono",
                 text: r.updated_at ? new Date(r.updated_at).toLocaleString("ko-KR") : "-" }),
       h("td", { class: "px-4 py-3 text-right space-x-1" }, testBtn, editBtn, delBtn),
     );
     tb.appendChild(tr);
   }
+  fillRouteReceivers();
+}
+
+// fillRouteReceivers — 각 rule 의 rkey 로 broker whois 조회 → 수신 AP 유무 표시.
+// MB-1002 (수신자 없음) 를 호출해 보기 전에 화면에서 알 수 있게 한다.
+async function fillRouteReceivers() {
+  const cells = [...document.querySelectorAll("#routes-tbody .route-rcv")];
+  await Promise.all(cells.map(async (td) => {
+    const rkey = td.dataset.rkey;
+    if (!rkey) return; // 패턴 rule
+    try {
+      const r = await api("/v1/admin/whois?argv1=" + encodeURIComponent(rkey));
+      const list = (r.data && r.data.whois) || [];
+      if (list.length > 0) {
+        td.textContent = "● " + (list[0].appl || "") + (list.length > 1 ? " ×" + list.length : "");
+        td.className = td.className.replace("text-slate-500", "text-good");
+        td.title = "수신 AP: " + list.map(x => x.appl).join(", ");
+      } else {
+        td.textContent = "○ 없음";
+        td.className = td.className.replace("text-slate-500", "text-bad");
+        td.title = "broker 에 이 rkey 수신자가 없음 — 호출 시 MB-1002";
+      }
+    } catch (e) {
+      td.textContent = "?";
+      td.title = "whois 조회 실패: " + e.message;
+    }
+  }));
 }
 function openRouteModal(rule) {
   const isEdit = !!rule;

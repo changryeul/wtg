@@ -187,3 +187,82 @@ func TestInMemoryRegistryConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// ───────── 패턴 rule (prefix glob) ─────────
+
+// 패턴 rule: alias 가 "W11*" 처럼 trailing * 이면 prefix 매칭.
+// rkey 빈값 = 요청 alias 그대로 (svc code 계열 일괄 노출).
+func TestResolvePatternRule(t *testing.T) {
+	reg := NewInMemoryRegistry(nil)
+	if err := reg.Put(&Rule{Alias: "W11*", Exchange: "dom", Active: true}, "op"); err != nil {
+		t.Fatalf("패턴 rule Put: %v", err)
+	}
+
+	r, err := Resolve(reg, "W1101S02")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if r.Exchange != "dom" || r.RoutingKey != "W1101S02" {
+		t.Errorf("패턴 resolve: %+v", r)
+	}
+	if r.Alias != "W1101S02" {
+		t.Errorf("synthesized alias: %q", r.Alias)
+	}
+
+	// prefix 밖은 미매칭.
+	if _, err := Resolve(reg, "W2200T01"); err == nil {
+		t.Error("W22 가 W11* 에 매칭되면 안 됨")
+	}
+}
+
+// 정확 매칭이 패턴보다 우선, 패턴끼리는 longest prefix 우선.
+func TestResolvePatternPrecedence(t *testing.T) {
+	reg := NewInMemoryRegistry(nil)
+	_ = reg.Put(&Rule{Alias: "W*", Exchange: "generic", Active: true}, "op")
+	_ = reg.Put(&Rule{Alias: "W11*", Exchange: "dom", Active: true}, "op")
+	_ = reg.Put(&Rule{Alias: "W1101T01", Exchange: "exact", RoutingKey: "W1101T01", Active: true}, "op")
+
+	r, _ := Resolve(reg, "W1101T01")
+	if r == nil || r.Exchange != "exact" {
+		t.Errorf("정확 매칭 우선 실패: %+v", r)
+	}
+	r, _ = Resolve(reg, "W1105S01")
+	if r == nil || r.Exchange != "dom" {
+		t.Errorf("longest prefix 우선 실패: %+v", r)
+	}
+	r, _ = Resolve(reg, "W9500S01")
+	if r == nil || r.Exchange != "generic" {
+		t.Errorf("W* fallback 실패: %+v", r)
+	}
+}
+
+// 비활성 패턴은 매칭 제외 + rkey 를 명시한 패턴은 rkey 고정.
+func TestResolvePatternInactiveAndFixedRkey(t *testing.T) {
+	reg := NewInMemoryRegistry(nil)
+	_ = reg.Put(&Rule{Alias: "W11*", Exchange: "dom", Active: false}, "op")
+	if _, err := Resolve(reg, "W1101S02"); err == nil {
+		t.Error("비활성 패턴이 매칭됨")
+	}
+
+	_ = reg.Put(&Rule{Alias: "ECHO*", Exchange: "ECHOSVC", RoutingKey: "PING", Active: true}, "op")
+	r, err := Resolve(reg, "ECHO_ANYTHING")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.RoutingKey != "PING" {
+		t.Errorf("고정 rkey: %q", r.RoutingKey)
+	}
+}
+
+// 일반 rule 은 여전히 rkey 필수, * 는 trailing 1개만 허용.
+func TestValidatePattern(t *testing.T) {
+	if err := (&Rule{Alias: "W11*", Exchange: "dom"}).Validate(); err != nil {
+		t.Errorf("패턴 rule 은 rkey 없이 유효해야 함: %v", err)
+	}
+	if err := (&Rule{Alias: "PLAIN", Exchange: "dom"}).Validate(); err == nil {
+		t.Error("일반 rule 의 빈 rkey 가 통과됨")
+	}
+	if err := (&Rule{Alias: "W*11*", Exchange: "dom"}).Validate(); err == nil {
+		t.Error("중간 * 가 통과됨")
+	}
+}

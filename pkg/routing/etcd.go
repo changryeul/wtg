@@ -122,7 +122,11 @@ func NewEtcdRegistry(ctx context.Context, opt EtcdRegistryOptions) (*EtcdRegistr
 		_ = cli.Close()
 		return nil, err
 	}
-	go r.watchLoop(ctx)
+	// watch 는 ctx 를 부트스트랩과 분리 — 호출자가 dial timeout ctx 를 넘기고
+	// cancel 해도 (routing.New 의 defer cancel) watch 가 죽으면 안 된다.
+	// 실사고: 부팅 직후 watch 사망 → admin 의 etcd 변경이 재시작 전까지 무전파.
+	// 종료는 stopC (Close) 가 담당.
+	go r.watchLoop(context.WithoutCancel(ctx))
 	return r, nil
 }
 

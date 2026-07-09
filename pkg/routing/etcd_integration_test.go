@@ -154,3 +154,47 @@ func TestEtcdRegistrySetActive(t *testing.T) {
 		t.Errorf("UpdatedBy: %s", got.UpdatedBy)
 	}
 }
+
+// 부트스트랩 ctx (dial timeout 등) 가 New 직후 취소돼도 watch 는 살아있어야 한다.
+// 실사고: factory 가 10s timeout ctx 를 넘기고 defer cancel → 부팅 직후 watch
+// 사망 → mci-admin 의 etcd 변경이 mci-api 에 영원히 무전파 (재시작 전까지).
+func TestEtcdRegistryWatchSurvivesBootstrapCtxCancel(t *testing.T) {
+	srv := etcdtest.Start(t)
+
+	bootCtx, bootCancel := context.WithCancel(context.Background())
+	apiSide, err := routing.NewEtcdRegistry(bootCtx, routing.EtcdRegistryOptions{
+		Endpoints: []string{srv.ClientURL},
+		Prefix:    "wtg/test/routes2/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer apiSide.Close()
+	bootCancel() // 부트스트랩 ctx 즉시 취소 — factory 의 defer cancel 재현
+
+	adminCtx, adminCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer adminCancel()
+	adminSide, err := routing.NewEtcdRegistry(adminCtx, routing.EtcdRegistryOptions{
+		Endpoints: []string{srv.ClientURL},
+		Prefix:    "wtg/test/routes2/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminSide.Close()
+
+	if err := adminSide.Put(&routing.Rule{
+		Alias: "LATE_RULE", Exchange: "dom", RoutingKey: "W1101S02", Active: true,
+	}, "admin01"); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if r, err := apiSide.Get("LATE_RULE"); err == nil && r.Active {
+			return // watch 전파 성공
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("부트스트랩 ctx 취소 후 watch 가 죽어 LATE_RULE 이 전파되지 않음")
+}

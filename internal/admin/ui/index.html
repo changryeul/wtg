@@ -4016,7 +4016,11 @@ function renderRoutes() {
     const tr = h("tr", { class: "border-b border-ink-700/40 hover:bg-ink-800/40 transition" },
       h("td", { class: "px-4 py-3 font-mono " + (r.active ? "" : "text-slate-500"), text: r.alias }),
       h("td", { class: "px-4 py-3 font-mono text-slate-300", text: r.exchange || "-" }),
-      h("td", { class: "px-4 py-3 font-mono text-slate-300", text: r.routing_key || "(alias 그대로)" }),
+      r.routing_key
+        ? h("td", { class: "px-4 py-3 font-mono text-slate-300", text: r.routing_key })
+        : h("td", { class: "px-4 py-3 text-xs italic text-slate-500",
+                    text: "요청 alias 그대로",
+                    title: "패턴 rule — rkey 를 비우면 매칭된 요청의 alias 가 routing key 로 쓰임" }),
       h("td", { class: "px-4 py-3" }, toggleBtn),
       rcvTd,
       h("td", { class: "px-4 py-3 text-xs text-slate-400 font-mono",

@@ -15,10 +15,15 @@ EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
 # --etcd: user-profiles (usid→Site/Tier) watch + 라우팅 룰 동기화.
 # --jwt-key: RS256 발급 — login 이 access_token 반환, /v1/refresh 활성.
 #            키는 setup-ec2.sh 가 1회 생성 (jwt-private.pem / jwt-public.pem).
+# --dev: dev EC2 한정 — admin UI DevMode (X-WTG-User) 의 tx-test 가 mci-api
+#        관문을 통과하게 허용. 주의: DevMode 는 X-WTG-User 만 인증하고 JWT
+#        Bearer 는 거부한다 (middleware/auth.go authenticate 분기 — 배타적).
+#        JWT 경로 테스트 시 이 플래그를 잠시 제거할 것. 운영 전환 시 제거 필수.
 ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-api \
     --listen=:8080 \
     --broker-host=${BROKER_HOST} \
     --broker-port=${BROKER_PORT} \
+    --dev \
     --etcd=http://127.0.0.1:2379 \
     --user-profiles-prefix=wtg/auth/user-profiles/ \
     --jwt-key=/home/winway/nh-fxallone-server/wtg/etc/jwt-private.pem \

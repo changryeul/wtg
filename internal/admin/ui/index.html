@@ -8083,16 +8083,12 @@ async function initSvcIO() {
       const spec = svcioState.selected;
       if (!spec) return;
       const sample = makeInputExample(spec.input || []);
-      // alias 매칭 — routing rules 의 routing_key 또는 alias 와 code 일치.
       const rules = Array.isArray(svcioState.rules) ? svcioState.rules : [];
-      const matched = rules.filter(r => r && (
-        r.alias === spec.code ||
-        r.routing_key === spec.code ||
-        (r.exchange + "_" + r.routing_key) === spec.code));
-      const rule = matched.find(r => r.active) || matched[0] || null;
-      const body = rule
-        ? { alias: rule.alias, data: sample }
-        : { exchange: spec.code, routing_key: spec.code, data: sample };
+      const m = svcioMatchRule(rules, spec.code);
+      // 항상 alias 호출 — 미등록이면 서버가 404 unknown_alias 로 명확히 답한다.
+      // (과거: exchange=code 라는 엉터리 raw envelope 폴백 → broker MB-1002 → 422)
+      const body = { alias: m ? m.aliasToCall : spec.code, data: sample };
+      if (!m) toast("라우팅 rule 미등록 — " + spec.code + " 호출은 404 예상. 라우팅 룰에서 패턴/개별 rule 등록 필요", "warn");
       goPage("tester");
       setTimeout(() => {
         testerLoadPreset({
@@ -8896,20 +8892,34 @@ function renderSvcIOGen() {
     return;
   }
   const tpl = SVCIO_GEN[svcioState.gen] || SVCIO_GEN.WEB;
-  // alias 매핑이 있으면 alias 형, 없으면 raw envelope.
-  const matched = svcioState.rules.filter(r =>
-    r.exchange === spec.code ||
-    r.routing_key === spec.code ||
-    (r.exchange + "_" + r.routing_key) === spec.code);
+  // alias 매핑 (패턴 포함) 이 있으면 alias 형, 없으면 raw envelope.
+  const m = svcioMatchRule(svcioState.rules || [], spec.code);
   const ctx = {
     code: spec.code,
     name: spec.name || "",
-    alias: matched.length > 0 ? matched[0].alias : "",
-    exchange: matched.length > 0 ? matched[0].exchange : spec.code,
-    routingKey: matched.length > 0 ? matched[0].routing_key : "",
+    alias: m ? m.aliasToCall : "",
+    exchange: m ? m.rule.exchange : spec.code,
+    routingKey: m ? (m.rule.routing_key || spec.code) : "",
     inputExample: makeInputExample(spec.input || []),
   };
   $("#svcio-gen").textContent = tpl(ctx);
+}
+
+// svcioMatchRule — svc code 에 대응하는 라우팅 rule 탐색 (패턴 rule 인지).
+// 반환: { rule, aliasToCall } — 정확 rule 이면 그 alias, 패턴 rule 이면
+// code 자체가 호출 alias (서버 Resolve 가 패턴으로 resolve). 없으면 null.
+function svcioMatchRule(rules, code) {
+  const active = rules.filter(r => r && r.active);
+  const exact = active.find(r =>
+    r.alias === code || r.routing_key === code ||
+    (r.exchange + "_" + r.routing_key) === code);
+  if (exact) return { rule: exact, aliasToCall: exact.alias };
+  // 패턴 rule — longest prefix 우선 (서버 Resolve 와 동일 규칙).
+  const patterns = active
+    .filter(r => (r.alias || "").endsWith("*") && code.startsWith(r.alias.slice(0, -1)))
+    .sort((a, b) => b.alias.length - a.alias.length);
+  if (patterns.length > 0) return { rule: patterns[0], aliasToCall: code };
+  return null;
 }
 
 // makeInputExample — Field 트리에서 sample JSON body 생성. 한글 주석은 sample value 로.

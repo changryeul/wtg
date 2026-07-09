@@ -500,10 +500,10 @@
 
           <div class="border-gradient rounded-2xl p-5">
             <div class="flex items-center justify-between mb-3">
-              <h3 class="font-semibold">최근 라우팅 룰 (top 5)</h3>
-              <button data-page="routes" class="nav-btn text-xs text-accent-400 hover:text-accent-500">전체 보기 →</button>
+              <h3 class="font-semibold">MCI 프로세스 상태</h3>
+              <span id="mci-health-summary" class="text-xs font-mono text-slate-500">—</span>
             </div>
-            <div id="recent-routes" class="text-sm text-slate-400">로딩 중…</div>
+            <div id="mci-health-grid" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-slate-400">로딩 중…</div>
           </div>
         </div>
 
@@ -3739,13 +3739,24 @@ async function pollDashboard() {
     list = r.rules || [];
     ok = true;
   } catch (e) {
-    // KPI 가시화 — 실패 시 broker DOWN 으로 마킹 (admin → broker 로 가는 경로
-    // 자체가 무관하긴 하지만, admin 자체 가용성 그래프로 이용).
+    // admin 자체 도달 실패 — RTT/룰 KPI 만 영향. broker 판정은 아래 별도 조회.
   }
   const ms = Math.round(performance.now() - t0);
 
+  // Broker KPI — 실제 connection 상태 (/v1/admin/broker-conn 이 mymq client 의
+  // Closed/Reconnecting 을 반영). 과거엔 routes 성공 여부로 추정해서 broker 가
+  // 죽어도 CONNECTED 로 보이는 오판이 있었다.
+  let brokerUp = false, brokerMode = "unreachable";
+  try {
+    const bc = await api("/v1/admin/broker-conn");
+    brokerUp = !!bc.connected;
+    brokerMode = bc.mode || "";
+  } catch (e) {
+    // admin 자체가 안 닿음 — broker 상태 미상 → DOWN 취급.
+  }
+
   pushPoint(dash.rtts, ms);
-  pushPoint(dash.broker, ok ? 1 : 0);
+  pushPoint(dash.broker, brokerUp ? 1 : 0);
   if (ok) {
     const active = list.filter(x => x.active).length;
     pushPoint(dash.routes, active);
@@ -3764,8 +3775,10 @@ async function pollDashboard() {
   const avg = dash.rtts.length ? Math.round(dash.rtts.reduce((a,b)=>a+b,0) / dash.rtts.length) : 0;
   $("#kpi-rtt-avg").textContent = "avg " + avg + "ms";
 
-  $("#kpi-broker").textContent = ok ? "CONNECTED" : "DISCONNECTED";
-  $("#kpi-broker").className = "text-3xl font-semibold " + (ok ? "text-good" : "text-bad");
+  $("#kpi-broker").textContent = brokerUp ? "CONNECTED"
+    : (brokerMode === "reconnecting" ? "RECONNECTING" : "DISCONNECTED");
+  $("#kpi-broker").className = "text-3xl font-semibold " +
+    (brokerUp ? "text-good" : brokerMode === "reconnecting" ? "text-warn" : "text-bad");
 
   // sparkline 그리기.
   drawSpark("#spark-routes", dash.routes);
@@ -3775,10 +3788,41 @@ async function pollDashboard() {
   // 풀 차트 업데이트.
   const lbl = new Date().toLocaleTimeString("ko-KR", { hour12: false });
   const cur = ok ? list.filter(x => x.active).length : (dash.full.routes.at(-1) ?? 0);
-  pushFull(lbl, cur, ms, ok ? 1 : 0);
+  pushFull(lbl, cur, ms, brokerUp ? 1 : 0);
 
-  // 최근 룰 5개 — ok 일 때만 갱신.
-  if (ok) renderRecentRoutes(list);
+  // MCI 프로세스 상태 — 4초마다 (폴링 2회에 1번, 서비스 fan-out 부하 절감).
+  dash.healthTick = (dash.healthTick || 0) + 1;
+  if (dash.healthTick % 2 === 1) refreshMciHealth();
+}
+
+// refreshMciHealth — /v1/admin/mci-health 를 그리드로 렌더.
+async function refreshMciHealth() {
+  const grid = $("#mci-health-grid");
+  if (!grid) return;
+  let d;
+  try {
+    d = await api("/v1/admin/mci-health");
+  } catch (e) {
+    $("#mci-health-summary").textContent = "조회 실패";
+    return;
+  }
+  $("#mci-health-summary").textContent = `${d.up}/${d.total} up`;
+  $("#mci-health-summary").className = "text-xs font-mono " +
+    (d.up === d.total ? "text-good" : "text-bad");
+  grid.replaceChildren();
+  for (const s of d.services || []) {
+    const dot = h("span", { class: "w-2 h-2 rounded-full shrink-0 " + (s.up ? "bg-good" : "bg-bad") });
+    const name = h("span", { class: "truncate", text: s.name });
+    const lat = h("span", {
+      class: "ml-auto text-[11px] font-mono " + (s.up ? "text-slate-500" : "text-bad"),
+      text: s.up ? s.latency_ms + "ms" : "DOWN",
+    });
+    const cell = h("div", {
+      class: "flex items-center gap-2 px-2.5 py-2 rounded-lg bg-ink-800/60",
+      title: s.url + (s.error ? " — " + s.error : ""),
+    }, dot, name, lat);
+    grid.appendChild(cell);
+  }
 }
 
 function pushPoint(arr, v) {
@@ -3786,26 +3830,6 @@ function pushPoint(arr, v) {
   if (arr.length > dash.MAX) arr.shift();
 }
 
-function renderRecentRoutes(list) {
-  const recent = $("#recent-routes");
-  if (!recent) return;
-  const top = [...list].sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")).slice(0, 5);
-  recent.replaceChildren();
-  if (top.length === 0) {
-    recent.appendChild(h("div", { class: "text-slate-500", text: "등록된 룰이 없습니다." }));
-    return;
-  }
-  const ul = h("ul", { class: "divide-y divide-ink-700/40" });
-  for (const r of top) {
-    ul.appendChild(h("li", { class: "py-2 flex items-center justify-between text-sm" },
-      h("span", { class: "font-mono", text: r.alias }),
-      h("span", { class: "text-slate-400 font-mono text-xs", text: (r.exchange || "-") + "/" + r.routing_key }),
-      h("span", { class: (r.active ? "text-good" : "text-slate-500") + " text-xs",
-                  text: r.active ? "active" : "inactive" }),
-    ));
-  }
-  recent.appendChild(ul);
-}
 
 // drawSpark — 단순 SVG 라인 차트 (currentColor stroke).
 function drawSpark(selector, values, opts = {}) {

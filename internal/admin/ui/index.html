@@ -290,6 +290,9 @@
         <!-- 대시보드 — 그룹 없이 항상 노출 -->
         <div class="space-y-0.5 mb-3">
           <button data-page="dashboard" class="nav-btn nav-item"><span class="nav-ico">📊</span>대시보드</button>
+          <div id="nav-recent" class="space-y-0.5"></div>
+          <button id="cmdk-open" class="nav-item w-full text-slate-500 hover:text-slate-300" title="커맨드 팔레트 (⌘K / Ctrl+K)">
+            <span class="nav-ico">⌨️</span>검색<span class="ml-auto text-[10px] font-mono text-slate-600">⌘K</span></button>
         </div>
 
         <!-- 운영 — 매일 보는 정책/게이트 -->
@@ -3326,6 +3329,15 @@ WEB.HQ.VIP</textarea>
 </div>
 
 <!-- ───── Route edit modal ───── -->
+<!-- Cmd+K 커맨드 팔레트 — 메뉴 항목 즉시 검색/이동 -->
+<div id="cmdk" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center pt-[15vh] p-4">
+  <div class="border-gradient rounded-2xl w-full max-w-md overflow-hidden">
+    <input id="cmdk-input" placeholder="메뉴 검색…  (↑↓ 이동 · Enter 열기 · Esc 닫기)"
+      class="w-full px-5 py-3.5 bg-ink-900 outline-none text-sm border-b border-ink-700/60" autocomplete="off" />
+    <div id="cmdk-list" class="max-h-[45vh] overflow-y-auto p-2 text-sm"></div>
+  </div>
+</div>
+
 <div id="route-modal" class="hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
   <div class="border-gradient rounded-2xl w-full max-w-lg">
     <div class="px-6 py-4 border-b border-ink-700/60 flex items-center justify-between">
@@ -3588,6 +3600,7 @@ function chartLinkURL(baseURL) {
 
 function goPage(name) {
   expandNavGroupFor(name); // 접힌 그룹 안 페이지로 이동 시 그룹 자동 펼침
+  pushNavRecent(name);     // 최근 방문 기록 (nav 상단 + ⌘K 정렬)
   $$(".page").forEach(p => p.classList.add("hidden"));
   const pg = document.getElementById("page-" + name);
   if (pg) pg.classList.remove("hidden");
@@ -3661,6 +3674,118 @@ function goPage(name) {
   if (name === "algo") initAlgo();
   if (name !== "tcpgw") stopTcpGwPoller();
   if (name === "tcpgw") initTcpGw();
+}
+
+// ───────── Cmd+K 커맨드 팔레트 + 최근 방문 ─────────
+const LS_NAV_RECENT = "wtg_nav_recent";
+const cmdk = { items: [], filtered: [], sel: 0 };
+
+// buildNavIndex — nav DOM 에서 검색 대상 수집 (nav 가 곧 인덱스 — 항목 추가 시 자동 반영).
+function buildNavIndex() {
+  cmdk.items = [];
+  $$("#nav [data-page]").forEach(b => {
+    if (b.dataset.page === "dashboard") return;
+    const group = b.closest(".nav-group")?.querySelector(".nav-group-hd")?.textContent.replace("▾","").trim() || "";
+    cmdk.items.push({ label: b.textContent.trim(), page: b.dataset.page, group });
+  });
+  $$("#nav a.nav-item[href]").forEach(a => {
+    if (a.getAttribute("href") === "#") return;
+    cmdk.items.push({ label: a.textContent.trim().replace("↗","").trim(), href: a.getAttribute("href"),
+                      group: a.closest(".nav-group")?.querySelector(".nav-group-hd")?.textContent.replace("▾","").trim() || "" });
+  });
+}
+
+function openCmdk() {
+  buildNavIndex();
+  $("#cmdk").classList.remove("hidden");
+  const inp = $("#cmdk-input");
+  inp.value = ""; cmdk.sel = 0;
+  renderCmdk("");
+  setTimeout(() => inp.focus(), 0);
+}
+function closeCmdk() { $("#cmdk").classList.add("hidden"); }
+
+function renderCmdk(q) {
+  q = q.trim().toLowerCase();
+  // 빈 질의 = 최근 방문 우선 + 전체 목록.
+  const recent = navRecent();
+  const scored = cmdk.items.filter(it =>
+    !q || it.label.toLowerCase().includes(q) || (it.page || "").includes(q));
+  scored.sort((a, b) => {
+    const ra = recent.indexOf(a.page), rb = recent.indexOf(b.page);
+    return (ra < 0 ? 99 : ra) - (rb < 0 ? 99 : rb);
+  });
+  cmdk.filtered = scored;
+  if (cmdk.sel >= scored.length) cmdk.sel = Math.max(0, scored.length - 1);
+  const list = $("#cmdk-list");
+  list.replaceChildren();
+  if (!scored.length) {
+    list.appendChild(h("div", { class: "p-4 text-center text-slate-500", text: "일치하는 메뉴 없음" }));
+    return;
+  }
+  scored.forEach((it, i) => {
+    const row = h("div", {
+      class: "flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer " +
+             (i === cmdk.sel ? "bg-accent-500/15 text-accent-400" : "hover:bg-ink-800"),
+    },
+      h("span", { class: "flex-1", text: it.label }),
+      h("span", { class: "text-[10px] text-slate-500", text: it.group }),
+      navRecent().includes(it.page) ? h("span", { class: "text-[10px] text-slate-600", text: "최근" }) : null,
+    );
+    row.onclick = () => activateCmdk(it);
+    list.appendChild(row);
+  });
+}
+
+function activateCmdk(it) {
+  closeCmdk();
+  if (it.page) goPage(it.page);
+  else if (it.href) location.href = it.href;
+}
+
+function navRecent() {
+  try { return JSON.parse(localStorage.getItem(LS_NAV_RECENT) || "[]"); } catch (_) { return []; }
+}
+
+// pushNavRecent — goPage 훅. 대시보드 제외 최근 3개 유지 + nav 상단 갱신.
+function pushNavRecent(page) {
+  if (page === "dashboard") return;
+  const r = [page, ...navRecent().filter(p => p !== page)].slice(0, 3);
+  localStorage.setItem(LS_NAV_RECENT, JSON.stringify(r));
+  renderNavRecent();
+}
+
+function renderNavRecent() {
+  const box = $("#nav-recent");
+  if (!box) return;
+  box.replaceChildren();
+  for (const page of navRecent()) {
+    const orig = document.querySelector(`#nav .nav-group [data-page="${page}"]`);
+    if (!orig) continue;
+    const b = h("button", { class: "nav-btn nav-item w-full text-slate-400", dataset: { page } },
+      h("span", { class: "nav-ico", text: "🕘" }),
+      document.createTextNode(orig.textContent.trim()));
+    box.appendChild(b);
+  }
+}
+
+function initCmdk() {
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      $("#cmdk").classList.contains("hidden") ? openCmdk() : closeCmdk();
+      return;
+    }
+    if ($("#cmdk").classList.contains("hidden")) return;
+    if (e.key === "Escape") { closeCmdk(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); cmdk.sel = Math.min(cmdk.sel + 1, cmdk.filtered.length - 1); renderCmdk($("#cmdk-input").value); }
+    else if (e.key === "ArrowUp")   { e.preventDefault(); cmdk.sel = Math.max(cmdk.sel - 1, 0); renderCmdk($("#cmdk-input").value); }
+    else if (e.key === "Enter")     { const it = cmdk.filtered[cmdk.sel]; if (it) activateCmdk(it); }
+  });
+  $("#cmdk-input").addEventListener("input", (e) => { cmdk.sel = 0; renderCmdk(e.target.value); });
+  $("#cmdk").addEventListener("click", (e) => { if (e.target.id === "cmdk") closeCmdk(); });
+  $("#cmdk-open").onclick = openCmdk;
+  renderNavRecent();
 }
 
 // ───────── nav 그룹 접기/펼치기 ─────────
@@ -11629,6 +11754,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (c) { document.getElementById(c.dataset.close).classList.add("hidden"); }
   });
   initNavGroups();
+  initCmdk();
   $("#logout-btn").onclick = logout;
 
   // 테마 토글 — 부팅 시 한 번 더 그려서 active 상태 표시.

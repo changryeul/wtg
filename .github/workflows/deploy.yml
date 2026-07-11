@@ -151,7 +151,7 @@ jobs:
           sudo systemctl enable --now \
             wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
             wtg-mci-api wtg-mci-edge-api wtg-mci-edge-fix wtg-mci-edge-md \
-            wtg-quote-forwarder wtg-dev-feed
+            wtg-mci-edge-tcp wtg-quote-forwarder wtg-dev-feed
 
       - name: Health check
         run: |
@@ -159,7 +159,7 @@ jobs:
           sleep 5
           for svc in wtg-etcd wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
                      wtg-mci-api wtg-mci-edge-api wtg-mci-edge-fix wtg-mci-edge-md \
-                     wtg-quote-forwarder wtg-dev-feed; do
+                     wtg-mci-edge-tcp wtg-quote-forwarder wtg-dev-feed; do
             if ! sudo systemctl is-active --quiet "$svc"; then
               echo "::error::$svc inactive — 최근 로그:"
               sudo journalctl -u "$svc" -n 40 --no-pager
@@ -179,6 +179,7 @@ jobs:
             http://127.0.0.1:5012/stats \
             http://127.0.0.1:9091/metrics \
             https://127.0.0.1:8090/v1/ping \
+            http://127.0.0.1:5022/healthz \
           ; do
             code=$(curl -sk -o /dev/null -w "%{http_code}" -m 3 "$url" || echo "ERR")
             printf "  %-45s HTTP %s\n" "$url" "$code"

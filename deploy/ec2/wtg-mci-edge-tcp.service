@@ -1,0 +1,38 @@
+# WTG mci-edge-tcp — 레거시 cs (HTS/EMP) 용 raw TCP 전문 gateway.
+# 지속 TCP 연결 + [4B length][전문] + 빈 프레임 heartbeat → mci-api raw 모드.
+#
+# --api-user: dev EC2 한정 (mci-api 가 --dev 라 X-WTG-User 수용).
+#             운영 전환 시 --api-token (JWT) 으로 교체 + connection 별
+#             LOGON 인증 (Phase B) 검토.
+# 외부 HTS 가 붙으려면 SG 에 5021 인바운드 개방 필요 (HTS 대역만).
+[Unit]
+Description=WTG mci-edge-tcp — raw TCP 전문 gateway (5021) + stats (5022)
+After=network-online.target wtg-mci-api.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-tcp \
+    --listen=:5021 \
+    --stats=127.0.0.1:5022 \
+    --upstream=http://127.0.0.1:8080 \
+    --api-user=hts01 \
+    --channel=HTS \
+    --log-level=info
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-edge-tcp
+
+[Install]
+WantedBy=multi-user.target

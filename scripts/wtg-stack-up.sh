@@ -64,9 +64,13 @@ if [ ! -x ./build/bin/mci-admin ]; then
   make build >/dev/null 2>&1 || { echo "make build 실패"; exit 1; }
 fi
 
+# 이번 기동의 대상 목록 — wtg-status.sh 가 "미기동(옵션)" 과 "죽음" 을 구분하는 근거.
+: > logs/.stack-services
+
 start() {
   local name=$1; shift
   echo "==> $name 시작 :: $*"
+  echo "$name" >> logs/.stack-services
   "$@" > "logs/$name.log" 2>&1 &
   echo "    pid=$!"
   sleep 1
@@ -234,6 +238,7 @@ fi
 TICKLOOP="$REPO/scripts/wtg-dev-tickloop.py"
 if [ -f "$TICKLOOP" ]; then
   echo "==> tickloop 시작"
+  echo "wtg-dev-tickloop" >> logs/.stack-services
   nohup python3 "$TICKLOOP" > logs/dev-tick.log 2>&1 &
   echo "    pid=$!"
 else

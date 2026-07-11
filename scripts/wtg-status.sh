@@ -5,6 +5,13 @@
 #   watch -tcn 2 ./scripts/wtg-status.sh   # 2초 주기 갱신
 set -u
 NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-fix mci-edge-md mci-edge-tcp mci-chart quote-forwarder prometheus wtg-dev-tickloop load-gen)
+# 마지막 stack-up 의 기동 대상 목록 — 없으면 (직접 기동 등) 전부 대상으로 간주.
+SVCFILE="logs/.stack-services"
+is_target() {
+  [ -f "$SVCFILE" ] || return 0
+  case "$1" in load-gen) return 1 ;; esac   # load-gen 은 load-test.sh 전용 — 항상 옵션
+  grep -qx "$1" "$SVCFILE"
+}
 printf "\033[1m=== WTG dev 스택 — %s ===\033[0m\n" "$(date '+%Y-%m-%d %H:%M:%S')"
 printf "%-22s %-8s %-8s %-12s %s\n" "프로세스" "PID" "상태" "RSS" "명령"
 for n in "${NAMES[@]}"; do
@@ -13,8 +20,12 @@ for n in "${NAMES[@]}"; do
     rss=$(ps -o rss= -p "$pid" 2>/dev/null | awk '{printf "%.1fMB", $1/1024}')
     cmd=$(ps -o command= -p "$pid" 2>/dev/null | sed 's|.*/||' | head -c 60)
     printf "%-22s %-8s \033[32m%-8s\033[0m %-12s %s\n" "$n" "$pid" "● UP" "${rss:-?}" "$cmd"
+  elif is_target "$n"; then
+    # 기동 대상이었는데 없음 — 진짜 문제 (logs/<svc>.log 마지막 줄 확인)
+    printf "%-22s %-8s \033[31m%-8s\033[0m %-12s %s\n" "$n" "—" "● DOWN" "—" "tail logs/$n.log"
   else
-    printf "%-22s %-8s \033[31m%-8s\033[0m %-12s %s\n" "$n" "—" "● DOWN" "—" "—"
+    # 옵션 미지정 — 원래 안 뜨는 게 정상
+    printf "%-22s %-8s \033[90m%-8s\033[0m %-12s \033[90m%s\033[0m\n" "$n" "—" "○ 옵션" "—" "(--with-* 미지정)"
   fi
 done
 echo
@@ -34,21 +45,25 @@ fi
 echo
 printf "\033[1m=== HTTP / TCP 헬스체크 ===\033[0m\n"
 check() {
-  local label=$1 url=$2
+  local label=$1 url=$2 svc=${3:-}
+  if [ -n "$svc" ] && ! is_target "$svc"; then
+    printf "  \033[90m○\033[0m \033[90m%-22s (미기동 대상 — 옵션)\033[0m\n" "$label"
+    return
+  fi
   code=$(curl -s -o /dev/null -w "%{http_code}" -m 1 "$url" 2>/dev/null || echo "ERR")
   if [ "$code" = "200" ] || [ "$code" = "401" ]; then color=32; else color=31; fi
   printf "  \033[${color}m●\033[0m %-22s HTTP %s  %s\n" "$label" "$code" "$url"
 }
 check "mci-admin /"               "http://127.0.0.1:9090/"
-check "mci-api /metrics"          "http://127.0.0.1:8080/metrics"
+check "mci-api /metrics"          "http://127.0.0.1:8080/metrics"        mci-api
 check "mci-price /price-stats"    "http://127.0.0.1:8082/v1/price-stats"
 check "mci-edge-price /metrics"   "http://127.0.0.1:8083/metrics"
-check "mci-edge-fix /stats"       "http://127.0.0.1:5002/stats"
-check "mci-edge-fix /metrics"     "http://127.0.0.1:5002/metrics"
-check "mci-edge-md /stats"        "http://127.0.0.1:5012/stats"
-check "mci-edge-md /metrics"      "http://127.0.0.1:5012/metrics"
-check "mci-chart /"               "http://127.0.0.1:8086/"
-check "quote-forwarder /stats"    "http://127.0.0.1:9091/stats"
+check "mci-edge-fix /stats"       "http://127.0.0.1:5002/stats"          mci-edge-fix
+check "mci-edge-fix /metrics"     "http://127.0.0.1:5002/metrics"        mci-edge-fix
+check "mci-edge-md /stats"        "http://127.0.0.1:5012/stats"          mci-edge-md
+check "mci-edge-md /metrics"      "http://127.0.0.1:5012/metrics"        mci-edge-md
+check "mci-chart /"               "http://127.0.0.1:8086/"               mci-chart
+check "quote-forwarder /stats"    "http://127.0.0.1:9091/stats"          quote-forwarder
 check "prometheus /-/ready"       "http://127.0.0.1:9095/-/ready"
 # broker (TCP only)
 if nc -z 127.0.0.1 11217 2>/dev/null; then

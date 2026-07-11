@@ -43,6 +43,7 @@ type MciHealthEntry struct {
 // 포트/경로는 CLAUDE.md 컴포넌트 표와 docs/observability.md 가 출처.
 func defaultMciTargets() []MciTarget {
 	return []MciTarget{
+		{Name: "mci-admin", URL: "http://127.0.0.1:9090/"}, // self — 목록 완결성 (요청 처리 중이면 자명히 up)
 		{Name: "mci-api", URL: "http://127.0.0.1:8080/v1/ping"},
 		{Name: "mci-price", URL: "http://127.0.0.1:8082/v1/price-stats"},
 		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics"},

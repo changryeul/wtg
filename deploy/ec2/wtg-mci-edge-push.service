@@ -1,0 +1,32 @@
+# WTG mci-edge-push — DMZ push fan-out. mci-push PushService(gRPC) → 외부 고객 ws.
+# 외부 고객이 붙는 ws 포트 (8084). 외부 접속은 SG 8084 개방 필요 (고객 대역).
+[Unit]
+Description=WTG mci-edge-push — DMZ 고객 ws fan-out (8084) → mci-push
+After=network-online.target wtg-mci-push.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-push \
+    --dev \
+    --listen=:8084 \
+    --upstream=127.0.0.1:50052 \
+    --etcd=http://127.0.0.1:2379 \
+    --log-level=info
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-edge-push
+
+[Install]
+WantedBy=multi-user.target

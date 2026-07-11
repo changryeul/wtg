@@ -55,6 +55,7 @@ func defaultMciTargets() []MciTarget {
 		{Name: "mci-admin", URL: "http://127.0.0.1:9090/", Tier: "internal", Upstream: "etcd"}, // self
 		{Name: "mci-api", URL: "http://127.0.0.1:8080/v1/ping", Tier: "internal", Upstream: "broker"},
 		{Name: "mci-price", URL: "http://127.0.0.1:8082/v1/price-stats", Tier: "internal", Upstream: "broker"},
+		{Name: "mci-push", URL: "http://127.0.0.1:8081/v1/ping", Tier: "internal", Upstream: "broker"},
 		{Name: "quote-forwarder", URL: "http://127.0.0.1:9091/metrics", Tier: "internal", Upstream: "mci-price"},
 		// DMZ — 외부 채널 종단. 각자 바라보는 internal upstream 명시.
 		{Name: "mci-edge-api", URL: "https://127.0.0.1:8090/v1/ping", Tier: "dmz", Upstream: "mci-api"},
@@ -62,6 +63,7 @@ func defaultMciTargets() []MciTarget {
 		{Name: "mci-edge-fix", URL: "http://127.0.0.1:5002/stats", Tier: "dmz", Upstream: "mci-api"},
 		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics", Tier: "dmz", Upstream: "mci-price"},
 		{Name: "mci-edge-md", URL: "http://127.0.0.1:5012/stats", Tier: "dmz", Upstream: "mci-price"},
+		{Name: "mci-edge-push", URL: "http://127.0.0.1:8084/v1/ping", Tier: "dmz", Upstream: "mci-push"},
 	}
 }
 

@@ -11,6 +11,7 @@
 #   ./scripts/wtg-stack-up.sh --with-broker      # docker mymqd (broker + test_service + WECHO) 같이
 #   ./scripts/wtg-stack-up.sh --with-api         # mci-api 까지 (broker 필요 → --with-broker 자동)
 #   ./scripts/wtg-stack-up.sh --with-fix         # mci-edge-fix (FIX 4.4 주문 DMZ gateway)
+#   ./scripts/wtg-stack-up.sh --with-push        # mci-push + mci-edge-push (체결통보 fan-out)
 #   ./scripts/wtg-stack-up.sh --with-md          # mci-edge-md  (FIX 4.4 시세 DMZ gateway, Phase A skeleton)
 #   ./scripts/wtg-stack-up.sh --with-all         # 모든 컴포넌트 (chart 제외 — DB 의존)
 #
@@ -34,6 +35,7 @@ WITH_BROKER=0
 WITH_API=0
 WITH_FIX=0
 WITH_MD=0
+WITH_PUSH=0
 for arg in "$@"; do
   case "$arg" in
     --with-chart)     WITH_CHART=1 ;;
@@ -44,7 +46,8 @@ for arg in "$@"; do
     --with-api)       WITH_API=1; WITH_BROKER=1 ;;     # api 는 broker 필수
     --with-fix)       WITH_FIX=1 ;;
     --with-md)        WITH_MD=1 ;;
-    --with-all)       WITH_FORWARDER=1; WITH_PROM=1; WITH_SWAP_LOCK=1; WITH_BROKER=1; WITH_API=1; WITH_FIX=1; WITH_MD=1 ;;
+    --with-push)      WITH_PUSH=1; WITH_BROKER=1 ;;   # push 는 broker 필수
+    --with-all)       WITH_FORWARDER=1; WITH_PROM=1; WITH_SWAP_LOCK=1; WITH_BROKER=1; WITH_API=1; WITH_FIX=1; WITH_MD=1; WITH_PUSH=1 ;;
     *) echo "unknown arg: $arg"; exit 1 ;;
   esac
 done
@@ -52,7 +55,7 @@ done
 mkdir -p logs
 
 # 기존 host 서비스 종료 (idempotent)
-for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix mci-edge-md mci-edge-tcp quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
+for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix mci-edge-md mci-edge-tcp mci-push mci-edge-push quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
   pkill -f "build/bin/$svc" 2>/dev/null || true
 done
 pkill -f "wtg-dev-tickloop.py" 2>/dev/null || true
@@ -248,6 +251,19 @@ if [ "$WITH_MD" = "1" ]; then
     --upstream "$MD_UPSTREAM" \
     "${MD_ETCD_ARGS[@]}" \
     --log-level info
+fi
+
+# mci-push + mci-edge-push (--with-push) — 체결통보/알림 fan-out.
+# push 는 broker unsolicited receiver 라 broker 필수. edge-push 는 mci-push gRPC 소비.
+if [ "$WITH_PUSH" = "1" ]; then
+  start mci-push ./build/bin/mci-push \
+    --listen "${LISTEN_PUSH:-:8081}" \
+    --grpc "${GRPC_PUSH:-:50052}" \
+    --broker-host 127.0.0.1 --broker-port 11217 \
+    --push-secret "${PUSH_SECRET:-dev-secret}"
+  start mci-edge-push ./build/bin/mci-edge-push \
+    --dev --listen "${LISTEN_EDGE_PUSH:-:8084}" \
+    --upstream "127.0.0.1${GRPC_PUSH:-:50052}"
 fi
 
 # tickloop (dev tick generator) — 영구 위치 scripts/wtg-dev-tickloop.py

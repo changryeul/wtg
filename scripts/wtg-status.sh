@@ -4,7 +4,7 @@
 #   ./scripts/wtg-status.sh           # 1회 스냅샷
 #   watch -tcn 2 ./scripts/wtg-status.sh   # 2초 주기 갱신
 set -u
-NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix mci-edge-md mci-edge-tcp mci-chart quote-forwarder prometheus wtg-dev-tickloop load-gen)
+NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix mci-edge-md mci-edge-tcp mci-push mci-edge-push mci-chart quote-forwarder prometheus wtg-dev-tickloop load-gen)
 # 마지막 stack-up 의 기동 대상 목록 — 없으면 (직접 기동 등) 전부 대상으로 간주.
 SVCFILE="logs/.stack-services"
 is_target() {
@@ -64,6 +64,8 @@ check "mci-edge-fix /metrics"     "http://127.0.0.1:5002/metrics"        mci-edg
 check "mci-edge-md /stats"        "http://127.0.0.1:5012/stats"          mci-edge-md
 check "mci-edge-md /metrics"      "http://127.0.0.1:5012/metrics"        mci-edge-md
 check "mci-chart /"               "http://127.0.0.1:8086/"               mci-chart
+check "mci-push /v1/ping"         "http://127.0.0.1:8081/v1/ping"         mci-push
+check "mci-edge-push /v1/ping"    "http://127.0.0.1:8084/v1/ping"         mci-edge-push
 check "quote-forwarder /stats"    "http://127.0.0.1:9091/stats"          quote-forwarder
 check "prometheus /-/ready"       "http://127.0.0.1:9095/-/ready"
 # broker (TCP only)

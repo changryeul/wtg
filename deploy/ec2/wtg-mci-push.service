@@ -1,0 +1,37 @@
+# WTG mci-push — broker unsolicited (체결통보/알림) 수신 → 사용자별 ws fan-out.
+# + HTTP push endpoint (운영 svc / edge-fix drop copy 가 broker 우회로 push).
+#
+# broker representative receiver 등록 (queue 빈값 → _CLIENT_ type). push-secret 은
+# wtg.env 의 FIX_PUSH_SECRET 재사용 (edge-fix drop copy 와 동일 secret 이어야 함).
+# gRPC(:50052) 는 mci-edge-push 가 소비.
+[Unit]
+Description=WTG mci-push — 체결통보 fan-out (ws :8081 + HTTP push + gRPC :50052)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-push \
+    --listen=:8081 \
+    --grpc=:50052 \
+    --broker-host=${BROKER_HOST} \
+    --broker-port=${BROKER_PORT} \
+    --push-secret=${FIX_PUSH_SECRET} \
+    --log-level=info
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-push
+
+[Install]
+WantedBy=multi-user.target

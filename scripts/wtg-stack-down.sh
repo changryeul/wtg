@@ -4,7 +4,7 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 echo "==> WTG host 서비스 종료"
-for svc in mci-admin mci-api mci-edge-price mci-edge-fix mci-edge-md mci-chart quote-forwarder mci-price prometheus; do
+for svc in mci-admin mci-api mci-edge-price mci-edge-fix mci-edge-md mci-edge-tcp mci-chart quote-forwarder mci-price prometheus; do
   pids=$(pgrep -f "build/bin/$svc" 2>/dev/null || true)
   if [ -n "$pids" ]; then
     echo "    $svc  pid=$pids"
@@ -29,6 +29,6 @@ fi
 sleep 1
 echo
 echo "==> 남은 프로세스 검사"
-remain=$(ps aux | grep -E "mci-(admin|api|price|edge-price|chart|push)|quote-forwarder|wtg-dev-tickloop|build/bin/load-gen" | grep -v grep | awk '{print "    "$2"  "$11" "$12}')
+remain=$(ps aux | grep -E "mci-(admin|api|price|edge-price|edge-tcp|chart|push)|quote-forwarder|wtg-dev-tickloop|build/bin/load-gen" | grep -v grep | awk '{print "    "$2"  "$11" "$12}')
 [ -n "$remain" ] && echo "$remain" || echo "    (없음)"
 docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | grep -E "mymqd|wtg-" | sed 's/^/    docker: /' || true

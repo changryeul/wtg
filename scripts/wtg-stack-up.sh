@@ -52,7 +52,7 @@ done
 mkdir -p logs
 
 # 기존 host 서비스 종료 (idempotent)
-for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-fix mci-edge-md quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
+for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-fix mci-edge-md mci-edge-tcp quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
   pkill -f "build/bin/$svc" 2>/dev/null || true
 done
 pkill -f "wtg-dev-tickloop.py" 2>/dev/null || true
@@ -150,6 +150,13 @@ if [ "$WITH_API" = "1" ]; then
   start mci-api ./build/bin/mci-api \
     --dev --listen "${LISTEN_API:-:8080}" \
     --broker-host 127.0.0.1 --broker-port 11217
+
+  # mci-edge-tcp — 레거시 cs (HTS) raw TCP 전문 gateway. mci-api 가 upstream
+  # 이므로 같이 기동. 검증: ./build/bin/tcp-tester --addr 127.0.0.1:5021
+  start mci-edge-tcp ./build/bin/mci-edge-tcp \
+    --listen "${LISTEN_EDGE_TCP:-:5021}" \
+    --upstream "http://127.0.0.1${LISTEN_API:-:8080}" \
+    --api-user "${EDGE_TCP_USER:-hts01}"
 fi
 
 # mci-edge-fix (--with-fix) — FIX 4.4 DMZ gateway.

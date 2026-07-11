@@ -25,15 +25,21 @@ import (
 const mciHealthTimeout = 1500 * time.Millisecond
 
 // MciTarget — 체크 대상 하나.
+// Tier: "dmz"(외부 edge) / "internal"(mci 코어) / "infra"(broker·etcd).
+// Upstream: 이 서비스가 트래픽을 forward 하는 대상 서비스 name (토폴로지 연결선).
 type MciTarget struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Tier     string `json:"tier,omitempty"`
+	Upstream string `json:"upstream,omitempty"`
 }
 
-// MciHealthEntry — 개별 서비스 체크 결과.
+// MciHealthEntry — 개별 서비스 체크 결과. 토폴로지 렌더용 Tier/Upstream 포함.
 type MciHealthEntry struct {
 	Name      string `json:"name"`
 	URL       string `json:"url"`
+	Tier      string `json:"tier,omitempty"`
+	Upstream  string `json:"upstream,omitempty"`
 	Up        bool   `json:"up"`
 	LatencyMs int64  `json:"latency_ms"`
 	Error     string `json:"error,omitempty"`
@@ -43,16 +49,19 @@ type MciHealthEntry struct {
 // 포트/경로는 CLAUDE.md 컴포넌트 표와 docs/observability.md 가 출처.
 func defaultMciTargets() []MciTarget {
 	return []MciTarget{
-		{Name: "mci-admin", URL: "http://127.0.0.1:9090/"}, // self — 목록 완결성 (요청 처리 중이면 자명히 up)
-		{Name: "mci-api", URL: "http://127.0.0.1:8080/v1/ping"},
-		{Name: "mci-price", URL: "http://127.0.0.1:8082/v1/price-stats"},
-		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics"},
-		{Name: "mci-edge-api", URL: "https://127.0.0.1:8090/v1/ping"},
-		{Name: "mci-edge-fix", URL: "http://127.0.0.1:5002/stats"},
-		{Name: "mci-edge-md", URL: "http://127.0.0.1:5012/stats"},
-		{Name: "mci-edge-tcp", URL: "http://127.0.0.1:5022/healthz"},
-		{Name: "quote-forwarder", URL: "http://127.0.0.1:9091/metrics"},
-		{Name: "etcd", URL: "http://127.0.0.1:2379/health"},
+		// Infra — 코어 의존 (broker 는 TCP-only 라 HTTP health 없음 → 상단 broker KPI 로 관측).
+		{Name: "etcd", URL: "http://127.0.0.1:2379/health", Tier: "infra"},
+		// Internal — mci 코어. api/price 는 broker 로 나감.
+		{Name: "mci-admin", URL: "http://127.0.0.1:9090/", Tier: "internal", Upstream: "etcd"}, // self
+		{Name: "mci-api", URL: "http://127.0.0.1:8080/v1/ping", Tier: "internal", Upstream: "broker"},
+		{Name: "mci-price", URL: "http://127.0.0.1:8082/v1/price-stats", Tier: "internal", Upstream: "broker"},
+		{Name: "quote-forwarder", URL: "http://127.0.0.1:9091/metrics", Tier: "internal", Upstream: "mci-price"},
+		// DMZ — 외부 채널 종단. 각자 바라보는 internal upstream 명시.
+		{Name: "mci-edge-api", URL: "https://127.0.0.1:8090/v1/ping", Tier: "dmz", Upstream: "mci-api"},
+		{Name: "mci-edge-tcp", URL: "http://127.0.0.1:5022/healthz", Tier: "dmz", Upstream: "mci-api"},
+		{Name: "mci-edge-fix", URL: "http://127.0.0.1:5002/stats", Tier: "dmz", Upstream: "mci-api"},
+		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics", Tier: "dmz", Upstream: "mci-price"},
+		{Name: "mci-edge-md", URL: "http://127.0.0.1:5012/stats", Tier: "dmz", Upstream: "mci-price"},
 	}
 }
 
@@ -89,7 +98,7 @@ func checkMciTargets(ctx context.Context, targets []MciTarget) []MciHealthEntry 
 		wg.Add(1)
 		go func(i int, t MciTarget) {
 			defer wg.Done()
-			e := MciHealthEntry{Name: t.Name, URL: t.URL}
+			e := MciHealthEntry{Name: t.Name, URL: t.URL, Tier: t.Tier, Upstream: t.Upstream}
 			cctx, cancel := context.WithTimeout(ctx, mciHealthTimeout)
 			defer cancel()
 			start := time.Now()

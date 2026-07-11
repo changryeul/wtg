@@ -510,10 +510,20 @@
 
           <div class="border-gradient rounded-2xl p-5">
             <div class="flex items-center justify-between mb-3">
-              <h3 class="font-semibold">MCI 프로세스 상태</h3>
+              <h3 class="font-semibold">MCI 프로세스 상태 · 연결 토폴로지</h3>
               <span id="mci-health-summary" class="text-xs font-mono text-slate-500">—</span>
             </div>
-            <div id="mci-health-grid" class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-slate-400">로딩 중…</div>
+            <!-- 3열 티어 (DMZ → Internal → Infra) + SVG 연결선 오버레이.
+                 트래픽 방향 (외부→내부) 대로 왼쪽→오른쪽 배치. -->
+            <div id="mci-topo" class="relative">
+              <svg id="mci-topo-svg" class="absolute inset-0 w-full h-full pointer-events-none" style="z-index:0"></svg>
+              <div class="relative grid grid-cols-3 gap-6" style="z-index:1">
+                <div><div class="text-[10px] uppercase tracking-widest text-slate-500 mb-2 text-center">DMZ · edge</div><div id="topo-dmz" class="space-y-2"></div></div>
+                <div><div class="text-[10px] uppercase tracking-widest text-slate-500 mb-2 text-center">Internal · mci</div><div id="topo-internal" class="space-y-2"></div></div>
+                <div><div class="text-[10px] uppercase tracking-widest text-slate-500 mb-2 text-center">Infra</div><div id="topo-infra" class="space-y-2"></div></div>
+              </div>
+            </div>
+            <div id="mci-health-grid" class="hidden"></div>
           </div>
         </div>
 
@@ -3914,6 +3924,12 @@ async function loadDashboard() {
   // mode 표시.
   const mode = localStorage.getItem(LS_DEV) === "1" ? "DevMode (X-WTG-User)" : "JWT (Bearer access_token)";
   $("#kpi-mode").textContent = "mode: " + mode;
+
+  // 토폴로지 연결선은 노드 DOM 위치 기반 — 창 크기 변하면 재계산 (1회 등록).
+  if (!dash.topoResizeHooked) {
+    dash.topoResizeHooked = true;
+    window.addEventListener("resize", () => { if (typeof drawMciTopoLines === "function") drawMciTopoLines(); });
+  }
 }
 
 function ensureDashChart() {
@@ -4071,10 +4087,13 @@ async function pollDashboard() {
   if (dash.healthTick % 2 === 1) refreshMciHealth();
 }
 
-// refreshMciHealth — /v1/admin/mci-health 를 그리드로 렌더.
+// refreshMciHealth — /v1/admin/mci-health 를 3열 티어 토폴로지로 렌더.
+// DMZ(edge) → Internal(mci) → Infra 를 트래픽 방향대로 배치하고, 각 서비스의
+// upstream 관계를 SVG 연결선으로 그린다 (양 끝 up 이면 초록, 아니면 회색).
+let mciTopoLast = null;
 async function refreshMciHealth() {
-  const grid = $("#mci-health-grid");
-  if (!grid) return;
+  const topo = $("#mci-topo");
+  if (!topo) return;
   let d;
   try {
     d = await api("/v1/admin/mci-health");
@@ -4082,23 +4101,90 @@ async function refreshMciHealth() {
     $("#mci-health-summary").textContent = "조회 실패";
     return;
   }
+  mciTopoLast = d;
   $("#mci-health-summary").textContent = `${d.up}/${d.total} up`;
   $("#mci-health-summary").className = "text-xs font-mono " +
     (d.up === d.total ? "text-good" : "text-bad");
-  grid.replaceChildren();
+
+  const byName = {};
+  const cols = { dmz: [], internal: [], infra: [] };
   for (const s of d.services || []) {
-    const dot = h("span", { class: "w-2 h-2 rounded-full shrink-0 " + (s.up ? "bg-good" : "bg-bad") });
-    const name = h("span", { class: "truncate", text: s.name });
-    const lat = h("span", {
-      class: "ml-auto text-[11px] font-mono " + (s.up ? "text-slate-500" : "text-bad"),
-      text: s.up ? s.latency_ms + "ms" : "DOWN",
-    });
-    const cell = h("div", {
-      class: "flex items-center gap-2 px-2.5 py-2 rounded-lg bg-ink-800/60",
-      title: s.url + (s.error ? " — " + s.error : ""),
-    }, dot, name, lat);
-    grid.appendChild(cell);
+    byName[s.name] = s;
+    (cols[s.tier] || cols.internal).push(s);
   }
+  // broker 는 HTTP health 없음 (TCP) — infra 에 참조 노드로 표시, 상태는 상단 KPI 연동.
+  if (!byName["broker"]) {
+    const brk = { name: "broker", tier: "infra", _ref: true };
+    byName["broker"] = brk; cols.infra.push(brk);
+  }
+
+  const node = (s) => {
+    const known = s.up !== undefined;
+    const dotCls = s._ref ? "bg-slate-500" : (s.up ? "bg-good" : "bg-bad");
+    const el = h("div", {
+      class: "mci-node flex items-center gap-2 px-2.5 py-2 rounded-lg bg-ink-800/60 border border-transparent",
+      dataset: { node: s.name },
+      title: s._ref ? "broker (TCP) — 상단 broker 카드 참조"
+                    : (s.url + (s.error ? " — " + s.error : "")),
+    },
+      h("span", { class: "w-2 h-2 rounded-full shrink-0 " + dotCls }),
+      h("span", { class: "truncate text-sm", text: s.name.replace("mci-", "") }),
+      h("span", { class: "ml-auto text-[10px] font-mono " + (s._ref ? "text-slate-500" : (s.up ? "text-slate-500" : "text-bad")),
+                  text: s._ref ? "—" : (known && s.up ? s.latency_ms + "ms" : "DOWN") }));
+    return el;
+  };
+
+  for (const [tier, boxId] of [["dmz","topo-dmz"],["internal","topo-internal"],["infra","topo-infra"]]) {
+    const box = $("#" + boxId);
+    box.replaceChildren();
+    cols[tier].forEach(s => box.appendChild(node(s)));
+  }
+  drawMciTopoLines();
+}
+
+// drawMciTopoLines — 각 노드 upstream 관계를 SVG 선으로. 노드 DOM 위치 기반이라
+// resize/레이아웃 후 재계산 필요 (ResizeObserver + 렌더 직후 호출).
+function drawMciTopoLines() {
+  const d = mciTopoLast;
+  const svg = $("#mci-topo-svg");
+  const topo = $("#mci-topo");
+  if (!d || !svg || !topo) return;
+  const base = topo.getBoundingClientRect();
+  const center = (name) => {
+    const el = topo.querySelector(`.mci-node[data-node="${name}"]`);
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { el, r };
+  };
+  const lines = [];
+  for (const s of d.services || []) {
+    if (!s.upstream) continue;
+    const from = center(s.name), to = center(s.upstream);
+    if (!from || !to) continue;
+    // 오른쪽으로 흐름 — from 우변 중앙 → to 좌변 중앙.
+    const x1 = from.r.right - base.left, y1 = from.r.top + from.r.height/2 - base.top;
+    const x2 = to.r.left - base.left,  y2 = to.r.top + to.r.height/2 - base.top;
+    const both = s.up && (byNameUp(d, s.upstream));
+    lines.push({ x1, y1, x2, y2, ok: both });
+  }
+  svg.setAttribute("viewBox", `0 0 ${base.width} ${base.height}`);
+  svg.replaceChildren();
+  const NS = "http://www.w3.org/2000/svg";
+  for (const l of lines) {
+    const mx = (l.x1 + l.x2) / 2;
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", `M ${l.x1} ${l.y1} C ${mx} ${l.y1}, ${mx} ${l.y2}, ${l.x2} ${l.y2}`);
+    p.setAttribute("fill", "none");
+    p.setAttribute("stroke", l.ok ? "var(--good, #34d399)" : "#64748b");
+    p.setAttribute("stroke-width", "1.5");
+    p.setAttribute("stroke-opacity", l.ok ? "0.7" : "0.35");
+    svg.appendChild(p);
+  }
+}
+function byNameUp(d, name) {
+  if (name === "broker") return true; // TCP ref — 흐름 상 존재 가정
+  const s = (d.services || []).find(x => x.name === name);
+  return s ? !!s.up : false;
 }
 
 function pushPoint(arr, v) {

@@ -4,7 +4,7 @@
 #   ./scripts/wtg-status.sh           # 1회 스냅샷
 #   watch -tcn 2 ./scripts/wtg-status.sh   # 2초 주기 갱신
 set -u
-NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-fix mci-edge-md mci-edge-tcp mci-chart quote-forwarder prometheus wtg-dev-tickloop load-gen)
+NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix mci-edge-md mci-edge-tcp mci-chart quote-forwarder prometheus wtg-dev-tickloop load-gen)
 # 마지막 stack-up 의 기동 대상 목록 — 없으면 (직접 기동 등) 전부 대상으로 간주.
 SVCFILE="logs/.stack-services"
 is_target() {
@@ -50,7 +50,7 @@ check() {
     printf "  \033[90m○\033[0m \033[90m%-22s (미기동 대상 — 옵션)\033[0m\n" "$label"
     return
   fi
-  code=$(curl -s -o /dev/null -w "%{http_code}" -m 1 "$url" 2>/dev/null || echo "ERR")
+  code=$(curl -sk -o /dev/null -w "%{http_code}" -m 1 "$url" 2>/dev/null || echo "ERR")
   if [ "$code" = "200" ] || [ "$code" = "401" ]; then color=32; else color=31; fi
   printf "  \033[${color}m●\033[0m %-22s HTTP %s  %s\n" "$label" "$code" "$url"
 }
@@ -58,6 +58,7 @@ check "mci-admin /"               "http://127.0.0.1:9090/"
 check "mci-api /metrics"          "http://127.0.0.1:8080/metrics"        mci-api
 check "mci-price /price-stats"    "http://127.0.0.1:8082/v1/price-stats"
 check "mci-edge-price /metrics"   "http://127.0.0.1:8083/metrics"
+check "mci-edge-api /ping"        "https://127.0.0.1:8090/v1/ping"        mci-edge-api
 check "mci-edge-fix /stats"       "http://127.0.0.1:5002/stats"          mci-edge-fix
 check "mci-edge-fix /metrics"     "http://127.0.0.1:5002/metrics"        mci-edge-fix
 check "mci-edge-md /stats"        "http://127.0.0.1:5012/stats"          mci-edge-md

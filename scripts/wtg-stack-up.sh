@@ -52,7 +52,7 @@ done
 mkdir -p logs
 
 # 기존 host 서비스 종료 (idempotent)
-for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-fix mci-edge-md mci-edge-tcp quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
+for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix mci-edge-md mci-edge-tcp quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
   pkill -f "build/bin/$svc" 2>/dev/null || true
 done
 pkill -f "wtg-dev-tickloop.py" 2>/dev/null || true
@@ -162,6 +162,22 @@ if [ "$WITH_API" = "1" ]; then
     --stats "${STATS_EDGE_TCP:-127.0.0.1:5022}" \
     --upstream "http://127.0.0.1${LISTEN_API:-:8080}" \
     --api-user "${EDGE_TCP_USER:-hts01}"
+
+  # mci-edge-api — DMZ REST gateway (8090, TLS). EC2 와 동일하게 TLS 로 띄워
+  # 대시보드 mci-health (https://8090/v1/ping) 와 일치. dev 자가서명 cert 1회 생성.
+  EDGE_CRT=logs/edge-tls.crt EDGE_KEY=logs/edge-tls.key
+  if [ ! -f "$EDGE_CRT" ]; then
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+      -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+      -keyout "$EDGE_KEY" -out "$EDGE_CRT" >/dev/null 2>&1 \
+      && echo "==> edge-api dev cert 생성 ($EDGE_CRT)" || echo "==> openssl 없음 — edge-api TLS skip"
+  fi
+  if [ -f "$EDGE_CRT" ]; then
+    start mci-edge-api ./build/bin/mci-edge-api \
+      --dev --listen "${LISTEN_EDGE_API:-:8090}" \
+      --upstream "http://127.0.0.1${LISTEN_API:-:8080}" \
+      --tls-cert "$EDGE_CRT" --tls-key "$EDGE_KEY"
+  fi
 fi
 
 # mci-edge-fix (--with-fix) — FIX 4.4 DMZ gateway.

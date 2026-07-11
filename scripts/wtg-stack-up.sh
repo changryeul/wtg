@@ -10,9 +10,9 @@
 #   ./scripts/wtg-stack-up.sh --with-swap-lock   # mci-price 에 --enable-swap-lock 추가
 #   ./scripts/wtg-stack-up.sh --with-broker      # docker mymqd (broker + test_service + WECHO) 같이
 #   ./scripts/wtg-stack-up.sh --with-api         # mci-api 까지 (broker 필요 → --with-broker 자동)
-#   ./scripts/wtg-stack-up.sh --with-fix         # mci-edge-fix (FIX 4.4 주문 DMZ gateway)
+#   ./scripts/wtg-stack-up.sh --with-fix         # mci-edge-fix-ord (FIX 4.4 주문 DMZ gateway)
 #   ./scripts/wtg-stack-up.sh --with-push        # mci-push + mci-edge-push (체결통보 fan-out)
-#   ./scripts/wtg-stack-up.sh --with-md          # mci-edge-md  (FIX 4.4 시세 DMZ gateway, Phase A skeleton)
+#   ./scripts/wtg-stack-up.sh --with-md          # mci-edge-fix-md  (FIX 4.4 시세 DMZ gateway, Phase A skeleton)
 #   ./scripts/wtg-stack-up.sh --with-all         # 모든 컴포넌트 (chart 제외 — DB 의존)
 #
 # 환경변수 override :
@@ -55,7 +55,7 @@ done
 mkdir -p logs
 
 # 기존 host 서비스 종료 (idempotent)
-for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix mci-edge-md mci-edge-tcp mci-push mci-edge-push quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
+for svc in mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix-ord mci-edge-fix-md mci-edge-tcp mci-push mci-edge-push quote-forwarder wtg-dev-tickloop prometheus mci-chart; do
   pkill -f "build/bin/$svc" 2>/dev/null || true
 done
 pkill -f "wtg-dev-tickloop.py" 2>/dev/null || true
@@ -183,7 +183,7 @@ if [ "$WITH_API" = "1" ]; then
   fi
 fi
 
-# mci-edge-fix (--with-fix) — FIX 4.4 DMZ gateway.
+# mci-edge-fix-ord (--with-fix) — FIX 4.4 DMZ gateway.
 # admin UI 의 /fix-counterparties.html 에서 carrier 등록 + fix-tester CLI 로 smoke.
 if [ "$WITH_FIX" = "1" ]; then
   # admin embedded etcd URL 결정.
@@ -200,13 +200,13 @@ if [ "$WITH_FIX" = "1" ]; then
     done
   fi
   if [ -z "${ETCD_URL:-}" ]; then
-    echo "==> mci-edge-fix: admin embedded etcd URL 을 10초 안에 못 잡음"
+    echo "==> mci-edge-fix-ord: admin embedded etcd URL 을 10초 안에 못 잡음"
     echo "    ETCD_URL=http://127.0.0.1:PORT 로 명시 지정하거나 mci-admin 로그 확인"
     exit 1
   fi
-  echo "==> mci-edge-fix: etcd_url=$ETCD_URL"
+  echo "==> mci-edge-fix-ord: etcd_url=$ETCD_URL"
   mkdir -p /tmp/wtg-fix-store
-  start mci-edge-fix ./build/bin/mci-edge-fix \
+  start mci-edge-fix-ord ./build/bin/mci-edge-fix-ord \
     --port "${FIX_PORT:-5001}" \
     --stats "${FIX_STATS:-:5002}" \
     --sender "${FIX_SENDER:-WTG}" \
@@ -217,7 +217,7 @@ if [ "$WITH_FIX" = "1" ]; then
     --log-level info
 fi
 
-# mci-edge-md (--with-md) — FIX 4.4 시세 DMZ gateway.
+# mci-edge-fix-md (--with-md) — FIX 4.4 시세 DMZ gateway.
 # Phase B-1: --with-fix 와 동일한 admin embedded etcd URL 을 재사용하여
 # `wtg/fix/counterparties/` 를 공유. MdReqRoleSet 에 "MD" 있는 항목만 accept.
 # 정적 seed 는 fallback (env MD_SEED_CP override).
@@ -236,14 +236,14 @@ if [ "$WITH_MD" = "1" ]; then
   MD_ETCD_ARGS=()
   if [ -n "${ETCD_URL:-}" ]; then
     MD_ETCD_ARGS=(--etcd "$ETCD_URL")
-    echo "==> mci-edge-md: etcd_url=$ETCD_URL"
+    echo "==> mci-edge-fix-md: etcd_url=$ETCD_URL"
   else
-    echo "==> mci-edge-md: etcd URL 못 잡음 — 정적 seed 만 사용"
+    echo "==> mci-edge-fix-md: etcd URL 못 잡음 — 정적 seed 만 사용"
   fi
   # upstream (Phase B-2a) — mci-price gRPC 로 SubscribeQuote. 스택 부팅 시
   # mci-price 는 --grpc :50051 로 뜬다.
   MD_UPSTREAM="${MD_UPSTREAM:-127.0.0.1${GRPC_PRICE:-:50051}}"
-  start mci-edge-md ./build/bin/mci-edge-md \
+  start mci-edge-fix-md ./build/bin/mci-edge-fix-md \
     --port "${MD_PORT:-5011}" \
     --stats "${MD_STATS:-127.0.0.1:5012}" \
     --sender "${MD_SENDER:-WTG_MD}" \

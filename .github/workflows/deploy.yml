@@ -95,6 +95,15 @@ jobs:
           set -euo pipefail
           sudo systemctl stop 'wtg-mci-*' 'wtg-quote-*' 'wtg-dev-*'
 
+      - name: 구 이름 unit 정리 (rename orphan — edge-fix/md → fix-ord/fix-md)
+        run: |
+          set -euo pipefail
+          for old in wtg-mci-edge-fix wtg-mci-edge-md; do
+            sudo systemctl disable --now "$old" 2>/dev/null || true
+            sudo rm -f "/etc/systemd/system/$old.service"
+          done
+          sudo systemctl daemon-reload
+
       - name: Install binaries + etc + systemd units
         run: |
           set -euo pipefail
@@ -150,7 +159,7 @@ jobs:
           sudo systemctl enable --now wtg-etcd
           sudo systemctl enable --now \
             wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
-            wtg-mci-api wtg-mci-edge-api wtg-mci-edge-fix wtg-mci-edge-md \
+            wtg-mci-api wtg-mci-edge-api wtg-mci-edge-fix-ord wtg-mci-edge-fix-md \
             wtg-mci-edge-tcp wtg-mci-push wtg-mci-edge-push \
             wtg-quote-forwarder wtg-dev-feed
 
@@ -159,7 +168,7 @@ jobs:
           set -euo pipefail
           sleep 5
           for svc in wtg-etcd wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
-                     wtg-mci-api wtg-mci-edge-api wtg-mci-edge-fix wtg-mci-edge-md \
+                     wtg-mci-api wtg-mci-edge-api wtg-mci-edge-fix-ord wtg-mci-edge-fix-md \
                      wtg-mci-edge-tcp wtg-mci-push wtg-mci-edge-push \
                      wtg-quote-forwarder wtg-dev-feed; do
             if ! sudo systemctl is-active --quiet "$svc"; then

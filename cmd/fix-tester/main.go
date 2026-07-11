@@ -1,4 +1,4 @@
-// fix-tester — mci-edge-fix smoke test 도구.
+// fix-tester — mci-edge-fix-ord smoke test 도구.
 //
 // 단일 quickfix initiator 를 띄워 Logon + 옵션 NewOrderSingle 송신. 결과
 // 출력 후 종료. 운영자가 admin UI 의 "fix-tester CLI 명령 복사" 버튼에서
@@ -87,9 +87,9 @@ func (a *app) FromApp(msg *quickfix.Message, sid quickfix.SessionID) quickfix.Me
 
 func main() {
 	var (
-		target      = flag.String("target", "127.0.0.1:5001", "mci-edge-fix host:port")
+		target      = flag.String("target", "127.0.0.1:5001", "mci-edge-fix-ord host:port")
 		sender      = flag.String("sender", "ECN_TEST_01", "SenderCompID (이 client)")
-		targetComp  = flag.String("target-comp", "WTG", "TargetCompID (mci-edge-fix self)")
+		targetComp  = flag.String("target-comp", "WTG", "TargetCompID (mci-edge-fix-ord self)")
 		password    = flag.String("password", "", "Logon Password (tag 554). 빈값=skip")
 		sendOrder   = flag.String("send-order", "", "선택 — Logon 후 NewOrderSingle 1개. 형식: 'SYMBOL:SIDE:QTY[:PRICE]' (예: USD/KRW:buy:1000000:1378.55). PRICE 빈값=Market")
 		waitTime    = flag.Duration("wait", 5*time.Second, "Logon 후 ExecutionReport 등 수신 대기 시간")

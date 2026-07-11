@@ -1,7 +1,7 @@
-# WTG mci-edge-fix — FIX 4.4 주문 gateway. flag 는 이전 docker-compose.prod.yml 과 동일.
+# WTG mci-edge-fix-ord — FIX 4.4 주문 gateway. flag 는 이전 docker-compose.prod.yml 과 동일.
 # FIX_PUSH_SECRET 은 wtg.env (CI 가 배포 시 GitHub Secret 으로 갱신).
 [Unit]
-Description=WTG mci-edge-fix — FIX 4.4 주문 gateway (5001) + stats (5002)
+Description=WTG mci-edge-fix-ord — FIX 4.4 주문 gateway (5001) + stats (5002)
 After=network-online.target wtg-etcd.service wtg-mci-api.service
 Wants=network-online.target wtg-etcd.service
 # broker/etcd 늦게 떠도 자동 복구되도록 start limit 해제 (무한 재시도)
@@ -13,7 +13,7 @@ User=winway
 Group=winway
 WorkingDirectory=/home/winway/nh-fxallone-server/wtg
 EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
-ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-fix \
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-fix-ord \
     --port=5001 \
     --stats=127.0.0.1:5002 \
     --sender=WTG \
@@ -31,7 +31,7 @@ LimitNOFILE=65536
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=wtg-mci-edge-fix
+SyslogIdentifier=wtg-mci-edge-fix-ord
 
 [Install]
 WantedBy=multi-user.target

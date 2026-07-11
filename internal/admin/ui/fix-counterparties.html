@@ -29,10 +29,10 @@
 <body>
   <h1>FIX 카운터파티 등록</h1>
   <p class="help">
-    mci-edge-fix 가 외부 FIX 카운터파티 (기관 / ECN / MM) 의 Logon 검증에 사용.
+    mci-edge-fix-ord 가 외부 FIX 카운터파티 (기관 / ECN / MM) 의 Logon 검증에 사용.
     SenderCompID + Password + Profile (Channel/Site/Tier) + Usid 명시.
-    Password 변경은 mci-edge-fix watch 로 즉시 반영. 새 SenderCompID 추가는
-    mci-edge-fix 재시작 필요 (Phase C).
+    Password 변경은 mci-edge-fix-ord watch 로 즉시 반영. 새 SenderCompID 추가는
+    mci-edge-fix-ord 재시작 필요 (Phase C).
   </p>
 
   <div class="card">
@@ -63,18 +63,18 @@
 
     <label>OrderAlias (매매 엔진의 routing alias — 카운터파티별 dialect 분기)</label>
     <input type="text" id="order_alias" placeholder="FIX_NEW_ORDER (빈값=default)">
-    <div class="help">빈값이면 mci-edge-fix 가 <code>FIX_NEW_ORDER</code> default 사용. ECN 별 alias 등록 시 매매 엔진이 다른 transaction 으로 dispatch.</div>
+    <div class="help">빈값이면 mci-edge-fix-ord 가 <code>FIX_NEW_ORDER</code> default 사용. ECN 별 alias 등록 시 매매 엔진이 다른 transaction 으로 dispatch.</div>
 
     <label style="margin-top:16px">채널 권한 (MdReqRoleSet — 이 카운터파티가 열 수 있는 채널)</label>
     <div style="display:flex;gap:16px;padding:6px 0;font-size:13px">
-      <label style="display:inline-flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="role_order" checked>ORDER (mci-edge-fix — 주문 세션)</label>
-      <label style="display:inline-flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="role_md">MD (mci-edge-md — 시세 세션)</label>
+      <label style="display:inline-flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="role_order" checked>ORDER (mci-edge-fix-ord — 주문 세션)</label>
+      <label style="display:inline-flex;align-items:center;gap:6px;margin:0"><input type="checkbox" id="role_md">MD (mci-edge-fix-md — 시세 세션)</label>
     </div>
     <div class="help">둘 다 체크하면 카운터파티가 같은 SenderCompID 로 두 세션 (edge-fix + edge-md) 을 열 수 있습니다. MD 만 체크하면 시세 전용.</div>
 
     <label>MdAllowedPairs (구독 허용 pair whitelist — MD 채널만 해당. 콤마 구분, 빈값=전체 허용)</label>
     <input type="text" id="md_allowed_pairs" placeholder="USD/KRW,EUR/USD,GBP/USD">
-    <div class="help">Phase C 에서 mci-edge-md 가 이 whitelist 로 MDR symbol 필터. Phase B-1 은 저장/전달만.</div>
+    <div class="help">Phase C 에서 mci-edge-fix-md 가 이 whitelist 로 MDR symbol 필터. Phase B-1 은 저장/전달만.</div>
 
     <button onclick="savePut()">저장 (PUT)</button>
     <button class="danger" onclick="delOne()">삭제 (DELETE)</button>
@@ -85,15 +85,15 @@
   <div class="card">
     <h2>테스트 도구</h2>
     <p class="help">
-      mci-edge-fix 가 가동 중이어야 동작합니다 (default <code>http://127.0.0.1:5002</code>).
+      mci-edge-fix-ord 가 가동 중이어야 동작합니다 (default <code>http://127.0.0.1:5002</code>).
       <code>--with-fix</code> 로 stack-up 시 자동 부팅. 위 등록한 카운터파티가 fix-tester
       CLI 또는 ExecutionReport drop copy 폼으로 즉시 검증 가능.
     </p>
 
-    <label>mci-edge-fix stats base URL (port :5002)</label>
+    <label>mci-edge-fix-ord stats base URL (port :5002)</label>
     <input type="text" id="fix_base" value="http://127.0.0.1:5002" autocomplete="off">
 
-    <label>X-Push-Secret (mci-edge-fix 의 --push-secret 값. 기본 dev-secret)</label>
+    <label>X-Push-Secret (mci-edge-fix-ord 의 --push-secret 값. 기본 dev-secret)</label>
     <input type="text" id="push_secret" value="dev-secret" autocomplete="off">
 
     <h3 style="font-size:14px;margin-top:18px;color:#1f4e79">1) ExecutionReport drop copy 송신 (35=8)</h3>
@@ -142,7 +142,7 @@
     <button onclick="genTesterCmd()">명령 생성 / 복사</button>
     <pre id="tester_cmd" style="background:#0f1722;color:#d7e0ea;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;white-space:pre-wrap;display:none"></pre>
 
-    <h3 style="font-size:14px;margin-top:18px;color:#1f4e79">3) mci-edge-fix 상태</h3>
+    <h3 style="font-size:14px;margin-top:18px;color:#1f4e79">3) mci-edge-fix-ord 상태</h3>
     <pre id="stats_dump" style="background:#0f1722;color:#d7e0ea;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;display:none"></pre>
   </div>
 
@@ -396,7 +396,7 @@ async function sendExecReport() {
       showErMsg("실패: status=" + r.status + " " + (d.message || ""), false);
     }
   } catch (e) {
-    showErMsg("네트워크 오류: " + e.message + " (mci-edge-fix 가 가동 중인지 확인)", false);
+    showErMsg("네트워크 오류: " + e.message + " (mci-edge-fix-ord 가 가동 중인지 확인)", false);
   }
 }
 

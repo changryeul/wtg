@@ -1,4 +1,4 @@
-// fix-md-tester — mci-edge-md smoke test 도구.
+// fix-md-tester — mci-edge-fix-md smoke test 도구.
 //
 // quickfix initiator 로 Logon → MarketDataRequest (35=V) 1건 송신 → 스냅샷
 // (35=W) 수신 출력 후 종료. 심볼별 bid/offer 를 표로 출력.
@@ -94,9 +94,9 @@ func dumpEntries(msg *quickfix.Message) {
 
 func main() {
 	var (
-		target      = flag.String("target", "127.0.0.1:5011", "mci-edge-md host:port")
+		target      = flag.String("target", "127.0.0.1:5011", "mci-edge-fix-md host:port")
 		sender      = flag.String("sender", "ECN_MD_TEST_01", "SenderCompID")
-		targetComp  = flag.String("target-comp", "WTG_MD", "TargetCompID (mci-edge-md self)")
+		targetComp  = flag.String("target-comp", "WTG_MD", "TargetCompID (mci-edge-fix-md self)")
 		password    = flag.String("password", "", "Logon Password (tag 554). 빈값=skip")
 		symbols     = flag.String("symbols", "USD/KRW", "MDR 심볼 리스트 (콤마 구분)")
 		subType     = flag.String("sub-type", "0", "SubscriptionRequestType — 0=snapshot / 1=snapshot+updates / 2=unsubscribe")

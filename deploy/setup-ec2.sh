@@ -133,8 +133,8 @@ step "8. 방화벽 (firewalld) 사내 CIDR 만 열기 — 샘플"
 # sudo firewall-cmd --permanent --zone=trusted --add-port=9090/tcp   # mci-admin
 # sudo firewall-cmd --permanent --zone=trusted --add-port=8080/tcp   # mci-api
 # sudo firewall-cmd --permanent --zone=trusted --add-port=8083/tcp   # mci-edge-price ws
-# sudo firewall-cmd --permanent --zone=trusted --add-port=5001/tcp   # mci-edge-fix
-# sudo firewall-cmd --permanent --zone=trusted --add-port=5011/tcp   # mci-edge-md
+# sudo firewall-cmd --permanent --zone=trusted --add-port=5001/tcp   # mci-edge-fix-ord
+# sudo firewall-cmd --permanent --zone=trusted --add-port=5011/tcp   # mci-edge-fix-md
 # sudo firewall-cmd --reload
 warn "firewalld rule 은 스크립트에 주석 처리 — 사내 CIDR 확정 후 활성"
 

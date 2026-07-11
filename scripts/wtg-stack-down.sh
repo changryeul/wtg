@@ -4,7 +4,7 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 echo "==> WTG host 서비스 종료"
-for svc in mci-admin mci-api mci-edge-price mci-edge-api mci-edge-fix mci-edge-md mci-edge-tcp mci-push mci-edge-push mci-chart quote-forwarder mci-price prometheus; do
+for svc in mci-admin mci-api mci-edge-price mci-edge-api mci-edge-fix-ord mci-edge-fix-md mci-edge-tcp mci-push mci-edge-push mci-chart quote-forwarder mci-price prometheus; do
   pids=$(pgrep -f "build/bin/$svc" 2>/dev/null || true)
   if [ -n "$pids" ]; then
     echo "    $svc  pid=$pids"

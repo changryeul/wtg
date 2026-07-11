@@ -1,6 +1,6 @@
-# WTG mci-edge-md — FIX 4.4 시세 gateway. flag 는 이전 docker-compose.prod.yml 과 동일.
+# WTG mci-edge-fix-md — FIX 4.4 시세 gateway. flag 는 이전 docker-compose.prod.yml 과 동일.
 [Unit]
-Description=WTG mci-edge-md — FIX 4.4 시세 gateway (5011) + stats (5012)
+Description=WTG mci-edge-fix-md — FIX 4.4 시세 gateway (5011) + stats (5012)
 After=network-online.target wtg-etcd.service wtg-mci-price.service
 Wants=network-online.target wtg-etcd.service wtg-mci-price.service
 # broker/etcd 늦게 떠도 자동 복구되도록 start limit 해제 (무한 재시도)
@@ -12,7 +12,7 @@ User=winway
 Group=winway
 WorkingDirectory=/home/winway/nh-fxallone-server/wtg
 EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
-ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-md \
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-fix-md \
     --port=5011 \
     --stats=127.0.0.1:5012 \
     --sender=WTG_MD \
@@ -27,7 +27,7 @@ LimitNOFILE=65536
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=wtg-mci-edge-md
+SyslogIdentifier=wtg-mci-edge-fix-md
 
 [Install]
 WantedBy=multi-user.target

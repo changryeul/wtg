@@ -16,7 +16,7 @@ func TestMciHealthMixed(t *testing.T) {
 	dead := httptest.NewServer(http.HandlerFunc(nil))
 	dead.Close() // 즉시 닫음 — connection refused 유도
 
-	h := MciHealth("api=" + alive.URL + ",price=" + dead.URL)
+	h := MciHealth("api="+alive.URL+",price="+dead.URL, "")
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodGet, "/v1/admin/mci-health", nil))
 
@@ -55,7 +55,7 @@ func TestMciHealth5xxIsDown(t *testing.T) {
 	}))
 	defer bad.Close()
 
-	h := MciHealth("svc=" + bad.URL)
+	h := MciHealth("svc="+bad.URL, "")
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodGet, "/v1/admin/mci-health", nil))
 	var body struct {
@@ -75,5 +75,40 @@ func TestParseMciTargets(t *testing.T) {
 	}
 	if len(parseMciTargets("")) != 0 {
 		t.Error("빈 spec 은 빈 slice")
+	}
+}
+
+// etcd self-report — 기본 목록의 etcd URL 이 admin 이 아는 endpoint 로 교체된다.
+func TestMciHealthEtcdSelfReport(t *testing.T) {
+	etcd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("etcd path: %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"health":"true"}`))
+	}))
+	defer etcd.Close()
+
+	// 커스텀 target 없이 (기본 목록) + etcdEndpoint 주입.
+	h := MciHealth("", etcd.URL)
+	rr := httptest.NewRecorder()
+	h(rr, httptest.NewRequest(http.MethodGet, "/x", nil))
+	var body struct {
+		Services []MciHealthEntry `json:"services"`
+	}
+	_ = json.NewDecoder(rr.Body).Decode(&body)
+	var e *MciHealthEntry
+	for i := range body.Services {
+		if body.Services[i].Name == "etcd" {
+			e = &body.Services[i]
+		}
+	}
+	if e == nil {
+		t.Fatal("etcd target 없음")
+	}
+	if e.URL != etcd.URL+"/health" {
+		t.Errorf("etcd URL self-report 안 됨: %q", e.URL)
+	}
+	if !e.Up {
+		t.Errorf("etcd up=false (err=%s)", e.Error)
 	}
 }

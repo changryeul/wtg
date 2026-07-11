@@ -65,6 +65,22 @@ func defaultMciTargets() []MciTarget {
 	}
 }
 
+// firstEndpoint — 콤마 구분 etcd endpoints 에서 첫 URL. scheme 없으면 http:// 보정.
+func firstEndpoint(spec string) string {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return ""
+	}
+	first := strings.TrimSpace(strings.Split(spec, ",")[0])
+	if first == "" {
+		return ""
+	}
+	if !strings.Contains(first, "://") {
+		first = "http://" + first
+	}
+	return first
+}
+
 // parseMciTargets — "name=url,name=url" 파싱. 형식 오류 항목은 skip.
 func parseMciTargets(spec string) []MciTarget {
 	var out []MciTarget
@@ -129,10 +145,22 @@ func checkMciTargets(ctx context.Context, targets []MciTarget) []MciHealthEntry 
 }
 
 // MciHealth — GET /v1/admin/mci-health 핸들러.
-func MciHealth(targetsSpec string) http.HandlerFunc {
+// etcdEndpoint: admin 이 실제 사용 중인 etcd 클라이언트 URL (embedded 면 동적
+// 포트, 외부면 --etcd 값). 기본 목록의 etcd target URL 을 이 값으로 self-report
+// 하여, 로컬 embedded etcd (동적 포트) 도 정확히 health 체크된다. 빈값이면
+// 기본 :2379 유지 (EC2 native etcd).
+func MciHealth(targetsSpec, etcdEndpoint string) http.HandlerFunc {
 	targets := parseMciTargets(targetsSpec)
 	if len(targets) == 0 {
 		targets = defaultMciTargets()
+		// etcd target 을 admin 이 아는 실제 endpoint 로 교체.
+		if ep := firstEndpoint(etcdEndpoint); ep != "" {
+			for i := range targets {
+				if targets[i].Name == "etcd" {
+					targets[i].URL = strings.TrimRight(ep, "/") + "/health"
+				}
+			}
+		}
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries := checkMciTargets(r.Context(), targets)

@@ -1058,7 +1058,7 @@
         <div id="page-tcpgw" class="page hidden space-y-4">
           <div>
             <h3 class="text-lg font-semibold">TCP 게이트웨이 (mci-edge-tcp)</h3>
-            <p class="text-sm text-slate-400">레거시 cs (HTS/EMP) 의 지속 TCP 전문 연결 — 연결별 heartbeat/전문 카운터. 4초 갱신.</p>
+            <p class="text-sm text-slate-400">레거시 cs (HTS/EMP) 의 지속 TCP 전문 연결 — 연결별 IP·사용자(usid)·heartbeat·전문 카운터. 4초 갱신. <span id="tg-fwd" class="text-slate-500"></span></p>
           </div>
           <div id="tcpgw-err" class="hidden border-gradient rounded-2xl p-4 text-sm text-bad"></div>
           <div class="grid grid-cols-2 md:grid-cols-6 gap-3" id="tcpgw-cards">
@@ -1074,7 +1074,8 @@
               <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
                 <tr class="border-b border-ink-700/60">
                   <th class="text-left px-4 py-3 font-medium">#</th>
-                  <th class="text-left px-4 py-3 font-medium">Remote</th>
+                  <th class="text-left px-4 py-3 font-medium">Remote (IP:port)</th>
+                  <th class="text-left px-4 py-3 font-medium" title="마지막 전문 COMHDR 의 usid — 클라이언트 신고값 (연결별 LOGON 인증은 Phase B)">사용자</th>
                   <th class="text-left px-4 py-3 font-medium">접속 시각</th>
                   <th class="text-left px-4 py-3 font-medium">마지막 활동</th>
                   <th class="text-right px-4 py-3 font-medium">전문</th>
@@ -3856,6 +3857,8 @@ async function loadTcpGw() {
     errBox.classList.remove("hidden");
     return;
   }
+  $("#tg-fwd").textContent = d.forward_user
+    ? `· upstream 인증: ${d.forward_user} (gateway 고정, 채널 ${d.channel || "-"})` : "";
   $("#tg-active").textContent = d.active_conns ?? 0;
   $("#tg-total").textContent  = d.total_conns ?? 0;
   $("#tg-in").textContent     = d.frames_in ?? 0;
@@ -3877,6 +3880,8 @@ async function loadTcpGw() {
     tb.appendChild(h("tr", { class: "border-b border-ink-700/40" },
       h("td", { class: "px-4 py-3 font-mono text-slate-400", text: String(c.id) }),
       h("td", { class: "px-4 py-3 font-mono", text: c.remote }),
+      h("td", { class: "px-4 py-3 font-mono " + (c.usid ? "text-accent-400" : "text-slate-600"),
+                text: c.usid || "—", title: c.usid ? "" : "아직 전문 미수신 (heartbeat 만)" }),
       h("td", { class: "px-4 py-3 text-xs font-mono text-slate-400", text: fmt(c.connected_at) }),
       h("td", { class: "px-4 py-3 text-xs font-mono " + (stale ? "text-warn" : "text-slate-400"), text: fmt(c.last_activity) }),
       h("td", { class: "px-4 py-3 text-right font-mono", text: String(c.frames ?? 0) }),

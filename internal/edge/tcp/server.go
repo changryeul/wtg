@@ -106,7 +106,18 @@ type connInfo struct {
 	LastActivity time.Time `json:"last_activity"`
 	Frames       int64     `json:"frames"`
 	Heartbeats   int64     `json:"heartbeats"`
+	// Usid — 마지막 전문 COMHDR 의 usid (관측용). HTS 는 연결당 1사용자라
+	// 사실상 연결 주인. connection 별 인증 (LOGON) 은 Phase B — 이 값은
+	// 클라이언트 신고값이지 검증된 신원이 아님에 유의.
+	Usid string `json:"usid,omitempty"`
 }
+
+// COMHDR 의 usid 위치 — win/src/inc/com/comhdr.h 필드 배치
+// (trxc[16] scrn[6] loip[16] auip[16] maca[20] → usid[30]).
+const (
+	comhdrUsidOff = 74
+	comhdrUsidLen = 30
+)
 
 // NewServer — cfg 검증 + 기본값 채움.
 func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
@@ -224,6 +235,8 @@ func (s *Server) startStats(ctx context.Context) error {
 			conns = append(conns, *ci)
 		}
 		out := map[string]any{
+			"forward_user":    s.cfg.APIUser, // gateway 가 upstream 에 쓰는 고정 인증 주체
+			"channel":         s.cfg.Channel,
 			"active_conns":    int64(len(s.active)),
 			"total_conns":     s.conns,
 			"frames_in":       s.framesIn,
@@ -283,6 +296,14 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn, ci *connInfo) {
 			continue
 		}
 		touch(false)
+		// 연결별 사용자 관측 — 전문 COMHDR 의 usid 캡처.
+		if len(payload) >= comhdrUsidOff+comhdrUsidLen {
+			if u := strings.TrimSpace(string(payload[comhdrUsidOff : comhdrUsidOff+comhdrUsidLen])); u != "" {
+				s.mu.Lock()
+				ci.Usid = u
+				s.mu.Unlock()
+			}
+		}
 		resp, err := s.forward(ctx, payload)
 		if err != nil {
 			s.logger.Warn("upstream forward 실패",

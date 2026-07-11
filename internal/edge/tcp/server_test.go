@@ -316,3 +316,58 @@ func TestStatsEndpoint(t *testing.T) {
 		t.Errorf("종료 후 active=%d", st2.Active)
 	}
 }
+
+// 연결별 사용자 식별 — 전문 COMHDR 의 usid (offset 74, 30B) 를 캡처해
+// stats 에 노출. HTS 는 연결당 1사용자 — 마지막 전문의 usid 가 연결 주인.
+func TestStatsCapturesUsid(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	cfg := Config{UpstreamURL: upstream.URL, APIUser: "gw", StatsAddr: "127.0.0.1:0", ListenAddr: "127.0.0.1:0"}
+	srv, err := NewServer(cfg, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Start(ctx) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.Addr() == nil || srv.StatsAddr() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("listen 시작 안 됨")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	conn, _ := net.Dial("tcp", srv.Addr().String())
+	defer conn.Close()
+	// COMHDR 배치: trxc16+scrn6+loip16+auip16+maca20 = 74 → usid[30]
+	buf := append([]byte("W1101T01"), []byte(strings.Repeat(" ", 8))...) // trxc 16B
+	buf = append(buf, []byte(strings.Repeat(" ", 58))...)                // scrn..maca 58B
+	buf = append(buf, []byte("hts-user-77"+strings.Repeat(" ", 19))...)  // usid 30B
+	buf = append(buf, []byte("AH")...)
+	_ = writeFrame(conn, buf)
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, _ = readFrame(conn, 1<<20)
+
+	resp, err := http.Get("http://" + srv.StatsAddr().String() + "/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var st struct {
+		ForwardUser string `json:"forward_user"`
+		Conns       []struct {
+			Usid string `json:"usid"`
+		} `json:"conns"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&st)
+	if st.ForwardUser != "gw" {
+		t.Errorf("forward_user: %q", st.ForwardUser)
+	}
+	if len(st.Conns) != 1 || st.Conns[0].Usid != "hts-user-77" {
+		t.Errorf("usid 캡처: %+v", st.Conns)
+	}
+}

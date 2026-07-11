@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,10 @@ type Config struct {
 	MaxFrame int
 	// UpstreamTimeout — /v1/tx 호출 timeout. 0 이면 10s.
 	UpstreamTimeout time.Duration
+	// StatsAddr — 진단 HTTP listen 주소 (예: "127.0.0.1:5022"). 빈값 = 비활성.
+	// GET /stats (연결/카운터 + 연결별 상세, CORS *) + GET /healthz.
+	// admin 의 /v1/admin/tcp-gw/stats proxy 와 대시보드 mci-health 가 소비.
+	StatsAddr string
 }
 
 func (c *Config) fill() {
@@ -80,9 +85,27 @@ type Server struct {
 	logger *slog.Logger
 	httpc  *http.Client
 
-	mu    sync.Mutex
-	ln    net.Listener
-	conns int64 // 누적 연결 수 (진단 로그용)
+	mu      sync.Mutex
+	ln      net.Listener
+	statsLn net.Listener
+	conns   int64 // 누적 연결 수 (id 발급 겸용)
+	active  map[int64]*connInfo
+
+	framesIn       int64 // 전문 frame 수신 (heartbeat 제외)
+	framesOut      int64
+	heartbeats     int64
+	upstreamErrors int64
+}
+
+// connInfo — 활성 연결 1건의 진단 정보.
+type connInfo struct {
+	ID          int64     `json:"id"`
+	Remote      string    `json:"remote"`
+	ConnectedAt time.Time `json:"connected_at"`
+	// 아래 필드는 s.mu 로 보호.
+	LastActivity time.Time `json:"last_activity"`
+	Frames       int64     `json:"frames"`
+	Heartbeats   int64     `json:"heartbeats"`
 }
 
 // NewServer — cfg 검증 + 기본값 채움.
@@ -101,7 +124,18 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 		cfg:    cfg,
 		logger: logger,
 		httpc:  &http.Client{Timeout: cfg.UpstreamTimeout},
+		active: make(map[int64]*connInfo),
 	}, nil
+}
+
+// StatsAddr — stats HTTP 의 실제 주소 (미활성이면 nil).
+func (s *Server) StatsAddr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.statsLn == nil {
+		return nil
+	}
+	return s.statsLn.Addr()
 }
 
 // Addr — listen 중인 실제 주소 (테스트에서 :0 사용 시).
@@ -129,6 +163,10 @@ func (s *Server) Start(ctx context.Context) error {
 		slog.String("channel", s.cfg.Channel),
 		slog.Duration("idle_timeout", s.cfg.IdleTimeout),
 	)
+	if err := s.startStats(ctx); err != nil {
+		_ = ln.Close()
+		return err
+	}
 	go func() {
 		<-ctx.Done()
 		_ = ln.Close()
@@ -143,18 +181,88 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		s.mu.Lock()
 		s.conns++
-		id := s.conns
+		ci := &connInfo{
+			ID: s.conns, Remote: conn.RemoteAddr().String(),
+			ConnectedAt: time.Now(), LastActivity: time.Now(),
+		}
+		s.active[ci.ID] = ci
 		s.mu.Unlock()
-		go s.handleConn(ctx, conn, id)
+		go func() {
+			defer func() {
+				s.mu.Lock()
+				delete(s.active, ci.ID)
+				s.mu.Unlock()
+			}()
+			s.handleConn(ctx, conn, ci)
+		}()
 	}
 }
 
+// startStats — 진단 HTTP listener (옵션). CORS * — fix/md stats 와 동일 컨벤션.
+func (s *Server) startStats(ctx context.Context) error {
+	if s.cfg.StatsAddr == "" {
+		return nil
+	}
+	ln, err := net.Listen("tcp", s.cfg.StatsAddr)
+	if err != nil {
+		return fmt.Errorf("stats listen: %w", err)
+	}
+	s.mu.Lock()
+	s.statsLn = ln
+	s.mu.Unlock()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+		s.mu.Lock()
+		conns := make([]connInfo, 0, len(s.active))
+		for _, ci := range s.active {
+			conns = append(conns, *ci)
+		}
+		out := map[string]any{
+			"active_conns":    int64(len(s.active)),
+			"total_conns":     s.conns,
+			"frames_in":       s.framesIn,
+			"frames_out":      s.framesOut,
+			"heartbeats":      s.heartbeats,
+			"upstream_errors": s.upstreamErrors,
+			"conns":           conns,
+		}
+		s.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(out)
+	})
+	srv := &http.Server{Handler: mux}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	go func() { _ = srv.Serve(ln) }()
+	s.logger.Info("stats HTTP 시작", slog.String("addr", ln.Addr().String()))
+	return nil
+}
+
 // handleConn — connection 당 직렬 처리 루프.
-func (s *Server) handleConn(ctx context.Context, conn net.Conn, id int64) {
+func (s *Server) handleConn(ctx context.Context, conn net.Conn, ci *connInfo) {
 	defer conn.Close()
-	remote := conn.RemoteAddr().String()
-	s.logger.Info("tcp 연결", slog.Int64("conn", id), slog.String("remote", remote))
-	defer s.logger.Info("tcp 종료", slog.Int64("conn", id), slog.String("remote", remote))
+	s.logger.Info("tcp 연결", slog.Int64("conn", ci.ID), slog.String("remote", ci.Remote))
+	defer s.logger.Info("tcp 종료", slog.Int64("conn", ci.ID), slog.String("remote", ci.Remote))
+
+	touch := func(hb bool) {
+		s.mu.Lock()
+		ci.LastActivity = time.Now()
+		if hb {
+			ci.Heartbeats++
+			s.heartbeats++
+		} else {
+			ci.Frames++
+			s.framesIn++
+		}
+		s.mu.Unlock()
+	}
 
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
@@ -162,27 +270,35 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn, id int64) {
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				s.logger.Warn("tcp frame 수신 실패 — 연결 종료",
-					slog.Int64("conn", id), slog.Any("error", err))
+					slog.Int64("conn", ci.ID), slog.Any("error", err))
 			}
 			return
 		}
 		// heartbeat — 빈 frame echo (클라이언트 왕복 생존 확인).
 		if len(payload) == 0 {
+			touch(true)
 			if err := writeFrame(conn, nil); err != nil {
 				return
 			}
 			continue
 		}
+		touch(false)
 		resp, err := s.forward(ctx, payload)
 		if err != nil {
 			s.logger.Warn("upstream forward 실패",
-				slog.Int64("conn", id), slog.Any("error", err))
+				slog.Int64("conn", ci.ID), slog.Any("error", err))
+			s.mu.Lock()
+			s.upstreamErrors++
+			s.mu.Unlock()
 			// transport 실패도 클라이언트에 알림 — text 본문 frame (Phase A).
 			resp = []byte("WTG-EDGE-TCP-ERROR: " + err.Error())
 		}
 		if err := writeFrame(conn, resp); err != nil {
 			return
 		}
+		s.mu.Lock()
+		s.framesOut++
+		s.mu.Unlock()
 	}
 }
 

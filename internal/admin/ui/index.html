@@ -333,6 +333,7 @@
           <button data-page="tester" class="nav-btn nav-item"><span class="nav-ico">🔌</span>API 테스터</button>
           <button data-page="broker" class="nav-btn nav-item"><span class="nav-ico">🖥</span>브로커 명령</button>
           <button data-page="wsmon"  class="nav-btn nav-item"><span class="nav-ico">📡</span>WS 모니터</button>
+          <button data-page="tcpgw"  class="nav-btn nav-item" title="mci-edge-tcp — 레거시 cs (HTS/EMP) raw TCP 전문 gateway 연결 현황"><span class="nav-ico">🔌</span>TCP 게이트웨이</button>
           <button data-page="quote"  class="nav-btn nav-item"><span class="nav-ico">💱</span>시세 (라이브 ws)</button>
         </div>
 
@@ -1040,6 +1041,40 @@
             <div id="ws-log" class="overflow-auto max-h-[55vh] divide-y divide-ink-700/30">
               <div class="p-6 text-center text-slate-500 text-sm">아직 메시지가 없습니다. 위 endpoint 칩에서 연결을 시작하세요.</div>
             </div>
+          </div>
+        </div>
+
+        <!-- TCP 게이트웨이 (mci-edge-tcp) — 레거시 cs raw TCP 전문 연결 현황.
+             admin 의 /v1/admin/tcp-gw/stats proxy 경유 (포트 직접 접근 불필요). -->
+        <div id="page-tcpgw" class="page hidden space-y-4">
+          <div>
+            <h3 class="text-lg font-semibold">TCP 게이트웨이 (mci-edge-tcp)</h3>
+            <p class="text-sm text-slate-400">레거시 cs (HTS/EMP) 의 지속 TCP 전문 연결 — 연결별 heartbeat/전문 카운터. 4초 갱신.</p>
+          </div>
+          <div id="tcpgw-err" class="hidden border-gradient rounded-2xl p-4 text-sm text-bad"></div>
+          <div class="grid grid-cols-2 md:grid-cols-6 gap-3" id="tcpgw-cards">
+            <div class="border-gradient rounded-2xl p-4"><div class="text-[10px] uppercase text-slate-500">활성 연결</div><div id="tg-active" class="text-2xl font-semibold">—</div></div>
+            <div class="border-gradient rounded-2xl p-4"><div class="text-[10px] uppercase text-slate-500">누적 연결</div><div id="tg-total" class="text-2xl font-semibold">—</div></div>
+            <div class="border-gradient rounded-2xl p-4"><div class="text-[10px] uppercase text-slate-500">전문 수신</div><div id="tg-in" class="text-2xl font-semibold">—</div></div>
+            <div class="border-gradient rounded-2xl p-4"><div class="text-[10px] uppercase text-slate-500">응답 송신</div><div id="tg-out" class="text-2xl font-semibold">—</div></div>
+            <div class="border-gradient rounded-2xl p-4"><div class="text-[10px] uppercase text-slate-500">Heartbeat</div><div id="tg-hb" class="text-2xl font-semibold">—</div></div>
+            <div class="border-gradient rounded-2xl p-4"><div class="text-[10px] uppercase text-slate-500">Upstream 에러</div><div id="tg-uerr" class="text-2xl font-semibold">—</div></div>
+          </div>
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="text-xs uppercase tracking-widest text-slate-400 bg-ink-850/60">
+                <tr class="border-b border-ink-700/60">
+                  <th class="text-left px-4 py-3 font-medium">#</th>
+                  <th class="text-left px-4 py-3 font-medium">Remote</th>
+                  <th class="text-left px-4 py-3 font-medium">접속 시각</th>
+                  <th class="text-left px-4 py-3 font-medium">마지막 활동</th>
+                  <th class="text-right px-4 py-3 font-medium">전문</th>
+                  <th class="text-right px-4 py-3 font-medium">Heartbeat</th>
+                </tr>
+              </thead>
+              <tbody id="tcpgw-tbody"></tbody>
+            </table>
+            <div id="tcpgw-empty" class="hidden p-8 text-center text-slate-500">활성 연결이 없습니다. tcp-tester 로 확인: <code class="font-mono text-xs">./build/bin/tcp-tester --addr 127.0.0.1:5021</code></div>
           </div>
         </div>
 
@@ -2411,6 +2446,7 @@ WEB.HQ.VIP</textarea>
                         <span class="text-slate-700 self-center px-0.5">│</span>
                         <button class="gen-tab px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-gen="ADM" title="내부 직원 — 운영 콘솔 (mci-admin)">ADM</button>
                         <button class="gen-tab px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-gen="EMP" title="내부 직원 — 딜러 desktop (HTS와 같은 cs framework, mci-api 직결)">EMP</button>
+                        <button class="gen-tab px-2 py-1 rounded-md bg-ink-800 hover:bg-ink-700" data-gen="TCP" title="레거시 cs 무수정 경로 — mci-edge-tcp (raw TCP 전문 + heartbeat)">TCP</button>
                       </div>
                       <span class="text-slate-700 self-center px-1">│</span>
                       <button id="svcio-copy-gen" title="현재 표시 중인 호출 코드 그대로 클립보드 복사"
@@ -2475,6 +2511,8 @@ WEB.HQ.VIP</textarea>
                     <div id="svcio-wire-result" class="hidden rounded-lg bg-ink-950 border border-ink-800 p-3 space-y-2 text-xs">
                       <div class="flex items-baseline gap-3 text-[11px] text-slate-400">
                         <span>status: <span id="swr-status" class="font-mono"></span></span>
+                        <button id="swr-copy-tcp" class="hidden text-xs px-2 py-0.5 rounded-md bg-ink-800 hover:bg-ink-700 text-accent-400"
+                          title="이 전문을 mci-edge-tcp (raw TCP :5021) 로 보내는 tcp-tester 명령 복사">tcp-tester 명령 복사</button>
                         <span>·</span>
                         <span>send: <span id="swr-sent" class="font-mono"></span></span>
                         <span>·</span>
@@ -3549,7 +3587,7 @@ function goPage(name) {
   $$("#nav .nav-btn").forEach(b => b.dataset.active = (b.dataset.page === name) ? "true" : "false");
   const titles = { dashboard: "대시보드", routes: "라우팅 룰", policy: "정책 엔진", ratelimit: "Rate Limit 정책",
                    broker: "브로커 명령",
-                   tester: "API 테스터", wsmon: "WS 모니터", quote: "시세",
+                   tester: "API 테스터", wsmon: "WS 모니터", tcpgw: "TCP 게이트웨이", quote: "시세",
                    currency: "통화 마스터", "pair-master": "통화쌍 마스터",
                    pricing: "마진 테이블", swap: "선물환 스왑",
                    holidays: "휴일 캘린더",
@@ -3614,6 +3652,60 @@ function goPage(name) {
   if (name === "swaplock") initSwaplock();
   if (name !== "algo") stopAlgoPoller();
   if (name === "algo") initAlgo();
+  if (name !== "tcpgw") stopTcpGwPoller();
+  if (name === "tcpgw") initTcpGw();
+}
+
+// ───────── TCP 게이트웨이 (mci-edge-tcp) ─────────
+const tcpgw = { poller: null };
+
+function initTcpGw() {
+  loadTcpGw();
+  if (!tcpgw.poller) tcpgw.poller = setInterval(loadTcpGw, 4000);
+}
+function stopTcpGwPoller() {
+  if (tcpgw.poller) { clearInterval(tcpgw.poller); tcpgw.poller = null; }
+}
+
+async function loadTcpGw() {
+  const errBox = $("#tcpgw-err");
+  let d;
+  try {
+    d = await api("/v1/admin/tcp-gw/stats");
+    errBox.classList.add("hidden");
+  } catch (e) {
+    errBox.textContent = "게이트웨이 stats 조회 실패: " + e.message +
+      " — mci-edge-tcp 가 --stats 옵션으로 기동되어 있는지 확인 (wtg-stack-up.sh --with-api 는 자동)";
+    errBox.classList.remove("hidden");
+    return;
+  }
+  $("#tg-active").textContent = d.active_conns ?? 0;
+  $("#tg-total").textContent  = d.total_conns ?? 0;
+  $("#tg-in").textContent     = d.frames_in ?? 0;
+  $("#tg-out").textContent    = d.frames_out ?? 0;
+  $("#tg-hb").textContent     = d.heartbeats ?? 0;
+  const uerr = d.upstream_errors ?? 0;
+  const uerrEl = $("#tg-uerr");
+  uerrEl.textContent = uerr;
+  uerrEl.className = "text-2xl font-semibold " + (uerr > 0 ? "text-bad" : "");
+
+  const tb = $("#tcpgw-tbody");
+  tb.replaceChildren();
+  const conns = (d.conns || []).sort((a, b) => a.id - b.id);
+  $("#tcpgw-empty").classList.toggle("hidden", conns.length > 0);
+  const fmt = (iso) => iso ? new Date(iso).toLocaleTimeString("ko-KR", { hour12: false }) : "-";
+  for (const c of conns) {
+    // 마지막 활동이 오래됐으면 (heartbeat 주기 초과 추정 30s) 경고색.
+    const stale = c.last_activity && (Date.now() - new Date(c.last_activity).getTime() > 30000);
+    tb.appendChild(h("tr", { class: "border-b border-ink-700/40" },
+      h("td", { class: "px-4 py-3 font-mono text-slate-400", text: String(c.id) }),
+      h("td", { class: "px-4 py-3 font-mono", text: c.remote }),
+      h("td", { class: "px-4 py-3 text-xs font-mono text-slate-400", text: fmt(c.connected_at) }),
+      h("td", { class: "px-4 py-3 text-xs font-mono " + (stale ? "text-warn" : "text-slate-400"), text: fmt(c.last_activity) }),
+      h("td", { class: "px-4 py-3 text-right font-mono", text: String(c.frames ?? 0) }),
+      h("td", { class: "px-4 py-3 text-right font-mono text-slate-400", text: String(c.heartbeats ?? 0) }),
+    ));
+  }
 }
 
 // ───────── Dashboard ─────────
@@ -8353,6 +8445,17 @@ async function wireSend(dryRun = false) {
 function showWireResult(res, status) {
   $("#svcio-wire-result").classList.remove("hidden");
   $("#swr-status").textContent = status;
+  // tcp-tester 명령 복사 — 조립된 전문 (sent_hex) 그대로 raw TCP 경로 재현.
+  const tcpBtn = $("#swr-copy-tcp");
+  if (tcpBtn) {
+    tcpBtn.classList.toggle("hidden", !res.sent_hex);
+    tcpBtn.onclick = () => {
+      const cmd = "./build/bin/tcp-tester --addr 127.0.0.1:5021 --hb-interval 10s --send-hex " + res.sent_hex;
+      navigator.clipboard.writeText(cmd)
+        .then(() => toast("tcp-tester 명령 복사됨 — 터미널에 붙여넣기 (edge-tcp 는 wtg-stack-up.sh --with-api 로 기동)"))
+        .catch(() => toast("클립보드 복사 실패", "err"));
+    };
+  }
   $("#swr-sent").textContent = (res.sent_bytes || 0) + " B";
   $("#swr-recv").textContent = (res.recv_bytes || 0) + " B";
   $("#swr-dur").textContent = (res.duration_ms != null ? res.duration_ms : "-") + " ms";
@@ -9175,6 +9278,32 @@ auto rsp = req.send();
 
 # 한 줄 검증 (wtgctl):
 # ${wtgctlHint.split("\n").join("\n# ")}`;
+  },
+
+  // TCP — 레거시 cs 무수정 경로. mci-edge-tcp (raw TCP 전문 gateway) 접속.
+  // 클라이언트 코드를 HTTP 로 포팅하지 않고 소켓 좌표만 바꾸는 시나리오.
+  TCP: (c) => {
+    return `// 채널: HTS/EMP 레거시 무수정 — mci-edge-tcp (raw TCP 전문 gateway :5021)
+//   wire: 지속 TCP 연결 + [4B big-endian length][전문] frame
+//         length 0 (4B 모두 0) = heartbeat — 서버가 빈 frame echo
+//   라우팅: 전문 앞 16B (COMHDR.trxc="${c.code}") 로 자동 결정 (패턴 rule)
+//   ${c.code}${c.name ? "  — " + c.name : ""}
+// C 예 (레거시 cs — 소켓 코드 그대로, 접속 좌표만 변경):
+int sock = tcp_connect("edge-tcp.host", 5021);
+
+// 주기 heartbeat (권장 10~30s — 서버 idle 90s 안에):
+uint32_t zero = 0;                     // 4B 모두 0
+send(sock, &zero, 4, 0);
+recv(sock, &zero, 4, 0);               // 빈 frame echo 수신 = 생존 확인
+
+// 전문 송신 — 기존 조립 코드 산출물 (COMHDR+Input) 그대로:
+uint32_t len = htonl(msg_len);         // big-endian length prefix
+send(sock, &len, 4, 0);
+send(sock, msg_buf, msg_len, 0);
+// 응답: [4B len][output 전문] — COMHDR rcod/mesg 로 판단 (기존과 동일)
+
+# dev 검증 (tcp-tester — 아래 "전문 테스트" 실행 후 명령 복사 버튼 사용):
+# ./build/bin/tcp-tester --addr 127.0.0.1:5021 --hb-interval 10s --send-file msg.bin`;
   },
 };
 

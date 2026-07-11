@@ -49,6 +49,7 @@ func defaultMciTargets() []MciTarget {
 		{Name: "mci-edge-api", URL: "https://127.0.0.1:8090/v1/ping"},
 		{Name: "mci-edge-fix", URL: "http://127.0.0.1:5002/stats"},
 		{Name: "mci-edge-md", URL: "http://127.0.0.1:5012/stats"},
+		{Name: "mci-edge-tcp", URL: "http://127.0.0.1:5022/healthz"},
 		{Name: "quote-forwarder", URL: "http://127.0.0.1:9091/metrics"},
 		{Name: "etcd", URL: "http://127.0.0.1:2379/health"},
 	}

@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -222,5 +223,96 @@ func TestConcurrentConnections(t *testing.T) {
 	}
 	if hits.Load() != 4 {
 		t.Errorf("upstream hit: %d", hits.Load())
+	}
+}
+
+// stats HTTP — 연결/프레임/heartbeat 카운터와 연결별 상세가 노출된다.
+func TestStatsEndpoint(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	cfg := Config{UpstreamURL: upstream.URL, APIUser: "u", StatsAddr: "127.0.0.1:0"}
+	cfg.ListenAddr = "127.0.0.1:0"
+	srv, err := NewServer(cfg, quietLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Start(ctx) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.Addr() == nil || srv.StatsAddr() == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("listen 시작 안 됨")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	conn, err := net.Dial("tcp", srv.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// heartbeat 1회 + 전문 1회.
+	_ = writeFrame(conn, nil)
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _ = readFrame(conn, 1<<20)
+	_ = writeFrame(conn, []byte("W1101T01        x"))
+	_, _ = readFrame(conn, 1<<20)
+
+	resp, err := http.Get("http://" + srv.StatsAddr().String() + "/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if cors := resp.Header.Get("Access-Control-Allow-Origin"); cors != "*" {
+		t.Errorf("CORS: %q", cors)
+	}
+	var st struct {
+		Active     int64 `json:"active_conns"`
+		Total      int64 `json:"total_conns"`
+		FramesIn   int64 `json:"frames_in"`
+		Heartbeats int64 `json:"heartbeats"`
+		Conns      []struct {
+			Remote string `json:"remote"`
+			Frames int64  `json:"frames"`
+		} `json:"conns"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Active != 1 || st.Total != 1 {
+		t.Errorf("conns: active=%d total=%d", st.Active, st.Total)
+	}
+	if st.Heartbeats != 1 || st.FramesIn != 1 {
+		t.Errorf("counters: hb=%d frames_in=%d", st.Heartbeats, st.FramesIn)
+	}
+	if len(st.Conns) != 1 || st.Conns[0].Frames != 1 {
+		t.Errorf("conn 상세: %+v", st.Conns)
+	}
+
+	// healthz.
+	hr, err := http.Get("http://" + srv.StatsAddr().String() + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hr.Body.Close()
+	if hr.StatusCode != 200 {
+		t.Errorf("healthz: %d", hr.StatusCode)
+	}
+
+	// 연결 종료 → active 0.
+	conn.Close()
+	time.Sleep(100 * time.Millisecond)
+	resp2, _ := http.Get("http://" + srv.StatsAddr().String() + "/stats")
+	var st2 struct {
+		Active int64 `json:"active_conns"`
+	}
+	_ = json.NewDecoder(resp2.Body).Decode(&st2)
+	resp2.Body.Close()
+	if st2.Active != 0 {
+		t.Errorf("종료 후 active=%d", st2.Active)
 	}
 }

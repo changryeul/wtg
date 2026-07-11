@@ -32,6 +32,7 @@ func main() {
 		apiUser  = flag.String("api-user", "", "DevMode X-WTG-User (dev 전용 — 운영은 --api-token)")
 		apiToken = flag.String("api-token", "", "JWT access token (Authorization Bearer)")
 		channel  = flag.String("channel", "HTS", "X-WTG-Channel 값 (HTS | EMP)")
+		stats    = flag.String("stats", "", "진단 HTTP listen 주소 (예: 127.0.0.1:5022). 빈값=비활성")
 		idle     = flag.Duration("idle-timeout", 90*time.Second, "무트래픽 (heartbeat 포함) 연결 종료 시간")
 		logLevel = flag.String("log-level", "info", "로그 레벨 (debug|info|warn|error)")
 	)
@@ -44,6 +45,7 @@ func main() {
 		APIUser:     *apiUser,
 		APIToken:    *apiToken,
 		Channel:     *channel,
+		StatsAddr:   *stats,
 		IdleTimeout: *idle,
 	}, logger)
 	if err != nil {

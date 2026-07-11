@@ -155,6 +155,7 @@ if [ "$WITH_API" = "1" ]; then
   # 이므로 같이 기동. 검증: ./build/bin/tcp-tester --addr 127.0.0.1:5021
   start mci-edge-tcp ./build/bin/mci-edge-tcp \
     --listen "${LISTEN_EDGE_TCP:-:5021}" \
+    --stats "${STATS_EDGE_TCP:-127.0.0.1:5022}" \
     --upstream "http://127.0.0.1${LISTEN_API:-:8080}" \
     --api-user "${EDGE_TCP_USER:-hts01}"
 fi

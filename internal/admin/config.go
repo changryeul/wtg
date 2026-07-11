@@ -150,6 +150,9 @@ type Config struct {
 	// 비면 단일 호스트 기본 목록 (wsmon_proxy.go). 다중 호스트 배치용.
 	WsmonTargets string
 
+	// TcpGwStatsURL — mci-edge-tcp stats base URL ("TCP 게이트웨이" 페이지).
+	TcpGwStatsURL string
+
 	// PriceURL — mci-price 의 HTTP base URL (모니터링 endpoint 용).
 	// 비면 default http://127.0.0.1:8082. admin UI 의 "시세 통계" 페이지가
 	// /v1/price-stats, /v1/best-stats 를 same-origin proxy 로 조회.
@@ -441,6 +444,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.UpstreamAPIURL, "upstream-api", cfg.UpstreamAPIURL, "mci-api base URL — Tx 테스터용 reverse proxy. 예: http://127.0.0.1:8080. 비면 비활성")
 	fs.StringVar(&cfg.MciHealthTargets, "mci-health-targets", cfg.MciHealthTargets, "대시보드 프로세스 상태 체크 대상 (name=url 콤마 구분). 비면 단일 호스트 기본 목록")
 	fs.StringVar(&cfg.WsmonTargets, "wsmon-targets", cfg.WsmonTargets, "WS 모니터 proxy 대상 (name=baseURL 콤마 구분). 비면 단일 호스트 기본 목록")
+	fs.StringVar(&cfg.TcpGwStatsURL, "tcp-gw-stats", cfg.TcpGwStatsURL, "mci-edge-tcp stats base URL (기본 http://127.0.0.1:5022)")
 	fs.StringVar(&cfg.PriceURL, "price-url", cfg.PriceURL, "mci-price HTTP base URL — 시세 통계 proxy. 기본 http://127.0.0.1:8082")
 	fs.StringVar(&cfg.ChartURL, "chart-url", cfg.ChartURL, "mci-chart HTTP base URL — 차트 통계 proxy. 기본 http://127.0.0.1:8086")
 	fs.StringVar(&cfg.PushURL, "push-url", cfg.PushURL, "mci-push HTTP base URL — push-test source=http 시 사용. 기본 http://127.0.0.1:8081")

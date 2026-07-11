@@ -540,6 +540,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// WS 모니터 reverse-proxy — 브라우저가 서비스 포트에 직접 못 닿는 원격
 	// 운영에서도 admin 포트 하나로 ws 모니터링 (Upgrade 통과).
 	mux.HandleFunc("GET /v1/admin/wsmon/{svc}/{rest...}", WsmonProxy(s.cfg.WsmonTargets, s.logger))
+	// TCP 게이트웨이 (mci-edge-tcp) stats — admin 경유 proxy.
+	tcpGwURL := s.cfg.TcpGwStatsURL
+	if tcpGwURL == "" {
+		tcpGwURL = "http://127.0.0.1:5022"
+	}
+	mux.HandleFunc("GET /v1/admin/tcp-gw/stats", TcpGwStats(tcpGwURL, s.logger))
 	// alias × tier 통계 — mci-api 의 /v1/admin/alias-stats 로 reverse proxy.
 	// UI 의 운영 대시보드에서 alias 별 calls/latency/error_rate × tier 분리 관찰.
 	mux.HandleFunc("GET /v1/admin/alias-stats", UpstreamProxy(s.cfg.UpstreamAPIURL, "/v1/admin/alias-stats", s.logger))

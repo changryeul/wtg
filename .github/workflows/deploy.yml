@@ -201,15 +201,20 @@ jobs:
 
           # 시세 fan-in 검증 — forwarder gRPC → price 로 시세가 실제 흐르는지.
           # dev-feed 가 UDP 시세를 주입하므로 received 가 0 보다 커야 정상.
-          # (broker→gRPC 전환 후 시세 파이프가 끊기면 여기서 잡힌다)
-          sleep 5
-          recv=$(curl -s -m 3 http://127.0.0.1:8082/v1/price-stats \
-                 | grep -o '"received":[0-9]*' | grep -o '[0-9]*' || echo 0)
+          # enable --now 병렬 기동이라 forwarder→price gRPC 파이프 워밍업에 시간이
+          # 걸릴 수 있어 폴링 (최대 ~40s). 계속 0 이면 진짜 fan-in 끊김.
+          recv=0
+          for _ in $(seq 1 8); do
+            recv=$(curl -s -m 3 http://127.0.0.1:8082/v1/price-stats \
+                   | grep -o '"received":[0-9]*' | grep -o '[0-9]*' || echo 0)
+            [ "${recv:-0}" -gt 0 ] 2>/dev/null && break
+            sleep 5
+          done
           printf "  %-45s received=%s\n" "price fan-in (forwarder→gRPC)" "${recv:-0}"
           if [ "${recv:-0}" -gt 0 ] 2>/dev/null; then
             echo "  시세 fan-in OK"
           else
-            echo "::error::price 시세 미수신 — forwarder gRPC fan-in 끊김 의심"
+            echo "::error::price 시세 미수신 (40s 폴링) — forwarder gRPC fan-in 끊김"
             fail=1
           fi
           exit $fail

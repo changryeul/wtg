@@ -1,7 +1,11 @@
-# WTG quote-forwarder — UDP FIX 4.4 시세 수신 → broker publish (PRICE exchange).
+# WTG quote-forwarder — UDP FIX 4.4 시세 수신 → mci-price gRPC PublishTick 직접.
+# 시세 fan-in broker 분리 1단계: broker publish 대신 gRPC 로 price 에 직접 push
+# (broker 의 고빈도 publish 부하 = SIGABRT 주범 제거). price 는 broker 연결을
+# 유지하므로 cs fan-out (ExchangeQuote publish) 은 그대로 — fan-out 분리는
+# 별도 단계 (docs/edge-tcp-quote-push.md). --broker-host 는 미사용 (참고용 유지).
 # feed 2개 (SMB/KMB) 수신 — BestConsumer 다중시장 best 산정 경로 활성.
 [Unit]
-Description=WTG quote-forwarder — UDP FIX 시세 → broker publish (SMB/KMB)
+Description=WTG quote-forwarder — UDP FIX 시세 → mci-price gRPC (SMB/KMB)
 After=network-online.target wtg-mci-price.service
 Wants=network-online.target wtg-mci-price.service
 # broker 늦게 떠도 자동 복구되도록 start limit 해제 (무한 재시도)
@@ -16,6 +20,8 @@ EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
 ExecStart=/home/winway/nh-fxallone-server/wtg/bin/quote-forwarder \
     --multi=SMB:30044,KMB:30045 \
     --bind=127.0.0.1 \
+    --publish-mode=grpc \
+    --price-grpc=127.0.0.1:50051 \
     --broker-host=${BROKER_HOST} \
     --broker-port=${BROKER_PORT} \
     --metrics=127.0.0.1:9091

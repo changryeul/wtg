@@ -32,14 +32,21 @@ type MciTarget struct {
 	URL      string `json:"url"`
 	Tier     string `json:"tier,omitempty"`
 	Upstream string `json:"upstream,omitempty"`
+	// Access — 클라이언트 접속 프로토콜/포트 (health URL 과 다를 수 있음:
+	// 예 edge-tcp 는 health 5022(HTTP) 지만 서비스는 5021(raw TCP)). 표시용.
+	Access string `json:"access,omitempty"`
+	// External — 외부(사외) 클라이언트가 붙는 포트 → SG 인바운드 개방 대상.
+	External bool `json:"external,omitempty"`
 }
 
-// MciHealthEntry — 개별 서비스 체크 결과. 토폴로지 렌더용 Tier/Upstream 포함.
+// MciHealthEntry — 개별 서비스 체크 결과. 토폴로지 렌더용 Tier/Upstream/Access 포함.
 type MciHealthEntry struct {
 	Name      string `json:"name"`
 	URL       string `json:"url"`
 	Tier      string `json:"tier,omitempty"`
 	Upstream  string `json:"upstream,omitempty"`
+	Access    string `json:"access,omitempty"`
+	External  bool   `json:"external,omitempty"`
 	Up        bool   `json:"up"`
 	LatencyMs int64  `json:"latency_ms"`
 	Error     string `json:"error,omitempty"`
@@ -50,20 +57,20 @@ type MciHealthEntry struct {
 func defaultMciTargets() []MciTarget {
 	return []MciTarget{
 		// Infra — 코어 의존 (broker 는 TCP-only 라 HTTP health 없음 → 상단 broker KPI 로 관측).
-		{Name: "etcd", URL: "http://127.0.0.1:2379/health", Tier: "infra"},
-		// Internal — mci 코어. api/price 는 broker 로 나감.
-		{Name: "mci-admin", URL: "http://127.0.0.1:9090/", Tier: "internal", Upstream: "etcd"}, // self
-		{Name: "mci-api", URL: "http://127.0.0.1:8080/v1/ping", Tier: "internal", Upstream: "broker"},
-		{Name: "mci-price", URL: "http://127.0.0.1:8082/v1/price-stats", Tier: "internal", Upstream: "broker"},
-		{Name: "mci-push", URL: "http://127.0.0.1:8081/v1/ping", Tier: "internal", Upstream: "broker"},
-		{Name: "quote-forwarder", URL: "http://127.0.0.1:9091/metrics", Tier: "internal", Upstream: "mci-price"},
-		// DMZ — 외부 채널 종단. 각자 바라보는 internal upstream 명시.
-		{Name: "mci-edge-api", URL: "https://127.0.0.1:8090/v1/ping", Tier: "dmz", Upstream: "mci-api"},
-		{Name: "mci-edge-tcp", URL: "http://127.0.0.1:5022/healthz", Tier: "dmz", Upstream: "mci-api"},
-		{Name: "mci-edge-fix-ord", URL: "http://127.0.0.1:5002/stats", Tier: "dmz", Upstream: "mci-api"},
-		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics", Tier: "dmz", Upstream: "mci-price"},
-		{Name: "mci-edge-fix-md", URL: "http://127.0.0.1:5012/stats", Tier: "dmz", Upstream: "mci-price"},
-		{Name: "mci-edge-push", URL: "http://127.0.0.1:8084/v1/ping", Tier: "dmz", Upstream: "mci-push"},
+		{Name: "etcd", URL: "http://127.0.0.1:2379/health", Tier: "infra", Access: "HTTP :2379"},
+		// Internal — mci 코어 (사내망 전용, SG 개방 대상 아님).
+		{Name: "mci-admin", URL: "http://127.0.0.1:9090/", Tier: "internal", Upstream: "etcd", Access: "HTTP :9090"}, // self
+		{Name: "mci-api", URL: "http://127.0.0.1:8080/v1/ping", Tier: "internal", Upstream: "broker", Access: "HTTP :8080"},
+		{Name: "mci-price", URL: "http://127.0.0.1:8082/v1/price-stats", Tier: "internal", Upstream: "broker", Access: "gRPC :50051 / HTTP :8082"},
+		{Name: "mci-push", URL: "http://127.0.0.1:8081/v1/ping", Tier: "internal", Upstream: "broker", Access: "WS :8081 / gRPC :50052"},
+		{Name: "quote-forwarder", URL: "http://127.0.0.1:9091/metrics", Tier: "internal", Upstream: "mci-price", Access: "UDP :30044-45"},
+		// DMZ — 외부 채널 종단. External=true → SG 인바운드 개방 대상 (해당 대역만).
+		{Name: "mci-edge-api", URL: "https://127.0.0.1:8090/v1/ping", Tier: "dmz", Upstream: "mci-api", Access: "HTTPS :8090", External: true},
+		{Name: "mci-edge-tcp", URL: "http://127.0.0.1:5022/healthz", Tier: "dmz", Upstream: "mci-api", Access: "raw TCP :5021", External: true},
+		{Name: "mci-edge-fix-ord", URL: "http://127.0.0.1:5002/stats", Tier: "dmz", Upstream: "mci-api", Access: "FIX :5001", External: true},
+		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics", Tier: "dmz", Upstream: "mci-price", Access: "WS :8083", External: true},
+		{Name: "mci-edge-fix-md", URL: "http://127.0.0.1:5012/stats", Tier: "dmz", Upstream: "mci-price", Access: "FIX :5011", External: true},
+		{Name: "mci-edge-push", URL: "http://127.0.0.1:8084/v1/ping", Tier: "dmz", Upstream: "mci-push", Access: "WS :8084", External: true},
 	}
 }
 
@@ -116,7 +123,7 @@ func checkMciTargets(ctx context.Context, targets []MciTarget) []MciHealthEntry 
 		wg.Add(1)
 		go func(i int, t MciTarget) {
 			defer wg.Done()
-			e := MciHealthEntry{Name: t.Name, URL: t.URL, Tier: t.Tier, Upstream: t.Upstream}
+			e := MciHealthEntry{Name: t.Name, URL: t.URL, Tier: t.Tier, Upstream: t.Upstream, Access: t.Access, External: t.External}
 			cctx, cancel := context.WithTimeout(ctx, mciHealthTimeout)
 			defer cancel()
 			start := time.Now()

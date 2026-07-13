@@ -523,6 +523,10 @@
                 <div><div class="text-[10px] uppercase tracking-widest text-slate-500 mb-2 text-center">Infra</div><div id="topo-infra" class="space-y-2"></div></div>
               </div>
             </div>
+            <div class="mt-3 text-[10px] text-slate-500 flex items-center gap-3">
+              <span class="text-warn">🌐 외부 노출 (SG 인바운드 개방 대상 — 해당 대역만)</span>
+              <span>· 각 노드에 접속 프로토콜/포트 표시</span>
+            </div>
             <div id="mci-health-grid" class="hidden"></div>
           </div>
         </div>
@@ -4122,15 +4126,22 @@ async function refreshMciHealth() {
     const known = s.up !== undefined;
     const dotCls = s._ref ? "bg-slate-500" : (s.up ? "bg-good" : "bg-bad");
     const el = h("div", {
-      class: "mci-node flex items-center gap-2 px-2.5 py-2 rounded-lg bg-ink-800/60 border border-transparent",
+      // External(SG 개방 대상) 은 좌측 강조 테두리로 구분.
+      class: "mci-node flex flex-col gap-0.5 px-2.5 py-2 rounded-lg bg-ink-800/60 border " +
+             (s.external ? "border-l-2 border-l-warn border-transparent" : "border-transparent"),
       dataset: { node: s.name },
       title: s._ref ? "broker (TCP) — 상단 broker 카드 참조"
-                    : (s.url + (s.error ? " — " + s.error : "")),
+                    : (s.url + (s.error ? " — " + s.error : "")
+                       + (s.external ? "  · 외부 노출 (SG 개방 대상)" : "")),
     },
-      h("span", { class: "w-2 h-2 rounded-full shrink-0 " + dotCls }),
-      h("span", { class: "truncate text-sm", text: s.name.replace("mci-", "") }),
-      h("span", { class: "ml-auto text-[10px] font-mono " + (s._ref ? "text-slate-500" : (s.up ? "text-slate-500" : "text-bad")),
-                  text: s._ref ? "—" : (known && s.up ? s.latency_ms + "ms" : "DOWN") }));
+      h("div", { class: "flex items-center gap-2" },
+        h("span", { class: "w-2 h-2 rounded-full shrink-0 " + dotCls }),
+        h("span", { class: "truncate text-sm", text: s.name.replace("mci-", "") }),
+        h("span", { class: "ml-auto text-[10px] font-mono " + (s._ref ? "text-slate-500" : (s.up ? "text-slate-500" : "text-bad")),
+                    text: s._ref ? "—" : (known && s.up ? s.latency_ms + "ms" : "DOWN") })),
+      // 접속 프로토콜/포트 — external 은 주황(SG 대상), 내부는 흐림.
+      s.access ? h("div", { class: "text-[10px] font-mono pl-4 " + (s.external ? "text-warn" : "text-slate-500"),
+                            text: (s.external ? "🌐 " : "") + s.access }) : null);
     return el;
   };
 

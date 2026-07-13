@@ -34,19 +34,21 @@ func main() {
 		channel  = flag.String("channel", "HTS", "X-WTG-Channel 값 (HTS | EMP)")
 		stats    = flag.String("stats", "", "진단 HTTP listen 주소 (예: 127.0.0.1:5022). 빈값=비활성")
 		idle     = flag.Duration("idle-timeout", 90*time.Second, "무트래픽 (heartbeat 포함) 연결 종료 시간")
+		selectIP = flag.String("select-server-ip", "", "cs select-server(FC 0x01) 응답 IP. 빈값=conn LocalAddr (cs 는 ip1==ip2 만 확인)")
 		logLevel = flag.String("log-level", "info", "로그 레벨 (debug|info|warn|error)")
 	)
 	flag.Parse()
 
 	logger := newLogger(*logLevel)
 	srv, err := edgetcp.NewServer(edgetcp.Config{
-		ListenAddr:  *listen,
-		UpstreamURL: *upstream,
-		APIUser:     *apiUser,
-		APIToken:    *apiToken,
-		Channel:     *channel,
-		StatsAddr:   *stats,
-		IdleTimeout: *idle,
+		ListenAddr:     *listen,
+		UpstreamURL:    *upstream,
+		APIUser:        *apiUser,
+		APIToken:       *apiToken,
+		Channel:        *channel,
+		StatsAddr:      *stats,
+		IdleTimeout:    *idle,
+		SelectServerIP: *selectIP,
 	}, logger)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mci-edge-tcp: config 에러: %v\n", err)

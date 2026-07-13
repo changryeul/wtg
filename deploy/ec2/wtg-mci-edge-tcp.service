@@ -22,6 +22,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-tcp \
     --stats=127.0.0.1:5022 \
     --upstream=http://127.0.0.1:8080 \
     --api-user=hts01 \
+    --select-server-ip=127.0.0.1 \
     --channel=HTS \
     --log-level=info
 

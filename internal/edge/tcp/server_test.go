@@ -371,3 +371,65 @@ func TestStatsCapturesUsid(t *testing.T) {
 		t.Errorf("usid 캡처: %+v", st.Conns)
 	}
 }
+
+// select-server (FC 0x01) — cs 가 연결 직후 보내는 [00 00 00 03][0c 00 01].
+// edge-tcp 는 ip1==ip2 응답 (TH echo + ip1 24B + ip2 24B) 을 줘야 cs 가 진행.
+func TestSelectServer(t *testing.T) {
+	addr, _ := startServer(t, Config{UpstreamURL: "http://127.0.0.1:1", SelectServerIP: "10.9.8.7"})
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	// select-server 요청: TH = [0x0c, 0x00, 0x01] (BPI+EPI, FC=0x01).
+	if err := writeFrame(conn, []byte{0x0c, 0x00, 0x01}); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := readFrame(conn, 1<<20)
+	if err != nil {
+		t.Fatalf("select-server 응답 수신: %v", err)
+	}
+	// 응답: TH echo(3B) + ip1(24B) + ip2(24B) = 51B.
+	if len(resp) != 3+24+24 {
+		t.Fatalf("응답 길이 %d, want 51", len(resp))
+	}
+	if resp[0] != 0x0c || resp[2] != 0x01 {
+		t.Errorf("TH echo: % x", resp[:3])
+	}
+	ip1 := strings.TrimRight(string(resp[3:27]), "\x00")
+	ip2 := strings.TrimRight(string(resp[27:51]), "\x00")
+	if ip1 != "10.9.8.7" || ip2 != "10.9.8.7" {
+		t.Errorf("ip1=%q ip2=%q, want 둘 다 10.9.8.7", ip1, ip2)
+	}
+	if ip1 != ip2 {
+		t.Error("ip1 != ip2 면 cs 가 재접속함")
+	}
+
+	// select-server 후 연결 유지 — heartbeat 왕복.
+	if err := writeFrame(conn, nil); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := readFrame(conn, 1<<20); err != nil || len(p) != 0 {
+		t.Fatalf("select-server 후 heartbeat 실패: %v", err)
+	}
+}
+
+// SelectServerIP 빈값이면 conn LocalAddr IP 사용 — ip1==ip2 유지.
+func TestSelectServerDefaultIP(t *testing.T) {
+	addr, _ := startServer(t, Config{UpstreamURL: "http://127.0.0.1:1"})
+	conn, _ := net.Dial("tcp", addr)
+	defer conn.Close()
+	_ = writeFrame(conn, []byte{0x0c, 0x00, 0x01})
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := readFrame(conn, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip1 := strings.TrimRight(string(resp[3:27]), "\x00")
+	ip2 := strings.TrimRight(string(resp[27:51]), "\x00")
+	if ip1 == "" || ip1 != ip2 {
+		t.Errorf("기본 IP: ip1=%q ip2=%q", ip1, ip2)
+	}
+}

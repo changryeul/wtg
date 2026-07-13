@@ -62,6 +62,10 @@ type Config struct {
 	// GET /stats (연결/카운터 + 연결별 상세, CORS *) + GET /healthz.
 	// admin 의 /v1/admin/tcp-gw/stats proxy 와 대시보드 mci-health 가 소비.
 	StatsAddr string
+	// SelectServerIP — cs 의 select-server (FC 0x01) 응답에 넣을 서버 IP.
+	// cs 는 ip1==ip2 면 같은 소켓 유지, 다르면 ip2 로 재접속(LB). 두 필드에
+	// 동일 값을 넣어 재접속 없이 진행시킨다. 빈값이면 conn 의 LocalAddr IP 사용.
+	SelectServerIP string
 }
 
 func (c *Config) fill() {
@@ -118,6 +122,39 @@ const (
 	comhdrUsidOff = 74
 	comhdrUsidLen = 30
 )
+
+// cs 프로토콜 FunctionCode (NymphSocket.cpp FunctionCode 표).
+//
+//	0x01 select-server / 0x02 crypto 키교환 / 'A' sign-on / 'B' cookie / 'C' 전문.
+const (
+	fcSelectServer = 0x01
+	fcCrypto       = 0x02
+	// select-server 응답의 ip 필드 크기 (ASCII null-terminated).
+	selectServerIPLen = 24
+)
+
+// replySelectServer 는 cs 의 select-server (FC 0x01) 요청에 응답한다.
+// 응답 = [TH echo 3B][ip1 24B][ip2 24B]. cs 는 strcmp(ip1,ip2) 만 보고
+// 같으면 현 소켓 유지, 다르면 ip2 로 재접속(LB). 두 필드에 동일 IP 를 넣어
+// 재접속 없이 진행시킨다. IP 는 cfg.SelectServerIP, 빈값이면 conn LocalAddr.
+func (s *Server) replySelectServer(conn net.Conn, reqTH []byte) error {
+	ip := s.cfg.SelectServerIP
+	if ip == "" {
+		if host, _, err := net.SplitHostPort(conn.LocalAddr().String()); err == nil {
+			ip = host
+		}
+	}
+	ipField := make([]byte, selectServerIPLen) // null-padded ASCII
+	copy(ipField, ip)
+
+	resp := make([]byte, 0, 3+2*selectServerIPLen)
+	resp = append(resp, reqTH[:3]...) // TH echo (0c 00 01)
+	resp = append(resp, ipField...)   // ip1
+	resp = append(resp, ipField...)   // ip2 (== ip1)
+
+	s.logger.Info("select-server 응답", slog.String("ip", ip))
+	return writeFrame(conn, resp)
+}
 
 // NewServer — cfg 검증 + 기본값 채움.
 func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
@@ -293,6 +330,27 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn, ci *connInfo) {
 			if err := writeFrame(conn, nil); err != nil {
 				return
 			}
+			continue
+		}
+		// cs 프로토콜 제어 프레임 — payload 앞 3B 가 TH(transport header):
+		//   TH[0]=BPI+EPI flags(0x0c=단일완결), TH[2]=FunctionCode.
+		//   FC 0x01 = select-server (LB 라우팅) — 연결 직후 무조건 최초.
+		//   전문(sign-on 'A'/cookie 'B'/일반 'C') 전에 반드시 통과해야 함.
+		// 자세히는 docs/edge-tcp-cs-protocol.md.
+		if len(payload) == 3 && payload[2] == fcSelectServer {
+			touch(false)
+			if err := s.replySelectServer(conn, payload); err != nil {
+				return
+			}
+			continue
+		}
+		// crypto 키교환 (FC 0x02) — HTS 모드(m_bHTSYN) INISAFENET 세션키 교환.
+		// 미구현: HTS 모드 비활성 또는 crypto 우회 합의가 선행돼야 함
+		// (docs/edge-tcp-cs-protocol.md). 여기서 막히면 이 로그로 확인.
+		if len(payload) >= 3 && payload[2] == fcCrypto {
+			touch(false)
+			s.logger.Warn("crypto(FC 0x02) 미구현 — cs HTS 모드 비활성 또는 crypto 우회 합의 필요",
+				slog.Int64("conn", ci.ID), slog.Int("payload_len", len(payload)))
 			continue
 		}
 		touch(false)

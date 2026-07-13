@@ -45,22 +45,40 @@ cs 는 TCP 연결 후 아래 순서로 진행. 각 단계가 통과해야 다음
 
 구현: `internal/edge/tcp/server.go` `replySelectServer`. TH[2]==0x01 & len==3 감지.
 
-## crypto (FC 0x02) — 미구현 (막힌 관문)
+## crypto (FC 0x02) — HTSYN=N 으로 우회 (소스 확정)
 
-HTS 모드(`m_bHTSYN`, 현 빌드 INISAFENET 활성) 에서 select-server 다음에 옴.
-`[len][01 00 02][RH 37B][INISAFE 암호화 블롭]` 송신 → 서버가 복호화·세션키 응답.
+MyMQChannelImpl.cpp 분석 결과, INISAFENET 빌드에서 crypto 는 **`if(m_bHTSYN)`**
+(MyMQChannelImpl.cpp:1133) 로 가드된다. `m_bHTSYN` 은 config 파일
+**`[Application] HTSYN`** 값이 `"Y"` 일 때만 TRUE (:516-518, 기본 FALSE).
 
-edge-tcp 는 이 프레임을 감지해 WARN 로그만 남기고 미처리 (연결 유지). 진행하려면:
-- **옵션 A**: cs 쪽 HTS 모드(`m_bHTSYN`) 비활성 → 3단계 생략, 바로 sign-on.
-- **옵션 B**: edge-tcp 가 INISAFENET v7.2 세션키 교환 구현 (무거움).
+→ **cs 를 `HTSYN=N` (또는 미설정) 으로 두면 FC 0x02 를 아예 안 보내고 바로
+login 으로 간다.** edge-tcp 는 crypto 구현 불필요 (INISAFE 라이브러리 회피).
 
-→ 운영/cs 팀과 A 가능 여부 합의가 선행. 합의 후 이 문서에 결정 기록.
+주의: 빌드 매크로가 `USE_INISAFENET` 이 아니라 `USE_HEADER_OPENSSL` 이면 crypto 가
+무조건(HTSYN 무관) 실행된다 (MyMQChannelImpl.h:13-20). cs 빌드가 INISAFENET
+(또는 Xecure 비-'H' userType) 인지 확인 필요. edge-tcp 는 FC 0x02 수신 시 WARN
+로그만 남기므로, 로그에 crypto 가 찍히면 HTSYN 또는 빌드 확인.
 
-## 전문 (FC 'A'/'B'/'C') — crypto 이후 (미구현)
+## 전문 (FC 'A' sign-on / 'B' cookie / 'C' 일반) — 구현됨
 
-crypto 통과 후 cs 가 보내는 실제 업무 프레임. TH(+RH) 를 벗기고 COMHDR(512B)+body
-를 `/v1/tx` raw 모드로 forward 해야 함. 현재 edge-tcp 는 payload 를 그대로 전문으로
-취급하므로, TH/RH 파싱을 crypto 합의 후 함께 구현.
+프레임: `[4B len][TH 3B][RH 37B (RHI set 시)][COMHDR 512B + body]`.
+- **TH flags** (TH[0], NymphSocket.h:155): RHI 0x01 / CPI 0x02 / BPI 0x04 /
+  EPI 0x08 / ZIP 0x10 / ERR 0x20 / ENC 0x40. FC = TH[2].
+- **RH 37B** (MyMqHeader.h): rhFlag(1)+winKey(4)+seqNo(4)+svcCode(4)+
+  exchCode(8)+**routingKey(16)**. RHI 비트가 set 일 때만 첨부. 전문(FC 'C')은 항상 set.
+- length prefix 는 **자신 제외** (= TH+RH+body 크기).
+
+edge-tcp 처리 (server.go handleConn):
+- payload[0] < 0x20 (제어값=flags) → cs TH-framed. `hdrLen = 3 + (RHI ? 37 : 0)`
+  만큼 벗겨 순수 COMHDR body 를 `/v1/tx` raw 로 forward (trxc = body[:16]).
+- payload[0] ≥ 0x20 (ASCII trxc) → raw COMHDR (tcp-tester 등 TH 없는 경로), 그대로.
+- **응답 재프레이밍**: cs TH-framed 요청은 응답도 `[TH][RH] echo + engine output`
+  으로 감싸 회신 (cs recv 파서가 RH.routingKey 로 요청-응답 매칭).
+- **cookie (FC 'B')** 는 응답 불필요 (MyMQChannelImpl.cpp:785 — cs 가 안 기다림).
+  서버는 usid accept + 로그만.
+
+login 흐름 (MyMQChannelImpl.cpp): FC 'C' transaction (routingKey `SCBS0000Q01`)
+또는 SSO → 정상 tx 응답 (ReplyCode "00000") → cs 가 FC 'B' cookie emit → 이후 전문.
 
 ## 참고
 

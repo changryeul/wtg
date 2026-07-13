@@ -129,8 +129,18 @@ const (
 const (
 	fcSelectServer = 0x01
 	fcCrypto       = 0x02
+	fcSignOn       = 'A' // 0x41
+	fcCookie       = 'B' // 0x42 — 로그온 쿠키 (응답 불필요)
+	fcTx           = 'C' // 0x43 — 일반 전문
 	// select-server 응답의 ip 필드 크기 (ASCII null-terminated).
 	selectServerIPLen = 24
+	// TH(3B) flags 비트 (NymphSocket.h). RHI set 이면 RH(37B) 첨부.
+	thFlagRHI = 0x01
+	thLen     = 3
+	rhLen     = 37
+	// cs TH-framed 프레임 판별 — payload[0] 가 flags(<0x20 제어값) 면 TH 프레임,
+	// ASCII trxc(영문, ≥0x20) 면 raw COMHDR (tcp-tester 등 TH 없는 경로).
+	thFlagsMax = 0x20
 )
 
 // replySelectServer 는 cs 의 select-server (FC 0x01) 요청에 응답한다.
@@ -345,39 +355,70 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn, ci *connInfo) {
 			continue
 		}
 		// crypto 키교환 (FC 0x02) — HTS 모드(m_bHTSYN) INISAFENET 세션키 교환.
-		// 미구현: HTS 모드 비활성 또는 crypto 우회 합의가 선행돼야 함
-		// (docs/edge-tcp-cs-protocol.md). 여기서 막히면 이 로그로 확인.
+		// 미구현: cs 를 HTSYN=N 으로 설정하면 이 단계 생략 (docs/edge-tcp-cs-protocol.md).
 		if len(payload) >= 3 && payload[2] == fcCrypto {
 			touch(false)
-			s.logger.Warn("crypto(FC 0x02) 미구현 — cs HTS 모드 비활성 또는 crypto 우회 합의 필요",
+			s.logger.Warn("crypto(FC 0x02) 미구현 — cs [Application] HTSYN=N 설정 필요",
 				slog.Int64("conn", ci.ID), slog.Int("payload_len", len(payload)))
 			continue
 		}
 		touch(false)
-		// 연결별 사용자 관측 — 전문 COMHDR 의 usid 캡처.
-		if len(payload) >= comhdrUsidOff+comhdrUsidLen {
-			if u := strings.TrimSpace(string(payload[comhdrUsidOff : comhdrUsidOff+comhdrUsidLen])); u != "" {
-				s.mu.Lock()
-				ci.Usid = u
-				s.mu.Unlock()
+
+		// 프레이밍 판별:
+		//   cs TH-framed — payload[0] 가 flags(<0x20 제어값). [TH 3B][RH 37B?][COMHDR body]
+		//   raw COMHDR   — payload[0] 가 ASCII trxc(≥0x20). tcp-tester 등 TH 없는 경로.
+		header, body := []byte(nil), payload
+		if len(payload) >= thLen && payload[0] < thFlagsMax {
+			hdrLen := thLen
+			if payload[0]&thFlagRHI != 0 {
+				hdrLen += rhLen // RHI set → RH(37B) 첨부
+			}
+			if len(payload) < hdrLen {
+				s.logger.Warn("TH/RH 헤더 길이 부족", slog.Int64("conn", ci.ID), slog.Int("len", len(payload)))
+				continue
+			}
+			header, body = payload[:hdrLen], payload[hdrLen:]
+			// cookie(FC 'B') — 서버는 신원 accept 만, 응답 없음 (cs 가 안 기다림).
+			if payload[2] == fcCookie {
+				s.captureUsid(ci, body)
+				s.logger.Info("cs cookie(FC B) 수신 — 신원 등록", slog.Int64("conn", ci.ID), slog.String("usid", ci.Usid))
+				continue
 			}
 		}
-		resp, err := s.forward(ctx, payload)
+
+		s.captureUsid(ci, body)
+		resp, err := s.forward(ctx, body)
 		if err != nil {
 			s.logger.Warn("upstream forward 실패",
 				slog.Int64("conn", ci.ID), slog.Any("error", err))
 			s.mu.Lock()
 			s.upstreamErrors++
 			s.mu.Unlock()
-			// transport 실패도 클라이언트에 알림 — text 본문 frame (Phase A).
 			resp = []byte("WTG-EDGE-TCP-ERROR: " + err.Error())
 		}
-		if err := writeFrame(conn, resp); err != nil {
+		// cs TH-framed 요청은 응답도 [TH][RH] echo 로 재프레이밍 (cs recv 파서가
+		// RH.RoutingKey 로 요청-응답 매칭). raw COMHDR 는 그대로 (tcp-tester).
+		out := resp
+		if header != nil {
+			out = append(append([]byte(nil), header...), resp...)
+		}
+		if err := writeFrame(conn, out); err != nil {
 			return
 		}
 		s.mu.Lock()
 		s.framesOut++
 		s.mu.Unlock()
+	}
+}
+
+// captureUsid — 전문 COMHDR body 의 usid 를 연결에 기록 (관측용).
+func (s *Server) captureUsid(ci *connInfo, body []byte) {
+	if len(body) >= comhdrUsidOff+comhdrUsidLen {
+		if u := strings.TrimSpace(string(body[comhdrUsidOff : comhdrUsidOff+comhdrUsidLen])); u != "" {
+			s.mu.Lock()
+			ci.Usid = u
+			s.mu.Unlock()
+		}
 	}
 }
 

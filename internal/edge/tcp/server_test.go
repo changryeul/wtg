@@ -433,3 +433,91 @@ func TestSelectServerDefaultIP(t *testing.T) {
 		t.Errorf("기본 IP: ip1=%q ip2=%q", ip1, ip2)
 	}
 }
+
+// buildCSFrame — cs TH(+RH) framed 전문 프레임 생성 헬퍼.
+func buildCSFrame(fc byte, rhi bool, comhdrBody []byte) []byte {
+	flags := byte(0x0c) // BPI+EPI
+	if rhi {
+		flags |= 0x01 // RHI
+	}
+	th := []byte{flags, 0x00, fc}
+	frame := append([]byte{}, th...)
+	if rhi {
+		rh := make([]byte, 37)                                 // rhFlag+winKey+seqNo+svc+exch+routingKey
+		copy(rh[13:29], comhdrBody[:min(16, len(comhdrBody))]) // routingKey ~ trxc echo (관측용)
+		frame = append(frame, rh...)
+	}
+	frame = append(frame, comhdrBody...)
+	return frame
+}
+
+// cs FC 'C' 전문 — TH(3)+RH(37) 벗기고 COMHDR body 만 forward, 응답은 TH+RH echo 로 재프레이밍.
+func TestCSTransactionFrame(t *testing.T) {
+	comhdr := []byte("W1101T01" + strings.Repeat(" ", 8) + strings.Repeat(" ", 488) + "DATA") // trxc 16B + ...
+	repBody := []byte("W1101T01" + strings.Repeat(" ", 504) + "OK")
+
+	var gotBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a := r.Header.Get("X-WTG-Alias"); a != "W1101T01" {
+			t.Errorf("alias: %q", a)
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		_, _ = w.Write(repBody)
+	}))
+	defer upstream.Close()
+
+	addr, _ := startServer(t, Config{UpstreamURL: upstream.URL, APIUser: "hts01"})
+	conn, _ := net.Dial("tcp", addr)
+	defer conn.Close()
+
+	req := buildCSFrame(fcTx, true, comhdr) // RHI set → TH3+RH37+COMHDR
+	if err := writeFrame(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	resp, err := readFrame(conn, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// upstream 이 받은 body = 순수 COMHDR (TH/RH 벗겨짐)
+	if string(gotBody) != string(comhdr) {
+		t.Errorf("forward body 가 COMHDR 아님 (TH/RH 미제거): %dB", len(gotBody))
+	}
+	// 응답 = TH(3)+RH(37) echo + repBody
+	if len(resp) != thLen+rhLen+len(repBody) {
+		t.Fatalf("응답 길이 %d, want %d (TH+RH+body)", len(resp), thLen+rhLen+len(repBody))
+	}
+	if resp[2] != fcTx {
+		t.Errorf("응답 FC: %c", resp[2])
+	}
+	if string(resp[thLen+rhLen:]) != string(repBody) {
+		t.Errorf("응답 body: %q", resp[thLen+rhLen:])
+	}
+}
+
+// cs FC 'B' cookie — 응답 불필요, accept + usid 캡처만. RH 없음(RHI clear).
+func TestCSCookieFrameNoResponse(t *testing.T) {
+	comhdr := make([]byte, 512)
+	copy(comhdr, "W0000B01")            // trxc
+	copy(comhdr[74:104], "cookie-user") // usid
+	addr, _ := startServer(t, Config{UpstreamURL: "http://127.0.0.1:1", APIUser: "u"})
+	conn, _ := net.Dial("tcp", addr)
+	defer conn.Close()
+
+	req := buildCSFrame(fcCookie, false, comhdr) // RHI clear → TH3+COMHDR (RH 없음)
+	if err := writeFrame(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	// cookie 는 응답 없음 — heartbeat 로 연결 살아있고 진행됨을 확인.
+	if err := writeFrame(conn, nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	p, err := readFrame(conn, 1<<20)
+	if err != nil {
+		t.Fatalf("cookie 후 heartbeat: %v", err)
+	}
+	if len(p) != 0 {
+		t.Errorf("cookie 에 응답이 옴 (없어야 함): %dB", len(p))
+	}
+}

@@ -222,6 +222,13 @@ int wtg_price_swap_point_set(wtg_price_client_t *cli, const char *pair,
 /* 해제 — pair 의 수동 스왑포인트 전체 삭제 (mds regTp=2 동등). */
 int wtg_price_swap_point_clear(wtg_price_client_t *cli, const char *pair);
 
+
+/* 시장 시세 생존 게이트 — WTR005 의 mds market_get/sendclient_flag 대체.
+ * open_out: 1=시세 전송 중 / 0=중단. 반환 WTGPRICE_OK 외엔 판정 불가 (호출측
+ * 이 보수적으로 주문 거부 또는 통과 정책 결정). pair 는 NULL 허용 (시장 전체). */
+int wtg_price_market_open(wtg_price_client_t *cli, const char *market,
+                          const char *pair, int *open_out);
+
 #ifdef __cplusplus
 }
 #endif

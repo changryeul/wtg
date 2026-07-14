@@ -13,7 +13,7 @@
 
 CC ?= cc
 AR ?= ar
-CFLAGS ?= -O -g -Wall -Wextra
+CFLAGS ?= -fPIC -O -g -Wall -Wextra
 LDLIBS_PLATFORM =
 
 UNAME := $(shell uname)

@@ -817,3 +817,42 @@ int wtg_price_swap_point_clear(wtg_price_client_t *cli, const char *pair) {
     if (len < 0 || len >= (int)sizeof(body)) return WTGPRICE_E_OVERSIZE;
     return swap_point_post(cli, body, len);
 }
+
+/* ====================== market_open ====================== */
+
+int wtg_price_market_open(wtg_price_client_t *cli, const char *market,
+                          const char *pair, int *open_out) {
+    if (cli == NULL || market == NULL || open_out == NULL) return WTGPRICE_E_INVALID;
+    cli->last_http_status = 0;
+    cli->last_errno = 0;
+    cli->last_error_body[0] = 0;
+    *open_out = 0;
+
+    char qmarket[64], qpair[64];
+    if (url_escape_into(qmarket, sizeof(qmarket), market) < 0) return WTGPRICE_E_INVALID;
+    qpair[0] = 0;
+    if (pair != NULL && url_escape_into(qpair, sizeof(qpair), pair) < 0) return WTGPRICE_E_INVALID;
+
+    char request[REQ_HEADER_MAX];
+    int hlen = snprintf(request, sizeof(request),
+        "GET /v1/pricing/market-status?market=%s%s%s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        qmarket, qpair[0] ? "&pair=" : "", qpair,
+        cli->host, cli->port);
+    if (hlen < 0 || hlen >= (int)sizeof(request)) return WTGPRICE_E_OVERSIZE;
+
+    char *resp = (char *)malloc(RESP_BUF);
+    if (resp == NULL) return WTGPRICE_E_INVALID;
+    int n = tcp_round_trip(cli, request, (size_t)hlen, resp, RESP_BUF);
+    if (n < 0) { free(resp); return n; }
+
+    int status;
+    const char *bptr = NULL;
+    int rc = http_status_and_body(cli, resp, &status, &bptr);
+    if (rc == WTGPRICE_OK)
+        *open_out = (strstr(bptr, "\"open\":true") != NULL) ? 1 : 0;
+    free(resp);
+    return rc;
+}

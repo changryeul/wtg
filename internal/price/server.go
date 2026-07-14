@@ -98,8 +98,8 @@ type Server struct {
 
 	// S3-b — swap/lock endpoint 용. AttachSwapIndex 로 주입. nil 이면 swap
 	// endpoint 미등록 (forward/lock 은 영향 X).
-	swapIndex   quoteid.SwapIndex
-	swapMetrics *AtomicSwapLockMetrics
+	swapIndex      quoteid.SwapIndex
+	swapMetrics    *AtomicSwapLockMetrics
 	swapPointStore DocStore // POST /v1/pricing/swap 의 etcd 저장소 (nil=503)
 
 	totalRecv  atomic.Uint64
@@ -255,6 +255,11 @@ func (s *Server) AttachPricingSwapWriter(store DocStore) {
 func (s *Server) registerSwapPointRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/pricing/swap",
 		SwapPointHandler(SwapPointDeps{Store: s.swapPointStore, Logger: s.logger}, s.cfg.DevMode))
+	var statsFn func() BestStats
+	if s.best != nil {
+		statsFn = s.best.Stats
+	}
+	mux.HandleFunc("GET /v1/pricing/market-status", MarketStatusHandler(statsFn, s.cfg.DevMode))
 }
 
 // registerSwapLockRoutes — S3-b. swap/lock endpoint + stats 등록.

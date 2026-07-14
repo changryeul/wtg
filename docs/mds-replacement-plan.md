@@ -21,7 +21,8 @@
 | FOS 파일 로더 (WD950010) | `fx-sync` 에 **FOS backend 추가** → etcd 미러 |
 | 회색지대 (W9501 종가 = DB read?) | 완전 폐기 결정으로 자동 해소 — **`mci-chart` 가 cover** (PoC 완료) |
 | client 전환 방식 | **혼합** — 재빌드 가능 client 는 cside SDK 교체, 불가 client 는 wire 호환 AP (`mci-mds-shim` 신설) |
-| trn (매매 AP) 축 | NH 설계에서 trn ↔ mds 는 **전부 W950x tp call** (증거: `nmds .../W9504A01.c` 가 trn 헤더 `wfrx/inc/trn/W2006A01.h` 의 input struct 를 typedef — trn W2006A01 이 tp call 호출자). 따라서 **shim 이 trn 호출자까지 무수정 커버** — 조회(S) 계열 + 설정(A01) 계열 모두. yuanta trn 의 SHM/UDP 직접 호출 3종 (`mds_updt_custfeed`/`mds_make_custsise`/`mds_send_rfq`) 은 nmds 에 대응 API 자체가 없어 NH 포팅 시 tp call 로 재편되는 코드 — 본 계획의 전제와 일치 |
+| trn (매매 AP) 축 | **EC2 기준 소스 전수 grep 으로 확정**: trn → mds 의존은 `W2006A01.pc` 의 `mymq_call(..., "W9504A01", ...)` **단 1건** (호출 지점 2곳 — 수동 스왑포인트/마진 등록). yuanta 식 SHM/UDP 직접 호출 (`mds_updt_custfeed`/`mds_make_custsise`/`mds_send_rfq`) 은 NH trn 에 해당 서비스 (W1801/W6109) 자체가 미포팅 — 0건. 따라서 **shim 이 W9504A01 하나만 매핑하면 trn 축은 무수정 커버** |
+| 기준 소스 | **`/Users/winwaysystems/mywork/nh`** = EC2 `/home/winway/nh-fxallone-server` 미러 (wtg 제외, 2026-07-14 rsync). `nmds`/`yuanta` 트리는 참고용 사본 — 판정은 항상 `mywork/nh` 기준 |
 | 전환 전략 | **기능별 스트랭글러** — 모듈 단위 잠식, 단계별 독립 검증·독립 롤백 |
 
 ## 2. 전환 전략 — 왜 스트랭글러인가
@@ -68,7 +69,7 @@
 | | |
 |---|---|
 | **목적** | 이후 모든 단계의 검증 도구와 전환 대상 목록을 선확보 |
-| **작업** | ① **client 인벤토리 조사** — W950x 호출 client 전수 파악, 재빌드 가능(cside 트랙)/불가(shim 트랙) 분류. NH 협조가 필요한 유일한 조사 항목. **NH trn 소스 (`wfrx` 트리, NH 빌드 서버에만 존재) 에서 W950x tp call grep 전수가 명시 항목** — 로컬에는 wfrx 가 없어 현재 호출자 목록 미확정. ② **`cmd/quote-replay` 신설** — mds `replay_smb2/kmb2/ebs2` 동등의 pcap 재생기. `load-gen` (합성) 과 달리 실 캡처를 mds/WTG 양쪽에 동일 재생 가능 |
+| **작업** | ① **client 인벤토리 조사** — W950x 호출 client 전수 파악, 재빌드 가능(cside 트랙)/불가(shim 트랙) 분류. **trn 축은 완료** — EC2 미러 (`mywork/nh/win/src/trn`) 전수 grep 결과 W2006A01 → W9504A01 1건뿐. 잔여 조사 = trn 외 호출자 (딜러 화면/사내 도구 등, NH 협조 필요). ② **`cmd/quote-replay` 신설** — mds `manual_feed/replay_smb2/kmb2/ebs2` 동등의 pcap 재생기. `load-gen` (합성) 과 달리 실 캡처를 mds/WTG 양쪽에 동일 재생 가능 |
 | **공수** | 2주 (조사 0.5 + quote-replay 1 + 리허설 0.5) |
 | **게이트** | 동일 pcap 을 mds cooker 에 재생했을 때 기존 동작 재현 확인 (도구 자체 검증) |
 | **롤백** | 해당 없음 (운영 무영향) |
@@ -135,9 +136,9 @@
 
 ### 범위 밖 — 별도 신규 기능 트랙 (mds 대치 아님)
 
-yuanta trn 에는 있으나 **nmds 에 대응 API 자체가 없는** 2건. mds 대치와 무관하게
-NH 포팅에서 새로 설계되는 기능이므로 본 계획의 공수·게이트에서 제외하고 별도
-트랙으로 관리한다:
+yuanta trn 에는 있으나 **NH 에는 해당 trn 서비스 (W1801U01/W6109A02) 자체가
+미포팅**이라 현재 수요 미확정인 2건. NH 포팅에서 이 서비스들이 살아나면 mds 가
+아니라 WTG 로 직접 붙인다 — 본 계획의 공수·게이트에서 제외, 수요 확인 후 착수:
 
 | 기능 | yuanta 원형 | WTG 수용 방안 | 공수 |
 |---|---|---|---|
@@ -180,6 +181,8 @@ NH 포팅에서 새로 설계되는 기능이므로 본 계획의 공수·게이
 - `internal/price/archiver.go` / `archiver_pgx.go` — Stage 3 `mci-archive-ora` 의 골격
 - `internal/price/crossrate_consumer.go` — Stage 4 `ArbitConsumer` 의 구조 발판
 - `internal/fxsync/backend.go` — Stage 5 FOS backend 의 인터페이스
-- `/Users/winwaysystems/mywork/nmds/mds/docs/06-아키텍처.md` — mds query-server 서비스 카탈로그
-- `/Users/winwaysystems/mywork/nmds/mds/src/query-server/W9504A01.c` — trn ↔ mds tp call 계약의 증거 (`wfrx/inc/trn/W2006A01.h` input struct 공유)
-- `/Users/winwaysystems/mywork/yuanta/win/src/trn/` — trn 의 mds 직접 호출 3곳 (W1801A01/W1801U01/W6109A02, `mdsap.pc` API) — NH 포팅 시 tp call 재편 대상
+- `/Users/winwaysystems/mywork/nh/` — **기준 소스** (EC2 `/home/winway/nh-fxallone-server` 미러, wtg 제외)
+- `/Users/winwaysystems/mywork/nh/win/src/trn/W2000/W2006A01.pc:702,1131` — trn → mds tp call 전부 (`mymq_call "W9504A01"`)
+- `/Users/winwaysystems/mywork/nh/mds/` — NH mds 실물 (W9500/WD9500/W9510/WD950010/manual_feed)
+- `/Users/winwaysystems/mywork/nmds/mds/docs/06-아키텍처.md` — mds query-server 서비스 카탈로그 (참고 사본)
+- `/Users/winwaysystems/mywork/yuanta/win/src/trn/` — yuanta 원형의 mds 직접 호출 3곳 (W1801A01/W1801U01/W6109A02) — NH 미포팅, 범위 밖 트랙의 원형 참고용

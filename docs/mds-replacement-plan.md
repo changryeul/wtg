@@ -21,7 +21,7 @@
 | OTP 인증 (W9510) | 매매엔진/외부 인증 시스템으로 **이관** — WTG 는 `/v1/tx` alias passthrough 만 (인증 위임 원칙, `docs/auth.md`) |
 | FOS 파일 로더 (WD950010) | `fx-sync` 에 **FOS backend 추가** → etcd 미러 |
 | 회색지대 (W9501 종가 = DB read?) | 완전 폐기 결정으로 자동 해소 — **`mci-chart` 가 cover** (PoC 완료) |
-| client 전환 방식 | **혼합** — 재빌드 가능 client 는 cside SDK 교체, 불가 client 는 wire 호환 AP (`mci-mds-shim` 신설) |
+| client 전환 방식 | **cside 우선 (2026-07-14 재정렬)** — 재빌드 가능한 것 (trn 포함 — 무수정은 원칙 아님, 구조가 결정 기준) 은 cside SDK 직결. wire 호환 AP (`mci-mds-shim`) 는 **조건부 자산** — 재빌드 불가 client 가 인벤토리에서 실제 확인될 때만 재가동 (코드·실 broker 실증 완료 상태로 동결, EC2 unit 은 설치되나 disable) |
 | trn (매매 AP) 축 | **`mywork/nh` 전수 grep 으로 결합 3축 확정**: ① **tp call 1건** — `W2006A01.pc` 의 `mymq_call("W9504A01")` 2곳 (수동 스왑포인트/마진 등록) → shim 으로 무수정 커버 가능 **(단, trn 무수정은 원칙 아님 — trn 은 직접 빌드하는 코드라 cside 직결로 패치하는 선택지도 유효. shim 대 cside 는 운영 편익으로 결정)**. ② **DB 결합 (본체)** — mds (수집계 WD9500 `rdb.pc` + FOS 로더 WD950010) 가 write 하는 시세 테이블을 업무 코드가 직접 SELECT: `CMG014F` 시장환율인터페이스 17개 파일 (trn W1200/W1400/W2000/W3200/W3510/W3600 + lib WTR005/WCM001), `CMG058M` RFS 6개 (**trn W2602A02/W2610A01 은 write 도** — 공유 테이블), `CMG035L` 5개, `CMG029M` 시세틱 4개 (trn W2103S01 + lib WLM005/006 + bat WB950001), `CMG034L` 체결내역 1개 → Stage 4 가 승계. ③ **trn 자체의 직접 의존 0건** — trn 은 SHM/mds 헤더/라이브러리 link 없음 (yuanta 원형의 W1801/W6109 는 NH 미포팅). 단 SHM 직접 read 는 trn 밖 (autotrd/mat) 에 존재 — 위 행 참조 |
 | 기준 소스 | **`/Users/winwaysystems/mywork/nh`** = EC2 `/home/winway/nh-fxallone-server` 미러 (wtg 제외, 2026-07-14 rsync). `nmds`/`yuanta` 트리는 참고용 사본 — 판정은 항상 `mywork/nh` 기준 |
 | 전환 전략 | **기능별 스트랭글러** — 모듈 단위 잠식, 단계별 독립 검증·독립 롤백 |
@@ -93,8 +93,8 @@
 | | |
 |---|---|
 | **목적** | query-server 의 19개 서비스 호출자를 WTG 백엔드로 이동 |
-| **작업** | ① **gap fill**: W9501S02/S03 audit 성 필드 (시초/고저/전일대비/base/fill — Aggregator 봉 영역 연결, ~1주) + FWD pdcd → `/v1/quote/forward-snapshot` 연결 (`internal/price/forward_snapshot.go`) ② **cside 트랙**: 재빌드 가능 client 의 `mymq_call` → `wtg_query_*` stub 교체 (`cside/wtgquery`, PoC 검증 완료) ③ **wire 호환 트랙**: **`mci-mds-shim` 신설** — `pkg/mymq` 로 broker 에 AP 로 등록 (`BindService` — FC_CNTL+BIND_SERVICE, 후행 와일드카드 지원), W950x 고정폭 전문 수신 → WTG 백엔드 변환 응답. client 완전 무수정 (~1.5주 — `pkg/svcio` 파서 + wtgquery 매핑 로직 재사용). **✓ GO 실증 (2026-07-14)** — W9504A01 수직 관통이 로컬 docker broker + **EC2 실 mymqd** 양쪽에서 end-to-end 통과 (trn 역할 호출 → shim → etcd swap_point 반영 → 응답 errn=0 역송). 응답 규약 확정: DirOrigin + 요청 navi 역순 (origin 이 `navi[nvia-1]`) + Clid echo. **조회(S) 계열뿐 아니라 trn 발 설정(A01) 계열 tp call 도 shim 이 수신**: W9502A01 킬스위치 → `pkg/policy`, W9504A01 수동 스왑포인트/마진 → `mci-admin` pricing (etcd → `PricingTable.SwapPoint` hot reload), W9505A01 거래소별 전송 on/off → Profile/policy, W9506A01 BEST 심볼 설정 → `mci-admin` symbols (etcd → `BestConsumer`) ④ **유틸계 W9500S01~S08 매핑 (실체 확인 완료 2026-07-14)** — HTS 챠트 TR (t7201/`sdif7201qXX` wire) 호환 시리즈, 데이터 소스는 mds 메모리 봉 (MDCANDLE). 매핑: S01 n틱 조회 → **틱봉은 WTG 미지원 (조건부 gap — 호출자가 Stage 0 인벤토리에서 실존 확인되면 Aggregator 틱봉 확장, 미확인 시 1s 봉 대체 협의)** · S02 n분 → 1m 봉 재집계 · S03 일 → `mci-chart /v1/chart` ✓ (wtgquery PoC 검증 경로) · S04 주/S05 월 → 1d 봉 rollup (TimescaleDB `time_bucket`) · S06 head (현재 봉 bid/ask/mid 요약) → `/v1/best-stats` + Aggregator 스냅샷 · S07 현재가 → `/v1/quote/spot` ✓ · S08 영업일 → `fx-sync` 가 영업일 테이블 (CMG012M 계열) 을 etcd 미러 → shim 이 etcd read. S01~S07 호출자는 로컬 트리에 없음 — HTS/딜러 화면 추정, Stage 0 인벤토리 대상 ⑤ OTP W9510 → `/v1/tx` alias 로 매매엔진/외부 인증 라우팅 |
-| **공수** | 3.5주 (gap fill 1 + 주/월 rollup·n분 재집계 0.5 + shim 1.5 + client 교체 지원 0.5) — 틱봉 확장은 호출자 실존 확인 시 +0.5주 |
+| **작업** | ① **gap fill**: W9501S02/S03 audit 성 필드 (시초/고저/전일대비/base/fill — Aggregator 봉 영역 연결, ~1주) + FWD pdcd → `/v1/quote/forward-snapshot` 연결 (`internal/price/forward_snapshot.go`) ② **cside 트랙 (우선)**: 재빌드 가능 client 의 `mymq_call` → `wtg_*` stub 교체. 조회는 `cside/wtgquery` (PoC 검증 완료), **trn W2006A01 의 W9504A01 은 `cside/wtgswap` 신설** (~2-3일 — wtgprice 패턴, mci-api REST 직결로 broker hop 제거) ③ **wire 호환 트랙 (조건부)**: **`mci-mds-shim`** — 재빌드 불가 client 확인 시에만 가동. 구현·실증 완료 상태로 동결: `pkg/mymq.BindService` (FC_CNTL+BIND_SERVICE, 후행 와일드카드) + W9504A01/W9501S01 코덱 + **실 broker GO 실증 (2026-07-14** — 로컬 docker + EC2 실 mymqd 양쪽 end-to-end 통과, 응답 규약 확정: DirOrigin + 요청 navi 역순 + Clid echo**)**. 확장 필요 시 서비스당 코덱 추가만. **조회(S) 계열뿐 아니라 trn 발 설정(A01) 계열 tp call 도 shim 이 수신**: W9502A01 킬스위치 → `pkg/policy`, W9504A01 수동 스왑포인트/마진 → `mci-admin` pricing (etcd → `PricingTable.SwapPoint` hot reload), W9505A01 거래소별 전송 on/off → Profile/policy, W9506A01 BEST 심볼 설정 → `mci-admin` symbols (etcd → `BestConsumer`) ④ **유틸계 W9500S01~S08 매핑 (실체 확인 완료 2026-07-14)** — HTS 챠트 TR (t7201/`sdif7201qXX` wire) 호환 시리즈, 데이터 소스는 mds 메모리 봉 (MDCANDLE). 매핑: S01 n틱 조회 → **틱봉은 WTG 미지원 (조건부 gap — 호출자가 Stage 0 인벤토리에서 실존 확인되면 Aggregator 틱봉 확장, 미확인 시 1s 봉 대체 협의)** · S02 n분 → 1m 봉 재집계 · S03 일 → `mci-chart /v1/chart` ✓ (wtgquery PoC 검증 경로) · S04 주/S05 월 → 1d 봉 rollup (TimescaleDB `time_bucket`) · S06 head (현재 봉 bid/ask/mid 요약) → `/v1/best-stats` + Aggregator 스냅샷 · S07 현재가 → `/v1/quote/spot` ✓ · S08 영업일 → `fx-sync` 가 영업일 테이블 (CMG012M 계열) 을 etcd 미러 → shim 이 etcd read. S01~S07 호출자는 로컬 트리에 없음 — HTS/딜러 화면 추정, Stage 0 인벤토리 대상 ⑤ OTP W9510 → `/v1/tx` alias 로 매매엔진/외부 인증 라우팅 |
+| **공수** | 2.5주 (gap fill 1 + 주/월 rollup·n분 재집계 0.5 + `cside/wtgswap` 0.5 + client 교체 지원 0.5) — 틱봉 확장 +0.5주 / shim 재가동 +1주는 인벤토리 확인 시 조건부 |
 | **게이트** | ① 동일 조회를 mds query-server 와 WTG 양쪽에 던져 필드 단위 diff 0 (자동화, pcap 재생 상태에서) ② shim 경유 p99 가 기존 mymq_call 대비 NH SLA (ms 수준) 내 ③ 전환 client 의 운영 오류 0 (1주 관측) |
 | **롤백** | client 별 stub 원복 (cside 트랙) / shim 정지 후 mds query-server 재기동 (wire 트랙) — client 단위 부분 롤백 가능 |
 
@@ -169,13 +169,13 @@ yuanta trn 에는 있으나 **NH 에는 해당 trn 서비스 (W1801U01/W6109A02)
 |---|---|---|
 | 0 사전 준비 | 2주 | — |
 | 1 시세 dual-run | 2주 | 4주 |
-| 2 조회 전환 | 3.5주 | 1주 |
+| 2 조회 전환 | 2.5주 (+조건부 1.5주) | 1주 |
 | 3 SHM 이관 (autotrd/mat) | 3.5주 | (pcap + 지연 비교) |
 | 4 Oracle 승계 | 3주 (058M 재환산 배치 포함) | 2주 |
 | 5 arbit | 1.5주 | (pcap 검증) |
 | 6 FOS | 1주 | — |
 | 7 폐기 | 0.5주 | 2주 + 유예 4주 |
-| **합계** | **~17주** | 관측은 다음 Stage 구현과 병행 |
+| **합계** | **~16주** (조건부 +1.5주) | 관측은 다음 Stage 구현과 병행 |
 
 관측 기간을 후속 구현과 겹치면 **달력 기준 약 5개월**. Stage 1·2·3 게이트
 통과가 각각 중간 보고 지점 — "이미 실 트래픽으로 동등성이 수치 입증됨" 을

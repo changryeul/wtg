@@ -22,7 +22,7 @@
 | FOS 파일 로더 (WD950010) | `fx-sync` 에 **FOS backend 추가** → etcd 미러 |
 | 회색지대 (W9501 종가 = DB read?) | 완전 폐기 결정으로 자동 해소 — **`mci-chart` 가 cover** (PoC 완료) |
 | client 전환 방식 | **혼합** — 재빌드 가능 client 는 cside SDK 교체, 불가 client 는 wire 호환 AP (`mci-mds-shim` 신설) |
-| trn (매매 AP) 축 | **`mywork/nh` 전수 grep 으로 결합 3축 확정**: ① **tp call 1건** — `W2006A01.pc` 의 `mymq_call("W9504A01")` 2곳 (수동 스왑포인트/마진 등록) → shim 매핑으로 커버. ② **DB 결합 (본체)** — mds 수집계 (WD9500 `rdb.pc`) 가 write 하는 시세 테이블을 업무 코드가 직접 SELECT: `CMG014F` 시장환율인터페이스 17개 파일 (trn W1200/W1400/W2000/W3200/W3510/W3600 + lib WTR005/WCM001), `CMG058M` RFS 6개 (**trn W2602A02/W2610A01 은 write 도** — 공유 테이블), `CMG035L` 5개, `CMG029M` 시세틱 4개 (trn W2103S01 + lib WLM005/006 + bat WB950001), `CMG034L` 체결내역 1개 → Stage 4 가 승계. ③ **trn 자체의 직접 의존 0건** — trn 은 SHM/mds 헤더/라이브러리 link 없음 (yuanta 원형의 W1801/W6109 는 NH 미포팅). 단 SHM 직접 read 는 trn 밖 (autotrd/mat) 에 존재 — 위 행 참조 |
+| trn (매매 AP) 축 | **`mywork/nh` 전수 grep 으로 결합 3축 확정**: ① **tp call 1건** — `W2006A01.pc` 의 `mymq_call("W9504A01")` 2곳 (수동 스왑포인트/마진 등록) → shim 매핑으로 커버. ② **DB 결합 (본체)** — mds (수집계 WD9500 `rdb.pc` + FOS 로더 WD950010) 가 write 하는 시세 테이블을 업무 코드가 직접 SELECT: `CMG014F` 시장환율인터페이스 17개 파일 (trn W1200/W1400/W2000/W3200/W3510/W3600 + lib WTR005/WCM001), `CMG058M` RFS 6개 (**trn W2602A02/W2610A01 은 write 도** — 공유 테이블), `CMG035L` 5개, `CMG029M` 시세틱 4개 (trn W2103S01 + lib WLM005/006 + bat WB950001), `CMG034L` 체결내역 1개 → Stage 4 가 승계. ③ **trn 자체의 직접 의존 0건** — trn 은 SHM/mds 헤더/라이브러리 link 없음 (yuanta 원형의 W1801/W6109 는 NH 미포팅). 단 SHM 직접 read 는 trn 밖 (autotrd/mat) 에 존재 — 위 행 참조 |
 | 기준 소스 | **`/Users/winwaysystems/mywork/nh`** = EC2 `/home/winway/nh-fxallone-server` 미러 (wtg 제외, 2026-07-14 rsync). `nmds`/`yuanta` 트리는 참고용 사본 — 판정은 항상 `mywork/nh` 기준 |
 | 전환 전략 | **기능별 스트랭글러** — 모듈 단위 잠식, 단계별 독립 검증·독립 롤백 |
 
@@ -93,8 +93,8 @@
 | | |
 |---|---|
 | **목적** | query-server 의 19개 서비스 호출자를 WTG 백엔드로 이동 |
-| **작업** | ① **gap fill**: W9501S02/S03 audit 성 필드 (시초/고저/전일대비/base/fill — Aggregator 봉 영역 연결, ~1주) + FWD pdcd → `/v1/quote/forward-snapshot` 연결 (`internal/price/forward_snapshot.go`) ② **cside 트랙**: 재빌드 가능 client 의 `mymq_call` → `wtg_query_*` stub 교체 (`cside/wtgquery`, PoC 검증 완료) ③ **wire 호환 트랙**: **`mci-mds-shim` 신설** — `pkg/mymq` 로 broker 에 AP 로 등록, W950x 고정폭 전문 수신 → mci-chart/mci-price REST 변환 응답. client 완전 무수정 (~1.5주 — `pkg/svcio` 파서 + wtgquery 매핑 로직 재사용). **조회(S) 계열뿐 아니라 trn 발 설정(A01) 계열 tp call 도 shim 이 수신**: W9502A01 킬스위치 → `pkg/policy`, W9504A01 수동 스왑포인트/마진 → `mci-admin` pricing (etcd → `PricingTable.SwapPoint` hot reload), W9505A01 거래소별 전송 on/off → Profile/policy, W9506A01 BEST 심볼 설정 → `mci-admin` symbols (etcd → `BestConsumer`) ④ **유틸계 W9500S01~S08 매핑** — S08 영업일 조회 (autotrd 가 기동 시 호출) 는 WTG 에 영업일 캘린더 개념이 없으므로 데이터 소스 선결정 필요: `fx-sync` 가 영업일 테이블 (CMG012M 계열) 을 etcd 미러 → shim 이 etcd read (권장) 또는 shim 이 직접 DB read. S01~S07 은 착수 1주차에 실체 확인 후 매핑표 확정 ⑤ OTP W9510 → `/v1/tx` alias 로 매매엔진/외부 인증 라우팅 |
-| **공수** | 3주 (gap fill 1 + shim 1.5 + client 교체 지원 0.5) |
+| **작업** | ① **gap fill**: W9501S02/S03 audit 성 필드 (시초/고저/전일대비/base/fill — Aggregator 봉 영역 연결, ~1주) + FWD pdcd → `/v1/quote/forward-snapshot` 연결 (`internal/price/forward_snapshot.go`) ② **cside 트랙**: 재빌드 가능 client 의 `mymq_call` → `wtg_query_*` stub 교체 (`cside/wtgquery`, PoC 검증 완료) ③ **wire 호환 트랙**: **`mci-mds-shim` 신설** — `pkg/mymq` 로 broker 에 AP 로 등록, W950x 고정폭 전문 수신 → mci-chart/mci-price REST 변환 응답. client 완전 무수정 (~1.5주 — `pkg/svcio` 파서 + wtgquery 매핑 로직 재사용). **조회(S) 계열뿐 아니라 trn 발 설정(A01) 계열 tp call 도 shim 이 수신**: W9502A01 킬스위치 → `pkg/policy`, W9504A01 수동 스왑포인트/마진 → `mci-admin` pricing (etcd → `PricingTable.SwapPoint` hot reload), W9505A01 거래소별 전송 on/off → Profile/policy, W9506A01 BEST 심볼 설정 → `mci-admin` symbols (etcd → `BestConsumer`) ④ **유틸계 W9500S01~S08 매핑 (실체 확인 완료 2026-07-14)** — HTS 챠트 TR (t7201/`sdif7201qXX` wire) 호환 시리즈, 데이터 소스는 mds 메모리 봉 (MDCANDLE). 매핑: S01 n틱 조회 → **틱봉은 WTG 미지원 (조건부 gap — 호출자가 Stage 0 인벤토리에서 실존 확인되면 Aggregator 틱봉 확장, 미확인 시 1s 봉 대체 협의)** · S02 n분 → 1m 봉 재집계 · S03 일 → `mci-chart /v1/chart` ✓ (wtgquery PoC 검증 경로) · S04 주/S05 월 → 1d 봉 rollup (TimescaleDB `time_bucket`) · S06 head (현재 봉 bid/ask/mid 요약) → `/v1/best-stats` + Aggregator 스냅샷 · S07 현재가 → `/v1/quote/spot` ✓ · S08 영업일 → `fx-sync` 가 영업일 테이블 (CMG012M 계열) 을 etcd 미러 → shim 이 etcd read. S01~S07 호출자는 로컬 트리에 없음 — HTS/딜러 화면 추정, Stage 0 인벤토리 대상 ⑤ OTP W9510 → `/v1/tx` alias 로 매매엔진/외부 인증 라우팅 |
+| **공수** | 3.5주 (gap fill 1 + 주/월 rollup·n분 재집계 0.5 + shim 1.5 + client 교체 지원 0.5) — 틱봉 확장은 호출자 실존 확인 시 +0.5주 |
 | **게이트** | ① 동일 조회를 mds query-server 와 WTG 양쪽에 던져 필드 단위 diff 0 (자동화, pcap 재생 상태에서) ② shim 경유 p99 가 기존 mymq_call 대비 NH SLA (ms 수준) 내 ③ 전환 client 의 운영 오류 0 (1주 관측) |
 | **롤백** | client 별 stub 원복 (cside 트랙) / shim 정지 후 mds query-server 재기동 (wire 트랙) — client 단위 부분 롤백 가능 |
 
@@ -117,7 +117,7 @@
 | **1-tier (거래 경로)** | `CMG014F` 시장환율인터페이스 — trn 거래/한도/평가 로직 17개 파일이 현재 환율 스냅샷으로 참조. 성격이 이력 INSERT 가 아니라 **현재가 UPDATE (저지연 요건)** — BEST tick 발생 시 즉시 UPDATE. 갱신 지연 SLA 를 mds 현행과 비교 측정 필수 |
 | **2-tier (업무 read)** | `CMG029M` 시세틱 (trn W2103S01, lib WLM005/006, bat WB950001) · `CMG034L` 체결내역 (W3530S02) · `CMG035L` (5개 파일) — 이력 INSERT, batch 재현 |
 | **3-tier (mds 내부/배치)** | 봉 계열 030~033M + 테너별 040~055M 16개 — 외부 소비는 bat WB950001 정도. 스키마 재현하되 dual-write 검증 우선순위 하위 |
-| **별도 조사** | `CMG058M` RFS — **trn W2602A02/W2610A01 도 write 하는 공유 테이블**. 행/컬럼 소유권 분석 후 mds 몫만 승계할지, trn 존치로 둘지 판정 (Stage 4 착수 1주차) |
+| **`CMG058M` (판정 완료)** | RFS밴드상세 — 소유권 분석 결과 (2026-07-14): **trn W2602A02/W2610A01** 은 운영자 설정 시 밴드 구간 upsert (금액+마진율), **mds 는 `WD950010/db_access.pc` 의 `Db_AccessRFS()`** 가 USD/KRW 기준 금액을 최신 환율(014F) 로 타 통화쌍에 재환산하는 배치 UPDATE. 같은 컬럼(BAND_START/END_AMT) 이지만 역할이 시점으로 분리 (설정 이벤트 vs 배치) — **mds 잔존 fallback 불필요, 재환산 배치를 fx-sync 또는 archive-ora 배치 job 으로 이식 (~2-3일)**. 경합 프로파일은 현행과 동일 |
 | **공수** | 3주 (1-tier 0.5 + 2-tier 1 + 3-tier 1 + 재접속·batch·backpressure 0.5) + dual-write 검증 2주 |
 | **게이트** | ① mds 와 WTG **병행 write** (WTG 는 검증용 테이블 접미사) → row-level diff 배치 일 단위 비교, 불일치 0 (commit timing ±1 row 는 원인 분류 후 판정) ② 1-tier `CMG014F` 는 갱신 지연 p99 가 mds 현행 동등 이내 |
 | **롤백** | WTG write 정지 + 검증 테이블 drop — 운영 테이블은 mds 가 계속 write 중이므로 무영향. **절체 (mds write 정지) 는 게이트 통과 후 별도 승인** |
@@ -169,13 +169,13 @@ yuanta trn 에는 있으나 **NH 에는 해당 trn 서비스 (W1801U01/W6109A02)
 |---|---|---|
 | 0 사전 준비 | 2주 | — |
 | 1 시세 dual-run | 2주 | 4주 |
-| 2 조회 전환 | 3주 | 1주 |
+| 2 조회 전환 | 3.5주 | 1주 |
 | 3 SHM 이관 (autotrd/mat) | 3.5주 | (pcap + 지연 비교) |
-| 4 Oracle 승계 | 3주 | 2주 |
+| 4 Oracle 승계 | 3주 (058M 재환산 배치 포함) | 2주 |
 | 5 arbit | 1.5주 | (pcap 검증) |
 | 6 FOS | 1주 | — |
 | 7 폐기 | 0.5주 | 2주 + 유예 4주 |
-| **합계** | **~16.5주** | 관측은 다음 Stage 구현과 병행 |
+| **합계** | **~17주** | 관측은 다음 Stage 구현과 병행 |
 
 관측 기간을 후속 구현과 겹치면 **달력 기준 약 5개월**. Stage 1·2·3 게이트
 통과가 각각 중간 보고 지점 — "이미 실 트래픽으로 동등성이 수치 입증됨" 을
@@ -189,7 +189,7 @@ yuanta trn 에는 있으나 **NH 에는 해당 trn 서비스 (W1801U01/W6109A02)
 | **SHM→스트림 전파 지연** | mds SHM 은 전파 지연 0 (cooker 가 같은 메모리에 write), WTG 는 UDP→forwarder→mci-price→TCP 스트림→로컬 캐시 hop 이 존재. 마켓메이킹·매칭이 이 지연을 수용 못 하면 Stage 3 실패 — **착수 1주차에 mds 현행 tick→소비 지연을 실측해 요건 수치를 먼저 확정**하고, 미달 시 mci-price 를 소비자와 동일 호스트에 배치 (loopback/UDS) 하는 축소 hop 배치안 적용 |
 | autotrd/mat 코드 수정 협조 | Stage 3 은 유일하게 **소비자 측 재빌드가 필수** (링크 교체) — libwtgfold 가 `market_getfold` 시그니처를 유지해 수정 폭을 링크 옵션으로 최소화하고, 롤백은 `-lmds` 원복으로 즉시 가능함을 협조 요청의 근거로 제시 |
 | go-ora 의 NH Oracle 버전 호환 | Stage 4 착수 1일차에 대상 Oracle (19c — mds 빌드 옵션 기준) 스모크 테스트 선행. 실패 시 godror (cgo) 로 전환 — 공수 +0.5주, 폐쇄망 배포 절차에 Oracle client 라이브러리 추가 |
-| `CMG058M` 공유 write 충돌 | mds 와 trn (W2602A02/W2610A01) 이 같은 테이블에 write — WTG 승계 시 trn write 와 경합/덮어쓰기 위험. Stage 4 1주차에 행/컬럼 소유권 분석을 선행하고, 소유 구분이 불가하면 058M 은 mds 폐기 시점까지 mds 잔존 write 로 남기는 fallback |
+| ~~`CMG058M` 공유 write 충돌~~ (해소) | 소유권 분석 완료 (Stage 4 표) — trn=설정 이벤트, mds=환율 재환산 배치로 시점 분리. 재환산 배치 이식으로 해소, fallback 불필요 |
 | `CMG014F` 갱신 지연 | trn 거래 로직이 읽는 현재 환율 스냅샷 — WTG 경유 (UDP→forwarder→mci-price→archive-ora→Oracle) 가 mds 직접 write 보다 hop 이 많음. Stage 4 게이트에 갱신 지연 p99 비교를 명시 (미달 시 mci-price 에서 직접 UPDATE 하는 우회 경로) |
 | BEST timing 차이로 일치율 미달 | mds 와 WTG 의 tick 처리 순서가 완전 동일할 수 없음 — 불일치 전건을 "값 오류 / timing 차이" 로 분류하는 diff 규칙을 Stage 1 첫 주에 확정. 값 오류만 게이트 대상 |
 | audit 필드 의미 불명 (mds 만 아는 파생값) | W9501S02 audit 필드 채움 시 mds 소스 (`W9501S02.c`) 를 필드 단위 대조 — 산식이 문서에 없으므로 소스가 명세 |

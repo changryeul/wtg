@@ -8,10 +8,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -32,10 +37,25 @@ func main() {
 	etcdUser := flag.String("etcd-user", "", "etcd 사용자 (옵션)")
 	etcdPass := flag.String("etcd-pass", "", "etcd 비밀번호 (옵션)")
 	pricingKey := flag.String("pricing-key", "wtg/pricing/table", "PricingTableDoc 이 저장된 etcd key")
+	chartURL := flag.String("chart-url", "http://127.0.0.1:8086", "mci-chart base URL (W9501S01 백엔드)")
+	logDir := flag.String("log-dir", "", "로그 디렉토리 (빈값=stderr). EC2 표준: ~/nh-fxallone-server/win/log")
 	zdiv := flag.Int("zdiv", 0, "수치 스케일 (10^zdiv 로 나눔) — TODO: symbols 카탈로그 연동 전 고정값")
 	flag.Parse()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// 로그 출력 — --log-dir 지정 시 <dir>/mci-mds-shim.log (EC2 표준:
+	// ~/nh-fxallone-server/win/log — trn AP 로그와 위치 통일).
+	logOut := os.Stderr
+	if *logDir != "" {
+		f, err := os.OpenFile(filepath.Join(*logDir, "mci-mds-shim.log"),
+			os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "로그 파일 열기 실패:", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		logOut = f
+	}
+	logger := slog.New(slog.NewTextHandler(logOut, nil))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -54,8 +74,8 @@ func main() {
 
 	// broker 접속 — mds 조회계 큐 승계 + 자동 재연결.
 	cli, err := mymq.Open(ctx, *brokerHost, *brokerPort, mymq.Options{
-		ApplName:  *appl,
-		Channel:   mymq.ChannelAdmin,
+		ApplName: *appl,
+		Channel:  mymq.ChannelAdmin,
 		// QtPublic — 외부 발견 가능한 AP 큐 (broker 라우팅 테이블의 transaction
 		// 목적지). mds 조회계 (W9500) 의 등록 형태를 승계한다.
 		Queue: &mymq.QueueOptions{
@@ -72,10 +92,12 @@ func main() {
 	}
 	defer cli.Close()
 
-	// rkey 바인딩 — broker 가 이 rkey 의 transaction 을 우리 큐로 라우팅.
-	if err := cli.BindService(ctx, *xchg, mdsshim.RkeyW9504A01); err != nil {
-		logger.Error("bind_service 실패", slog.Any("error", err))
-		os.Exit(1)
+	// rkey 바인딩 — broker 가 이 rkey 들의 transaction 을 우리 큐로 라우팅.
+	for _, rkey := range []string{mdsshim.RkeyW9504A01, mdsshim.RkeyW9501S01} {
+		if err := cli.BindService(ctx, *xchg, rkey); err != nil {
+			logger.Error("bind_service 실패", slog.String("rkey", rkey), slog.Any("error", err))
+			os.Exit(1)
+		}
 	}
 	logger.Info("mci-mds-shim 기동",
 		slog.String("broker", *brokerHost), slog.String("queue", *queue),
@@ -95,6 +117,9 @@ func main() {
 				return
 			}
 			reply, err := mdsshim.HandleW9504A01(u, zdivFn, applier)
+			if reply == nil && err == nil {
+				reply, err = mdsshim.HandleW9501S01(u, chartFetch(*chartURL))
+			}
 			if err != nil {
 				logger.Error("요청 처리 실패", slog.Any("error", err))
 			}
@@ -104,7 +129,7 @@ func main() {
 			if err := cli.Send(reply); err != nil {
 				logger.Error("응답 송신 실패", slog.Any("error", err))
 			} else {
-				logger.Info("W9504A01 처리", slog.Uint64("ckey", uint64(reply.Ckey)),
+				logger.Info("요청 처리", slog.Uint64("ckey", uint64(reply.Ckey)),
 					slog.Uint64("errn", uint64(reply.Errn)))
 			}
 		}
@@ -153,5 +178,47 @@ func etcdApplier(cli *clientv3.Client, key string, logger *slog.Logger) mdsshim.
 			}
 			// 경합 — 최신본으로 재시도.
 		}
+	}
+}
+
+// chartFetch 는 mci-chart GET /v1/chart?tf=1d 를 ChartFunc 으로 배선한다.
+func chartFetch(base string) mdsshim.ChartFunc {
+	return func(pair string) ([]mdsshim.ChartBar, error) {
+		q := url.Values{"pair": {pair}, "tf": {"1d"}, "limit": {"16"}}
+		httpCli := http.Client{Timeout: 3 * time.Second}
+		resp, err := httpCli.Get(base + "/v1/chart?" + q.Encode())
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("chart %s: %s", pair, resp.Status)
+		}
+		var body struct {
+			Bars []struct {
+				OpenedAt time.Time `json:"opened_at"`
+				OpenBid  float64   `json:"open_bid"`
+				HighBid  float64   `json:"high_bid"`
+				LowBid   float64   `json:"low_bid"`
+				CloseBid float64   `json:"close_bid"`
+				OpenAsk  float64   `json:"open_ask"`
+				HighAsk  float64   `json:"high_ask"`
+				LowAsk   float64   `json:"low_ask"`
+				CloseAsk float64   `json:"close_ask"`
+			} `json:"bars"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		bars := make([]mdsshim.ChartBar, 0, len(body.Bars))
+		for _, b := range body.Bars {
+			bars = append(bars, mdsshim.ChartBar{
+				Kymd: b.OpenedAt.Format("20060102"),
+				Khms: b.OpenedAt.Format("150405"),
+				BidO: b.OpenBid, BidH: b.HighBid, BidL: b.LowBid, BidC: b.CloseBid,
+				AskO: b.OpenAsk, AskH: b.HighAsk, AskL: b.LowAsk, AskC: b.CloseAsk,
+			})
+		}
+		return bars, nil
 	}
 }

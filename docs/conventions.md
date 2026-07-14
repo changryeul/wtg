@@ -103,6 +103,8 @@ mymq.Open(ctx, host, port, mymq.Options{
 | `ExchangeSignal` | `SIGNAL` | FANOUT | mci-admin | 모든 mci-*  |
 | `ExchangeAdmin`  | `ADMIN`  | DIRECT | mci-admin | mymqd     |
 | `ExchangeAudit`  | `AUDIT`  | FANOUT | 모든 mci-*  | mci-admin |
+| `ExchangeMESOrd` | `MESORD` | DIRECT | trn → mat 주문 전송 (FC_NOTIFY, 전문 MES_SND 1024B) — wfa 대체 |
+| `ExchangeMESExe` | `MESEXE` | DIRECT | mat → 체결 결과 (전문 MES_RCV) — wfa 대체 |
 
 ### Routing Key (DIRECT exchange 만)
 
@@ -138,6 +140,8 @@ mymq.Open(ctx, host, port, mymq.Options{
 | `QueueMciPush` | `mci_push` | mci-push 가 EXEC/ALERT 구독 |
 | `QueueMciPrice` | `mci_price` | mci-price 가 PRICE 구독 |
 | `QueueMciAdmin` | `mci_admin` | mci-admin 이 AUDIT 등 구독 |
+| `QueueMatOrd` | `mat_ord` | mat (내부체결엔진) 이 MESORD/ORD 주문 수신 — 레거시 wfa MESORDSQUE 대체 |
+| `QueueMesExe` | `mes_exe` | WD300002 가 MESEXE/EXE 체결 수신 — 레거시 wfa MESEXERQUE 대체 |
 
 `mymqd.cfg` 에 동일 이름으로 선언되어야 한다.
 

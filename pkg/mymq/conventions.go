@@ -107,6 +107,12 @@ const (
 	ExchangeSignal = "SIGNAL" // FANOUT — 시그널 메시지
 	ExchangeAdmin  = "ADMIN"  // DIRECT — 관리 명령
 	ExchangeAudit  = "AUDIT"  // FANOUT — 감사 로그
+
+	// MES — 내부체결엔진 (mat) 주문/체결 큐. 레거시 wfa SHM 큐
+	// (MESORDSQUE/MESEXERQUE) 를 broker 큐로 대체 (안정성: 순단 버퍼링
+	// + 발신 논블로킹 유지). docs/mds-replacement-plan.md 부록 A.
+	ExchangeMESOrd = "MESORD" // DIRECT — trn → mat 주문 전송 (FC_NOTIFY)
+	ExchangeMESExe = "MESEXE" // DIRECT — mat → 체결 결과 (WD300002 수신)
 )
 
 // 주문(ORDER) routing key — DIRECT exchange, 정확 매칭.
@@ -172,4 +178,6 @@ const (
 	QueueMciPush  = "mci_push"
 	QueueMciPrice = "mci_price"
 	QueueMciAdmin = "mci_admin"
+	QueueMatOrd   = "mat_ord" // mat 이 MESORD 주문 수신 (rkey ORD 바인딩)
+	QueueMesExe   = "mes_exe" // WD300002 가 MESEXE 체결 수신 (rkey EXE 바인딩)
 )

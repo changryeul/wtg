@@ -146,6 +146,16 @@ jobs:
       # SELinux (Rocky 9 Enforcing): 홈 안에 새로 쓴 파일은 user_home_t 라
       # systemd 가 exec/read 거부. setup-ec2.sh 가 등록한 fcontext 룰
       # (bin_t / etc_t / var_lib_t) 을 매 배포 후 재적용.
+      # cside C SDK 재빌드 — 소스 미러 rsync --delete 가 빌드 산출물 (.a) 을
+      # 지우는데, win/src (trn/lib) 빌드가 libwtgprice.a/libwtgpush.a 에
+      # 의존하므로 매 배포 후 재생성 (-fPIC — libwwstr.so 편입 요건).
+      - name: cside SDK 빌드
+        run: |
+          set -euo pipefail
+          for d in wtgprice wtgpush; do
+            sudo -u "$DEPLOY_USER" make -C "$WTG_HOME/src/cside/$d" >/dev/null
+          done
+
       - name: SELinux 라벨 복원
         run: |
           set -euo pipefail

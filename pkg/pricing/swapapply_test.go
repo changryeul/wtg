@@ -1,10 +1,8 @@
-package mdsshim
+package pricing
 
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/winwaysystems/wtg/pkg/pricing"
 )
 
 func TestApplySwapToDoc(t *testing.T) {
@@ -19,7 +17,7 @@ func TestApplySwapToDoc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	var doc pricing.PricingTableDoc
+	var doc PricingTableDoc
 	if err := json.Unmarshal(out, &doc); err != nil {
 		t.Fatalf("out 파싱: %v", err)
 	}
@@ -38,7 +36,7 @@ func TestApplySwapToDoc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	doc = pricing.PricingTableDoc{}
+	doc = PricingTableDoc{}
 	if err := json.Unmarshal(out2, &doc); err != nil {
 		t.Fatalf("out2 파싱: %v", err)
 	}
@@ -53,7 +51,7 @@ func TestApplySwapToDoc_EmptySeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	var doc pricing.PricingTableDoc
+	var doc PricingTableDoc
 	_ = json.Unmarshal(out, &doc)
 	if doc.Version != 1 || len(doc.SwapPoint) != 1 {
 		t.Fatalf("빈 seed 시작 실패: %+v", doc)

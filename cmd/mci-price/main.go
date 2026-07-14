@@ -417,6 +417,14 @@ func main() {
 	if pc != nil {
 		srv.AttachPricing(pc.Store())
 	}
+	// 수동 스왑포인트 등록 endpoint (POST /v1/pricing/swap) — etcd 가 있을 때만.
+	// 거래 경로 기능이라 admin 이 아닌 price 상주 (딜러/trn 발 cside/wtgswap).
+	if etcdCli != nil {
+		srv.AttachPricingSwapWriter(&price.EtcdDocStore{
+			Cli: etcdCli,
+			Key: cfg.EtcdPrefix + "pricing/table",
+		})
+	}
 	// forward/lock endpoint 활성화 — quoteid Generator/Registry 가 있을 때만.
 	if quoteIDGen != nil && quoteIDReg != nil {
 		srv.AttachQuoteID(quoteIDGen, quoteIDReg, cfg.QuoteIDValidity)

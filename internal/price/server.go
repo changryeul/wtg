@@ -100,6 +100,7 @@ type Server struct {
 	// endpoint 미등록 (forward/lock 은 영향 X).
 	swapIndex   quoteid.SwapIndex
 	swapMetrics *AtomicSwapLockMetrics
+	swapPointStore DocStore // POST /v1/pricing/swap 의 etcd 저장소 (nil=503)
 
 	totalRecv  atomic.Uint64
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
@@ -241,6 +242,19 @@ func (s *Server) AttachQuoteID(gen *quoteid.Generator, reg quoteid.Registry, val
 
 func (s *Server) AttachQuoteValidator(v *QuoteValidationServer) {
 	s.quoteValidator = v
+}
+
+// AttachPricingSwapWriter — POST /v1/pricing/swap 의 etcd 저장소 주입.
+// nil 이면 endpoint 는 등록되지만 503 (etcd 미구성) 응답.
+func (s *Server) AttachPricingSwapWriter(store DocStore) {
+	s.swapPointStore = store
+}
+
+// registerSwapPointRoutes — 수동 스왑포인트 등록 (딜러/trn 발, cside/wtgswap).
+// 거래 경로 기능이라 admin 이 아닌 mci-price 상주 (admin 은 비필수 콘솔).
+func (s *Server) registerSwapPointRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/pricing/swap",
+		SwapPointHandler(SwapPointDeps{Store: s.swapPointStore, Logger: s.logger}, s.cfg.DevMode))
 }
 
 // registerSwapLockRoutes — S3-b. swap/lock endpoint + stats 등록.
@@ -739,6 +753,7 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			slog.Duration("validity", s.quoteIDValidity))
 	}
 	s.registerSwapLockRoutes(mux)
+	s.registerSwapPointRoutes(mux)
 	// 운영 진단 — gRPC stream 카탈로그 (누가 구독 중인가). grpcSrv 가 주입된
 	// 경우에만 노출. 큐 깊이 = backpressure 가시화. operator 가 "지금 edge-A 가
 	// VIP profile 받고 있나" 같은 질문에 즉시 답하기 위한 endpoint.

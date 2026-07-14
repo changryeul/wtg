@@ -13,6 +13,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/winwaysystems/wtg/pkg/pricing"
 )
 
 // RegTp 는 W2006A01 의 등록구분이다.
@@ -47,14 +49,9 @@ type W9504Request struct {
 	Records []W9504Record
 }
 
-// SwapUpdate 는 WTG pricing 카탈로그에 반영할 스왑포인트 1건이다.
+// SwapUpdate 는 pkg/pricing 의 공용 갱신 단위 별칭 —
 // Tenor 는 WTG 표기 (etc/pricing.json 컨벤션: 1W/1M/...).
-type SwapUpdate struct {
-	Pair  string
-	Tenor string
-	Bid   float64
-	Ask   float64
-}
+type SwapUpdate = pricing.SwapUpdate
 
 // mdsTenorToWTG 는 mds tnrId → WTG pricing tenor 표기 매핑.
 // mds tenor2index 카탈로그 (mat/mds/mds.h TENOR_*) 의 9개 전체를 커버한다.

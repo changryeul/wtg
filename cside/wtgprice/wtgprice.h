@@ -203,6 +203,25 @@ int wtg_price_get_spot(wtg_price_client_t *cli,
  */
 const char *wtg_price_strerror(int code);
 
+
+/* ====================== 수동 스왑포인트 등록 (W2006A01 대체) ======================
+ * trn 딜러 화면의 스왑포인트 등록/해제 — mds W9504A01 tp call 을
+ * POST /v1/pricing/swap (mci-price) 직결로 대체한다. 반영은 etcd pricing
+ * doc CAS write → 전 mci-price 인스턴스 hot reload.
+ * tenor 는 WTG 표기 ("1W"/"1M"/"2M"/"3M"/"6M"/"1Y"/"SPT"/"TOD"/"TOM"). */
+typedef struct {
+    char   tenor[8];
+    double bid;
+    double ask;
+} wtg_swap_point_t;
+
+/* 등록/갱신 — points×npoint upsert. 성공 = WTGPRICE_OK. */
+int wtg_price_swap_point_set(wtg_price_client_t *cli, const char *pair,
+                             const wtg_swap_point_t *points, int npoint);
+
+/* 해제 — pair 의 수동 스왑포인트 전체 삭제 (mds regTp=2 동등). */
+int wtg_price_swap_point_clear(wtg_price_client_t *cli, const char *pair);
+
 #ifdef __cplusplus
 }
 #endif

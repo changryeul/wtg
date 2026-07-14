@@ -25,6 +25,7 @@ import (
 
 	"github.com/winwaysystems/wtg/internal/mdsshim"
 	"github.com/winwaysystems/wtg/pkg/mymq"
+	"github.com/winwaysystems/wtg/pkg/pricing"
 )
 
 func main() {
@@ -154,7 +155,7 @@ func etcdApplier(cli *clientv3.Client, key string, logger *slog.Logger) mdsshim.
 				rev = resp.Kvs[0].ModRevision
 			}
 
-			next, err := mdsshim.ApplySwapToDoc(cur, pair, ups, clear)
+			next, err := pricing.ApplySwapToDoc(cur, pair, ups, clear)
 			if err != nil {
 				return err
 			}

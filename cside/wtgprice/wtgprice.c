@@ -752,3 +752,68 @@ const char *wtg_price_strerror(int code) {
     default:                    return "unknown error";
     }
 }
+
+/* ====================== swap_point_set / clear ====================== */
+
+static int swap_point_post(wtg_price_client_t *cli, const char *body, int body_len) {
+    char request[REQ_HEADER_MAX + REQ_BODY_MAX];
+    int hlen = snprintf(request, sizeof(request),
+        "POST /v1/pricing/swap HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        cli->host, cli->port, body_len);
+    if (hlen < 0 || hlen >= (int)sizeof(request)) return WTGPRICE_E_OVERSIZE;
+    if ((size_t)(hlen + body_len) >= sizeof(request)) return WTGPRICE_E_OVERSIZE;
+    memcpy(request + hlen, body, (size_t)body_len);
+
+    char *resp = (char *)malloc(RESP_BUF);
+    if (resp == NULL) return WTGPRICE_E_INVALID;
+    int n = tcp_round_trip(cli, request, (size_t)(hlen + body_len), resp, RESP_BUF);
+    if (n < 0) { free(resp); return n; }
+
+    int status;
+    const char *bptr = NULL;
+    int rc = http_status_and_body(cli, resp, &status, &bptr);
+    free(resp);
+    return rc;
+}
+
+int wtg_price_swap_point_set(wtg_price_client_t *cli, const char *pair,
+                             const wtg_swap_point_t *points, int npoint) {
+    if (cli == NULL || pair == NULL || points == NULL || npoint <= 0)
+        return WTGPRICE_E_INVALID;
+    cli->last_http_status = 0;
+    cli->last_errno = 0;
+    cli->last_error_body[0] = 0;
+
+    char body[REQ_BODY_MAX];
+    int off = snprintf(body, sizeof(body), "{\"pair\":\"%s\",\"updates\":[", pair);
+    if (off < 0 || off >= (int)sizeof(body)) return WTGPRICE_E_OVERSIZE;
+    for (int i = 0; i < npoint; i++) {
+        int n = snprintf(body + off, sizeof(body) - (size_t)off,
+            "%s{\"tenor\":\"%s\",\"bid\":%.10g,\"ask\":%.10g}",
+            i ? "," : "", points[i].tenor, points[i].bid, points[i].ask);
+        if (n < 0 || off + n >= (int)sizeof(body)) return WTGPRICE_E_OVERSIZE;
+        off += n;
+    }
+    int n = snprintf(body + off, sizeof(body) - (size_t)off, "]}");
+    if (n < 0 || off + n >= (int)sizeof(body)) return WTGPRICE_E_OVERSIZE;
+    off += n;
+
+    return swap_point_post(cli, body, off);
+}
+
+int wtg_price_swap_point_clear(wtg_price_client_t *cli, const char *pair) {
+    if (cli == NULL || pair == NULL) return WTGPRICE_E_INVALID;
+    cli->last_http_status = 0;
+    cli->last_errno = 0;
+    cli->last_error_body[0] = 0;
+
+    char body[REQ_BODY_MAX];
+    int len = snprintf(body, sizeof(body), "{\"pair\":\"%s\",\"clear\":true}", pair);
+    if (len < 0 || len >= (int)sizeof(body)) return WTGPRICE_E_OVERSIZE;
+    return swap_point_post(cli, body, len);
+}

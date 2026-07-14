@@ -872,3 +872,31 @@ func cloneBytes(b []byte) []byte {
 	copy(out, b)
 	return out
 }
+
+// BindService 는 선언된 큐에 (exchange, routing_key) 바인딩을 추가한다
+// (FC_CNTL + BIND_SERVICE — C 의 mymq_bind_service 동등). broker 가 이후
+// 해당 rkey 의 transaction 을 이 클라이언트 큐로 라우팅한다. rkey 는 후행
+// 와일드카드 허용 ("W95*" / "W950?"). AP 역할 (transaction 수신 서버) 이
+// Open 직후 호출한다. Queue 미선언 클라이언트에서는 broker 가 거부한다.
+func (c *Client) BindService(ctx context.Context, exchange, rkey string) error {
+	if rkey == "" || len(rkey) > LRkey {
+		return fmt.Errorf("bind_service: rkey 길이 불량 %q", rkey)
+	}
+	if len(exchange) > 16 {
+		return fmt.Errorf("bind_service: exchange 길이 불량 %q", exchange)
+	}
+	r, err := c.Call(ctx, &FrameInput{
+		Func: FCCntl,
+		Subc: SubBindService,
+		Dirf: DirIoctl,
+		Keyc: KeySend,
+		Body: bindServiceBody(exchange, rkey),
+	})
+	if err != nil {
+		return fmt.Errorf("bind_service(%s/%s): %w", exchange, rkey, err)
+	}
+	if r.Errn != 0 {
+		return fmt.Errorf("bind_service(%s/%s): errn=%d %s", exchange, rkey, r.Errn, r.ErrMsg)
+	}
+	return nil
+}

@@ -27,6 +27,7 @@ func main() {
 	brokerPort := flag.Int("broker-port", 11217, "mymqd 포트")
 	appl := flag.String("appl", "mci-mds-shim", "ApplName (≤16B)")
 	queue := flag.String("queue", "W9500", "큐 이름 — broker 라우팅 테이블이 W950x 를 보내는 mds 조회계 큐를 승계")
+	xchg := flag.String("exchange", "dom", "함께 선언할 exchange (mds 조회계가 속한 exchange)")
 	etcdAddrs := flag.String("etcd", "127.0.0.1:2379", "etcd endpoints (콤마 구분)")
 	etcdUser := flag.String("etcd-user", "", "etcd 사용자 (옵션)")
 	etcdPass := flag.String("etcd-pass", "", "etcd 비밀번호 (옵션)")
@@ -55,7 +56,14 @@ func main() {
 	cli, err := mymq.Open(ctx, *brokerHost, *brokerPort, mymq.Options{
 		ApplName:  *appl,
 		Channel:   mymq.ChannelAdmin,
-		Queue:     &mymq.QueueOptions{Name: *queue},
+		// QtPublic — 외부 발견 가능한 AP 큐 (broker 라우팅 테이블의 transaction
+		// 목적지). mds 조회계 (W9500) 의 등록 형태를 승계한다.
+		Queue: &mymq.QueueOptions{
+			Name:         *queue,
+			Attr:         mymq.QtPublic,
+			ExchangeName: *xchg,
+			ExchangeType: mymq.ExchangeDirect,
+		},
 		Reconnect: &mymq.ReconnectOptions{},
 	})
 	if err != nil {
@@ -63,6 +71,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer cli.Close()
+
+	// rkey 바인딩 — broker 가 이 rkey 의 transaction 을 우리 큐로 라우팅.
+	if err := cli.BindService(ctx, *xchg, mdsshim.RkeyW9504A01); err != nil {
+		logger.Error("bind_service 실패", slog.Any("error", err))
+		os.Exit(1)
+	}
 	logger.Info("mci-mds-shim 기동",
 		slog.String("broker", *brokerHost), slog.String("queue", *queue),
 		slog.String("pricing_key", *pricingKey))

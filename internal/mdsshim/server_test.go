@@ -11,6 +11,14 @@ func unsolFor(rkey string, ckey uint32, body []byte) *mymq.Unsolicited {
 	copy(u.Header.Rkey[:], rkey)
 	copy(u.Header.Xchg[:], "dom")
 	u.Header.Ckey = ckey
+	// 요청 navi: [0]=origin(호출자), [1]=목적지(우리 큐) — broker 수신 형태
+	var origin, dest mymq.Navi
+	copy(origin.Xchg[:], "dom")
+	copy(origin.Rkey[:], "CALLER")
+	origin.Scid = 42
+	copy(dest.Xchg[:], "dom")
+	copy(dest.Rkey[:], rkey)
+	u.Decoded = &mymq.DecodedFrame{Navis: []mymq.Navi{origin, dest}}
 	return u
 }
 
@@ -36,8 +44,15 @@ func TestHandleW9504A01(t *testing.T) {
 		gotUps[0].Tenor != "1M" || gotUps[0].Bid != 0.15 {
 		t.Fatalf("applier 인자 불일치: pair=%q clear=%v ups=%+v", gotPair, gotClear, gotUps)
 	}
-	if reply.Ckey != 77 || reply.Errn != 0 || reply.Dirf != mymq.DirBackward {
+	if reply.Ckey != 77 || reply.Errn != 0 || reply.Dirf != mymq.DirOrigin {
 		t.Fatalf("reply 프레임 불일치: %+v", reply)
+	}
+	// navi 역순 — origin (Scid=42) 이 마지막이어야 broker 가 역송한다
+	if len(reply.Navis) != 2 || reply.Navis[1].Scid != 42 {
+		t.Fatalf("navi 역순 실패: %+v", reply.Navis)
+	}
+	if reply.Rkey != "CALLER" {
+		t.Fatalf("목적지 rkey=%q, want CALLER", reply.Rkey)
 	}
 	if string(reply.Body) != "USD/KRW " {
 		t.Fatalf("reply body=%q", reply.Body)

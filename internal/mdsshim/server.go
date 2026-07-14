@@ -34,15 +34,29 @@ func HandleW9504A01(u *mymq.Unsolicited, zdiv ZdivFunc, apply Applier) (*mymq.Fr
 		return nil, nil
 	}
 
+	// 응답 = C mymq_reply 동등: Dirf=ORIGIN + 요청 navi 유지 — broker 가
+	// navi[0] (origin client) 로 역송한다 (mq_send.c dosend/ORIGIN 참조).
 	reply := &mymq.FrameInput{
 		Func: mymq.FCTran,
-		Dirf: mymq.DirBackward,
-		Xchg: cString(u.Header.Xchg[:]),
-		Rkey: rkey,
+		Dirf: mymq.DirOrigin,
 		Ckey: u.Header.Ckey,
+		Clid: u.Header.Clid, // origin client id echo — broker 의 역송 대상 식별
+		Wkey: u.Header.Wkey,
+		Chan: u.Header.Chan,
 	}
-	if u.Decoded != nil {
-		reply.Navis = u.Decoded.Navis
+	if u.Decoded != nil && len(u.Decoded.Navis) > 0 {
+		// broker 는 방향과 무관하게 navi[nvia-1] 을 목적지로 삼는다
+		// (mqd/message.c: to = &navi[nvia-1]). 응답은 요청 경로의 역순 —
+		// origin (요청 navi[0], Scid 포함) 이 마지막에 오도록 뒤집는다.
+		src := u.Decoded.Navis
+		rev := make([]mymq.Navi, len(src))
+		for i, n := range src {
+			rev[len(src)-1-i] = n
+		}
+		reply.Navis = rev
+		origin := src[0]
+		reply.Xchg = cString(origin.Xchg[:])
+		reply.Rkey = cString(origin.Rkey[:])
 	}
 
 	req, err := ParseW2006A01(u.Body)

@@ -180,3 +180,12 @@ func decodeConnectResponse(buf []byte) (ConnectResponse, error) {
 	r.CompressSize = getU32(buf[off : off+4])
 	return r, nil
 }
+
+// bindServiceBody 는 FC_CNTL+BIND_SERVICE 의 본문 (mqio.h struct bind_service —
+// exchange_name[16] + routing_key[16], NUL 패딩 고정폭 32B) 을 만든다.
+func bindServiceBody(exchange, rkey string) []byte {
+	body := make([]byte, 32)
+	copy(body[0:16], exchange)
+	copy(body[16:32], rkey)
+	return body
+}

@@ -165,6 +165,23 @@ yuanta trn 에는 있으나 **NH 에는 해당 trn 서비스 (W1801U01/W6109A02)
 | 수동 시세 주입 | `mds_make_custsise` — 수동(HAND) 시세를 UDP 로 feed 처럼 주입 (trn W1801U01) | `PriceService.PublishTick` gRPC 에 `Source="HAND"` tick — 주입용 소형 REST/cside API 또는 `mci-admin` 수동시세 페이지 신설 | ~2-3일 |
 | RFQ 응답 → FIX 송신 | `mds_send_rfq` — 딜러 RFQ 환율 (bid/ask/near/far) UDP multicast → FIX 송신 (trn W6109A02) | `mci-edge-fix-md` 에 Quote(35=S) 트랙 신설. near/far = swap 2-leg — `docs/swap-trade-spec.md` Phase S3 연동 | ~1-2주 |
 
+### 부록 A — wfa 걷어내기 트랙 (mds 대치 중 발견된 인접 레거시)
+
+W2000 링크 시도 (Stage 2 trn 패치 검증) 중 발견된 wfa (큐↔TCP 브리지
+프레임워크) 의존을 mds 와 같은 방향으로 제거한다. wfa 실체 (wfa.cfg):
+trn 이 SHM 큐 (`IBA_*_QUE_PUSH/POP`) 에 넣으면 wfa 데몬이 TCP 로 중계.
+
+| 인터페이스 | 원형 | 대체 | 상태 (2026-07-14) |
+|---|---|---|---|
+| RTA 통보 (주문/체결 → client) | `IBA_RTA_QUE_PUSH` → RTAEXEIQUE → wfa → 단말 | `fnWtgRtaPush` → **mci-push HTTP push** (RTS_HEAD.usrx 로 지정 push / algo 는 broadcast, CP949 전문 base64 JSON 래핑) | **✓ 10곳 전부 치환** — W2000/W3100/WD300001·3·11 링크 성공 |
+| MES 주문 전송 (trn → mat) | `IBA_MES_ORD_QUE_PUSH` → MESORDSQUE → wfa → TCP :26003 → `mat_rcv` | **mat_rcv :26003 TCP 직결** (`fnWtgMesOrdSend` plain-C — wfa 브리지 hop 제거, 전문 MES_SND 1024B 무변형) | 설계 — 착수 전 mat/lib/tcp 프레이밍 + BAOR01 세션 핸드셰이크 확인 필요 |
+| MES 체결 수신 (mat → trn측) | `mat_snd` → TCP :26004 → wfa → MESEXERQUE → `IBA_MES_EXE_QUE_POP` (WD300002) | **WD300002 가 :26004 직접 수신** (`fnWtgMesExeRecv`) | 설계 — 동일 선행 확인 |
+| 잔존 바이너리 | — | — | W3200 (MES 주문 3곳) + WD300002 (MES 수신 1곳) 만 wfa undefined |
+
+검증 게이트: 주문 1건 → mat 체결 → WD300002 수신 → DB 반영 + RTA push
+(mci-push) 까지 end-to-end. mds 의 `MESEXERQUE_2MDS` (체결의 mds 분기) 는
+mds 폐기와 함께 소멸 — Stage 4 의 034L (체결내역) 승계가 그 대체다.
+
 ## 5. 공수 총괄 / 타임라인
 
 | Stage | 구현 공수 | 병행 관측 |

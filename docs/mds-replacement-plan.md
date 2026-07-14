@@ -15,13 +15,13 @@
 | 안건 | 결정 |
 |---|---|
 | 전환 수준 | **mds 완전 폐기** — 축소 잔존 없음 |
-| DB write (Oracle) | 하단 소비 시스템 (보고서/정산) 이 mds Oracle 테이블을 그대로 읽으므로 **WTG 가 동일 스키마로 Oracle write 를 승계** — `mci-archive-ora` 신설 |
+| DB write (Oracle) | **교차 소비 실증됨** — mds 수집계가 write 하는 시세 테이블을 trn/lib/bat 26개+ 파일이 read (아래 trn 축 참조). **WTG 가 동일 스키마로 Oracle write 를 승계** — `mci-archive-ora` 신설, 교차 테이블 우선 (Stage 3) |
 | arbit (차익 신호) | `mci-price` 의 consumer 로 **Go 포팅** (`ArbitConsumer`) |
 | OTP 인증 (W9510) | 매매엔진/외부 인증 시스템으로 **이관** — WTG 는 `/v1/tx` alias passthrough 만 (인증 위임 원칙, `docs/auth.md`) |
 | FOS 파일 로더 (WD950010) | `fx-sync` 에 **FOS backend 추가** → etcd 미러 |
 | 회색지대 (W9501 종가 = DB read?) | 완전 폐기 결정으로 자동 해소 — **`mci-chart` 가 cover** (PoC 완료) |
 | client 전환 방식 | **혼합** — 재빌드 가능 client 는 cside SDK 교체, 불가 client 는 wire 호환 AP (`mci-mds-shim` 신설) |
-| trn (매매 AP) 축 | **EC2 기준 소스 전수 grep 으로 확정**: trn → mds 의존은 `W2006A01.pc` 의 `mymq_call(..., "W9504A01", ...)` **단 1건** (호출 지점 2곳 — 수동 스왑포인트/마진 등록). yuanta 식 SHM/UDP 직접 호출 (`mds_updt_custfeed`/`mds_make_custsise`/`mds_send_rfq`) 은 NH trn 에 해당 서비스 (W1801/W6109) 자체가 미포팅 — 0건. 따라서 **shim 이 W9504A01 하나만 매핑하면 trn 축은 무수정 커버** |
+| trn (매매 AP) 축 | **`mywork/nh` 전수 grep 으로 결합 3축 확정**: ① **tp call 1건** — `W2006A01.pc` 의 `mymq_call("W9504A01")` 2곳 (수동 스왑포인트/마진 등록) → shim 매핑으로 커버. ② **DB 결합 (본체)** — mds 수집계 (WD9500 `rdb.pc`) 가 write 하는 시세 테이블을 업무 코드가 직접 SELECT: `CMG014F` 시장환율인터페이스 17개 파일 (trn W1200/W1400/W2000/W3200/W3510/W3600 + lib WTR005/WCM001), `CMG058M` RFS 6개 (**trn W2602A02/W2610A01 은 write 도** — 공유 테이블), `CMG035L` 5개, `CMG029M` 시세틱 4개 (trn W2103S01 + lib WLM005/006 + bat WB950001), `CMG034L` 체결내역 1개 → Stage 3 이 승계. ③ **직접 의존 0건** — SHM/mds 헤더/라이브러리 link 없음 (yuanta 원형의 W1801/W6109 는 NH 미포팅) |
 | 기준 소스 | **`/Users/winwaysystems/mywork/nh`** = EC2 `/home/winway/nh-fxallone-server` 미러 (wtg 제외, 2026-07-14 rsync). `nmds`/`yuanta` 트리는 참고용 사본 — 판정은 항상 `mywork/nh` 기준 |
 | 전환 전략 | **기능별 스트랭글러** — 모듈 단위 잠식, 단계별 독립 검증·독립 롤백 |
 
@@ -49,16 +49,17 @@
    feed 또는 pcap 재생) 을 넣고 출력을 기계 비교. 사람 눈 검수는 게이트가
    아니다.
 
-## 3. mds 실물 규모 (공수 산출 근거)
+## 3. mds 실물 규모 (공수 산출 근거 — `mywork/nh/mds` 실측)
 
 | 모듈 | 규모 (실측) | 전환 방식 |
 |---|---|---|
-| cooker UDP 수신·파싱·BEST | ~28,000 LOC C (stub 포함) | 기 구현 — `quote-forwarder` + `BestConsumer` (동일 알고리즘, `docs/mds-coverage.md`) |
-| DB write (`cooker/db/mds_rdb*.pc`) | 11,921 LOC Pro*C — tick(2,057)/intr(1,958)/heod(1,451)/fill(253)/master(275) + 공통(5,927) | `mci-archive-ora` 신설. 실질 작업은 5개 도메인 INSERT 재현 — Pro*C 공통 플러밍은 Go 에선 불필요 |
-| query-server (W950x 9 핸들러) | 2,767 LOC C | cside 교체 (`wtgquery`) + wire 호환 AP (`mci-mds-shim`) 혼합 |
-| arbit (`cooker/parser/mds_arbit.c`) | 650 LOC C | `internal/price/arbit.go` Go 포팅 |
-| FOS loader (`fos-loader/`) | ~3,500 LOC (파싱부 ~1,000 만 필요) | `fx-sync` FOS backend |
-| OTP (`otp-auth/W9510.c`) | 소형 (curl 기반) | passthrough alias 만 |
+| 수집계 `WD9500/` (UDP 수신·파싱·BEST·SHM) | 37,546 LOC C/Pro*C 총계 | 기 구현 — `quote-forwarder` + `BestConsumer` (동일 알고리즘, `docs/mds-coverage.md`) |
+| DB write (`WD9500/rdb.pc`) | 5,927 LOC Pro*C — 시세 테이블 25개 (틱 029M / 봉 030~033M / 테너별 040~055M 16개 / 체결 034L / 로스트 035L / RFS 058M / 시장환율 014F) | `mci-archive-ora` 신설 — 교차 소비 테이블 우선 (Stage 3 표) |
+| 조회계 `W9500/` (W950x 9 핸들러) | 7,788 LOC C | cside 교체 (`wtgquery`) + wire 호환 AP (`mci-mds-shim`) 혼합 |
+| arbit (`WD9500/arbitrage.c`) | 450 LOC C | `internal/price/arbit.go` Go 포팅 |
+| FOS loader (`WD950010/`) | 3,603 LOC (파싱부 ~1,000 만 필요) | `fx-sync` FOS backend |
+| OTP (`W9510/`) | 소형 (curl 기반) | passthrough alias 만 |
+| 리플레이 (`manual_feed/replay_*.c`) | 소형 | `cmd/quote-replay` 신설 (Stage 0) |
 
 ## 4. 단계별 계획
 
@@ -98,10 +99,14 @@
 
 | | |
 |---|---|
-| **목적** | 하단 소비 시스템 무수정을 전제로 mds 의 Oracle write 를 WTG 가 승계 |
-| **작업** | **`mci-archive-ora` 신설** — `PriceService.SubscribeQuote`/`SubscribeBar` gRPC 소비 → 기존 mds 스키마 그대로 Oracle INSERT (tick/intr/heod/fill/master 5개 도메인). driver 는 **go-ora (pure Go)** — cgo·Oracle client 라이브러리 불필요, 폐쇄망 배포 단순. 기존 `Archiver` (TimescaleDB, pgx batch) 구조를 골격으로 재사용 |
-| **공수** | 3주 (5개 도메인 INSERT 2 + 재접속·batch·backpressure 1) + dual-write 검증 2주 |
-| **게이트** | mds 와 WTG 가 **병행 write** (WTG 는 검증용 테이블 접미사) → row-level diff 배치가 일 단위 비교, 불일치 0 (허용 오차: commit timing 에 따른 ±1 row 는 원인 분류 후 판정) |
+| **목적** | trn/lib/bat 업무 코드 무수정을 전제로 mds 수집계 (`WD9500/rdb.pc`) 의 Oracle write 를 WTG 가 승계 |
+| **작업** | **`mci-archive-ora` 신설** — `PriceService.SubscribeQuote`/`SubscribeBar` gRPC 소비 → 기존 스키마 (`FXPL.TB_FXB_CMG*`) 그대로 write. driver 는 **go-ora (pure Go)** — cgo·Oracle client 불필요, 폐쇄망 배포 단순. 기존 `Archiver` (TimescaleDB, pgx batch) 구조를 골격으로 재사용. **교차 소비 테이블 우선순위로 3-tier 분할**: |
+| **1-tier (거래 경로)** | `CMG014F` 시장환율인터페이스 — trn 거래/한도/평가 로직 17개 파일이 현재 환율 스냅샷으로 참조. 성격이 이력 INSERT 가 아니라 **현재가 UPDATE (저지연 요건)** — BEST tick 발생 시 즉시 UPDATE. 갱신 지연 SLA 를 mds 현행과 비교 측정 필수 |
+| **2-tier (업무 read)** | `CMG029M` 시세틱 (trn W2103S01, lib WLM005/006, bat WB950001) · `CMG034L` 체결내역 (W3530S02) · `CMG035L` (5개 파일) — 이력 INSERT, batch 재현 |
+| **3-tier (mds 내부/배치)** | 봉 계열 030~033M + 테너별 040~055M 16개 — 외부 소비는 bat WB950001 정도. 스키마 재현하되 dual-write 검증 우선순위 하위 |
+| **별도 조사** | `CMG058M` RFS — **trn W2602A02/W2610A01 도 write 하는 공유 테이블**. 행/컬럼 소유권 분석 후 mds 몫만 승계할지, trn 존치로 둘지 판정 (Stage 3 착수 1주차) |
+| **공수** | 3주 (1-tier 0.5 + 2-tier 1 + 3-tier 1 + 재접속·batch·backpressure 0.5) + dual-write 검증 2주 |
+| **게이트** | ① mds 와 WTG **병행 write** (WTG 는 검증용 테이블 접미사) → row-level diff 배치 일 단위 비교, 불일치 0 (commit timing ±1 row 는 원인 분류 후 판정) ② 1-tier `CMG014F` 는 갱신 지연 p99 가 mds 현행 동등 이내 |
 | **롤백** | WTG write 정지 + 검증 테이블 drop — 운영 테이블은 mds 가 계속 write 중이므로 무영향. **절체 (mds write 정지) 는 게이트 통과 후 별도 승인** |
 
 ### Stage 4 — arbit 포팅 (~1.5주)
@@ -167,7 +172,9 @@ yuanta trn 에는 있으나 **NH 에는 해당 trn 서비스 (W1801U01/W6109A02)
 | 리스크 | 대응 |
 |---|---|
 | client 인벤토리 누락 (미파악 W950x 호출자) | Stage 6 관측 2주에서 broker 트래픽 0 을 게이트로 — 누락 호출자는 여기서 반드시 드러남. 발견 시 shim 트랙으로 흡수 (client 무수정이므로 추가 공수 미미). trn 호출자는 `wfrx` 트리 grep (Stage 0) 으로 선제 파악 |
-| go-ora 의 NH Oracle 버전 호환 | Stage 3 착수 1일차에 대상 Oracle 버전 스모크 테스트 선행. 실패 시 godror (cgo) 로 전환 — 공수 +0.5주, 폐쇄망 배포 절차에 Oracle client 라이브러리 추가 |
+| go-ora 의 NH Oracle 버전 호환 | Stage 3 착수 1일차에 대상 Oracle (19c — mds 빌드 옵션 기준) 스모크 테스트 선행. 실패 시 godror (cgo) 로 전환 — 공수 +0.5주, 폐쇄망 배포 절차에 Oracle client 라이브러리 추가 |
+| `CMG058M` 공유 write 충돌 | mds 와 trn (W2602A02/W2610A01) 이 같은 테이블에 write — WTG 승계 시 trn write 와 경합/덮어쓰기 위험. Stage 3 1주차에 행/컬럼 소유권 분석을 선행하고, 소유 구분이 불가하면 058M 은 mds 폐기 시점까지 mds 잔존 write 로 남기는 fallback |
+| `CMG014F` 갱신 지연 | trn 거래 로직이 읽는 현재 환율 스냅샷 — WTG 경유 (UDP→forwarder→mci-price→archive-ora→Oracle) 가 mds 직접 write 보다 hop 이 많음. Stage 3 게이트에 갱신 지연 p99 비교를 명시 (미달 시 mci-price 에서 직접 UPDATE 하는 우회 경로) |
 | BEST timing 차이로 일치율 미달 | mds 와 WTG 의 tick 처리 순서가 완전 동일할 수 없음 — 불일치 전건을 "값 오류 / timing 차이" 로 분류하는 diff 규칙을 Stage 1 첫 주에 확정. 값 오류만 게이트 대상 |
 | audit 필드 의미 불명 (mds 만 아는 파생값) | W9501S02 audit 필드 채움 시 mds 소스 (`W9501S02.c`) 를 필드 단위 대조 — 산식이 문서에 없으므로 소스가 명세 |
 | shim 이 새 단일 장애점 | shim 은 stateless (broker AP + REST 변환) — 다중 인스턴스 기동, broker 가 AP 분배. 재시작 = 무손실 |
@@ -183,6 +190,9 @@ yuanta trn 에는 있으나 **NH 에는 해당 trn 서비스 (W1801U01/W6109A02)
 - `internal/fxsync/backend.go` — Stage 5 FOS backend 의 인터페이스
 - `/Users/winwaysystems/mywork/nh/` — **기준 소스** (EC2 `/home/winway/nh-fxallone-server` 미러, wtg 제외)
 - `/Users/winwaysystems/mywork/nh/win/src/trn/W2000/W2006A01.pc:702,1131` — trn → mds tp call 전부 (`mymq_call "W9504A01"`)
-- `/Users/winwaysystems/mywork/nh/mds/` — NH mds 실물 (W9500/WD9500/W9510/WD950010/manual_feed)
+- `/Users/winwaysystems/mywork/nh/mds/` — NH mds 실물 (W9500 조회계 / WD9500 수집계 / W9510 OTP / WD950010 FOS / manual_feed 리플레이)
+- `/Users/winwaysystems/mywork/nh/mds/WD9500/rdb.pc` — Oracle write 전부 (시세 테이블 25개) — Stage 3 의 이식 원본
+- `/Users/winwaysystems/mywork/nh/table.sql` — `FXPL.TB_FXB_CMG*` DDL + 한글 테이블 정의 (CP949)
+- 교차 소비 지도 (2026-07-14 grep): 014F←17파일 / 058M←6(+write 2) / 035L←5 / 029M←4 / 034L←1 / 040M←1 (bat WB950001)
 - `/Users/winwaysystems/mywork/nmds/mds/docs/06-아키텍처.md` — mds query-server 서비스 카탈로그 (참고 사본)
 - `/Users/winwaysystems/mywork/yuanta/win/src/trn/` — yuanta 원형의 mds 직접 호출 3곳 (W1801A01/W1801U01/W6109A02) — NH 미포팅, 범위 밖 트랙의 원형 참고용

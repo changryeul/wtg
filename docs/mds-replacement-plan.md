@@ -21,6 +21,7 @@
 | FOS 파일 로더 (WD950010) | `fx-sync` 에 **FOS backend 추가** → etcd 미러 |
 | 회색지대 (W9501 종가 = DB read?) | 완전 폐기 결정으로 자동 해소 — **`mci-chart` 가 cover** (PoC 완료) |
 | client 전환 방식 | **혼합** — 재빌드 가능 client 는 cside SDK 교체, 불가 client 는 wire 호환 AP (`mci-mds-shim` 신설) |
+| trn (매매 AP) 축 | NH 설계에서 trn ↔ mds 는 **전부 W950x tp call** (증거: `nmds .../W9504A01.c` 가 trn 헤더 `wfrx/inc/trn/W2006A01.h` 의 input struct 를 typedef — trn W2006A01 이 tp call 호출자). 따라서 **shim 이 trn 호출자까지 무수정 커버** — 조회(S) 계열 + 설정(A01) 계열 모두. yuanta trn 의 SHM/UDP 직접 호출 3종 (`mds_updt_custfeed`/`mds_make_custsise`/`mds_send_rfq`) 은 nmds 에 대응 API 자체가 없어 NH 포팅 시 tp call 로 재편되는 코드 — 본 계획의 전제와 일치 |
 | 전환 전략 | **기능별 스트랭글러** — 모듈 단위 잠식, 단계별 독립 검증·독립 롤백 |
 
 ## 2. 전환 전략 — 왜 스트랭글러인가
@@ -67,7 +68,7 @@
 | | |
 |---|---|
 | **목적** | 이후 모든 단계의 검증 도구와 전환 대상 목록을 선확보 |
-| **작업** | ① **client 인벤토리 조사** — W950x 호출 client 전수 파악, 재빌드 가능(cside 트랙)/불가(shim 트랙) 분류. NH 협조가 필요한 유일한 조사 항목. ② **`cmd/quote-replay` 신설** — mds `replay_smb2/kmb2/ebs2` 동등의 pcap 재생기. `load-gen` (합성) 과 달리 실 캡처를 mds/WTG 양쪽에 동일 재생 가능 |
+| **작업** | ① **client 인벤토리 조사** — W950x 호출 client 전수 파악, 재빌드 가능(cside 트랙)/불가(shim 트랙) 분류. NH 협조가 필요한 유일한 조사 항목. **NH trn 소스 (`wfrx` 트리, NH 빌드 서버에만 존재) 에서 W950x tp call grep 전수가 명시 항목** — 로컬에는 wfrx 가 없어 현재 호출자 목록 미확정. ② **`cmd/quote-replay` 신설** — mds `replay_smb2/kmb2/ebs2` 동등의 pcap 재생기. `load-gen` (합성) 과 달리 실 캡처를 mds/WTG 양쪽에 동일 재생 가능 |
 | **공수** | 2주 (조사 0.5 + quote-replay 1 + 리허설 0.5) |
 | **게이트** | 동일 pcap 을 mds cooker 에 재생했을 때 기존 동작 재현 확인 (도구 자체 검증) |
 | **롤백** | 해당 없음 (운영 무영향) |
@@ -87,7 +88,7 @@
 | | |
 |---|---|
 | **목적** | query-server 의 9개 서비스 호출자를 WTG 백엔드로 이동 |
-| **작업** | ① **gap fill**: W9501S02/S03 audit 성 필드 (시초/고저/전일대비/base/fill — Aggregator 봉 영역 연결, ~1주) + FWD pdcd → `/v1/quote/forward-snapshot` 연결 (`internal/price/forward_snapshot.go`) ② **cside 트랙**: 재빌드 가능 client 의 `mymq_call` → `wtg_query_*` stub 교체 (`cside/wtgquery`, PoC 검증 완료) ③ **wire 호환 트랙**: **`mci-mds-shim` 신설** — `pkg/mymq` 로 broker 에 AP 로 등록, W950x 고정폭 전문 수신 → mci-chart/mci-price REST 변환 응답. client 완전 무수정 (~1.5주 — `pkg/svcio` 파서 + wtgquery 매핑 로직 재사용) ④ W9502~W9506 (킬스위치/알림/설정) 호출자는 `mci-admin`/`mci-push` 상당 기능으로 안내 매핑 ⑤ OTP W9510 → `/v1/tx` alias 로 매매엔진/외부 인증 라우팅 |
+| **작업** | ① **gap fill**: W9501S02/S03 audit 성 필드 (시초/고저/전일대비/base/fill — Aggregator 봉 영역 연결, ~1주) + FWD pdcd → `/v1/quote/forward-snapshot` 연결 (`internal/price/forward_snapshot.go`) ② **cside 트랙**: 재빌드 가능 client 의 `mymq_call` → `wtg_query_*` stub 교체 (`cside/wtgquery`, PoC 검증 완료) ③ **wire 호환 트랙**: **`mci-mds-shim` 신설** — `pkg/mymq` 로 broker 에 AP 로 등록, W950x 고정폭 전문 수신 → mci-chart/mci-price REST 변환 응답. client 완전 무수정 (~1.5주 — `pkg/svcio` 파서 + wtgquery 매핑 로직 재사용). **조회(S) 계열뿐 아니라 trn 발 설정(A01) 계열 tp call 도 shim 이 수신**: W9502A01 킬스위치 → `pkg/policy`, W9504A01 수동 스왑포인트/마진 → `mci-admin` pricing (etcd → `PricingTable.SwapPoint` hot reload), W9505A01 거래소별 전송 on/off → Profile/policy, W9506A01 BEST 심볼 설정 → `mci-admin` symbols (etcd → `BestConsumer`) ④ OTP W9510 → `/v1/tx` alias 로 매매엔진/외부 인증 라우팅 |
 | **공수** | 3주 (gap fill 1 + shim 1.5 + client 교체 지원 0.5) |
 | **게이트** | ① 동일 조회를 mds query-server 와 WTG 양쪽에 던져 필드 단위 diff 0 (자동화, pcap 재생 상태에서) ② shim 경유 p99 가 기존 mymq_call 대비 NH SLA (ms 수준) 내 ③ 전환 client 의 운영 오류 0 (1주 관측) |
 | **롤백** | client 별 stub 원복 (cside 트랙) / shim 정지 후 mds query-server 재기동 (wire 트랙) — client 단위 부분 롤백 가능 |
@@ -132,6 +133,17 @@
 | **게이트** | 정지 후 1주간 하단 소비 시스템·client 이상 보고 0 |
 | **롤백** | 아카이브에서 mds 재기동 (정지일로부터 4주간 즉시 재기동 가능 상태 유지) |
 
+### 범위 밖 — 별도 신규 기능 트랙 (mds 대치 아님)
+
+yuanta trn 에는 있으나 **nmds 에 대응 API 자체가 없는** 2건. mds 대치와 무관하게
+NH 포팅에서 새로 설계되는 기능이므로 본 계획의 공수·게이트에서 제외하고 별도
+트랙으로 관리한다:
+
+| 기능 | yuanta 원형 | WTG 수용 방안 | 공수 |
+|---|---|---|---|
+| 수동 시세 주입 | `mds_make_custsise` — 수동(HAND) 시세를 UDP 로 feed 처럼 주입 (trn W1801U01) | `PriceService.PublishTick` gRPC 에 `Source="HAND"` tick — 주입용 소형 REST/cside API 또는 `mci-admin` 수동시세 페이지 신설 | ~2-3일 |
+| RFQ 응답 → FIX 송신 | `mds_send_rfq` — 딜러 RFQ 환율 (bid/ask/near/far) UDP multicast → FIX 송신 (trn W6109A02) | `mci-edge-fix-md` 에 Quote(35=S) 트랙 신설. near/far = swap 2-leg — `docs/swap-trade-spec.md` Phase S3 연동 | ~1-2주 |
+
 ## 5. 공수 총괄 / 타임라인
 
 | Stage | 구현 공수 | 병행 관측 |
@@ -153,7 +165,7 @@
 
 | 리스크 | 대응 |
 |---|---|
-| client 인벤토리 누락 (미파악 W950x 호출자) | Stage 6 관측 2주에서 broker 트래픽 0 을 게이트로 — 누락 호출자는 여기서 반드시 드러남. 발견 시 shim 트랙으로 흡수 (client 무수정이므로 추가 공수 미미) |
+| client 인벤토리 누락 (미파악 W950x 호출자) | Stage 6 관측 2주에서 broker 트래픽 0 을 게이트로 — 누락 호출자는 여기서 반드시 드러남. 발견 시 shim 트랙으로 흡수 (client 무수정이므로 추가 공수 미미). trn 호출자는 `wfrx` 트리 grep (Stage 0) 으로 선제 파악 |
 | go-ora 의 NH Oracle 버전 호환 | Stage 3 착수 1일차에 대상 Oracle 버전 스모크 테스트 선행. 실패 시 godror (cgo) 로 전환 — 공수 +0.5주, 폐쇄망 배포 절차에 Oracle client 라이브러리 추가 |
 | BEST timing 차이로 일치율 미달 | mds 와 WTG 의 tick 처리 순서가 완전 동일할 수 없음 — 불일치 전건을 "값 오류 / timing 차이" 로 분류하는 diff 규칙을 Stage 1 첫 주에 확정. 값 오류만 게이트 대상 |
 | audit 필드 의미 불명 (mds 만 아는 파생값) | W9501S02 audit 필드 채움 시 mds 소스 (`W9501S02.c`) 를 필드 단위 대조 — 산식이 문서에 없으므로 소스가 명세 |
@@ -169,3 +181,5 @@
 - `internal/price/crossrate_consumer.go` — Stage 4 `ArbitConsumer` 의 구조 발판
 - `internal/fxsync/backend.go` — Stage 5 FOS backend 의 인터페이스
 - `/Users/winwaysystems/mywork/nmds/mds/docs/06-아키텍처.md` — mds query-server 서비스 카탈로그
+- `/Users/winwaysystems/mywork/nmds/mds/src/query-server/W9504A01.c` — trn ↔ mds tp call 계약의 증거 (`wfrx/inc/trn/W2006A01.h` input struct 공유)
+- `/Users/winwaysystems/mywork/yuanta/win/src/trn/` — trn 의 mds 직접 호출 3곳 (W1801A01/W1801U01/W6109A02, `mdsap.pc` API) — NH 포팅 시 tp call 재편 대상

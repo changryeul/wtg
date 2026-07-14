@@ -624,3 +624,66 @@ func isEditablePath(p string) (bool, string) {
 //   3. 그 외 422 — 운영자가 alias 를 명시 등록해야 함.
 //
 // 진짜 매핑을 broker 에 직접 물어보는 도구는 scripts/import-svc-routes.sh 참조.
+
+// aliasResolver 는 routing registry 로 code(routing_key) → alias reverse
+// lookup 함수를 만든다. 매칭 룰이 없으면 code 자체를 alias 로 (fallback).
+func aliasResolver(routes routing.Registry) func(string) string {
+	if routes == nil {
+		return func(code string) string { return code }
+	}
+	// code → alias 맵 1회 구성 (List 는 로컬 캐시라 저렴).
+	byCode := map[string]string{}
+	for _, ru := range routes.List() {
+		if ru == nil || ru.RoutingKey == "" {
+			continue
+		}
+		if _, dup := byCode[ru.RoutingKey]; !dup {
+			byCode[ru.RoutingKey] = ru.Alias
+		}
+	}
+	return func(code string) string {
+		if a, ok := byCode[code]; ok {
+			return a
+		}
+		return code
+	}
+}
+
+// GetSvcIOOpenAPI — GET /v1/admin/svc-io/openapi.json[?codes=W35*][&download=1]
+// svcio Registry 전체(또는 codes 필터)를 OpenAPI 3.0 문서로 생성해 응답.
+// 클라이언트 개발자 전달용 — Swagger UI / Postman / codegen 소비 가능.
+func GetSvcIOOpenAPI(deps *SvcIODeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps == nil || deps.Registry == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "svcio_disabled", "svc-inc-dir 미설정")
+			return
+		}
+		codeFilter := strings.TrimSpace(r.URL.Query().Get("codes"))
+
+		var specs []*svcio.SvcSpec
+		for _, sum := range deps.Registry.List() {
+			if codeFilter != "" && !svcio.CodeMatch(codeFilter, sum.Code) {
+				continue
+			}
+			if sp, ok := deps.Registry.Get(sum.Code); ok {
+				specs = append(specs, sp)
+			}
+		}
+
+		server := ""
+		if deps.UpstreamAPIURL != "" {
+			server = deps.UpstreamAPIURL
+		}
+		doc := svcio.BuildOpenAPI(specs, svcio.OpenAPIOptions{
+			Title:    "WTG 매매 서비스 API (svc I/O 명세 자동 생성)",
+			Version:  "1.0.0",
+			Server:   server,
+			AliasFor: aliasResolver(deps.Routes),
+		})
+
+		if r.URL.Query().Get("download") == "1" {
+			w.Header().Set("Content-Disposition", "attachment; filename=wtg-openapi.json")
+		}
+		writeJSON(w, http.StatusOK, doc)
+	}
+}

@@ -8495,12 +8495,24 @@ async function initSvcIO() {
     if (hdrBtn) hdrBtn.onclick = openSvcioHeadersModal;
     // OpenAPI 다운로드 — 현재 검색어를 codes 필터로 전달 (없으면 전체).
     const oaBtn = $("#svcio-openapi-btn");
-    if (oaBtn) oaBtn.onclick = () => {
+    if (oaBtn) oaBtn.onclick = async () => {
+      // window.open 은 인증 헤더를 못 실으므로 fetch(authHeaders) → Blob 다운로드.
       const q = ($("#svcio-q")?.value || "").trim();
-      let url = "/v1/admin/svc-io/openapi.json?download=1";
+      let url = "/v1/admin/svc-io/openapi.json";
       // 검색어가 코드 패턴(영문/숫자/*/,)일 때만 codes 필터로 — 한글 검색은 전체.
-      if (q && /^[A-Za-z0-9*,]+$/.test(q)) url += "&codes=" + encodeURIComponent(q);
-      window.open(url, "_blank");
+      if (q && /^[A-Za-z0-9*,]+$/.test(q)) url += "?codes=" + encodeURIComponent(q);
+      try {
+        const resp = await fetch(url, { credentials: "same-origin", headers: authHeaders() });
+        if (!resp.ok) { alert("OpenAPI 생성 실패: HTTP " + resp.status); return; }
+        const blob = await resp.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "wtg-openapi.json";
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        alert("OpenAPI 다운로드 오류: " + e);
+      }
     };
     const hdrClose = $("#svcio-headers-close");
     if (hdrClose) hdrClose.onclick = () => $("#svcio-headers-modal").classList.add("hidden");

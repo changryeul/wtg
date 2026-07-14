@@ -161,7 +161,7 @@ jobs:
             wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
             wtg-mci-api wtg-mci-edge-api wtg-mci-edge-fix-ord wtg-mci-edge-fix-md \
             wtg-mci-edge-tcp wtg-mci-push wtg-mci-edge-push \
-            wtg-quote-forwarder wtg-dev-feed
+            wtg-quote-forwarder wtg-dev-feed wtg-mci-mds-shim
 
       - name: Health check
         run: |
@@ -170,7 +170,7 @@ jobs:
           for svc in wtg-etcd wtg-mci-price wtg-mci-edge-price wtg-mci-admin \
                      wtg-mci-api wtg-mci-edge-api wtg-mci-edge-fix-ord wtg-mci-edge-fix-md \
                      wtg-mci-edge-tcp wtg-mci-push wtg-mci-edge-push \
-                     wtg-quote-forwarder wtg-dev-feed; do
+                     wtg-quote-forwarder wtg-dev-feed wtg-mci-mds-shim; do
             if ! sudo systemctl is-active --quiet "$svc"; then
               echo "::error::$svc inactive — 최근 로그:"
               sudo journalctl -u "$svc" -n 40 --no-pager

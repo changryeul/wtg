@@ -1,0 +1,36 @@
+# WTG mci-mds-shim — mds query-server (W9500) 대체 wire 호환 AP.
+# W950x 고정폭 전문 (현재 W9504A01 스왑포인트 / W9501S01 종가) 을 받아
+# WTG 백엔드 (etcd pricing / mci-chart) 로 변환한다.
+# 전환 계획: docs/mds-replacement-plan.md Stage 2.
+[Unit]
+Description=WTG mci-mds-shim — mds W950x wire 호환 AP (broker 큐 W9500 승계)
+After=network-online.target wtg-etcd.service
+Wants=network-online.target wtg-etcd.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+# 로그 위치 통일: trn AP 로그와 동일한 win/log (--log-dir)
+ExecStartPre=/usr/bin/install -d -o winway -g winway /home/winway/nh-fxallone-server/win/log
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-mds-shim \
+    --broker-host=${BROKER_HOST} \
+    --broker-port=${BROKER_PORT} \
+    --etcd=127.0.0.1:2379 \
+    --chart-url=http://127.0.0.1:8086 \
+    --log-dir=/home/winway/nh-fxallone-server/win/log
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-mds-shim
+
+[Install]
+WantedBy=multi-user.target

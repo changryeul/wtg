@@ -73,7 +73,7 @@
 | | |
 |---|---|
 | **목적** | 이후 모든 단계의 검증 도구와 전환 대상 목록을 선확보 |
-| **작업** | ① **client 인벤토리 조사** — W950x 호출 client 전수 파악, 재빌드 가능(cside 트랙)/불가(shim 트랙) 분류. **trn 축은 완료** — EC2 미러 (`mywork/nh/win/src/trn`) 전수 grep 결과 W2006A01 → W9504A01 1건뿐. 잔여 조사 = trn 외 호출자 (딜러 화면/사내 도구 등, NH 협조 필요). ② **`cmd/quote-replay` 신설** — mds `manual_feed/replay_smb2/kmb2/ebs2` 동등의 pcap 재생기. `load-gen` (합성) 과 달리 실 캡처를 mds/WTG 양쪽에 동일 재생 가능 |
+| **작업** | ① **client 인벤토리 조사** — W950x 호출 client 전수 파악, 재빌드 가능(cside 트랙)/불가(shim 트랙) 분류. **trn 축은 완료** — EC2 미러 (`mywork/nh/win/src/trn`) 전수 grep 결과 W2006A01 → W9504A01 1건뿐. 잔여 조사 = trn 외 호출자 (딜러 화면/사내 도구 등, NH 협조 필요). ② **`cmd/quote-replay` 신설** — mds `manual_feed/replay_smb2/kmb2/ebs2` 동등의 `.trc` 실 캡처 재생기. `load-gen` (합성) 과 달리 실 캡처를 mds/WTG 양쪽에 동일 재생 가능. **✓ 구현 완료 (2026-07-14)** — `--file/--dest(다중)/--speed/--loop/--dry-run`, 원형과 달리 상대 간격 페이싱이라 아무 시각에나 실행 가능 |
 | **공수** | 2주 (조사 0.5 + quote-replay 1 + 리허설 0.5) |
 | **게이트** | 동일 pcap 을 mds cooker 에 재생했을 때 기존 동작 재현 확인 (도구 자체 검증) |
 | **롤백** | 해당 없음 (운영 무영향) |

@@ -390,7 +390,8 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn, ci *connInfo) {
 		resp, err := s.forward(ctx, body)
 		if err != nil {
 			s.logger.Warn("upstream forward 실패",
-				slog.Int64("conn", ci.ID), slog.Any("error", err))
+				slog.Int64("conn", ci.ID), slog.Any("error", err),
+				slog.String("payload_hex", hexPrefix(body, 32)))
 			s.mu.Lock()
 			s.upstreamErrors++
 			s.mu.Unlock()
@@ -429,9 +430,9 @@ func (s *Server) forward(ctx context.Context, payload []byte) ([]byte, error) {
 	if len(payload) < 16 {
 		return nil, fmt.Errorf("전문 길이 부족: %dB (< COMHDR.trxc 16B)", len(payload))
 	}
-	trxc := strings.TrimSpace(string(payload[:16]))
-	if trxc == "" {
-		return nil, errors.New("COMHDR.trxc 비어있음")
+	trxc, err := sanitizeTrxc(payload[:16])
+	if err != nil {
+		return nil, err
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.cfg.UpstreamTimeout)
 	defer cancel()
@@ -493,4 +494,31 @@ func writeFrame(w io.Writer, payload []byte) error {
 		}
 	}
 	return nil
+}
+
+// sanitizeTrxc 는 COMHDR.trxc(16B) 를 alias 로 정제한다 — cs 전문은 NUL
+// 패딩이라 TrimSpace 만으로는 HTTP 헤더 불가 바이트가 남는다. 선행 공백을
+// 걷고 첫 비인쇄/비ASCII 바이트에서 절단, 결과가 비면 hex 포함 에러.
+func sanitizeTrxc(b []byte) (string, error) {
+	i := 0
+	for i < len(b) && b[i] == ' ' {
+		i++
+	}
+	j := i
+	for j < len(b) && b[j] > 0x20 && b[j] < 0x7f {
+		j++
+	}
+	trxc := strings.TrimSpace(string(b[i:j]))
+	if trxc == "" {
+		return "", fmt.Errorf("COMHDR.trxc 추출 실패 (hex=%s)", hexPrefix(b, 16))
+	}
+	return trxc, nil
+}
+
+// hexPrefix 는 진단 로그용 hex 문자열 (최대 n 바이트).
+func hexPrefix(b []byte, n int) string {
+	if len(b) > n {
+		b = b[:n]
+	}
+	return fmt.Sprintf("% x", b)
 }

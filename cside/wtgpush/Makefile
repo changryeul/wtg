@@ -13,7 +13,7 @@
 
 CC ?= cc
 AR ?= ar
-CFLAGS ?= -O -g -Wall -Wextra
+CFLAGS ?= -fPIC -O -g -Wall -Wextra
 LDLIBS_PLATFORM =
 
 # 플랫폼별 추가 라이브러리 — Solaris 는 socket / nsl 명시.

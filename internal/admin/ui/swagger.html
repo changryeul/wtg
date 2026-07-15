@@ -74,10 +74,17 @@
           deepLinking: true,
           presets: [SwaggerUIBundle.presets.apis],
           layout: "BaseLayout",
-          // 실제 호출 시 /v1/tx 로 alias 붙여 인증 헤더 주입 (Try it out 지원).
+          // 인증 헤더 기본 자동 주입 — 단 사용자가 Try it out 에서 직접 입력한
+          // 헤더 값이 있으면 덮지 않는다 (수동 편집 우선).
           requestInterceptor: function (req) {
             var h = authHeaders();
-            for (var k in h) req.headers[k] = h[k];
+            for (var k in h) {
+              var has = false;
+              for (var rk in req.headers) {
+                if (rk.toLowerCase() === k.toLowerCase() && req.headers[rk]) { has = true; break; }
+              }
+              if (!has) req.headers[k] = h[k];
+            }
             return req;
           },
         });

@@ -48,9 +48,19 @@ type Operation struct {
 	Summary     string                `json:"summary,omitempty"`
 	Description string                `json:"description,omitempty"`
 	Tags        []string              `json:"tags,omitempty"`
+	Parameters  []Parameter           `json:"parameters,omitempty"`
 	RequestBody *RequestBody          `json:"requestBody,omitempty"`
 	Responses   map[string]Response   `json:"responses"`
 	Security    []map[string][]string `json:"security,omitempty"`
+}
+
+// Parameter — OpenAPI 파라미터 (여기선 편집 가능한 header 용).
+type Parameter struct {
+	Name        string  `json:"name"`
+	In          string  `json:"in"`
+	Description string  `json:"description,omitempty"`
+	Required    bool    `json:"required,omitempty"`
+	Schema      *Schema `json:"schema,omitempty"`
 }
 
 type RequestBody struct {
@@ -185,6 +195,7 @@ func BuildOpenAPI(specs []*SvcSpec, opts OpenAPIOptions) OpenAPIDoc {
 			Summary:     spec.Code + " " + spec.Name,
 			Description: "실제 호출: `POST /v1/tx`, body 의 alias=`" + alias + "`.",
 			Tags:        []string{tagOf(spec.Code)},
+			Parameters:  commonHeaders(),
 			Security:    []map[string][]string{{"bearerAuth": {}}},
 			RequestBody: &RequestBody{
 				Required: true,
@@ -242,4 +253,18 @@ func splitComma(s string) []string {
 		}
 	}
 	return append(out, strings.TrimSpace(cur))
+}
+
+// commonHeaders 는 /v1/tx 호출에 붙는 편집 가능한 header 파라미터.
+// Swagger UI 의 Try it out 에서 값을 직접 보고 수정할 수 있게 노출한다.
+// (Authorization 은 bearerAuth security scheme 의 Authorize 버튼으로 별도 입력)
+func commonHeaders() []Parameter {
+	return []Parameter{
+		{Name: "X-WTG-User", In: "header",
+			Description: "DevMode 사용자 ID (JWT 미사용 시). 운영은 Authorize 의 Bearer 토큰 사용",
+			Schema:      &Schema{Type: "string"}},
+		{Name: "X-WTG-Channel", In: "header",
+			Description: "채널 코드 (예: HTS / WEB). 생략 가능",
+			Schema:      &Schema{Type: "string"}},
+	}
 }

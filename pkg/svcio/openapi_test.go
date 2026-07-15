@@ -170,3 +170,27 @@ func TestCodeMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildOpenAPI_HeaderParams(t *testing.T) {
+	doc := BuildOpenAPI([]*SvcSpec{sampleSpec()}, OpenAPIOptions{Title: "x", Version: "1"})
+	op := doc.Paths["/v1/tx#W3500S01"].Post
+	if len(op.Parameters) == 0 {
+		t.Fatal("헤더 파라미터 없음 — Swagger UI 에서 편집 불가")
+	}
+	names := map[string]Parameter{}
+	for _, p := range op.Parameters {
+		names[p.Name] = p
+	}
+	for _, want := range []string{"X-WTG-User", "X-WTG-Channel"} {
+		p, ok := names[want]
+		if !ok {
+			t.Fatalf("헤더 파라미터 %s 누락", want)
+		}
+		if p.In != "header" {
+			t.Fatalf("%s in=%q, want header", want, p.In)
+		}
+		if p.Schema == nil || p.Schema.Type != "string" {
+			t.Fatalf("%s 스키마 불량: %+v", want, p.Schema)
+		}
+	}
+}

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WTG 서비스 API — Swagger UI</title>
+  <!-- Swagger UI (CDN — 기존 admin UI 의 Tailwind/chart.js CDN 정책과 동일) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css">
+  <style>
+    body { margin: 0; background: #fafafa; }
+    #topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; background: #0f172a; color: #e2e8f0;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #topbar b { color: #fff; }
+    #topbar input {
+      background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
+      border-radius: 6px; padding: 4px 8px; font-size: 12px; width: 220px;
+    }
+    #topbar button {
+      background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
+      border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer;
+    }
+    #topbar button:hover { border-color: #38bdf8; color: #38bdf8; }
+    #topbar .msg { color: #94a3b8; }
+    #swagger-ui { max-width: 1400px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <b>WTG 서비스 API 뷰어</b>
+    <span class="msg">실제 endpoint 는 <code>POST /v1/tx</code> — 각 TR 은 body 의 alias 로 구분</span>
+    <span style="flex:1"></span>
+    <input id="codes" placeholder="코드 필터 (예: W35*, W3200S01)">
+    <button id="reload">불러오기</button>
+    <button id="download">⬇ JSON</button>
+    <span class="msg" id="stat">—</span>
+  </div>
+  <div id="swagger-ui"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js"></script>
+  <script>
+    // admin SPA 와 동일한 localStorage 키에서 인증 정보 취득.
+    var LS_TOKEN = "wtg_access_token", LS_USER = "wtg_user", LS_DEV = "wtg_dev_mode";
+    function authHeaders() {
+      var h = {};
+      if (localStorage.getItem(LS_DEV) === "1") {
+        var u = localStorage.getItem(LS_USER) || "";
+        if (u) h["X-WTG-User"] = u;
+      } else {
+        var t = localStorage.getItem(LS_TOKEN);
+        if (t) h["Authorization"] = "Bearer " + t;
+      }
+      return h;
+    }
+    function specUrl() {
+      var q = (document.getElementById("codes").value || "").trim();
+      var url = "/v1/admin/svc-io/openapi.json";
+      if (q && /^[A-Za-z0-9*,]+$/.test(q)) url += "?codes=" + encodeURIComponent(q);
+      return url;
+    }
+    async function load() {
+      var stat = document.getElementById("stat");
+      stat.textContent = "불러오는 중…";
+      try {
+        var resp = await fetch(specUrl(), { credentials: "same-origin", headers: authHeaders() });
+        if (!resp.ok) { stat.textContent = "실패: HTTP " + resp.status + (resp.status === 401 ? " (admin 로그인 필요)" : ""); return; }
+        var spec = await resp.json();
+        var n = Object.keys(spec.paths || {}).length;
+        window.ui = SwaggerUIBundle({
+          spec: spec,
+          dom_id: "#swagger-ui",
+          deepLinking: true,
+          presets: [SwaggerUIBundle.presets.apis],
+          layout: "BaseLayout",
+          // 실제 호출 시 /v1/tx 로 alias 붙여 인증 헤더 주입 (Try it out 지원).
+          requestInterceptor: function (req) {
+            var h = authHeaders();
+            for (var k in h) req.headers[k] = h[k];
+            return req;
+          },
+        });
+        stat.textContent = n + " TR 로드됨";
+      } catch (e) {
+        stat.textContent = "오류: " + e;
+      }
+    }
+    document.getElementById("reload").onclick = load;
+    document.getElementById("codes").addEventListener("keydown", function (e) { if (e.key === "Enter") load(); });
+    document.getElementById("download").onclick = async function () {
+      var resp = await fetch(specUrl(), { credentials: "same-origin", headers: authHeaders() });
+      if (!resp.ok) { alert("다운로드 실패: HTTP " + resp.status); return; }
+      var blob = await resp.blob(), a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = "wtg-openapi.json";
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+    };
+    // 초기 코드 필터를 URL ?codes= 로 받을 수 있게 (admin 에서 deep link).
+    var params = new URLSearchParams(location.search);
+    if (params.get("codes")) document.getElementById("codes").value = params.get("codes");
+    load();
+  </script>
+</body>
+</html>

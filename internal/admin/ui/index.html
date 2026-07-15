@@ -2328,6 +2328,13 @@ WEB.HQ.VIP</textarea>
                 title="svc I/O 명세를 OpenAPI 3.0 (Swagger) 문서로 내려받아 클라이언트 개발자에게 전달">
                 ⬇ OpenAPI 다운로드
               </button>
+              <!-- Swagger UI 뷰어 — 다운로드 없이 브라우저에서 바로 API 문서 열람.
+                   현재 검색어를 codes 필터로 전달. -->
+              <button id="svcio-swagger-btn"
+                class="text-xs px-3 py-1.5 rounded-md bg-ink-800 border border-ink-700 hover:border-accent-500 hover:text-accent-400"
+                title="Swagger UI 로 API 문서를 새 탭에서 열람 (Try it out 지원)">
+                🔎 API 뷰어
+              </button>
               <div class="text-xs text-slate-500 font-mono" id="svcio-stats">—</div>
             </div>
           </div>
@@ -8513,6 +8520,14 @@ async function initSvcIO() {
       } catch (e) {
         alert("OpenAPI 다운로드 오류: " + e);
       }
+    };
+    // Swagger UI 뷰어 — 새 탭. 검색어를 codes 필터로 넘김.
+    const swBtn = $("#svcio-swagger-btn");
+    if (swBtn) swBtn.onclick = () => {
+      const q = ($("#svcio-q")?.value || "").trim();
+      let url = "/swagger.html";
+      if (q && /^[A-Za-z0-9*,]+$/.test(q)) url += "?codes=" + encodeURIComponent(q);
+      window.open(url, "_blank");
     };
     const hdrClose = $("#svcio-headers-close");
     if (hdrClose) hdrClose.onclick = () => $("#svcio-headers-modal").classList.add("hidden");

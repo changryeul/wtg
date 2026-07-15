@@ -30,7 +30,7 @@
 <body>
   <div id="topbar">
     <b>WTG 서비스 API 뷰어</b>
-    <span class="msg">실제 endpoint 는 <code>POST /v1/tx</code> — 각 TR 은 body 의 alias 로 구분. <b>Try it out</b> 은 Servers 를 <b>관리자 콘솔 테스트</b> 로 바꾼 뒤 실행 (외부 DMZ 는 CORS·TLS 로 브라우저 직접 호출 불가)</span>
+    <span class="msg">실제 endpoint 는 <code>POST /v1/tx</code> — 각 TR 은 body 의 alias 로 구분. <b>Try it out</b> 은 same-origin <b>관리자 콘솔 테스트</b> 서버로 바로 동작. 외부 DMZ(8090)로 실호출 시엔 <b>⬇ JSON</b> 다운로드 스펙을 클라이언트 도구로 import</span>
     <span style="flex:1"></span>
     <input id="codes" placeholder="코드 필터 (예: W35*, W3200S01)">
     <button id="reload">불러오기</button>
@@ -54,17 +54,23 @@
       }
       return h;
     }
-    function specUrl() {
+    // forTry=true → viewer 용. try=1 을 붙여 same-origin 테스트 서버가
+    // servers[0] 로 오게 한다 (Swagger UI 기본 선택 = Try it out 바로 동작).
+    // 다운로드(forTry=false)는 try 없이 외부 DMZ(8090) 를 첫 서버로 유지.
+    function specUrl(forTry) {
       var q = (document.getElementById("codes").value || "").trim();
+      var params = [];
+      if (q && /^[A-Za-z0-9*,]+$/.test(q)) params.push("codes=" + encodeURIComponent(q));
+      if (forTry) params.push("try=1");
       var url = "/v1/admin/svc-io/openapi.json";
-      if (q && /^[A-Za-z0-9*,]+$/.test(q)) url += "?codes=" + encodeURIComponent(q);
+      if (params.length) url += "?" + params.join("&");
       return url;
     }
     async function load() {
       var stat = document.getElementById("stat");
       stat.textContent = "불러오는 중…";
       try {
-        var resp = await fetch(specUrl(), { credentials: "same-origin", headers: authHeaders() });
+        var resp = await fetch(specUrl(true), { credentials: "same-origin", headers: authHeaders() });
         if (!resp.ok) { stat.textContent = "실패: HTTP " + resp.status + (resp.status === 401 ? " (admin 로그인 필요)" : ""); return; }
         var spec = await resp.json();
         var n = Object.keys(spec.paths || {}).length;

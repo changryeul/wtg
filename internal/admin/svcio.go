@@ -696,13 +696,24 @@ func GetSvcIOOpenAPI(deps *SvcIODeps) http.HandlerFunc {
 			}
 		}
 
+		// try=1 (admin viewer 모드) 이면 same-origin 테스트 서버를 servers[0] 로
+		// 앞세운다. Swagger UI 는 servers[0] 를 기본 선택하므로 viewer 에서
+		// "Try it out" 이 곧바로 same-origin 으로 나가 CORS/self-signed TLS 를
+		// 피한다. 다운로드/전달용(try 없음)은 외부 DMZ(8090) 를 우선.
+		primary, primaryDesc := server, serverDesc
+		secondary, secondaryDesc := testServer, testServerDesc
+		if r.URL.Query().Get("try") == "1" && testServer != "" {
+			primary, primaryDesc = testServer, testServerDesc
+			secondary, secondaryDesc = server, serverDesc
+		}
+
 		doc := svcio.BuildOpenAPI(specs, svcio.OpenAPIOptions{
 			Title:          "WTG 매매 서비스 API (svc I/O 명세 자동 생성)",
 			Version:        "1.0.0",
-			Server:         server,
-			ServerDesc:     serverDesc,
-			TestServer:     testServer,
-			TestServerDesc: testServerDesc,
+			Server:         primary,
+			ServerDesc:     primaryDesc,
+			TestServer:     secondary,
+			TestServerDesc: secondaryDesc,
 			AliasFor:       aliasResolver(deps.Routes),
 		})
 

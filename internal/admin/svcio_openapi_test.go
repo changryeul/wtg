@@ -43,8 +43,16 @@ func newTestSvcRegistry(t *testing.T) *svcio.Registry {
 }
 
 func fetchOpenAPIServers(t *testing.T, deps *SvcIODeps) []svcio.OpenAPIServer {
+	return fetchOpenAPIServersQ(t, deps, "")
+}
+
+func fetchOpenAPIServersQ(t *testing.T, deps *SvcIODeps, query string) []svcio.OpenAPIServer {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "http://admin.example:9090/v1/admin/svc-io/openapi.json", nil)
+	u := "http://admin.example:9090/v1/admin/svc-io/openapi.json"
+	if query != "" {
+		u += "?" + query
+	}
+	req := httptest.NewRequest(http.MethodGet, u, nil)
 	rec := httptest.NewRecorder()
 	GetSvcIOOpenAPI(deps)(rec, req)
 	if rec.Code != http.StatusOK {
@@ -75,6 +83,27 @@ func TestGetSvcIOOpenAPI_DevModeAddsTestServer(t *testing.T) {
 	}
 	if servers[1].URL != "http://admin.example:9090" {
 		t.Fatalf("servers[1]=%q, want 요청 origin (same-origin)", servers[1].URL)
+	}
+}
+
+// try=1 (viewer 모드) 이면 same-origin 테스트 서버를 servers[0] 로 앞세운다 —
+// Swagger UI 기본 선택이 테스트 서버가 되어 Try it out 이 바로 동작.
+func TestGetSvcIOOpenAPI_TryModeTestServerFirst(t *testing.T) {
+	deps := &SvcIODeps{
+		Registry:      newTestSvcRegistry(t),
+		OpenAPIServer: "https://3.36.188.87:8090",
+		DevMode:       true,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	servers := fetchOpenAPIServersQ(t, deps, "try=1")
+	if len(servers) != 2 {
+		t.Fatalf("servers %d개, want 2: %+v", len(servers), servers)
+	}
+	if servers[0].URL != "http://admin.example:9090" {
+		t.Fatalf("servers[0]=%q, want same-origin 테스트 서버 우선", servers[0].URL)
+	}
+	if servers[1].URL != "https://3.36.188.87:8090" {
+		t.Fatalf("servers[1]=%q, want 외부 DMZ", servers[1].URL)
 	}
 }
 

@@ -32,8 +32,11 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # cancel-in-progress: true — 새 push 가 오면 진행/대기 중인 이전 run 을
+  # 취소한다. false 로 큐잉하면 뒤늦게 끝난 옛 run 이 최신 배포를 덮어써
+  # stale 바이너리가 배포되는 사고가 있었다 (2026-07-15). 항상 최신만 배포.
   group: deploy-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   WTG_HOME: /home/winway/nh-fxallone-server/wtg

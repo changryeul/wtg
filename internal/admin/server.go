@@ -513,6 +513,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Registry:      s.svcio,
 		Routes:        s.routes,
 		OpenAPIServer: s.cfg.OpenAPIServer,
+		DevMode:       s.cfg.DevMode,
 		Logger:        s.logger,
 	}))
 	mux.HandleFunc("GET /v1/admin/svc-io/{code}", GetSvcIO(&SvcIODeps{
@@ -541,6 +542,14 @@ func (s *Server) Start(ctx context.Context) error {
 	// Tx 테스터 — UI 안에서 mci-api 의 /v1/tx 로 reverse proxy.
 	// UpstreamAPIURL 이 비어있으면 503. DevMode 검증용 우회 path.
 	mux.HandleFunc("POST /v1/admin/tx-test", TxTestProxy(s.cfg.UpstreamAPIURL, s.logger))
+	// Swagger UI "Try it out" same-origin 타깃 — 가상 path /v1/tx#code 의
+	// 실 요청은 POST /v1/tx (fragment 제거) 이므로 admin 이 same-origin 으로
+	// 받아 내부 mci-api 로 프록시한다. 외부 DMZ(8090) 직접 호출은 CORS·
+	// self-signed TLS·JWT 로 브라우저에서 막히므로 DevMode 우회 전용.
+	// 운영 admin(비 DevMode) 은 거래 경로가 아니므로 등록하지 않는다.
+	if s.cfg.DevMode {
+		mux.HandleFunc("POST /v1/tx", TxTestProxy(s.cfg.UpstreamAPIURL, s.logger))
+	}
 	// 대시보드 "MCI 프로세스 상태" — 각 서비스 진단 endpoint 병렬 ping.
 	mux.HandleFunc("GET /v1/admin/mci-health", MciHealth(s.cfg.MciHealthTargets, s.cfg.EtcdEndpoints))
 	// WS 모니터 reverse-proxy — 브라우저가 서비스 포트에 직접 못 닿는 원격

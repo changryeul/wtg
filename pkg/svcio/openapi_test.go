@@ -142,6 +142,45 @@ func TestBuildOpenAPI_Empty(t *testing.T) {
 	}
 }
 
+func TestBuildOpenAPI_TestServer(t *testing.T) {
+	// 외부 DMZ (배포) 서버 + 관리자 콘솔 same-origin 테스트 서버 2개 등록.
+	doc := BuildOpenAPI([]*SvcSpec{sampleSpec()}, OpenAPIOptions{
+		Title:          "x",
+		Version:        "1",
+		Server:         "https://3.36.188.87:8090",
+		ServerDesc:     "외부 DMZ (mci-edge-api)",
+		TestServer:     "http://3.36.188.87:9090",
+		TestServerDesc: "관리자 콘솔 테스트 (DevMode)",
+	})
+	if len(doc.Servers) != 2 {
+		t.Fatalf("servers %d개, want 2: %+v", len(doc.Servers), doc.Servers)
+	}
+	// [0] = 외부 DMZ (배포 default)
+	if doc.Servers[0].URL != "https://3.36.188.87:8090" {
+		t.Fatalf("servers[0].url=%q", doc.Servers[0].URL)
+	}
+	if doc.Servers[0].Description != "외부 DMZ (mci-edge-api)" {
+		t.Fatalf("servers[0].description=%q", doc.Servers[0].Description)
+	}
+	// [1] = 관리자 콘솔 same-origin (Try it out 용)
+	if doc.Servers[1].URL != "http://3.36.188.87:9090" {
+		t.Fatalf("servers[1].url=%q", doc.Servers[1].URL)
+	}
+	if doc.Servers[1].Description != "관리자 콘솔 테스트 (DevMode)" {
+		t.Fatalf("servers[1].description=%q", doc.Servers[1].Description)
+	}
+}
+
+func TestBuildOpenAPI_TestServerOmittedWhenEmpty(t *testing.T) {
+	// TestServer 비면 서버 1개만 (기존 동작 유지).
+	doc := BuildOpenAPI([]*SvcSpec{sampleSpec()}, OpenAPIOptions{
+		Title: "x", Version: "1", Server: "https://api.example.com",
+	})
+	if len(doc.Servers) != 1 {
+		t.Fatalf("servers %d개, want 1", len(doc.Servers))
+	}
+}
+
 func pathKeys(m map[string]PathItem) []string {
 	ks := make([]string, 0, len(m))
 	for k := range m {

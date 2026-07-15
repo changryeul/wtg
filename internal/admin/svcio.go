@@ -129,6 +129,7 @@ type SvcIODeps struct {
 	Routes         routing.Registry // svc code → alias 들 reverse lookup
 	UpstreamAPIURL string           // mci-api /v1/admin/alias-stats fetch
 	OpenAPIServer  string           // OpenAPI servers[].url 명시값 (외부 API 게이트웨이). 비면 요청 origin
+	DevMode        bool             // DevMode 면 관리자 콘솔 same-origin 테스트 서버를 servers[] 에 추가
 	HTTPClient     *http.Client     // 짧은 timeout, nil 이면 default 사용
 	Logger         *slog.Logger
 }
@@ -676,14 +677,33 @@ func GetSvcIOOpenAPI(deps *SvcIODeps) http.HandlerFunc {
 		//   2) 요청이 들어온 실제 origin (scheme+host — 브라우저 접근 기준). admin
 		//      의 내부 upstream (127.0.0.1:8080) 은 외부/브라우저에서 틀리므로 안 씀.
 		server := deps.OpenAPIServer
+		serverDesc := ""
 		if server == "" {
 			server = requestOrigin(r)
+		} else {
+			serverDesc = "외부 DMZ (mci-edge-api) — 실 클라이언트 호출용"
 		}
+
+		// DevMode 면 관리자 콘솔 same-origin 을 두 번째 서버로 추가한다. Swagger UI
+		// "Try it out" 은 외부 DMZ(8090) 로는 CORS·self-signed TLS·JWT 때문에
+		// 브라우저에서 막히므로, same-origin(admin :9090) 의 /v1/tx 프록시로 우회.
+		// (admin 이 X-WTG-User DevMode 헤더로 인증 → 내부 mci-api 로 forward)
+		testServer, testServerDesc := "", ""
+		if deps.DevMode {
+			if origin := requestOrigin(r); origin != "" && origin != server {
+				testServer = origin
+				testServerDesc = "관리자 콘솔 테스트 (DevMode, same-origin)"
+			}
+		}
+
 		doc := svcio.BuildOpenAPI(specs, svcio.OpenAPIOptions{
-			Title:    "WTG 매매 서비스 API (svc I/O 명세 자동 생성)",
-			Version:  "1.0.0",
-			Server:   server,
-			AliasFor: aliasResolver(deps.Routes),
+			Title:          "WTG 매매 서비스 API (svc I/O 명세 자동 생성)",
+			Version:        "1.0.0",
+			Server:         server,
+			ServerDesc:     serverDesc,
+			TestServer:     testServer,
+			TestServerDesc: testServerDesc,
+			AliasFor:       aliasResolver(deps.Routes),
 		})
 
 		if r.URL.Query().Get("download") == "1" {

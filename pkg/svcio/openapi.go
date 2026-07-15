@@ -15,6 +15,13 @@ type OpenAPIOptions struct {
 	Title   string
 	Version string
 	Server  string // 예: "https://api.example.com" (비면 servers 생략)
+	// ServerDesc — 주 서버(Server) 의 servers[].description. 비면 생략.
+	ServerDesc string
+	// TestServer — 관리자 콘솔 same-origin 테스트 서버 (Swagger UI "Try it out" 용).
+	// 비면 등록 안 함. Server 다음 두 번째 servers[] 엔트리로 들어간다.
+	TestServer string
+	// TestServerDesc — TestServer 의 servers[].description.
+	TestServerDesc string
 	// AliasFor 는 svc code → routing alias 해석. nil 이면 code 를 그대로 alias 로.
 	AliasFor func(code string) string
 }
@@ -36,7 +43,8 @@ type OpenAPIInfo struct {
 }
 
 type OpenAPIServer struct {
-	URL string `json:"url"`
+	URL         string `json:"url"`
+	Description string `json:"description,omitempty"`
 }
 
 type PathItem struct {
@@ -152,7 +160,10 @@ func BuildOpenAPI(specs []*SvcSpec, opts OpenAPIOptions) OpenAPIDoc {
 		Paths: map[string]PathItem{},
 	}
 	if opts.Server != "" {
-		doc.Servers = []OpenAPIServer{{URL: opts.Server}}
+		doc.Servers = append(doc.Servers, OpenAPIServer{URL: opts.Server, Description: opts.ServerDesc})
+	}
+	if opts.TestServer != "" {
+		doc.Servers = append(doc.Servers, OpenAPIServer{URL: opts.TestServer, Description: opts.TestServerDesc})
 	}
 	doc.Components = &Components{SecuritySchemes: map[string]SecurityScheme{
 		"bearerAuth": {Type: "http", Scheme: "bearer", BearerFormat: "JWT"},

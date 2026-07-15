@@ -1,6 +1,7 @@
 package svcio
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -181,9 +182,11 @@ func TestSerialize_Truncates(t *testing.T) {
 	}
 }
 
-// 전문 인코딩 UTF-8 통일 (2026-07-08) — 한글 왕복 + rune 경계 절단 + CP949 fallback.
-func TestWireEncodingUTF8(t *testing.T) {
-	// 1. UTF-8 왕복 — 한글이 그대로 보존.
+// 전문 인코딩 CP949 경계변환 (2026-07-15 결정) — WTG 경계에서 JSON(UTF-8) ↔
+// 엔진(CP949) 변환. 송신: UTF-8 → CP949 byte 배치 (한글 1자=2byte). 수신: CP949
+// → UTF-8. 왕복 + CP949 byte-width 절단(다중바이트 분할 금지) 검증.
+func TestWireEncodingCP949(t *testing.T) {
+	// 1. 한글 왕복 — UTF-8 입력 → CP949 wire → UTF-8 복원.
 	fields := []Field{{Name: "mesg", CType: "char", Size: 40, Comment: "메시지"}}
 	buf, err := Serialize(fields, map[string]interface{}{"mesg": "DB System 장애 입니다."})
 	if err != nil {
@@ -194,29 +197,49 @@ func TestWireEncodingUTF8(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out["mesg"] != "DB System 장애 입니다." {
-		t.Errorf("UTF-8 왕복 불일치: %q", out["mesg"])
+		t.Errorf("CP949 왕복 불일치: %q", out["mesg"])
 	}
 
-	// 2. char[N] 절단이 rune 중간에 걸리면 경계까지 되돌림 — invalid UTF-8 생성 금지.
+	// 2. 송신은 CP949 byte 로 배치 — "가나" 는 CP949 4byte (UTF-8 6byte 아님).
 	small := []Field{{Name: "nm", CType: "char", Size: 4, Comment: "이름"}}
-	buf2, err := Serialize(small, map[string]interface{}{"nm": "가나"}) // UTF-8 6B > 4
+	buf2, err := Serialize(small, map[string]interface{}{"nm": "가나"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(buf2) != 4 {
-		t.Fatalf("길이 %d, want 4", len(buf2))
-	}
-	if got := strings.Trim(string(buf2), " "); got != "가" {
-		t.Errorf("rune 경계 절단 실패: %q (raw=% x)", got, buf2)
+	if want := []byte{0xB0, 0xA1, 0xB3, 0xAA}; !bytes.Equal(buf2, want) {
+		t.Errorf("CP949 인코딩 불일치: got=% x want=% x", buf2, want)
 	}
 
-	// 3. 레거시 CP949 응답 fallback — EUC-KR bytes 도 올바르게 복원.
-	euckr := []byte{0xB0, 0xA1, 0xB3, 0xAA} // "가나" (EUC-KR)
+	// 3. char[N] 절단이 CP949 다중바이트 문자 중간에 걸리면 안 됨.
+	//    "가나다"(CP949 6byte) → size 4 → "가나"(4byte) 온전, 반쪽 byte 없음.
+	buf3, err := Serialize(small, map[string]interface{}{"nm": "가나다"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []byte{0xB0, 0xA1, 0xB3, 0xAA}; !bytes.Equal(buf3, want) {
+		t.Errorf("CP949 절단 불일치: got=% x want=% x", buf3, want)
+	}
+	//    size 3 → "가"(2byte) + 공백(1) — "나"(2byte)는 남은 1byte 에 못 들어감.
+	sz3 := []Field{{Name: "nm", CType: "char", Size: 3}}
+	buf4, _ := Serialize(sz3, map[string]interface{}{"nm": "가나"})
+	if want := []byte{0xB0, 0xA1, 0x20}; !bytes.Equal(buf4, want) {
+		t.Errorf("CP949 부분절단 불일치: got=% x want=% x", buf4, want)
+	}
+
+	// 4. 수신 — CP949 bytes 를 UTF-8 로 복원.
+	euckr := []byte{0xB0, 0xA1, 0xB3, 0xAA} // "가나" (CP949)
 	out3, err := Deserialize([]Field{{Name: "nm", CType: "char", Size: 4}}, euckr)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out3["nm"] != "가나" {
-		t.Errorf("CP949 fallback 실패: %q", out3["nm"])
+		t.Errorf("CP949 수신 복원 실패: %q", out3["nm"])
+	}
+
+	// 5. ASCII 는 양방향 무손상.
+	a := []Field{{Name: "id", CType: "char", Size: 6}}
+	ab, _ := Serialize(a, map[string]interface{}{"id": "AB12"})
+	if string(ab) != "AB12  " {
+		t.Errorf("ASCII 송신 불일치: %q", string(ab))
 	}
 }

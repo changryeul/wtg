@@ -18,9 +18,11 @@ import (
 // byte 배치 그대로 만들어 mci 경유로 broker 에 송신, 응답 byte 를 Output layout
 // 으로 다시 parse.
 //
-// 전문 인코딩 원칙 (2026-07-08 운영 결정): UTF-8 통일.
-//   - 송신: UTF-8 그대로 (변환 없음). char[N] 절단 시 rune 경계 보존.
-//   - 수신: UTF-8 valid 면 그대로, 아니면 CP949 fallback (레거시 응답 호환).
+// 전문 인코딩 원칙 (2026-07-15 운영 결정): 엔진/DB 는 CP949, WTG 경계에서 변환.
+//   - 송신: UTF-8(JSON) → CP949 로 인코딩해 char[N] 에 배치. 절단은 CP949
+//     byte-width 기준 + 다중바이트 문자 분할 금지 (encodeWire).
+//   - 수신: UTF-8 valid(=ASCII 등) 면 그대로, 아니면 CP949 → UTF-8 (decodeWire).
+//   - 레거시 EUC-KR 클라의 raw 전문(octet-stream)은 이 경로가 아니라 무손상 통과.
 //
 // 1차 prototype 범위 (실측 830 헤더 압도적 다수가 이 패턴):
 //   - char[N] 필드 — 우측 공백 fill
@@ -243,21 +245,29 @@ func nestedRows(in map[string]interface{}, key string) []map[string]interface{} 
 	return nil
 }
 
-// encodeWire — 전문 필드 값을 UTF-8 그대로 char[N] 에 배치 (우측 공백 fill).
-// N 초과 시 절단하되 UTF-8 rune 경계를 보존한다 (다중바이트 문자 중간 절단 방지).
+// encodeWire — 전문 필드 값(UTF-8 문자열)을 CP949 로 인코딩해 char[N] 에 배치
+// (우측 공백 fill). WTG 경계에서 JSON(UTF-8) → 엔진(CP949) 변환.
+//
+// rune 단위로 CP949 로 변환하며 누적해, char[N] 초과 시 다음 글자를 통째로
+// 버린다 — CP949 다중바이트(한글 2byte) 문자가 반쪽으로 잘리지 않도록 보장.
+// CP949 에 매핑 없는 rune 은 '?' 로 대체한다.
 func encodeWire(s string, size int) []byte {
-	b := []byte(s)
-	if len(b) > size {
-		b = b[:size]
-		// 절단이 rune 중간에 걸리면 해당 rune 시작까지 되돌린다.
-		for len(b) > 0 && !utf8.Valid(b) {
-			b = b[:len(b)-1]
-		}
-	}
 	out := make([]byte, size)
-	copy(out, b)
-	for i := len(b); i < size; i++ {
-		out[i] = ' '
+	for i := range out {
+		out[i] = ' ' // 우측 공백 fill 기본값
+	}
+	enc := korean.EUCKR.NewEncoder()
+	pos := 0
+	for _, r := range s {
+		cb, err := enc.Bytes([]byte(string(r)))
+		if err != nil || len(cb) == 0 {
+			cb = []byte{'?'} // CP949 미매핑 rune 대체
+		}
+		if pos+len(cb) > size {
+			break // 남은 자리에 이 글자가 온전히 안 들어감 → 절단 (분할 금지)
+		}
+		copy(out[pos:], cb)
+		pos += len(cb)
 	}
 	return out
 }

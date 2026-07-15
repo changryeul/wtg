@@ -142,6 +142,11 @@ type Config struct {
 	// DevMode 에서만 의미 있는 우회 path (운영에선 비활성 권장).
 	UpstreamAPIURL string
 
+	// OpenAPIServer — OpenAPI servers[].url 로 넣을 외부 API 게이트웨이 base URL
+	// (client 개발자가 실제 호출하는 주소, 예: https://fx.example.com). 비면
+	// openapi.json 요청이 들어온 origin 을 사용.
+	OpenAPIServer string
+
 	// MciHealthTargets — 대시보드 "MCI 프로세스 상태" 체크 대상 재정의
 	// ("name=url,name=url"). 비면 단일 호스트 배치 기본 목록 (mci_health.go).
 	MciHealthTargets string
@@ -442,6 +447,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.BrokerTLSCAFile, "broker-tls-ca", cfg.BrokerTLSCAFile, "broker TLS 서버 검증용 CA bundle")
 	fs.StringVar(&cfg.BrokerTLSSNI, "broker-tls-sni", cfg.BrokerTLSSNI, "broker TLS SNI / hostname")
 	fs.StringVar(&cfg.UpstreamAPIURL, "upstream-api", cfg.UpstreamAPIURL, "mci-api base URL — Tx 테스터용 reverse proxy. 예: http://127.0.0.1:8080. 비면 비활성")
+	fs.StringVar(&cfg.OpenAPIServer, "openapi-server", cfg.OpenAPIServer, "OpenAPI servers[].url — 외부 API 게이트웨이 base URL (client 전달용). 비면 요청 origin 사용")
 	fs.StringVar(&cfg.MciHealthTargets, "mci-health-targets", cfg.MciHealthTargets, "대시보드 프로세스 상태 체크 대상 (name=url 콤마 구분). 비면 단일 호스트 기본 목록")
 	fs.StringVar(&cfg.WsmonTargets, "wsmon-targets", cfg.WsmonTargets, "WS 모니터 proxy 대상 (name=baseURL 콤마 구분). 비면 단일 호스트 기본 목록")
 	fs.StringVar(&cfg.TcpGwStatsURL, "tcp-gw-stats", cfg.TcpGwStatsURL, "mci-edge-tcp stats base URL (기본 http://127.0.0.1:5022)")

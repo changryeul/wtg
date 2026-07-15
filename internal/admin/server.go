@@ -510,10 +510,10 @@ func (s *Server) Start(ctx context.Context) error {
 	// 공통 헤더 (COMHDR/BROADCAST_H/...) 등록 list.
 	mux.HandleFunc("GET /v1/admin/svc-io/headers", ListSvcIOHeaders(s.svcio))
 	mux.HandleFunc("GET /v1/admin/svc-io/openapi.json", GetSvcIOOpenAPI(&SvcIODeps{
-		Registry:       s.svcio,
-		Routes:         s.routes,
-		UpstreamAPIURL: s.cfg.UpstreamAPIURL,
-		Logger:         s.logger,
+		Registry:      s.svcio,
+		Routes:        s.routes,
+		OpenAPIServer: s.cfg.OpenAPIServer,
+		Logger:        s.logger,
 	}))
 	mux.HandleFunc("GET /v1/admin/svc-io/{code}", GetSvcIO(&SvcIODeps{
 		Registry:       s.svcio,

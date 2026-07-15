@@ -128,6 +128,7 @@ type SvcIODeps struct {
 	Registry       *svcio.Registry
 	Routes         routing.Registry // svc code → alias 들 reverse lookup
 	UpstreamAPIURL string           // mci-api /v1/admin/alias-stats fetch
+	OpenAPIServer  string           // OpenAPI servers[].url 명시값 (외부 API 게이트웨이). 비면 요청 origin
 	HTTPClient     *http.Client     // 짧은 timeout, nil 이면 default 사용
 	Logger         *slog.Logger
 }
@@ -670,9 +671,13 @@ func GetSvcIOOpenAPI(deps *SvcIODeps) http.HandlerFunc {
 			}
 		}
 
-		server := ""
-		if deps.UpstreamAPIURL != "" {
-			server = deps.UpstreamAPIURL
+		// 서버 URL 우선순위:
+		//   1) 명시적 OpenAPIServer flag (외부 API 게이트웨이 — client 개발자 전달용)
+		//   2) 요청이 들어온 실제 origin (scheme+host — 브라우저 접근 기준). admin
+		//      의 내부 upstream (127.0.0.1:8080) 은 외부/브라우저에서 틀리므로 안 씀.
+		server := deps.OpenAPIServer
+		if server == "" {
+			server = requestOrigin(r)
 		}
 		doc := svcio.BuildOpenAPI(specs, svcio.OpenAPIOptions{
 			Title:    "WTG 매매 서비스 API (svc I/O 명세 자동 생성)",
@@ -686,4 +691,24 @@ func GetSvcIOOpenAPI(deps *SvcIODeps) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, doc)
 	}
+}
+
+// requestOrigin 은 들어온 요청의 scheme+host 를 돌려준다 (프록시 헤더 우선).
+// OpenAPI servers URL 기본값 — 클라이언트가 실제로 접근한 origin 을 반영.
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		scheme = v
+	}
+	host := r.Host
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		host = v
+	}
+	if host == "" {
+		return ""
+	}
+	return scheme + "://" + host
 }

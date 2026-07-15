@@ -450,6 +450,59 @@ cs 가 양쪽 subscribe 한 envelope 을 동시 출력하면 동일 형식으로
 - exit 0: mismatched = 0
 - exit 1: mismatched > 0 (CI 자동 fail)
 
+## 11-A. legacy 경로 필드 대사표 (broker subscribe → WTG legacy)
+
+원본(mymq broker PRICE 구독)과 WTG legacy 인스턴스(`:8089`, `--envelope-format=legacy`)
+출력의 **필드 단위 대조**. 컷오버 전 cs 파서 영향도 판정 근거.
+
+🟢 동일 · 🟡 형식 동일/값 재산정 · 🔴 값·의미 상이
+
+### A. Envelope 최상위 필드
+
+| 필드 | 원본 (broker PRICE 구독) | WTG legacy | 동일성 | 비고 |
+|---|---|---|---|---|
+| `ts` | tick 시각 RFC3339(nano) UTC | 동일 형식, BEST tick `ts` | 🟡 | best 합성 시점으로 재산정 |
+| `feed` | 실제 피드/시장 source 명 | `"BEST"` 고정 | 🔴 | 다중시장 best 합성 source |
+| `seq` | 출처별 시퀀스 | WTG 자체 `seq_num` | 🔴 | dedup/누락탐지용, 절대값 무의미 |
+| `msgtype` | `snapshot`/`incremental` | `"incremental"` 고정 | 🟡 | WTG 는 항상 incremental |
+| `symbol` | `"USDKRW"` 외부표기 | 동일 | 🟢 | SymbolMap 표기 그대로 |
+| `entries` | `[{type,px,qty}, …]` | `[{type,px,qty:0}, …]` | 🟡 | B 참조 |
+
+### B. `entries[]` 원소
+
+| 필드 | 원본 | WTG legacy | 동일성 | 비고 |
+|---|---|---|---|---|
+| `type` | `"bid"` / `"ask"` | `"bid"` / `"ask"` | 🟢 | 한쪽 호가만 있으면 그 entry 만. 순서 bid→ask |
+| `px` | 해당 feed 호가 | BEST `bid`/`ask` | 🔴 | C 참조 |
+| `qty` | 호가 수량 | `0` 고정 | 🔴 | BEST tick 은 수량 정보 없음 |
+
+### C. 값(px) 산정 차이 — 핵심
+
+| 항목 | 원본 | WTG legacy |
+|---|---|---|
+| 산정 | 구독하던 단일 feed 의 raw 호가 | 다중시장 best = `max(bid)` / `min(ask)` (cross 시 최신 ts fallback) |
+| 마진 | 환경에 따라 | **미적용** — legacy 는 raw BEST tick 기반 (마진은 best `:8083` 경로에만) |
+| 판정 | 단일 feed 였다면 값 상이 가능 / 예전에도 best 였다면 수렴 | |
+
+### D. 필드 증감
+- **없어짐**: 원본에 여러 `MDEntryType`(trade/open/volume 등) 또는 feed별 부가 필드가
+  있었다면 → WTG legacy 는 bid/ask 2개 entry 로 축약.
+- **추가**: 없음 (상위 스키마 동일).
+
+### E. cs 파서 영향도 판정
+
+| cs 파서가 쓰는 것 | 영향 |
+|---|---|
+| `entries[].type` + `px` 만 | 🟢 변경 0 |
+| `qty` 사용 (수량 표시) | 🔴 항상 0 → 로직 확인 |
+| `feed` 로 시장 구분 | 🔴 항상 BEST → 재검토 |
+| `seq` 연속성 검사 | 🔴 채번 체계 상이 → dedup 확인 |
+| `msgtype` snapshot/incremental 분기 | 🟡 항상 incremental |
+
+### F. 검증 (컷오버 전 필수)
+- `cmd/quote-diff` — 원본 vs best 두 ws source 필드 자동 비교 (§11)
+- `cmd/quote-replay` — mds `.trc` 캡처 mds/WTG 동시 재생 → 출력 대사
+
 ## 12. 점검 체크리스트 (운영 배포 직전)
 
 cs 가 P4-3 (broker subscribe 제거) 진입 전 마지막 확인:

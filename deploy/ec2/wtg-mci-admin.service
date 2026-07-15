@@ -27,7 +27,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-admin \
     --dev-routes-file=/home/winway/nh-fxallone-server/wtg/etc/wtg-routes.json \
     --svc-common-header=/home/winway/nh-fxallone-server/win/src/inc/com/comhdr.h \
     --svc-inc-dir=/home/winway/nh-fxallone-server/win/src/inc/trn \
-    --openapi-server=http://3.36.188.87
+    --openapi-server=http://3.36.188.87:8080
 
 Restart=on-failure
 RestartSec=10

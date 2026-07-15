@@ -20,9 +20,19 @@ import (
 
 	"github.com/winwaysystems/wtg/internal/admin"
 	"github.com/winwaysystems/wtg/pkg/otelinit"
+	"github.com/winwaysystems/wtg/pkg/version"
 )
 
 func main() {
+	// --version — 빌드 커밋 SHA 출력 후 종료. 배포 파이프라인이 설치된
+	// 바이너리가 기대 커밋과 일치하는지 검증 (stale artifact 조기 감지).
+	for _, a := range os.Args[1:] {
+		if a == "--version" || a == "-version" {
+			fmt.Println(version.SHA)
+			return
+		}
+	}
+
 	cfg, err := admin.LoadConfig(os.Args[1:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mci-admin: config 에러: %v\n", err)

@@ -175,6 +175,19 @@ jobs:
           # wtg-mci-mds-shim 은 조건부 자산 — unit 은 설치되지만 enable 하지 않음.
           # 재빌드 불가 client 가 인벤토리에서 확인되면 목록에 복귀 (mds-replacement-plan Stage 2)
 
+      # 설치된 바이너리가 이 커밋으로 빌드됐는지 검증 — stale artifact 를
+      # 조용히 성공시키지 않고 배포 실패로 잡는다 (2026-07-15 사고 방어).
+      - name: Verify deployed binary SHA
+        run: |
+          set -euo pipefail
+          want="${GITHUB_SHA::7}"
+          got="$("$WTG_HOME/bin/mci-admin" --version 2>/dev/null || echo MISSING)"
+          echo "expected=$want installed=$got"
+          if [ "$got" != "$want" ]; then
+            echo "::error::설치 바이너리 SHA 불일치 (stale artifact) — expected=$want got=$got"
+            exit 1
+          fi
+
       - name: Health check
         run: |
           set -euo pipefail

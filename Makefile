@@ -6,7 +6,8 @@
 
 GO       ?= go
 GOFLAGS  ?= -trimpath
-LDFLAGS  ?= -s -w
+GIT_SHA  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS  ?= -s -w -X github.com/winwaysystems/wtg/pkg/version.SHA=$(GIT_SHA)
 PREFIX   ?= /opt/wtg
 BINDIR   ?= $(PREFIX)/bin
 ETCDIR   ?= $(PREFIX)/etc

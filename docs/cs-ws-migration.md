@@ -23,14 +23,14 @@ cs client  ─WebSocket─→  mci-edge-price :8089
 
 ## 2. 변경 요약
 
-| 영역 | Before | After |
-|------|--------|-------|
-| 연결 endpoint | `mymqd-host:11217` | `mci-edge-price-host:8089` |
-| protocol | mymq TCP frame (84B mqhdr + body) | WebSocket (HTTP/1.1 upgrade + ws frame) |
-| 인증 | broker handshake (DECLARE_SESSION) | URL query `?x_wtg_user=<id>` (dev) / `?access_token=<JWT>` (운영) |
-| subscribe | broker connect 의 ExchangeName="PRICE" | ws connect 후 control message |
-| envelope schema | `{ts, feed, seq, msgtype, symbol, entries:[...]}` | **동일** (legacy 옵션 사용 시) |
-| TLS | broker TLS 옵션 | `wss://` (운영) |
+| 영역              | Before                                            | After                                                           |
+| --------------- | ------------------------------------------------- | --------------------------------------------------------------- |
+| 연결 endpoint     | `mymqd-host:11217`                                | `mci-edge-price-host:8089`                                      |
+| protocol        | mymq TCP frame (84B mqhdr + body)                 | WebSocket (HTTP/1.1 upgrade + ws frame)                         |
+| 인증              | broker handshake (DECLARE_SESSION)                | URL query `?x_wtg_user=<id>` (dev) / `?access_token=<JWT>` (운영) |
+| subscribe       | broker connect 의 ExchangeName="PRICE"             | ws connect 후 control message                                    |
+| envelope schema | `{ts, feed, seq, msgtype, symbol, entries:[...]}` | **동일** (legacy 옵션 사용 시)                                         |
+| TLS             | broker TLS 옵션                                     | `wss://` (운영)                                                   |
 
 **핵심** — envelope schema 가 broker subscribe 시 받던 그대로. cs 의 parser
 코드 변경 없이 transport (mymq → ws) 만 교체.
@@ -219,7 +219,7 @@ bool ConnectWS(const wchar_t* host, INTERNET_PORT port, const wchar_t* path) {
 cs 코드 변경 전에 endpoint 자체 동작 확인. 예: `wscat` 또는 `websocat`:
 
 ```bash
-brew install websocat       # macOS
+		brew install websocat       # macOS
 websocat 'ws://10.0.0.10:8089/v1/subscribe?x_wtg_user=alice'
 # stdin 으로 subscribe 보냄:
 {"type":"subscribe","pairs":["USD/KRW","EUR/KRW"]}
@@ -452,6 +452,20 @@ cs 가 양쪽 subscribe 한 envelope 을 동시 출력하면 동일 형식으로
 
 ## 11-A. legacy 경로 필드 대사표 (broker subscribe → WTG legacy)
 
+> ⚠️ **검증 caveat (2026-07-16 실측)**: 아래 "원본" 열은 본 문서가 서술해온
+> broker JSON(`{ts,feed,seq,msgtype,symbol,entries}`) 기준이나, **소스 대조 결과
+> 이 형식은 어떤 실제 캡처에도 대응되지 않는다.** 확인된 사실:
+> - **NH `mds` 는 broker 를 쓰지 않는다** — `mds/` 에 mymq 코드 없음, `sendto_client
+>   → sndsock_sendto`(UDP)로 **binary 구조체**(`MDSSISE`/`CUSTSISE`/`MDFOLD`,
+>   `mds/include/mds.h`)를 전송. 내부 소비자(autotrd `fxquote.c`)도 binary `APSISE` 파싱.
+> - **WTG 의 실제 broker PRICE payload 는 flat `{sym,bid,ask,ts,src,seq}`**
+>   (`docs/cooker-quote-schema.md`, `pkg/quote/pushdata.go`) — `feed`/`msgtype`/
+>   `entries` 는 broker 에 없고 **WS edge `encodeTickLegacyJSON` 에서만 합성**된다.
+> - repo 에 NH broker PRICE 실 캡처 파일 없음.
+>
+> 따라서 아래 표는 **WTG WS legacy 출력 스펙**으로만 유효하며, "원본"과의 동일성은
+> **미검증**이다. 진짜 대사가 필요하면 §11-B 의 실측 절차를 먼저 수행할 것.
+
 원본(mymq broker PRICE 구독)과 WTG legacy 인스턴스(`:8089`, `--envelope-format=legacy`)
 출력의 **필드 단위 대조**. 컷오버 전 cs 파서 영향도 판정 근거.
 
@@ -502,6 +516,48 @@ cs 가 양쪽 subscribe 한 envelope 을 동시 출력하면 동일 형식으로
 ### F. 검증 (컷오버 전 필수)
 - `cmd/quote-diff` — 원본 vs best 두 ws source 필드 자동 비교 (§11)
 - `cmd/quote-replay` — mds `.trc` 캡처 mds/WTG 동시 재생 → 출력 대사
+
+## 11-B. 실측 대사 절차 + 진짜 mds 원본 매핑
+
+§11-A caveat 대로, 실제 동일성 검증은 **살아있는 원본 트래픽 캡처**로만 가능하다.
+
+### B-1. 진짜 원본(mds) 캡처 방법
+mds→client 는 UDP binary 이므로 broker 캡처 도구가 아니라 패킷 캡처가 필요하다.
+```bash
+# mds WD9500 → cs 로 나가는 UDP 시세 캡처 (mds 폐기 전에 확보)
+tcpdump -i <if> -w mds-sise.pcap 'udp and host <cs-host>'
+# 구조체 해석: mds/include/mds.h 의 MDSSISE / CUSTSISE / APSISE 로 오프셋 파싱
+```
+현 WTG broker PRICE(JSON)를 보려면:
+```bash
+mymqbcap -c   # FC_CAST(broadcast) 메시지 캡처 — pushdata.msgb 안 v1 JSON 확인
+```
+
+### B-2. 진짜 원본(mds binary) → WTG legacy 필드 매핑
+cs 가 mds UDP 를 직접 받았다면(=broker JSON 아님) 대사는 아래가 된다.
+원본 필드 출처: `mds/include/mds.h`.
+
+| mds 구조체 필드 | 의미 | WTG legacy 대응 | 상태 |
+|---|---|---|---|
+| `symb` / `md_symbol` | 통화코드 | `symbol` | 🟡 표기 정규화 필요 |
+| `bid.prc` / `bidprc` | 매수호가 | `entries[bid].px` | 🔴 mds=원천별, WTG=BEST |
+| `ask.prc` / `askprc` | 매도호가 | `entries[ask].px` | 🔴 상동 |
+| `bid.vol`/`ask.vol` (`bidqty`) | 호가 수량 | `entries[].qty` (=0) | 🔴 mds 도 USD/KRW 는 0 |
+| `excode` | 원천(SMB/KMB/EBS/CMB/BEST/ZCUST) | 없음 (feed=BEST 고정) | 🔴 소실 |
+| `usdbid`/`usdask` | USD/KRW 기준가 | 없음 | 🔴 소실 |
+| `date`+`time`(HHMMSSSSS) | 수신일시 | `ts`(RFC3339) | 🟡 형식 변환 |
+| `bestprc`/`bestvol`, `midprc`, `fillprc` | best/중간/체결가 | 없음 | 🔴 소실 |
+| `reqid`/`quoteid` | MDReqID/스냅샷ID | 없음 (`quote_id` 는 best 경로만) | 🔴 소실 |
+| (CUSTSISE) `bestcpask`/`bestpask`/`bestspread`/color | HTS 표시용 문자열·색상 | 없음 | 🔴 소실 |
+
+**함의**: cs 가 mds UDP binary 를 쓰던 구조라면, WTG legacy JSON 은 **bid/ask/symbol/ts
+만 보존하는 대폭 축약**이다. cs 화면이 excode·best·color·vol·mid 를 쓴다면 그대로는
+대체 불가 → best 경로(`:8083`, `type:quote` + `raw_bid/ask`) 또는 별도 필드 확장 검토.
+
+### B-3. 판정 순서
+1. **cs 가 실제로 무엇을 구독했는지 먼저 확정** — mds UDP(binary) vs broker(JSON).
+   cs 프레임워크의 시세 수신부 소스(파서 struct)로 판별.
+2. 그 실제 형식으로 §11-A/§11-B 표를 확정 후 `quote-diff`/`quote-replay` 로 대사.
 
 ## 12. 점검 체크리스트 (운영 배포 직전)
 

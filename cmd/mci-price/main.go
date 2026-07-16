@@ -247,7 +247,8 @@ func main() {
 			ClientBufferSize:  cfg.AlgoClientBufferSize,
 			SlowClientTimeout: cfg.AlgoSlowClientTimeout,
 		})
-		srv.AddConsumer(algoSrv)
+		srv.AddConsumer(algoSrv)    // BEST/CROSS 합성 tick 수신 (BEST 모드 구독자용)
+		srv.AddRawConsumer(algoSrv) // raw 원천 tick(SMB/KMB) 수신 (per-source 구독자용, mds excode)
 		grpcSrv.AttachAlgo(algoSrv)
 		logger.Info("AlgoStream 활성 — SubscribeAlgo",
 			slog.Int("ring_size", cfg.AlgoRingSize),

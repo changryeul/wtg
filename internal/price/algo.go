@@ -58,12 +58,19 @@ type AlgoStreamServer struct {
 	backfillGaps      atomic.Uint64 // Phase B — sequence_gap 반환한 요청 누적
 	dedupSkipped      atomic.Uint64 // Phase B — replay 후 live 시 중복 skip 누적
 	disconnectedSlow  atomic.Uint64 // Phase C — slow client timeout 으로 끊은 수
+
+	// perSourceSubs — sources 필터를 건 구독자 수. 0 이면 OnTick 이 raw 원천
+	// tick(BEST/CROSS 외)을 skip 해 기존 perf 유지 (per-source 수요 있을 때만 처리).
+	perSourceSubs atomic.Int64
 }
 
 // algoSub — 활성 subscribe stream 의 상태.
 type algoSub struct {
-	clientID   string
-	symbolSet  map[string]struct{} // 빈 map = 모두 허용
+	clientID  string
+	symbolSet map[string]struct{} // 빈 map = 모두 허용
+	// sources — per-source 필터 (mds excode). 빈 map = BEST 모드(BEST/CROSS 만).
+	// 비어있지 않으면 per-source 모드 — 지정 원천의 raw 호가만 수신.
+	sources    map[string]struct{}
 	ch         chan *wtgpb.AlgoQuote
 	dropsLocal atomic.Uint64
 
@@ -238,28 +245,61 @@ func (s *AlgoStreamServer) evictSlowSubs() {
 	}
 }
 
-// OnTick — TickConsumer. 합성 최종 호가만 처리:
-//   - SourceBest  : BestConsumer 의 다중시장 best (direct pair)
-//   - SourceCross : CrossRateConsumer 의 재정환율 (예: CNH/KRW = USDKRW/USDCNH)
-//     — mds refprctype=4 cross-mid 대응. 산식은 mds 와 동일 (worse-side div).
+// registerSub — 구독자 등록 + per-source 카운터 갱신.
+func (s *AlgoStreamServer) registerSub(sub *algoSub) {
+	s.subsMu.Lock()
+	s.subs[sub] = struct{}{}
+	s.subsMu.Unlock()
+	s.subscribersActive.Add(1)
+	if len(sub.sources) > 0 {
+		s.perSourceSubs.Add(1)
+	}
+}
+
+// unregisterSub — 구독자 해제 + per-source 카운터 감소.
+func (s *AlgoStreamServer) unregisterSub(sub *algoSub) {
+	s.subsMu.Lock()
+	delete(s.subs, sub)
+	s.subsMu.Unlock()
+	s.subscribersActive.Add(-1)
+	if len(sub.sources) > 0 {
+		s.perSourceSubs.Add(-1)
+	}
+}
+
+// isSynth — BEST/CROSS 합성 tick 인지 (BEST 모드 구독자 대상).
+func isSynth(source string) bool { return source == SourceBest || source == SourceCross }
+
+// OnTick — TickConsumer. 두 계열을 처리:
+//   - 합성 tick (SourceBest/SourceCross) → BEST 모드 구독자 (sources 없음) 로.
+//     · SourceBest  : BestConsumer 의 다중시장 best (direct pair)
+//     · SourceCross : CrossRateConsumer 재정환율 (mds refprctype=4 대응)
+//   - raw 원천 tick (SMB/KMB 등) → per-source 구독자(sources 지정) 로. mds excode
+//     대응 — automkm 의 원천별 마켓메이킹. per-source 구독자 없으면 skip(perf).
 //
-// raw 원천 stream 은 algo 에 부적합하므로 skip. cross pair 는 자체 symbol 이라
-// SourceBest pair 와 seq 독립 (같은 symbol 이 두 source 로 오는 일은 없음 —
-// direct 피드 있으면 best, 없으면 cross 로 단일 산정).
+// stream key: 합성=symbol, raw=source|symbol → seq/ring 를 스트림 단위로 독립.
 func (s *AlgoStreamServer) OnTick(t *Tick) {
 	if t == nil || t.Symbol == "" {
 		return
 	}
-	if t.Source != SourceBest && t.Source != SourceCross {
-		return
+	synth := isSynth(t.Source)
+	if !synth {
+		// raw 원천 tick — per-source 수요 없으면 처리 안 함 (기존 perf 유지).
+		if s.perSourceSubs.Load() == 0 {
+			return
+		}
 	}
 	env, err := quote.DecodeJSONEnvelope(t.Body)
 	if err != nil {
 		return
 	}
 
-	// 심볼별 seq 발급.
-	seq := s.nextSeq(t.Symbol)
+	// stream key — 합성은 symbol, raw 는 source|symbol 로 seq/ring 독립.
+	key := t.Symbol
+	if !synth {
+		key = t.Source + "|" + t.Symbol
+	}
+	seq := s.nextSeq(key)
 
 	q := &wtgpb.AlgoQuote{
 		Sym:            t.Symbol,
@@ -272,10 +312,11 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 		Last:           env.Last, // 최근 시장 체결가 (mds fillprc 대응)
 		LastQty:        env.LastQty,
 		Mid:            (env.Bid + env.Ask) / 2, // mds mdquot_calc_mid 대응 (refprctype=2)
+		Source:         t.Source,                // 원천 (BEST/CROSS/SMB/KMB…)
 	}
 
 	// ring buffer (Phase B backfill 용). 값 복사로 저장.
-	if ring := s.ringFor(t.Symbol); ring != nil {
+	if ring := s.ringFor(key); ring != nil {
 		ring.push(q)
 	}
 
@@ -289,6 +330,14 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 			if _, ok := sub.symbolSet[t.Symbol]; !ok {
 				continue
 			}
+		}
+		// source 매칭: per-source 구독자는 지정 원천만, BEST 모드는 합성만.
+		if len(sub.sources) > 0 {
+			if _, ok := sub.sources[t.Source]; !ok {
+				continue
+			}
+		} else if !synth {
+			continue // BEST 모드 구독자는 raw 원천 tick 수신 X.
 		}
 		select {
 		case sub.ch <- q:
@@ -354,6 +403,7 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 	sub := &algoSub{
 		clientID:  req.GetClientId(),
 		symbolSet: make(map[string]struct{}, len(req.GetSymbols())),
+		sources:   make(map[string]struct{}, len(req.GetSources())),
 		ch:        make(chan *wtgpb.AlgoQuote, s.clientBufSize),
 		done:      make(chan struct{}),
 	}
@@ -362,22 +412,22 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 			sub.symbolSet[sym] = struct{}{}
 		}
 	}
+	for _, src := range req.GetSources() {
+		if src != "" {
+			sub.sources[src] = struct{}{}
+		}
+	}
 	// 1) sub 등록 — 이 시점부터 새 tick 은 sub.ch 로 push.
-	s.subsMu.Lock()
-	s.subs[sub] = struct{}{}
-	s.subsMu.Unlock()
-	s.subscribersActive.Add(1)
+	s.registerSub(sub)
 
 	s.logger.Info("algo subscribe 시작",
 		slog.String("client_id", sub.clientID),
 		slog.Int("symbols", len(sub.symbolSet)),
+		slog.Int("sources", len(sub.sources)),
 		slog.Int64("from_seq", req.GetFromSeq()))
 
 	defer func() {
-		s.subsMu.Lock()
-		delete(s.subs, sub)
-		s.subsMu.Unlock()
-		s.subscribersActive.Add(-1)
+		s.unregisterSub(sub)
 		s.logger.Info("algo subscribe 종료",
 			slog.String("client_id", sub.clientID),
 			slog.Uint64("drops_local", sub.dropsLocal.Load()))
@@ -415,6 +465,7 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 					Last:           orig.GetLast(),
 					LastQty:        orig.GetLastQty(),
 					Mid:            orig.GetMid(),
+					Source:         orig.GetSource(),
 				}
 				if err := stream.Send(q); err != nil {
 					return err

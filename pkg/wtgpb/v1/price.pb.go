@@ -90,7 +90,12 @@ type AlgoSubscribeRequest struct {
 	// > 0 이면 서버 ring buffer 에서 그 seq 다음부터 replay 후 live 이어감.
 	// ring 에서 밀려나간 seq 는 sequence_gap 에러 로 응답 (client 는 snapshot 로
 	// fallback).
-	FromSeq       int64 `protobuf:"varint,3,opt,name=from_seq,json=fromSeq,proto3" json:"from_seq,omitempty"`
+	FromSeq int64 `protobuf:"varint,3,opt,name=from_seq,json=fromSeq,proto3" json:"from_seq,omitempty"`
+	// sources — 원천별 구독 필터 (예: ["SMB","KMB"]). mds excode 대응.
+	//   - 비어있음(기본) : BEST 모드 — 다중시장 합성 best(+cross)만 수신 (기존 동작).
+	//   - 지정          : per-source 모드 — 지정 원천의 raw 호가를 원천별로 수신
+	//     (automkm 처럼 카운터파티별 마켓메이킹용). AlgoQuote.source 로 구분.
+	Sources       []string `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -146,6 +151,13 @@ func (x *AlgoSubscribeRequest) GetFromSeq() int64 {
 	return 0
 }
 
+func (x *AlgoSubscribeRequest) GetSources() []string {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
 // AlgoQuote — algo stream 의 1건. seq 는 심볼별 monotonic.
 type AlgoQuote struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -171,7 +183,11 @@ type AlgoQuote struct {
 	LastQty float64 `protobuf:"fixed64,9,opt,name=last_qty,json=lastQty,proto3" json:"last_qty,omitempty"`
 	// mid — 중간가 = (bid+ask)/2 (mds mdquot_calc_mid 대응, refprctype=2 algo 용).
 	// 반올림 없음. bid·ask 둘 다 있을 때만 emit 되므로 항상 유효.
-	Mid           float64 `protobuf:"fixed64,10,opt,name=mid,proto3" json:"mid,omitempty"`
+	Mid float64 `protobuf:"fixed64,10,opt,name=mid,proto3" json:"mid,omitempty"`
+	// source — 시세 원천. "BEST"(다중시장 합성) / "CROSS"(재정환율) 또는 원천별
+	// 구독 시 "SMB"/"KMB" 등 카운터파티. mds excode 대응 — automkm 의 원천별
+	// 마켓메이킹(state 가 (원천,symbol) 키잉)에 필요.
+	Source        string `protobuf:"bytes,11,opt,name=source,proto3" json:"source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -274,6 +290,13 @@ func (x *AlgoQuote) GetMid() float64 {
 		return x.Mid
 	}
 	return 0
+}
+
+func (x *AlgoQuote) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와
@@ -1118,11 +1141,12 @@ var File_wtg_v1_price_proto protoreflect.FileDescriptor
 
 const file_wtg_v1_price_proto_rawDesc = "" +
 	"\n" +
-	"\x12wtg/v1/price.proto\x12\x06wtg.v1\"h\n" +
+	"\x12wtg/v1/price.proto\x12\x06wtg.v1\"\x82\x01\n" +
 	"\x14AlgoSubscribeRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x18\n" +
 	"\asymbols\x18\x02 \x03(\tR\asymbols\x12\x19\n" +
-	"\bfrom_seq\x18\x03 \x01(\x03R\afromSeq\"\x85\x02\n" +
+	"\bfrom_seq\x18\x03 \x01(\x03R\afromSeq\x12\x18\n" +
+	"\asources\x18\x04 \x03(\tR\asources\"\x9d\x02\n" +
 	"\tAlgoQuote\x12\x10\n" +
 	"\x03sym\x18\x01 \x01(\tR\x03sym\x12\x10\n" +
 	"\x03bid\x18\x02 \x01(\x01R\x03bid\x12\x10\n" +
@@ -1135,7 +1159,8 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\x04last\x18\b \x01(\x01R\x04last\x12\x19\n" +
 	"\blast_qty\x18\t \x01(\x01R\alastQty\x12\x10\n" +
 	"\x03mid\x18\n" +
-	" \x01(\x01R\x03mid\"l\n" +
+	" \x01(\x01R\x03mid\x12\x16\n" +
+	"\x06source\x18\v \x01(\tR\x06source\"l\n" +
 	"\n" +
 	"PublishAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\x04R\baccepted\x12\x18\n" +

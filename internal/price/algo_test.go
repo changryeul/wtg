@@ -172,6 +172,77 @@ func TestAlgoServer_OnTickCarriesLast(t *testing.T) {
 	}
 }
 
+// per-source 구독자는 raw 원천 tick(Source=SMB) 을 원천 태그와 함께 수신한다
+// (mds excode / automkm 원천별 MM 대응).
+func TestAlgoServer_PerSourceSubscriberReceivesRaw(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})
+	defer s.Stop()
+
+	// per-source 구독자 (sources=[SMB]) 등록.
+	sub := &algoSub{
+		clientID:  "mm-smb",
+		symbolSet: map[string]struct{}{"USDKRW": {}},
+		sources:   map[string]struct{}{"SMB": {}},
+		ch:        make(chan *wtgpb.AlgoQuote, 4),
+		done:      make(chan struct{}),
+	}
+	s.registerSub(sub)
+
+	// raw SMB tick 유입.
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: "USDKRW", Bid: 1380.00, Ask: 1380.10, Src: "SMB", TS: time.Now().UTC(),
+	})
+	s.OnTick(&Tick{Symbol: "USDKRW", Source: "SMB", Body: body, Received: time.Now()})
+
+	select {
+	case q := <-sub.ch:
+		if q.GetSource() != "SMB" || q.GetBid() != 1380.00 {
+			t.Errorf("per-source AlgoQuote source=%q bid=%v, want SMB/1380.00", q.GetSource(), q.GetBid())
+		}
+	default:
+		t.Fatal("per-source 구독자가 SMB raw tick 을 못 받음")
+	}
+}
+
+// BEST 모드 구독자(sources 없음)는 raw 원천 tick 을 받지 않는다 (BEST/CROSS 만).
+func TestAlgoServer_BestSubscriberIgnoresRaw(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})
+	defer s.Stop()
+
+	best := &algoSub{
+		clientID:  "best-cli",
+		symbolSet: map[string]struct{}{},
+		ch:        make(chan *wtgpb.AlgoQuote, 4),
+		done:      make(chan struct{}),
+	}
+	// per-source 구독자도 하나 둬서 raw 처리(perf gate)를 켠다.
+	psrc := &algoSub{
+		clientID:  "mm",
+		symbolSet: map[string]struct{}{},
+		sources:   map[string]struct{}{"SMB": {}},
+		ch:        make(chan *wtgpb.AlgoQuote, 4),
+		done:      make(chan struct{}),
+	}
+	s.registerSub(best)
+	s.registerSub(psrc)
+
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: "USDKRW", Bid: 1380.00, Ask: 1380.10, Src: "SMB", TS: time.Now().UTC(),
+	})
+	s.OnTick(&Tick{Symbol: "USDKRW", Source: "SMB", Body: body, Received: time.Now()})
+
+	select {
+	case <-best.ch:
+		t.Fatal("BEST 모드 구독자가 raw SMB tick 을 받음 (원천 격리 실패)")
+	default:
+		// OK — BEST 구독자는 raw 안 받음
+	}
+	// per-source 구독자는 받아야 정상.
+	if len(psrc.ch) != 1 {
+		t.Errorf("per-source 구독자 수신 %d, want 1", len(psrc.ch))
+	}
+}
+
 func TestAlgoServer_EvictSlowClient(t *testing.T) {
 	s := NewAlgoStreamServer(nil, AlgoStreamOptions{
 		RingSize:          10,

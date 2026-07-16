@@ -88,6 +88,12 @@ message AlgoSubscribeRequest {
   // ring 에서 밀려나간 seq 는 sequence_gap 에러 로 응답 (client 는 snapshot 로
   // fallback).
   int64 from_seq = 3;
+
+  // sources — 원천별 구독 필터 (예: ["SMB","KMB"]). mds excode 대응.
+  //   - 비어있음(기본) : BEST 모드 — 다중시장 합성 best(+cross)만 수신 (기존 동작).
+  //   - 지정          : per-source 모드 — 지정 원천의 raw 호가를 원천별로 수신
+  //     (automkm 처럼 카운터파티별 마켓메이킹용). AlgoQuote.source 로 구분.
+  repeated string sources = 4;
 }
 
 // AlgoQuote — algo stream 의 1건. seq 는 심볼별 monotonic.
@@ -123,6 +129,11 @@ message AlgoQuote {
   // mid — 중간가 = (bid+ask)/2 (mds mdquot_calc_mid 대응, refprctype=2 algo 용).
   // 반올림 없음. bid·ask 둘 다 있을 때만 emit 되므로 항상 유효.
   double mid = 10;
+
+  // source — 시세 원천. "BEST"(다중시장 합성) / "CROSS"(재정환율) 또는 원천별
+  // 구독 시 "SMB"/"KMB" 등 카운터파티. mds excode 대응 — automkm 의 원천별
+  // 마켓메이킹(state 가 (원천,symbol) 키잉)에 필요.
+  string source = 11;
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와

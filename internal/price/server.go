@@ -170,6 +170,14 @@ func (s *Server) AddConsumer(c TickConsumer) {
 	s.consumers = append(s.consumers, c)
 }
 
+// AddRawConsumer 는 BestConsumer *이전* 의 raw hot-path 에 consumer 를 추가한다 —
+// Source=SMB/KMB 등 원천별 tick 을 그대로 받는다 (BestConsumer 가 흡수하기 전).
+// AlgoStream 의 per-source 모드(mds excode 대응)처럼 원천 구분이 필요한 소비자용.
+// best 비활성 시엔 AddConsumer 와 동일 (이미 raw path).
+func (s *Server) AddRawConsumer(c TickConsumer) {
+	s.consumers = append(s.consumers, c)
+}
+
 // AttachGRPC 는 외부에서 생성한 GRPCServer 를 주입한다.
 //
 // 사용 패턴: main.go 가 GRPCServer 를 미리 만들어두면 PricingConsumer 등이

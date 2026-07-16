@@ -45,7 +45,7 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
 | `mid` | MDFOLD (`mdquot_calc_mid`) | 중간가 (refprctype=2) | `mid` = (bid+ask)/2 | 🟢 제공 (§5-B) |
 | `fillprc` | MDFOLD (FIX 269=2 Trade) | 시장 체결가 (refprctype=1) | **없음** | 🔴 gap — forwarder 가 Trade drop 중 §4 |
 | `symb` | APSISE | 통화쌍 | `sym` | 🟡 표기 정규화(USD/KRW↔USDKRW) |
-| `excode` | APSISE | 원천(SMB/KMB/EBS/CMB) | **없음** | 🔴 BEST 합성 → 원천 구분 소실 |
+| `excode` | APSISE | 원천(SMB/KMB/EBS/CMB) | `source` (per-source 모드) | 🟢 제공 (§5-D) |
 | `type`("FA") | APSISE | swap rate 구분 | **없음** | 🔴 swap 이면 별도 |
 | (시각) `date`+`time` | APSISE | 발행시각 | `ts_source_unix_ns`(+`ts_wtg`) | 🟢 오히려 개선(2단 latency) |
 | (순번) — | — | — | `seq` | 🟢 gap 감지 신규 제공 |
@@ -131,6 +131,27 @@ bid=`USDKRW.bid × 1/USDCNH.ask`, ask=`USDKRW.ask × 1/USDCNH.bid` (div=worse-si
 `SourceCross` 도 받도록 수정. 이제 algo 가 `SubscribeAlgo(["CNHKRW"])` 로 cross
 pair 를 bid/ask/mid 와 함께 수신. (반올림은 downstream 소수자리 정책에 위임 —
 mds mrktzdiv 대응은 SymbolEntry decimal 로 별도 관리.)
+
+## 5-D. excode (원천 구분) — per-source 스트림 (2026-07-16)
+
+**확인**: automkm 은 **원천별 마켓메이킹** — SMB/KMB 만 처리(그 외 무시), state 가
+`(compid=원천, symbol)` 키잉, `market_getfold(compid,…)` 로 **그 원천의 호가**를 읽어
+그 원천에 호가를 냄. BEST 로 뭉치면 원천별 MM 이 깨짐.
+
+**구현** (per-source 스트림 — 결정: 구조 보존):
+- `AlgoQuote.source` + `AlgoSubscribeRequest.sources`(필터) 추가.
+- `Server.AddRawConsumer` 신설 → AlgoStream 이 BestConsumer 이전 raw tick
+  (Source=SMB/KMB) 도 tap. main 에서 `AddConsumer`(BEST/CROSS) + `AddRawConsumer`(raw) 병행.
+- `OnTick`: 합성(BEST/CROSS)=symbol / raw=source|symbol 로 seq·ring 독립. 매칭 —
+  per-source 구독자(`sources` 지정)는 그 원천만, BEST 모드(sources 없음)는 합성만.
+  per-source 구독자 0 이면 raw tick skip(기존 perf 유지).
+
+**사용**: automkm → `SubscribeAlgo(symbols=["USD/KRW","CNH/KRW"], sources=["SMB","KMB"])`
+→ 원천별 tick 을 `AlgoQuote.source` 로 구분 수신. 기존 BEST 소비자는 `sources` 미지정
+으로 그대로 동작 (호환).
+
+> 남은 점: per-source **backfill**(from_seq>0)은 ring key 가 source|symbol 이라
+> Phase B 에서 별도 처리 필요(Phase A from_seq=0 는 영향 없음).
 
 ## 6. 판정 요약
 

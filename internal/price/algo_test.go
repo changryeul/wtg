@@ -99,6 +99,26 @@ func TestAlgoRing_SnapshotGap(t *testing.T) {
 
 // Phase C — slow client 감지: firstDropAt 이 timeout 지나면 evictSlowSubs 가
 // sub.done 을 close 하고 카운터 증가.
+// OnTick 이 mid = (bid+ask)/2 를 계산해 넣는다 (mds mdquot_calc_mid 대응,
+// refprctype=2). 반올림 없음.
+func TestAlgoServer_OnTickComputesMid(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})
+	defer s.Stop()
+
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: "USDKRW", Bid: 1380.00, Ask: 1380.10, Src: SourceBest, TS: time.Now().UTC(),
+	})
+	s.OnTick(&Tick{Symbol: "USDKRW", Source: SourceBest, Body: body, Received: time.Now()})
+
+	ticks, _, _ := s.ringFor("USDKRW").snapshot(0)
+	if len(ticks) != 1 {
+		t.Fatalf("ring %d개, want 1", len(ticks))
+	}
+	if got := ticks[0].GetMid(); got != 1380.05 {
+		t.Errorf("mid=%v, want 1380.05 ((bid+ask)/2)", got)
+	}
+}
+
 // OnTick 이 BEST tick 의 체결가(last)를 AlgoQuote 로 전달한다 (mds fillprc 대응).
 func TestAlgoServer_OnTickCarriesLast(t *testing.T) {
 	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})

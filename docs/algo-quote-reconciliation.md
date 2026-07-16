@@ -42,7 +42,7 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
 | `offer` | MDFOLD | 매도호가(원천 last) | `ask` (BEST) | 🟡 상동 |
 | `bid_best` | MDFOLD | best 매수 | `bid` | 🟡 WTG `bid` 가 곧 best |
 | `offer_best` | MDFOLD | best 매도 | `ask` | 🟡 WTG `ask` 가 곧 best |
-| `mid` | MDFOLD | 중간가 (refprctype=2) | **없음** | 🔴 gap — §4 |
+| `mid` | MDFOLD (`mdquot_calc_mid`) | 중간가 (refprctype=2) | `mid` = (bid+ask)/2 | 🟢 제공 (§5-B) |
 | `fillprc` | MDFOLD (FIX 269=2 Trade) | 시장 체결가 (refprctype=1) | **없음** | 🔴 gap — forwarder 가 Trade drop 중 §4 |
 | `symb` | APSISE | 통화쌍 | `sym` | 🟡 표기 정규화(USD/KRW↔USDKRW) |
 | `excode` | APSISE | 원천(SMB/KMB/EBS/CMB) | **없음** | 🔴 BEST 합성 → 원천 구분 소실 |
@@ -63,9 +63,8 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
    `JSONEnvelope` 에도 체결가 필드가 없다(`Sym/Bid/Ask/TS/Src/Seq`).
    → **gap = 시세 경로가 Trade tick 을 드롭 중.** 해결: forwarder 가 269=2 파싱 +
    `JSONEnvelope` 에 `last`/`trade_px`(+qty) 추가 + `AlgoQuote` 에 필드 추가.
-2. **`mid` (중간가)** — `refprctype=2` 사용. WTG 미제공 → 클라이언트가 `(bid+ask)/2`
-   로 산출 가능하나, **mds `midprc` 가 단순 평균이 아닐 수 있음**(별도 필드) →
-   mds 산식 확인 후 동일하게 계산하거나 `AlgoQuote` 에 `mid` 추가 검토.
+2. ~~**`mid` (중간가)**~~ — **해소됨(§5-B)**: 산식 = `(bid+ask)/2` (count 기반, 반올림
+   없음) 확인 → `AlgoQuote.mid` 서버 계산 제공.
 3. **`excode` (원천)** — mds 는 원천별(SMB/KMB…) tick, algo 는 SMB/KMB 만 처리
    (`automkm.c`). WTG 는 **BEST 합성**이라 원천 구분이 없다. algo 가 원천 필터에
    의존하면 로직 재설계 필요(예: BEST 단일 소비로 전환).
@@ -78,7 +77,7 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
   ① `quote-forwarder` 가 `269=2`(Trade) 파싱 (현재 skip) → ② `JSONEnvelope` 에
   `last`(+`last_qty`) 필드 추가 → ③ BestConsumer/`AlgoQuote` 로 전달. 호가만 쓰는
   refprctype(2/3/4) 은 즉시 이관, `1`(체결가)은 이 확장 후 이관.
-- **mid**: mds `midprc` 산식 확인 → 단순 평균이면 클라 계산, 아니면 `AlgoQuote.mid` 추가.
+- **mid**: ✅ 완료 — `(bid+ask)/2` 로 확인, `AlgoQuote.mid` 제공 (§5-B).
 - **excode**: BEST 단일 소비로 전환 가능한지 algo 정책 확인. 원천 지정이 필수면
   `SubscribeAlgo` 에 per-source tick 옵션 확장 필요 (BestConsumer 이전 raw).
 - **검증**: mds UDP(APSISE) 캡처 + SHM MDFOLD 덤프를 기준값으로, `algo-tester`
@@ -100,12 +99,28 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
 - **발생 시 설계(방향 B, 권장)**: best/aggregator 를 우회하는 side-channel 로 체결을
   `AlgoStream` 에만 전달(봉/마진 오염 방지). 상세는 대화 이력 참조.
 
+## 5-B. mid 산식 확인 + 제공 (2026-07-16)
+
+algo `refprctype=2` 가 읽는 `quote.mid` = `pfold->mdquot->mid.last_valid` =
+mds `mdquot_calc_mid` (mds.c:1588) 출력:
+```
+count = (bid.last>0) + (ask.last>0)
+mid   = (bid.last + ask.last) / count      // 둘 다 → (bid+ask)/2, 한쪽 → 그 값
+```
+**반올림 없음.** (별도 `calc_mid`(mds.c:875) 는 USD/KRW 소수1자리 반올림하지만
+고객/display 시세용이지 algo 의 mdquot mid 아님.)
+
+**구현**: `AlgoQuote.mid` 를 서버에서 `(bid+ask)/2` 로 계산해 제공. AlgoQuote 는
+bid·ask 둘 다 있을 때만 emit → one-side edge 없음 → 산식 정확히 일치.
+잔차: mds mid 는 fold 의 last(원천) 기반, WTG 는 BEST 기반 — 이는 mid 산식이
+아니라 기존 BEST vs last 모델 차이(§3 bid/ask 행과 동일 성격).
+
 ## 6. 판정 요약
 
 | refprctype | algo 기준가 | WTG 로 즉시 이관 |
 |---|---|---|
 | 3 (bid/offer) | 호가 | 🟢 가능 (`bid`/`ask`) |
-| 2 (mid) | 중간가 | 🟡 mid 산식 확인 후 |
+| 2 (mid) | 중간가 | 🟢 가능 (`mid`=(bid+ask)/2 제공, §5-B) |
 | 4 (cross-mid) | CNH/KRW cross | 🟡 cross 산식 확인 후 |
 | 1 (fill) | 시장 체결가 | 🔴 forwarder 269=2 파싱 + envelope `last` 확장 선결 (별도 스트림 아님) |
 

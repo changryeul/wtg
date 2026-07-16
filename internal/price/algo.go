@@ -262,6 +262,7 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 		IsBackfill:     false,
 		Last:           env.Last, // 최근 시장 체결가 (mds fillprc 대응)
 		LastQty:        env.LastQty,
+		Mid:            (env.Bid + env.Ask) / 2, // mds mdquot_calc_mid 대응 (refprctype=2)
 	}
 
 	// ring buffer (Phase B backfill 용). 값 복사로 저장.
@@ -404,6 +405,7 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 					IsBackfill:     true,
 					Last:           orig.GetLast(),
 					LastQty:        orig.GetLastQty(),
+					Mid:            orig.GetMid(),
 				}
 				if err := stream.Send(q); err != nil {
 					return err

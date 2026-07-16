@@ -168,7 +168,10 @@ type AlgoQuote struct {
 	// 기준) algo 가 사용.
 	Last float64 `protobuf:"fixed64,8,opt,name=last,proto3" json:"last,omitempty"`
 	// last_qty — 체결 수량 (FIX 271). USD/KRW·CNH/KRW 는 항상 0.
-	LastQty       float64 `protobuf:"fixed64,9,opt,name=last_qty,json=lastQty,proto3" json:"last_qty,omitempty"`
+	LastQty float64 `protobuf:"fixed64,9,opt,name=last_qty,json=lastQty,proto3" json:"last_qty,omitempty"`
+	// mid — 중간가 = (bid+ask)/2 (mds mdquot_calc_mid 대응, refprctype=2 algo 용).
+	// 반올림 없음. bid·ask 둘 다 있을 때만 emit 되므로 항상 유효.
+	Mid           float64 `protobuf:"fixed64,10,opt,name=mid,proto3" json:"mid,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -262,6 +265,13 @@ func (x *AlgoQuote) GetLast() float64 {
 func (x *AlgoQuote) GetLastQty() float64 {
 	if x != nil {
 		return x.LastQty
+	}
+	return 0
+}
+
+func (x *AlgoQuote) GetMid() float64 {
+	if x != nil {
+		return x.Mid
 	}
 	return 0
 }
@@ -1112,7 +1122,7 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\x14AlgoSubscribeRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x18\n" +
 	"\asymbols\x18\x02 \x03(\tR\asymbols\x12\x19\n" +
-	"\bfrom_seq\x18\x03 \x01(\x03R\afromSeq\"\xf3\x01\n" +
+	"\bfrom_seq\x18\x03 \x01(\x03R\afromSeq\"\x85\x02\n" +
 	"\tAlgoQuote\x12\x10\n" +
 	"\x03sym\x18\x01 \x01(\tR\x03sym\x12\x10\n" +
 	"\x03bid\x18\x02 \x01(\x01R\x03bid\x12\x10\n" +
@@ -1123,7 +1133,9 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\vis_backfill\x18\a \x01(\bR\n" +
 	"isBackfill\x12\x12\n" +
 	"\x04last\x18\b \x01(\x01R\x04last\x12\x19\n" +
-	"\blast_qty\x18\t \x01(\x01R\alastQty\"l\n" +
+	"\blast_qty\x18\t \x01(\x01R\alastQty\x12\x10\n" +
+	"\x03mid\x18\n" +
+	" \x01(\x01R\x03mid\"l\n" +
 	"\n" +
 	"PublishAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\x04R\baccepted\x12\x18\n" +

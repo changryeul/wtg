@@ -119,6 +119,10 @@ message AlgoQuote {
 
   // last_qty — 체결 수량 (FIX 271). USD/KRW·CNH/KRW 는 항상 0.
   double last_qty = 9;
+
+  // mid — 중간가 = (bid+ask)/2 (mds mdquot_calc_mid 대응, refprctype=2 algo 용).
+  // 반올림 없음. bid·ask 둘 다 있을 때만 emit 되므로 항상 유효.
+  double mid = 10;
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와

@@ -238,10 +238,19 @@ func (s *AlgoStreamServer) evictSlowSubs() {
 	}
 }
 
-// OnTick — TickConsumer. BestConsumer 가 fan-out 하는 합성 BEST tick 만 처리
-// (다른 Source 는 skip — raw stream 은 algo 에 부적합).
+// OnTick — TickConsumer. 합성 최종 호가만 처리:
+//   - SourceBest  : BestConsumer 의 다중시장 best (direct pair)
+//   - SourceCross : CrossRateConsumer 의 재정환율 (예: CNH/KRW = USDKRW/USDCNH)
+//     — mds refprctype=4 cross-mid 대응. 산식은 mds 와 동일 (worse-side div).
+//
+// raw 원천 stream 은 algo 에 부적합하므로 skip. cross pair 는 자체 symbol 이라
+// SourceBest pair 와 seq 독립 (같은 symbol 이 두 source 로 오는 일은 없음 —
+// direct 피드 있으면 best, 없으면 cross 로 단일 산정).
 func (s *AlgoStreamServer) OnTick(t *Tick) {
-	if t == nil || t.Symbol == "" || t.Source != SourceBest {
+	if t == nil || t.Symbol == "" {
+		return
+	}
+	if t.Source != SourceBest && t.Source != SourceCross {
 		return
 	}
 	env, err := quote.DecodeJSONEnvelope(t.Body)

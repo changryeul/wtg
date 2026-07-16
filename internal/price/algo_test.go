@@ -99,6 +99,32 @@ func TestAlgoRing_SnapshotGap(t *testing.T) {
 
 // Phase C — slow client 감지: firstDropAt 이 timeout 지나면 evictSlowSubs 가
 // sub.done 을 close 하고 카운터 증가.
+// OnTick 이 cross tick(SourceCross, 예: CNH/KRW 재정환율)도 받아 emit 한다
+// (mds refprctype=4 cross-mid 대응 — CNHKRW=USDKRW/USDCNH 는 CrossRateConsumer
+// 가 SourceCross 로 emit).
+func TestAlgoServer_OnTickAcceptsCross(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})
+	defer s.Stop()
+
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: "CNHKRW", Bid: 190.10, Ask: 190.30, Src: SourceCross, TS: time.Now().UTC(),
+	})
+	s.OnTick(&Tick{Symbol: "CNHKRW", Source: SourceCross, Body: body, Received: time.Now()})
+
+	ring := s.ringFor("CNHKRW")
+	if ring == nil {
+		t.Fatal("cross tick 이 AlgoStream 에 안 들어옴 (SourceCross drop)")
+	}
+	ticks, _, _ := ring.snapshot(0)
+	if len(ticks) != 1 {
+		t.Fatalf("ring %d개, want 1", len(ticks))
+	}
+	if ticks[0].GetBid() != 190.10 || ticks[0].GetMid() != 190.20 {
+		t.Errorf("cross AlgoQuote bid=%v mid=%v, want 190.10/190.20",
+			ticks[0].GetBid(), ticks[0].GetMid())
+	}
+}
+
 // OnTick 이 mid = (bid+ask)/2 를 계산해 넣는다 (mds mdquot_calc_mid 대응,
 // refprctype=2). 반올림 없음.
 func TestAlgoServer_OnTickComputesMid(t *testing.T) {

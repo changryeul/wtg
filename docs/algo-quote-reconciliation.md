@@ -150,8 +150,11 @@ mds mrktzdiv 대응은 SymbolEntry decimal 로 별도 관리.)
 → 원천별 tick 을 `AlgoQuote.source` 로 구분 수신. 기존 BEST 소비자는 `sources` 미지정
 으로 그대로 동작 (호환).
 
-> 남은 점: per-source **backfill**(from_seq>0)은 ring key 가 source|symbol 이라
-> Phase B 에서 별도 처리 필요(Phase A from_seq=0 는 영향 없음).
+**per-source backfill (Phase B, 완료)**: `streamKeyFor(source,symbol)` 로 seq·ring·
+replay·dedup 키를 통일 — 합성=symbol, per-source=source|symbol. `replayKeys(sub)`
+가 구독자 모드에 맞는 ring 키를 산출(BEST=symbol, per-source=sources×symbols).
+`SubscribeAlgo(from_seq>0, sources=[…])` 가 원천별 ring 에서 정확히 replay + live
+dedup. mock-stream end-to-end 테스트 확인.
 
 ## 6. 판정 요약
 

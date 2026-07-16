@@ -1,9 +1,13 @@
 package price
 
 import (
+	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
 
 	"github.com/winwaysystems/wtg/pkg/quote"
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
@@ -169,6 +173,115 @@ func TestAlgoServer_OnTickCarriesLast(t *testing.T) {
 	if ticks[0].GetLast() != 1380.05 || ticks[0].GetLastQty() != 500000 {
 		t.Errorf("AlgoQuote last=%v qty=%v, want 1380.05/500000",
 			ticks[0].GetLast(), ticks[0].GetLastQty())
+	}
+}
+
+// mockAlgoStream — SubscribeAlgo 용 최소 gRPC server stream mock.
+type mockAlgoStream struct {
+	grpc.ServerStream
+	ctx  context.Context
+	mu   sync.Mutex
+	sent []*wtgpb.AlgoQuote
+}
+
+func (m *mockAlgoStream) Send(q *wtgpb.AlgoQuote) error {
+	m.mu.Lock()
+	m.sent = append(m.sent, q)
+	m.mu.Unlock()
+	return nil
+}
+func (m *mockAlgoStream) Context() context.Context { return m.ctx }
+func (m *mockAlgoStream) snapshot() []*wtgpb.AlgoQuote {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*wtgpb.AlgoQuote, len(m.sent))
+	copy(out, m.sent)
+	return out
+}
+
+// per-source backfill — from_seq>0 + sources 로 source|symbol ring 에서 replay.
+func TestAlgoServer_PerSourceBackfill(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 16})
+	defer s.Stop()
+
+	// perf gate 통과용 per-source 구독자 상주 → OnTick 이 raw 처리 → ring 적재.
+	keeper := &algoSub{
+		symbolSet: map[string]struct{}{},
+		sources:   map[string]struct{}{"SMB": {}},
+		ch:        make(chan *wtgpb.AlgoQuote, 64),
+		done:      make(chan struct{}),
+	}
+	s.registerSub(keeper)
+
+	// SMB USD/KRW tick 3건 적재 → ring[SMB|USDKRW] seq 1,2,3.
+	for i := 0; i < 3; i++ {
+		body, _ := json.Marshal(quote.JSONEnvelope{
+			Sym: "USDKRW", Bid: 1380.00, Ask: 1380.10, Src: "SMB", TS: time.Now().UTC(),
+		})
+		s.OnTick(&Tick{Symbol: "USDKRW", Source: "SMB", Body: body, Received: time.Now()})
+	}
+
+	// from_seq=1, sources=[SMB] 로 재구독 → seq 2,3 backfill 되어야.
+	ctx, cancel := context.WithCancel(context.Background())
+	ms := &mockAlgoStream{ctx: ctx}
+	done := make(chan error, 1)
+	go func() {
+		done <- s.SubscribeAlgo(&wtgpb.AlgoSubscribeRequest{
+			ClientId: "mm-bf", Symbols: []string{"USDKRW"},
+			Sources: []string{"SMB"}, FromSeq: 1,
+		}, ms)
+	}()
+
+	// backfill 이 전송될 시간을 준 뒤 종료.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(ms.snapshot()) >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	sent := ms.snapshot()
+	if len(sent) != 2 {
+		t.Fatalf("backfill %d건, want 2 (seq 2,3): %+v", len(sent), sent)
+	}
+	for _, q := range sent {
+		if q.GetSource() != "SMB" || !q.GetIsBackfill() {
+			t.Errorf("backfill tick source=%q backfill=%v, want SMB/true", q.GetSource(), q.GetIsBackfill())
+		}
+		if q.GetSeq() <= 1 {
+			t.Errorf("seq=%d, want >1 (from_seq=1)", q.GetSeq())
+		}
+	}
+}
+
+// replayKeys — per-source 구독자는 source|symbol 키, BEST 모드는 symbol 키.
+func TestAlgoServer_ReplayKeys(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})
+	defer s.Stop()
+
+	// BEST 모드 (sources 없음) — symbol 키.
+	best := &algoSub{symbolSet: map[string]struct{}{"USDKRW": {}}}
+	if got := s.replayKeys(best); len(got) != 1 || got[0] != "USDKRW" {
+		t.Errorf("BEST replayKeys=%v, want [USDKRW]", got)
+	}
+
+	// per-source (sources=[SMB,KMB], symbols=[USDKRW]) — source|symbol 키.
+	psrc := &algoSub{
+		symbolSet: map[string]struct{}{"USDKRW": {}},
+		sources:   map[string]struct{}{"SMB": {}, "KMB": {}},
+	}
+	got := s.replayKeys(psrc)
+	want := map[string]bool{"SMB|USDKRW": true, "KMB|USDKRW": true}
+	if len(got) != 2 {
+		t.Fatalf("per-source replayKeys=%v, want 2 keys", got)
+	}
+	for _, k := range got {
+		if !want[k] {
+			t.Errorf("예상 못한 key %q (want %v)", k, want)
+		}
 	}
 }
 

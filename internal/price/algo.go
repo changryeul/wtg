@@ -3,6 +3,7 @@ package price
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -270,6 +271,65 @@ func (s *AlgoStreamServer) unregisterSub(sub *algoSub) {
 // isSynth — BEST/CROSS 합성 tick 인지 (BEST 모드 구독자 대상).
 func isSynth(source string) bool { return source == SourceBest || source == SourceCross }
 
+// streamKeyFor — seq·ring 스트림 단위 키. 합성(BEST/CROSS)은 symbol,
+// raw 원천은 source|symbol 로 분리 (원천별 seq 독립).
+func streamKeyFor(source, symbol string) string {
+	if isSynth(source) {
+		return symbol
+	}
+	return source + "|" + symbol
+}
+
+// replayKeys — backfill replay 대상 stream key 리스트.
+//   - BEST 모드(sources 없음): symbol 키 (합성 ring). symbolSet 없으면 등록된
+//     합성 ring(= '|' 없는 key) 전부.
+//   - per-source 모드: source|symbol 키. symbolSet 있으면 sources×symbols 조합,
+//     없으면 등록된 ring 중 지정 source prefix 인 것 전부.
+func (s *AlgoStreamServer) replayKeys(sub *algoSub) []string {
+	if len(sub.sources) == 0 {
+		if len(sub.symbolSet) > 0 {
+			out := make([]string, 0, len(sub.symbolSet))
+			for sym := range sub.symbolSet {
+				out = append(out, sym)
+			}
+			return out
+		}
+		// 모든 합성 ring (source prefix 없는 key).
+		s.mu.RLock()
+		out := make([]string, 0, len(s.rings))
+		for k := range s.rings {
+			if !strings.Contains(k, "|") {
+				out = append(out, k)
+			}
+		}
+		s.mu.RUnlock()
+		return out
+	}
+	// per-source.
+	if len(sub.symbolSet) > 0 {
+		out := make([]string, 0, len(sub.sources)*len(sub.symbolSet))
+		for src := range sub.sources {
+			for sym := range sub.symbolSet {
+				out = append(out, src+"|"+sym)
+			}
+		}
+		return out
+	}
+	// symbol 미지정 — 지정 source prefix 인 ring 전부.
+	s.mu.RLock()
+	out := make([]string, 0, len(s.rings))
+	for k := range s.rings {
+		for src := range sub.sources {
+			if strings.HasPrefix(k, src+"|") {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	s.mu.RUnlock()
+	return out
+}
+
 // OnTick — TickConsumer. 두 계열을 처리:
 //   - 합성 tick (SourceBest/SourceCross) → BEST 모드 구독자 (sources 없음) 로.
 //     · SourceBest  : BestConsumer 의 다중시장 best (direct pair)
@@ -295,10 +355,7 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 	}
 
 	// stream key — 합성은 symbol, raw 는 source|symbol 로 seq/ring 독립.
-	key := t.Symbol
-	if !synth {
-		key = t.Source + "|" + t.Symbol
-	}
+	key := streamKeyFor(t.Source, t.Symbol)
 	seq := s.nextSeq(key)
 
 	q := &wtgpb.AlgoQuote{
@@ -433,23 +490,23 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 			slog.Uint64("drops_local", sub.dropsLocal.Load()))
 	}()
 
-	// 2~3) backfill replay.
+	// 2~3) backfill replay. key 는 stream 단위 (합성=symbol, per-source=source|symbol).
 	replayEndSeq := map[string]int64{}
 	if req.GetFromSeq() > 0 {
-		syms := s.replaySymbolList(sub.symbolSet)
-		for _, sym := range syms {
-			ring := s.ringFor(sym)
+		keys := s.replayKeys(sub)
+		for _, key := range keys {
+			ring := s.ringFor(key)
 			ticks, oldest, gap := ring.snapshot(req.GetFromSeq())
 			if gap {
 				s.backfillGaps.Add(1)
 				s.logger.Warn("algo backfill gap — snapshot 재구독 필요",
 					slog.String("client_id", sub.clientID),
-					slog.String("symbol", sym),
+					slog.String("stream", key),
 					slog.Int64("from_seq", req.GetFromSeq()),
 					slog.Int64("oldest_available", oldest))
 				return status.Errorf(codes.FailedPrecondition,
-					"sequence_gap sym=%s from_seq=%d oldest_available=%d — from_seq=0 으로 재구독하여 snapshot 부터 시작",
-					sym, req.GetFromSeq(), oldest)
+					"sequence_gap stream=%s from_seq=%d oldest_available=%d — from_seq=0 으로 재구독하여 snapshot 부터 시작",
+					key, req.GetFromSeq(), oldest)
 			}
 			for _, orig := range ticks {
 				// ring 원본을 수정하면 다음 subscribe 에게도 backfill=true 로 보임.
@@ -470,8 +527,8 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 				if err := stream.Send(q); err != nil {
 					return err
 				}
-				if q.GetSeq() > replayEndSeq[sym] {
-					replayEndSeq[sym] = q.GetSeq()
+				if q.GetSeq() > replayEndSeq[key] {
+					replayEndSeq[key] = q.GetSeq()
 				}
 				s.backfillEmitted.Add(1)
 			}
@@ -490,9 +547,10 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 				"slow_client_timeout — buffer 폭주 %v 이상 지속. drops=%d. 재접속 시 from_seq 재개 권장",
 				s.slowTimeout, sub.dropsLocal.Load())
 		case q := <-sub.ch:
-			// dedup: replay 이미 한 seq 는 skip. 심볼별 최종 replay seq 이하는
-			// 이미 client 가 backfill 로 받았음.
-			if end, ok := replayEndSeq[q.GetSym()]; ok && q.GetSeq() <= end {
+			// dedup: replay 이미 한 seq 는 skip. stream(합성=symbol / per-source=
+			// source|symbol) 별 최종 replay seq 이하는 이미 backfill 로 받았음.
+			dk := streamKeyFor(q.GetSource(), q.GetSym())
+			if end, ok := replayEndSeq[dk]; ok && q.GetSeq() <= end {
 				s.dedupSkipped.Add(1)
 				continue
 			}
@@ -501,25 +559,6 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 			}
 		}
 	}
-}
-
-// replaySymbolList — replay 대상 심볼 리스트. sub.symbolSet 이 있으면 그
-// 심볼만, 없으면 (모든 심볼 구독) 현재 ring 등록된 모든 심볼.
-func (s *AlgoStreamServer) replaySymbolList(subSet map[string]struct{}) []string {
-	if len(subSet) > 0 {
-		out := make([]string, 0, len(subSet))
-		for sym := range subSet {
-			out = append(out, sym)
-		}
-		return out
-	}
-	s.mu.RLock()
-	out := make([]string, 0, len(s.rings))
-	for sym := range s.rings {
-		out = append(out, sym)
-	}
-	s.mu.RUnlock()
-	return out
 }
 
 // AlgoStats — 진단 스냅샷.

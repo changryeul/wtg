@@ -22,11 +22,16 @@ build/
 /mci-edge-push
 /mci-edge-price
 /mci-edge-chart
+/mci-edge-tcp
+/mci-mds-shim
 /quote-forwarder
 /dev-bar-faker
 /load-gen
 /quote-diff
 /fx-sync
+
+# svc-specs 배포용 zip 패키지 — docs/svc-specs/*.md 에서 재생성 (산출물)
+docs/svc-specs.zip
 
 # cside C SDK 빌드 산출물 — 소스만 commit, 산출물은 `make cside`/`make wtgprice` 가 재생성
 cside/*/*.a

@@ -43,7 +43,7 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
 | `bid_best` | MDFOLD | best 매수 | `bid` | 🟡 WTG `bid` 가 곧 best |
 | `offer_best` | MDFOLD | best 매도 | `ask` | 🟡 WTG `ask` 가 곧 best |
 | `mid` | MDFOLD | 중간가 (refprctype=2) | **없음** | 🔴 gap — §4 |
-| `fillprc` | MDFOLD/fill | 체결가 (refprctype=1) | **없음** | 🔴 gap — §4 |
+| `fillprc` | MDFOLD (FIX 269=2 Trade) | 시장 체결가 (refprctype=1) | **없음** | 🔴 gap — forwarder 가 Trade drop 중 §4 |
 | `symb` | APSISE | 통화쌍 | `sym` | 🟡 표기 정규화(USD/KRW↔USDKRW) |
 | `excode` | APSISE | 원천(SMB/KMB/EBS/CMB) | **없음** | 🔴 BEST 합성 → 원천 구분 소실 |
 | `type`("FA") | APSISE | swap rate 구분 | **없음** | 🔴 swap 이면 별도 |
@@ -52,10 +52,17 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
 
 ## 4. 핵심 gap (컷오버 전 반드시 해결)
 
-1. **`fillprc` (체결가)** — `refprctype=1`(체결가 기준) algo 가 사용. **`SubscribeAlgo`
-   는 호가 전용이라 체결가가 없다.** 체결가는 시세가 아니라 체결 이벤트이므로
-   별도 스트림 필요 → WTG 의 체결 push(mci-push RTA 대체, `mds-replacement-plan`
-   RTA 절) 로 받아 algo 측에서 병합해야 함. **호가 스트림만으로는 대체 불가.**
+1. **`fillprc` (체결가 = 시장 last trade price)** — `refprctype=1` algo 가 사용.
+   출처는 **FIX 시세 피드의 `MDEntryType='2'`(Trade)** 항목(`270`=MDEntryPx →
+   fillprc, `271`→fillqty, MDEntryID→fillid; 35=X + MDUpdateAction=0 에서
+   `fill_flag=1`). mds `fix.c` → SHM `MDFOLD` 저장 → algo 소비.
+   **주의: 이는 고객 주문 체결이 아니라 시장 체결가(market data)다.** 따라서 별도
+   체결 push 스트림이 아니라 **시세 파이프라인 안에서** 해결해야 한다. 그런데
+   현재 **WTG quote-forwarder 는 Trade(269=2) 를 의도적으로 버린다**
+   (`cmd/quote-forwarder/main.go`: "trade 는 silent skip", `TestExtractV1IgnoresTradeEntries`),
+   `JSONEnvelope` 에도 체결가 필드가 없다(`Sym/Bid/Ask/TS/Src/Seq`).
+   → **gap = 시세 경로가 Trade tick 을 드롭 중.** 해결: forwarder 가 269=2 파싱 +
+   `JSONEnvelope` 에 `last`/`trade_px`(+qty) 추가 + `AlgoQuote` 에 필드 추가.
 2. **`mid` (중간가)** — `refprctype=2` 사용. WTG 미제공 → 클라이언트가 `(bid+ask)/2`
    로 산출 가능하나, **mds `midprc` 가 단순 평균이 아닐 수 있음**(별도 필드) →
    mds 산식 확인 후 동일하게 계산하거나 `AlgoQuote` 에 `mid` 추가 검토.
@@ -67,8 +74,10 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
 
 ## 5. 권고
 
-- **fillprc/체결 병합**: algo 를 `SubscribeAlgo`(호가) + 체결 push(주문/체결) **2 스트림**
-  구독으로 재구성. 호가만 쓰는 refprctype(2/3) 은 즉시 이관 가능, `1`(체결가)만 병합 대기.
+- **fillprc(시장 체결가)**: 별도 스트림 아님 — **시세 경로 확장**으로 복원.
+  ① `quote-forwarder` 가 `269=2`(Trade) 파싱 (현재 skip) → ② `JSONEnvelope` 에
+  `last`(+`last_qty`) 필드 추가 → ③ BestConsumer/`AlgoQuote` 로 전달. 호가만 쓰는
+  refprctype(2/3/4) 은 즉시 이관, `1`(체결가)은 이 확장 후 이관.
 - **mid**: mds `midprc` 산식 확인 → 단순 평균이면 클라 계산, 아니면 `AlgoQuote.mid` 추가.
 - **excode**: BEST 단일 소비로 전환 가능한지 algo 정책 확인. 원천 지정이 필수면
   `SubscribeAlgo` 에 per-source tick 옵션 확장 필요 (BestConsumer 이전 raw).
@@ -82,7 +91,7 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
 | 3 (bid/offer) | 호가 | 🟢 가능 (`bid`/`ask`) |
 | 2 (mid) | 중간가 | 🟡 mid 산식 확인 후 |
 | 4 (cross-mid) | CNH/KRW cross | 🟡 cross 산식 확인 후 |
-| 1 (fill) | 체결가 | 🔴 체결 스트림 병합 선결 |
+| 1 (fill) | 시장 체결가 | 🔴 forwarder 269=2 파싱 + envelope `last` 확장 선결 (별도 스트림 아님) |
 
 ## 관련
 - `docs/mds-replacement-plan.md` — mds 폐기 단계 + RTA(체결 push) 대체

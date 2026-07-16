@@ -84,6 +84,22 @@ refprctype 분기: `1`=체결가 / `2`=중간가 / `3`=bid·offer / `4`=cross-mi
 - **검증**: mds UDP(APSISE) 캡처 + SHM MDFOLD 덤프를 기준값으로, `algo-tester`
   (SubscribeAlgo smoke) 수신값과 심볼·시각 정렬 후 bid/ask 오차 대사.
 
+## 5-A. 구현 상태 + 보류 후속 (2026-07-16)
+
+**구현됨** — 시장 체결가(`last`) 시세경로 복원 (커밋 `83787d1`):
+`quote-forwarder`(FIX 269=2 → `JSONEnvelope.Last/LastQty`) → `BestConsumer`
+(per-symbol persist, mds MDFOLD 모델) → `AlgoQuote.last/last_qty`. **단, bid/ask 와
+같은 메시지에 온 체결가(35=W 스냅샷 케이스)만** 커버.
+
+**보류 — "호가 없는 체결"(quote-less trade)**: bid/ask 없이 `269=2` 만 담긴 35=X
+메시지는 `fastExtractV1` 이 `ok=false` 로 drop → 놓침.
+- **보류 사유**: 실 피드에서 발생하지 않을 것으로 판단(FX 시세는 호가 위주).
+- **선결 조건**: 발생 여부 확인 후 진행. repo 의 `.trc` 는 전부 앱 텍스트 로그라
+  FIX wire 캡처 없음(2026-07-16 스캔) → **라이브 tcpdump / mds UDP 캡처로** `269=2`
+  가 `269=0/1` 없이 단독으로 오는 프레임이 실재하는지 확인해야 함.
+- **발생 시 설계(방향 B, 권장)**: best/aggregator 를 우회하는 side-channel 로 체결을
+  `AlgoStream` 에만 전달(봉/마진 오염 방지). 상세는 대화 이력 참조.
+
 ## 6. 판정 요약
 
 | refprctype | algo 기준가 | WTG 로 즉시 이관 |

@@ -1,9 +1,11 @@
 package price
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/winwaysystems/wtg/pkg/quote"
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
 
@@ -97,6 +99,33 @@ func TestAlgoRing_SnapshotGap(t *testing.T) {
 
 // Phase C — slow client 감지: firstDropAt 이 timeout 지나면 evictSlowSubs 가
 // sub.done 을 close 하고 카운터 증가.
+// OnTick 이 BEST tick 의 체결가(last)를 AlgoQuote 로 전달한다 (mds fillprc 대응).
+func TestAlgoServer_OnTickCarriesLast(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})
+	defer s.Stop()
+
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: "USDKRW", Bid: 1380.00, Ask: 1380.10, Src: SourceBest,
+		TS: time.Now().UTC(), Last: 1380.05, LastQty: 500000,
+	})
+	s.OnTick(&Tick{
+		Symbol: "USDKRW", Source: SourceBest, Body: body, Received: time.Now(),
+	})
+
+	ring := s.ringFor("USDKRW")
+	if ring == nil {
+		t.Fatal("ring 없음")
+	}
+	ticks, _, _ := ring.snapshot(0)
+	if len(ticks) != 1 {
+		t.Fatalf("ring %d개, want 1", len(ticks))
+	}
+	if ticks[0].GetLast() != 1380.05 || ticks[0].GetLastQty() != 500000 {
+		t.Errorf("AlgoQuote last=%v qty=%v, want 1380.05/500000",
+			ticks[0].GetLast(), ticks[0].GetLastQty())
+	}
+}
+
 func TestAlgoServer_EvictSlowClient(t *testing.T) {
 	s := NewAlgoStreamServer(nil, AlgoStreamOptions{
 		RingSize:          10,

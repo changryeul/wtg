@@ -260,6 +260,8 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 		TsSourceUnixNs: env.TS.UnixNano(),
 		TsWtgUnixNs:    t.Received.UnixNano(),
 		IsBackfill:     false,
+		Last:           env.Last, // 최근 시장 체결가 (mds fillprc 대응)
+		LastQty:        env.LastQty,
 	}
 
 	// ring buffer (Phase B backfill 용). 값 복사로 저장.
@@ -400,6 +402,8 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 					TsSourceUnixNs: orig.GetTsSourceUnixNs(),
 					TsWtgUnixNs:    orig.GetTsWtgUnixNs(),
 					IsBackfill:     true,
+					Last:           orig.GetLast(),
+					LastQty:        orig.GetLastQty(),
 				}
 				if err := stream.Send(q); err != nil {
 					return err

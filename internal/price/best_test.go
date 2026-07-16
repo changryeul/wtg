@@ -42,6 +42,15 @@ func buildRaw(sym, source string, bid, ask float64) *Tick {
 	}
 }
 
+// buildRawWithLast — bid/ask + 체결가(last) 동반 raw Tick.
+func buildRawWithLast(sym, source string, bid, ask, last, lastQty float64) *Tick {
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: sym, Bid: bid, Ask: ask, Src: source, TS: time.Now().UTC(),
+		Last: last, LastQty: lastQty,
+	})
+	return &Tick{Symbol: sym, Source: source, Body: body, Received: time.Now()}
+}
+
 // decodeBest — emit 된 best Tick 의 body 를 v1 envelope 로 파싱.
 func decodeBest(t *testing.T, tick *Tick) quote.JSONEnvelope {
 	t.Helper()
@@ -50,6 +59,31 @@ func decodeBest(t *testing.T, tick *Tick) quote.JSONEnvelope {
 		t.Fatalf("best Tick body decode 실패: %v", err)
 	}
 	return env
+}
+
+// 체결가(last)가 best envelope 로 전달되고, 이후 체결 없는 tick 에도 최근값이
+// 유지된다 (mds MDFOLD.fillprc 모델 — BestConsumer 가 per-symbol persist).
+func TestBestConsumer_CarriesAndPersistsLast(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+
+	// 1) 체결가 동반 tick → best 에 last 실림.
+	bc.OnTick(buildRawWithLast("USDKRW", "SMB", 1380.00, 1380.10, 1380.05, 500000))
+	// 2) 체결 없는 tick (last=0) 이지만 bid/ask 변동 → best 는 최근 체결가 유지.
+	bc.OnTick(buildRaw("USDKRW", "SMB", 1380.01, 1380.11))
+
+	ticks := c.snapshot()
+	if len(ticks) < 2 {
+		t.Fatalf("emit %d개, want >=2", len(ticks))
+	}
+	e0 := decodeBest(t, ticks[0])
+	if e0.Last != 1380.05 || e0.LastQty != 500000 {
+		t.Errorf("첫 best last=%v qty=%v, want 1380.05/500000", e0.Last, e0.LastQty)
+	}
+	e1 := decodeBest(t, ticks[1])
+	if e1.Last != 1380.05 {
+		t.Errorf("체결 없는 tick 의 best last=%v, want 최근값 1380.05 유지", e1.Last)
+	}
 }
 
 func TestBestConsumer_TwoFeedsHigherBidLowerAsk(t *testing.T) {

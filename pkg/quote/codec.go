@@ -22,6 +22,13 @@ type JSONEnvelope struct {
 	TS  time.Time `json:"ts"`
 	Src string    `json:"src,omitempty"`
 	Seq uint64    `json:"seq,omitempty"`
+	// Last 는 시장 체결가 (FIX MDEntryType=2 Trade → mds fillprc 대응). optional —
+	// bid/ask 와 같은 메시지에 체결이 함께 온 경우에만 채워진다. 0 이면 생략.
+	// mds MDFOLD.fillprc 와 달리 forwarder 는 stateless 라 "이 tick 의 체결가" 만
+	// 담고, 최근값 유지(persist)는 BestConsumer 가 담당.
+	Last float64 `json:"last,omitempty"`
+	// LastQty 는 체결 수량 (FIX 271 MDEntrySize). USD/KRW·CNH/KRW 는 항상 0.
+	LastQty float64 `json:"last_qty,omitempty"`
 }
 
 // 디코딩 에러.

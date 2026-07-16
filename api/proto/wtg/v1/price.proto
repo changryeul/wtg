@@ -111,6 +111,14 @@ message AlgoQuote {
 
   // is_backfill — replay 중이면 true. live 이후는 false. Phase A 는 항상 false.
   bool is_backfill = 7;
+
+  // last — 최근 시장 체결가 (FIX MDEntryType=2 → mds fillprc 대응). 체결이 아직
+  // 없으면 0. BestConsumer 가 per-symbol persist 한 최근값. refprctype=1(체결가
+  // 기준) algo 가 사용.
+  double last = 8;
+
+  // last_qty — 체결 수량 (FIX 271). USD/KRW·CNH/KRW 는 항상 0.
+  double last_qty = 9;
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와

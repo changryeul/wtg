@@ -40,6 +40,60 @@ func TestDecodeJSONEnvelope_AuditFields(t *testing.T) {
 	}
 }
 
+// last (시장 체결가) 필드 — bid/ask 와 함께 오면 보존 (mds fillprc 대응).
+func TestJSONEnvelope_LastField(t *testing.T) {
+	body := []byte(`{
+		"sym":"USDKRW","bid":1385.20,"ask":1385.60,
+		"ts":"2026-07-16T03:21:45.456Z",
+		"last":1385.40,"last_qty":1000000
+	}`)
+	env, err := DecodeJSONEnvelope(body)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Last != 1385.40 {
+		t.Errorf("last=%v, want 1385.40", env.Last)
+	}
+	if env.LastQty != 1000000 {
+		t.Errorf("last_qty=%v, want 1000000", env.LastQty)
+	}
+	// 왕복 — encode 후 재 decode 해도 last 보존.
+	out, err := EncodeJSONEnvelope(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env2, err := DecodeJSONEnvelope(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env2.Last != 1385.40 || env2.LastQty != 1000000 {
+		t.Errorf("왕복 last 불일치: %+v", env2)
+	}
+}
+
+// last 없는 envelope 은 omitempty 로 직렬화에서 생략 (기존 호환).
+func TestJSONEnvelope_LastOmittedWhenZero(t *testing.T) {
+	env := JSONEnvelope{Sym: "USDKRW", Bid: 1, Ask: 2}
+	out, err := EncodeJSONEnvelope(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytesContains(out, "last") {
+		t.Errorf("last=0 인데 직렬화에 포함됨: %s", out)
+	}
+}
+
+func bytesContains(b []byte, s string) bool {
+	return len(b) >= len(s) && (func() bool {
+		for i := 0; i+len(s) <= len(b); i++ {
+			if string(b[i:i+len(s)]) == s {
+				return true
+			}
+		}
+		return false
+	})()
+}
+
 func TestDecodeJSONEnvelope_Reject_InvalidBidAsk(t *testing.T) {
 	tests := []struct {
 		name string

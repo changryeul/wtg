@@ -573,7 +573,7 @@ func feedLoop(ctx context.Context, logger *slog.Logger, pub Publisher, conn *net
 			// FIX → v1 envelope (fast path — alloc 1, 125ns vs parseQuote
 			// 의 28 alloc 595ns). audit 로그 필요 시는 includeFix 분기에서
 			// 별도 parseQuote 호출 — hot path 에선 fastExtractV1 만 사용.
-			sym, bid, ask, v1ok := fastExtractV1(pkt.data)
+			sym, bid, ask, last, lastQty, v1ok := fastExtractV1(pkt.data)
 			if !v1ok {
 				// reject 이유 분류 — 음수 가격(cooker drift) 등 운영 anomaly 를 alert 로 즉시 잡기 위함.
 				reason := classifyInvalid(sym, bid, ask)
@@ -603,6 +603,7 @@ func feedLoop(ctx context.Context, logger *slog.Logger, pub Publisher, conn *net
 				Sym: sym, Bid: bid, Ask: ask,
 				TS:  time.Now().UTC(),
 				Src: label, Seq: seq,
+				Last: last, LastQty: lastQty, // 체결가 동반 시 (0 이면 omitempty)
 			})
 			if len(batch) >= batchMax {
 				if !flushTimer.Stop() {
@@ -644,7 +645,7 @@ func feedLoop(ctx context.Context, logger *slog.Logger, pub Publisher, conn *net
 // 한계: 270 만 single string conversion (ParseFloat 가 string 요구). 그 외
 // alloc 없음. ParseFloat 의 alloc 비용 (작음) 이 진짜 hot path 면 별도
 // byte 기반 parser 필요 — 일단 보수적.
-func fastExtractV1(buf []byte) (sym string, bid, ask float64, ok bool) {
+func fastExtractV1(buf []byte) (sym string, bid, ask, last, lastQty float64, ok bool) {
 	var entryType byte
 	start := 0
 	for i := 0; i <= len(buf); i++ {
@@ -681,6 +682,17 @@ func fastExtractV1(buf []byte) (sym string, bid, ask float64, ok bool) {
 			case '1':
 				if ask == 0 {
 					ask = f
+				}
+			case '2': // Trade — 시장 체결가 (mds fillprc 대응)
+				if last == 0 {
+					last = f
+				}
+			}
+		case len(tag) == 3 && tag[0] == '2' && tag[1] == '7' && tag[2] == '1':
+			// MDEntrySize — 체결 entry 일 때만 수량으로 취한다 (bid/ask 의 271 은 무시).
+			if entryType == '2' && lastQty == 0 {
+				if f, err := strconv.ParseFloat(string(val), 64); err == nil {
+					lastQty = f
 				}
 			}
 		}

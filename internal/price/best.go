@@ -93,11 +93,21 @@ type BestConsumer struct {
 	dedupDroppedSame      atomic.Uint64
 	dedupDroppedBelowTick atomic.Uint64
 	emittedTotal          atomic.Uint64
+
+	// lastTrade — symbol → 최근 시장 체결가 (mds MDFOLD.fillprc 모델). raw tick 의
+	// env.Last 로 갱신되고, best emit 시 함께 실린다. 체결 없는 bid/ask tick 에도
+	// 최근값이 유지되도록 persist (cache mu 로 보호).
+	lastTrade map[string]tradeVal
 }
 
 type sourceQuote struct {
 	bid, ask float64
 	ts       time.Time
+}
+
+// tradeVal — 최근 체결가 + 수량.
+type tradeVal struct {
+	px, qty float64
 }
 
 // NewBestConsumer 는 BestConsumer 를 생성한다. downstream 은 best Tick 을
@@ -122,6 +132,7 @@ func NewBestConsumer(opts BestOptions, downstream ...TickConsumer) *BestConsumer
 		downstream:   downstream,
 		dedup:        d,
 		lastEmitted:  make(map[string]lastEmit),
+		lastTrade:    make(map[string]tradeVal),
 	}
 }
 
@@ -239,6 +250,11 @@ func (b *BestConsumer) OnTick(t *Tick) {
 		b.cache[t.Symbol] = bySource
 	}
 	bySource[t.Source] = sourceQuote{bid: env.Bid, ask: env.Ask, ts: time.Now()}
+	// 체결가 동반 시 최근값 갱신 (없으면 이전값 유지 — mds MDFOLD.fillprc 모델).
+	if env.Last > 0 {
+		b.lastTrade[t.Symbol] = tradeVal{px: env.Last, qty: env.LastQty}
+	}
+	lt := b.lastTrade[t.Symbol]
 	bestBid, bestAsk, srcCount := b.recomputeLocked(bySource)
 	// dedup — emit 전 이전 값과 비교. skip 시 lastEmitted 갱신 안 함 (다음
 	// 실제 emit 시점이 정확한 delta 판정 기준).
@@ -265,12 +281,14 @@ func (b *BestConsumer) OnTick(t *Tick) {
 
 	// 합성 best envelope. TS 는 emit 시각 — Aggregator OHLC 시계열에 사용.
 	bestBody, err := json.Marshal(quote.JSONEnvelope{
-		Sym: t.Symbol,
-		Bid: bestBid,
-		Ask: bestAsk,
-		TS:  time.Now().UTC(),
-		Src: SourceBest,
-		Seq: uint64(t.SeqNum),
+		Sym:     t.Symbol,
+		Bid:     bestBid,
+		Ask:     bestAsk,
+		TS:      time.Now().UTC(),
+		Src:     SourceBest,
+		Seq:     uint64(t.SeqNum),
+		Last:    lt.px, // 최근 시장 체결가 (persist)
+		LastQty: lt.qty,
 	})
 	if err != nil {
 		b.logger.Warn("best envelope 마샬 실패", slog.String("sym", t.Symbol), slog.Any("err", err))

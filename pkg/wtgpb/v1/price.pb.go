@@ -162,7 +162,13 @@ type AlgoQuote struct {
 	// latency = client_recv_ts - ts_wtg_unix_ns 로 fan-out 지연 측정.
 	TsWtgUnixNs int64 `protobuf:"varint,6,opt,name=ts_wtg_unix_ns,json=tsWtgUnixNs,proto3" json:"ts_wtg_unix_ns,omitempty"`
 	// is_backfill — replay 중이면 true. live 이후는 false. Phase A 는 항상 false.
-	IsBackfill    bool `protobuf:"varint,7,opt,name=is_backfill,json=isBackfill,proto3" json:"is_backfill,omitempty"`
+	IsBackfill bool `protobuf:"varint,7,opt,name=is_backfill,json=isBackfill,proto3" json:"is_backfill,omitempty"`
+	// last — 최근 시장 체결가 (FIX MDEntryType=2 → mds fillprc 대응). 체결이 아직
+	// 없으면 0. BestConsumer 가 per-symbol persist 한 최근값. refprctype=1(체결가
+	// 기준) algo 가 사용.
+	Last float64 `protobuf:"fixed64,8,opt,name=last,proto3" json:"last,omitempty"`
+	// last_qty — 체결 수량 (FIX 271). USD/KRW·CNH/KRW 는 항상 0.
+	LastQty       float64 `protobuf:"fixed64,9,opt,name=last_qty,json=lastQty,proto3" json:"last_qty,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -244,6 +250,20 @@ func (x *AlgoQuote) GetIsBackfill() bool {
 		return x.IsBackfill
 	}
 	return false
+}
+
+func (x *AlgoQuote) GetLast() float64 {
+	if x != nil {
+		return x.Last
+	}
+	return 0
+}
+
+func (x *AlgoQuote) GetLastQty() float64 {
+	if x != nil {
+		return x.LastQty
+	}
+	return 0
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와
@@ -1092,7 +1112,7 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\x14AlgoSubscribeRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x18\n" +
 	"\asymbols\x18\x02 \x03(\tR\asymbols\x12\x19\n" +
-	"\bfrom_seq\x18\x03 \x01(\x03R\afromSeq\"\xc4\x01\n" +
+	"\bfrom_seq\x18\x03 \x01(\x03R\afromSeq\"\xf3\x01\n" +
 	"\tAlgoQuote\x12\x10\n" +
 	"\x03sym\x18\x01 \x01(\tR\x03sym\x12\x10\n" +
 	"\x03bid\x18\x02 \x01(\x01R\x03bid\x12\x10\n" +
@@ -1101,7 +1121,9 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\x11ts_source_unix_ns\x18\x05 \x01(\x03R\x0etsSourceUnixNs\x12#\n" +
 	"\x0ets_wtg_unix_ns\x18\x06 \x01(\x03R\vtsWtgUnixNs\x12\x1f\n" +
 	"\vis_backfill\x18\a \x01(\bR\n" +
-	"isBackfill\"l\n" +
+	"isBackfill\x12\x12\n" +
+	"\x04last\x18\b \x01(\x01R\x04last\x12\x19\n" +
+	"\blast_qty\x18\t \x01(\x01R\alastQty\"l\n" +
 	"\n" +
 	"PublishAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\x04R\baccepted\x12\x18\n" +

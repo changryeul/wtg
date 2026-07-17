@@ -499,6 +499,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /v1/admin/policy/blocked-routing-keys", SetBlockedRoutingKeys(policyDeps))
 	// 시세 통계 proxy — admin UI 의 "시세 통계" 페이지가 same-origin 으로 mci-price 호출.
 	mux.HandleFunc("GET /v1/admin/price/{kind}", PriceStatsProxy(s.cfg.PriceURL))
+	// 스왑포인트 화면 — 로이터 수신값 조회 + delta 조정 적용 (same-origin proxy → mci-price).
+	mux.HandleFunc("GET /v1/admin/swap-received", UpstreamProxy(s.cfg.PriceURL, "/v1/pricing/swap-received", s.logger))
+	mux.HandleFunc("POST /v1/admin/swap-apply", UpstreamProxy(s.cfg.PriceURL, "/v1/pricing/swap", s.logger))
 	// N4. UI 통합 — mci-price 의 customer 단일 lookup + mci-edge-price 의 ws 연결.
 	mux.HandleFunc("GET /v1/admin/price/customers/{customerID}", PriceCustomerLookupProxy(s.cfg.PriceURL))
 	mux.HandleFunc("GET /v1/admin/edge/connections", EdgeConnectionsProxy(s.cfg.EdgeURLs))

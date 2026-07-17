@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WTG 스왑포인트 — 수신·조정·적용</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fafafa; color: #111; }
+    @media (prefers-color-scheme: dark) { body { background: #0f172a; color: #e2e8f0; } }
+    #topbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: #0f172a; color: #e2e8f0; }
+    #topbar b { color: #fff; }
+    #topbar button { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+    #topbar button:hover { border-color: #38bdf8; color: #38bdf8; }
+    #topbar .msg { color: #94a3b8; flex: 1; }
+    main { max-width: 1100px; margin: 16px auto; padding: 0 16px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: 6px 10px; border-bottom: 1px solid #cbd5e1; text-align: right; font-variant-numeric: tabular-nums; }
+    th { font-weight: 600; color: #64748b; font-size: 12px; }
+    th.l, td.l { text-align: left; }
+    td.recv { color: #64748b; }
+    td.eff { font-weight: 600; }
+    input { width: 90px; text-align: right; padding: 3px 6px; border: 1px solid #94a3b8; border-radius: 4px; background: transparent; color: inherit; font: inherit; }
+    input.dirty { border-color: #f59e0b; background: rgba(245,158,11,.08); }
+    button.apply { padding: 3px 10px; border: 1px solid #16a34a; color: #16a34a; background: transparent; border-radius: 4px; cursor: pointer; }
+    button.apply:hover { background: rgba(22,163,74,.1); }
+    tr.pairhdr td { background: rgba(100,116,139,.12); font-weight: 600; text-align: left; color: #475569; }
+    #stat { color: #94a3b8; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="topbar">
+    <b>WTG 스왑포인트</b>
+    <span class="msg">로이터 수신값(read-only) + 운영자 조정(delta) → <b>적용값 = 수신 + delta</b>. 적용 시 forward 견적·algo 에 반영</span>
+    <button id="reload">새로고침</button>
+    <span id="stat">—</span>
+  </div>
+  <main>
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th class="l">통화쌍 / 테너</th>
+          <th>수신 Bid</th><th>수신 Ask</th>
+          <th>조정 Bid(delta)</th><th>조정 Ask(delta)</th>
+          <th>적용 Bid</th><th>적용 Ask</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+
+  <script>
+    var LS_USER = "wtg_user", LS_DEV = "wtg_dev_mode", LS_TOKEN = "wtg_access_token";
+    function authHeaders() {
+      var h = { "Content-Type": "application/json" };
+      if (localStorage.getItem(LS_DEV) === "1") {
+        var u = localStorage.getItem(LS_USER) || "";
+        if (u) h["X-WTG-User"] = u;
+      } else {
+        var t = localStorage.getItem(LS_TOKEN);
+        if (t) h["Authorization"] = "Bearer " + t;
+      }
+      return h;
+    }
+    var num = function (x) { return (x == null) ? 0 : Number(x); };
+    var fmt = function (x) { return (x === 0 || x == null) ? "" : Number(x).toFixed(4); };
+
+    // 수신값(로이터) + delta(pricing table) 를 (pair,tenor) 로 병합.
+    async function load() {
+      var stat = document.getElementById("stat");
+      stat.textContent = "불러오는 중…";
+      try {
+        var results = await Promise.all([
+          fetch("/v1/admin/swap-received", { headers: authHeaders() }),
+          fetch("/v1/admin/pricing/table", { headers: authHeaders() }),
+        ]);
+        var recvR = results[0], tblR = results[1];
+        var received = recvR.ok ? await recvR.json() : [];
+        var deltas = [];
+        if (tblR.ok) { var doc = await tblR.json(); deltas = (doc && doc.swap_point) || []; }
+
+        var map = {};
+        (received || []).forEach(function (e) {
+          map[e.pair + "|" + e.tenor] = { pair: e.pair, tenor: e.tenor, rbid: num(e.bid), rask: num(e.ask), dbid: 0, dask: 0 };
+        });
+        (deltas || []).forEach(function (e) {
+          var k = e.pair + "|" + e.tenor;
+          if (!map[k]) map[k] = { pair: e.pair, tenor: e.tenor, rbid: 0, rask: 0, dbid: 0, dask: 0 };
+          map[k].dbid = num(e.bid_amount); map[k].dask = num(e.ask_amount);
+        });
+        render(Object.keys(map).map(function (k) { return map[k]; }));
+        stat.textContent = Object.keys(map).length + " 건";
+      } catch (e) { stat.textContent = "오류: " + e; }
+    }
+
+    function render(list) {
+      list.sort(function (a, b) { return (a.pair + a.tenor).localeCompare(b.pair + b.tenor); });
+      var byPair = {};
+      list.forEach(function (r) { (byPair[r.pair] = byPair[r.pair] || []).push(r); });
+      var rows = document.getElementById("rows");
+      rows.replaceChildren();
+      Object.keys(byPair).sort().forEach(function (pair) {
+        var hdr = document.createElement("tr"); hdr.className = "pairhdr";
+        var hc = document.createElement("td"); hc.colSpan = 8; hc.textContent = pair;
+        hdr.appendChild(hc);
+        rows.appendChild(hdr);
+        byPair[pair].forEach(function (r) { rows.appendChild(rowEl(r)); });
+      });
+    }
+
+    function td(cls, text) {
+      var el = document.createElement("td");
+      if (cls) el.className = cls;
+      if (text != null) el.textContent = text;
+      return el;
+    }
+
+    function rowEl(r) {
+      var tr = document.createElement("tr");
+      var effBid = td("eff"), effAsk = td("eff");
+      var bidIn = document.createElement("input"); bidIn.value = r.dbid || "";
+      var askIn = document.createElement("input"); askIn.value = r.dask || "";
+      function recomputeEff() {
+        effBid.textContent = fmt(r.rbid + num(bidIn.value));
+        effAsk.textContent = fmt(r.rask + num(askIn.value));
+      }
+      [bidIn, askIn].forEach(function (inp) {
+        inp.addEventListener("input", function () { inp.classList.add("dirty"); recomputeEff(); });
+      });
+
+      var tdDb = td(); tdDb.appendChild(bidIn);
+      var tdDa = td(); tdDa.appendChild(askIn);
+      var tdApply = td();
+      var btn = document.createElement("button"); btn.className = "apply"; btn.textContent = "적용";
+      btn.onclick = function () { apply(r.pair, r.tenor, num(bidIn.value), num(askIn.value), btn, bidIn, askIn); };
+      tdApply.appendChild(btn);
+
+      tr.appendChild(td("l", r.tenor));
+      tr.appendChild(td("recv", fmt(r.rbid)));
+      tr.appendChild(td("recv", fmt(r.rask)));
+      tr.appendChild(tdDb);
+      tr.appendChild(tdDa);
+      tr.appendChild(effBid);
+      tr.appendChild(effAsk);
+      tr.appendChild(tdApply);
+      recomputeEff();
+      return tr;
+    }
+
+    // 적용 = delta(bid/ask) 를 POST /v1/admin/swap-apply → mci-price POST /v1/pricing/swap.
+    async function apply(pair, tenor, dbid, dask, btn, bidIn, askIn) {
+      btn.disabled = true; btn.textContent = "…";
+      try {
+        var resp = await fetch("/v1/admin/swap-apply", {
+          method: "POST", headers: authHeaders(),
+          body: JSON.stringify({ pair: pair, updates: [{ tenor: tenor, bid: dbid, ask: dask }] }),
+        });
+        if (!resp.ok) { alert("적용 실패: HTTP " + resp.status + "\n" + (await resp.text())); }
+        else { bidIn.classList.remove("dirty"); askIn.classList.remove("dirty"); btn.textContent = "✓"; setTimeout(function () { btn.textContent = "적용"; }, 1200); }
+      } catch (e) { alert("적용 오류: " + e); }
+      finally { btn.disabled = false; }
+    }
+
+    document.getElementById("reload").onclick = load;
+    load();
+  </script>
+</body>
+</html>

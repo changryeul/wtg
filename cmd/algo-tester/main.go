@@ -36,6 +36,7 @@ func main() {
 		symbols   = flag.String("symbols", "USDKRW", "구독 심볼 CSV (빈값=모든 심볼)")
 		fromSeq   = flag.Int64("from-seq", 0, "재접속 backfill (Phase B). Phase A 는 반드시 0")
 		sources   = flag.String("sources", "", "원천 필터 CSV (예: SMB,KMB). 빈값=BEST 모드 (excode per-source)")
+		tenors    = flag.String("tenors", "", "forward tenor 필터 CSV (예: M01,M03). 빈값=spot(SPT) (effective swap 적용)")
 		duration  = flag.Duration("duration", 30*time.Second, "테스트 실행 시간. 0=Ctrl-C 까지")
 		slowSleep = flag.Duration("slow-sleep", 0, "매 recv 후 sleep — slow client 시뮬. 예: 100ms")
 		jsonOut   = flag.Bool("json", false, "각 AlgoQuote 를 JSON 라인으로 출력 (스크립트 파싱용)")
@@ -62,6 +63,7 @@ func main() {
 		ClientId: *clientID,
 		Symbols:  splitCSV(*symbols),
 		Sources:  splitCSV(*sources),
+		Tenors:   splitCSV(*tenors),
 		FromSeq:  *fromSeq,
 	}
 	stream, err := cli.SubscribeAlgo(ctx, req)
@@ -99,12 +101,12 @@ func main() {
 		lastSeq[q.GetSym()] = q.GetSeq()
 
 		if *jsonOut {
-			fmt.Printf(`{"sym":%q,"source":%q,"seq":%d,"bid":%.5f,"ask":%.5f,"mid":%.5f,"last":%.5f,"last_qty":%.0f,"backfill":%v}`+"\n",
-				q.GetSym(), q.GetSource(), q.GetSeq(), q.GetBid(), q.GetAsk(),
+			fmt.Printf(`{"sym":%q,"source":%q,"tenor":%q,"seq":%d,"bid":%.5f,"ask":%.5f,"mid":%.5f,"last":%.5f,"last_qty":%.0f,"backfill":%v}`+"\n",
+				q.GetSym(), q.GetSource(), q.GetTenor(), q.GetSeq(), q.GetBid(), q.GetAsk(),
 				q.GetMid(), q.GetLast(), q.GetLastQty(), q.GetIsBackfill())
 		} else if recv <= 20 || recv%50 == 0 {
-			fmt.Printf("[#%06d] %s src=%s seq=%d bid=%.5f ask=%.5f mid=%.5f last=%.5f lat=%.2fms bf=%v%s\n",
-				recv, q.GetSym(), q.GetSource(), q.GetSeq(), q.GetBid(), q.GetAsk(),
+			fmt.Printf("[#%06d] %s src=%s tenor=%s seq=%d bid=%.5f ask=%.5f mid=%.5f last=%.5f lat=%.2fms bf=%v%s\n",
+				recv, q.GetSym(), q.GetSource(), q.GetTenor(), q.GetSeq(), q.GetBid(), q.GetAsk(),
 				q.GetMid(), q.GetLast(), latencyMs, q.GetIsBackfill(), gap)
 		}
 		if *slowSleep > 0 {

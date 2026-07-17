@@ -54,9 +54,10 @@ cat > "$TMP/scn.json" <<JSON
 ]}
 JSON
 
-echo "==> mci-price 기동 (--no-broker, gRPC :$GRPC_PORT, algo-stream)"
+echo "==> mci-price 기동 (--no-broker, gRPC :$GRPC_PORT, algo-stream, symbols)"
+# --symbols: swap provider 가 symbol(USDKRW)→pair(USD/KRW) 매핑에 사용 (forward tenor).
 $BIN/mci-price --no-broker --dev --listen ":$HTTP_PORT" \
-  --grpc "127.0.0.1:$GRPC_PORT" --algo-stream >"$TMP/price.log" 2>&1 &
+  --grpc "127.0.0.1:$GRPC_PORT" --algo-stream --symbols etc/symbols.json >"$TMP/price.log" 2>&1 &
 PIDS+=($!)
 
 # /v1/ping 대기
@@ -83,11 +84,11 @@ assert_eq() { # name got want
   fi
 }
 
-run_algo() { # sources → 마지막 AlgoQuote JSON 라인
-  local sources="$1"
+run_algo() { # sources tenors → 매칭 마지막 AlgoQuote JSON 라인
+  local sources="$1" tenors="${2:-}"
   # algo-tester 를 백그라운드로 띄워 구독 후, mock-lp 를 반복 송신 (구독 시점 이후 tick 수신 보장).
   ( $BIN/algo-tester --target "127.0.0.1:$GRPC_PORT" --symbols USDKRW \
-      --sources "$sources" --json --duration 2s >"$TMP/algo.out" 2>/dev/null ) &
+      --sources "$sources" --tenors "$tenors" --json --duration 2s >"$TMP/algo.out" 2>/dev/null ) &
   local ap=$!
   sleep 0.4
   for _ in $(seq 1 8); do
@@ -96,7 +97,12 @@ run_algo() { # sources → 마지막 AlgoQuote JSON 라인
     sleep 0.15
   done
   wait $ap 2>/dev/null || true
-  grep '^{' "$TMP/algo.out" | tail -1
+  # tenors 지정 시 그 tenor 라인만, 아니면 마지막.
+  if [ -n "$tenors" ]; then
+    grep '^{' "$TMP/algo.out" | grep "\"tenor\":\"$tenors\"" | tail -1
+  else
+    grep '^{' "$TMP/algo.out" | tail -1
+  fi
 }
 
 echo "==> [1] BEST 모드 검증"
@@ -118,9 +124,25 @@ SRC=$(echo "$LINE" | jq -r .source)
 assert_eq "SMB bid" "$(echo "$LINE" | jq .bid)" "$SMB_BID"
 assert_eq "SMB ask" "$(echo "$LINE" | jq .ask)" "$SMB_ASK"
 
+echo "==> [3] forward tenor swap 검증 (effective = received + delta, forward = spot + effective)"
+# 로이터 수신 + 운영자 delta 주입 (add 규약). effective M01 = {2.55, 2.67}.
+curl -s -XPOST "http://127.0.0.1:$HTTP_PORT/v1/pricing/swap-received" -H "X-WTG-User: op" \
+  -d '{"updates":[{"pair":"USD/KRW","tenor":"M01","bid":2.50,"ask":2.70}]}' >/dev/null
+curl -s -XPOST "http://127.0.0.1:$HTTP_PORT/v1/pricing/swap-delta" -H "X-WTG-User: op" \
+  -d '{"updates":[{"pair":"USD/KRW","tenor":"M01","bid":0.05,"ask":-0.03}]}' >/dev/null
+FWD_BID=$(awk "BEGIN{print $BEST_BID + 2.55}") # 1380.10 + 2.55 = 1382.65
+FWD_ASK=$(awk "BEGIN{print $BEST_ASK + 2.67}") # 1380.20 + 2.67 = 1382.87
+LINE=$(run_algo "" "M01")
+[ -z "$LINE" ] && { echo "FAIL: M01 forward tick 수신 없음"; cat "$TMP/price.log"; exit 1; }
+echo "     recv: $LINE"
+TN=$(echo "$LINE" | jq -r .tenor)
+[ "$TN" = "M01" ] && echo "  ✓ tenor = M01" || { echo "  ✗ tenor = $TN (want M01)"; FAILED=1; }
+assert_eq "M01 forward bid" "$(echo "$LINE" | jq .bid)" "$FWD_BID"
+assert_eq "M01 forward ask" "$(echo "$LINE" | jq .ask)" "$FWD_ASK"
+
 echo
 if [ "$FAILED" = 0 ]; then
-  echo "✅ mock-lp e2e 검증 통과 (BEST + per-source)"
+  echo "✅ mock-lp e2e 검증 통과 (BEST + per-source + forward swap)"
 else
   echo "❌ 검증 실패 — 위 ✗ 항목 확인. 로그: $TMP (cleanup 됨)"; exit 1
 fi

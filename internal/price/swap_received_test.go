@@ -4,67 +4,72 @@ import (
 	"testing"
 
 	"github.com/winwaysystems/wtg/pkg/pricing"
-	"github.com/winwaysystems/wtg/pkg/session"
 )
 
-func TestReceivedSwapStore_SetGet(t *testing.T) {
-	s := NewReceivedSwapStore()
-	if _, ok := s.Get("USD/KRW", "M01"); ok {
-		t.Error("빈 store 인데 Get ok=true")
+func TestSwapStore_SetGet(t *testing.T) {
+	s := NewSwapStore()
+	if _, ok := s.Received("USD/KRW", "M01"); ok {
+		t.Error("빈 store 인데 Received ok=true")
 	}
-	s.Set("USD/KRW", "M01", 2.50, 2.70)
-	m, ok := s.Get("USD/KRW", "M01")
+	s.SetReceived("USD/KRW", "M01", 2.50, 2.70)
+	m, ok := s.Received("USD/KRW", "M01")
 	if !ok || m.BidAmount != 2.50 || m.AskAmount != 2.70 {
-		t.Errorf("Get=%+v ok=%v, want {2.50,2.70}", m, ok)
+		t.Errorf("Received=%+v ok=%v, want {2.50,2.70}", m, ok)
 	}
-	// 덮어쓰기 (최신 수신).
-	s.Set("USD/KRW", "M01", 2.55, 2.75)
-	m, _ = s.Get("USD/KRW", "M01")
+	s.SetReceived("USD/KRW", "M01", 2.55, 2.75) // 최신 갱신
+	m, _ = s.Received("USD/KRW", "M01")
 	if m.BidAmount != 2.55 {
 		t.Errorf("갱신 실패: %+v", m)
 	}
 }
 
-func TestReceivedSwapStore_Snapshot(t *testing.T) {
-	s := NewReceivedSwapStore()
-	s.Set("USD/KRW", "M01", 2.5, 2.7)
-	s.Set("USD/KRW", "M03", 7.1, 7.4)
-	snap := s.Snapshot()
-	if len(snap) != 2 {
-		t.Fatalf("snapshot %d개, want 2", len(snap))
+// effective = received + delta (둘 다 add 규약).
+func TestSwapStore_Effective(t *testing.T) {
+	s := NewSwapStore()
+	s.SetReceived("USD/KRW", "M01", 2.50, 2.70)
+	s.SetDelta("USD/KRW", "M01", 0.05, -0.03) // 운영자 조정
+	eff, ok := s.Effective("USD/KRW", "M01")
+	if !ok {
+		t.Fatal("Effective ok=false")
 	}
-	if snap[pricing.SwapKey{Pair: "USD/KRW", Tenor: "M03"}].AskAmount != 7.4 {
-		t.Errorf("snapshot M03=%+v", snap[pricing.SwapKey{Pair: "USD/KRW", Tenor: "M03"}])
-	}
-	// snapshot 은 복사본 — 원본 불변.
-	snap[pricing.SwapKey{Pair: "USD/KRW", Tenor: "M01"}] = pricing.Margin{BidAmount: 999}
-	m, _ := s.Get("USD/KRW", "M01")
-	if m.BidAmount == 999 {
-		t.Error("snapshot 이 원본을 공유함 (복사 아님)")
+	if !near(eff.BidAmount, 2.55) || !near(eff.AskAmount, 2.67) {
+		t.Errorf("effective=%+v, want {2.55,2.67}", eff)
 	}
 }
 
-// effective = 수신값(로이터) + 운영자 delta (delta/skew 모델).
-func TestEffectiveSwap(t *testing.T) {
-	received := pricing.Margin{BidAmount: 2.50, AskAmount: 2.70}
-	delta := pricing.Margin{BidAmount: 0.05, AskAmount: -0.03} // 운영자 조정
-	eff := EffectiveSwap(received, delta)
-	if !near(eff.BidAmount, 2.55) {
-		t.Errorf("effective bid=%v, want 2.55", eff.BidAmount)
-	}
-	if !near(eff.AskAmount, 2.67) {
-		t.Errorf("effective ask=%v, want 2.67", eff.AskAmount)
+// received 없이 delta 만 있어도 effective = delta (하위호환).
+func TestSwapStore_DeltaOnly(t *testing.T) {
+	s := NewSwapStore()
+	s.SetDelta("USD/KRW", "M01", 2.0, 2.2)
+	eff, ok := s.Effective("USD/KRW", "M01")
+	if !ok || !near(eff.BidAmount, 2.0) || !near(eff.AskAmount, 2.2) {
+		t.Errorf("delta-only effective=%+v ok=%v", eff, ok)
 	}
 }
 
-// 수신값 없으면 effective = delta 만 (기존 동작 하위호환 — Reuters 미연결 시).
-func TestEffectiveSwap_NoReceived(t *testing.T) {
-	s := NewReceivedSwapStore()
-	received, _ := s.Get("USD/KRW", "M01") // zero Margin
-	delta := pricing.Margin{BidAmount: 2.0, AskAmount: 2.2}
-	eff := EffectiveSwap(received, delta)
-	if eff.BidAmount != 2.0 || eff.AskAmount != 2.2 {
-		t.Errorf("no-received effective=%+v, want delta 그대로", eff)
+// Tenors = received ∪ delta forward tenor (spot 제외).
+func TestSwapStore_Tenors(t *testing.T) {
+	s := NewSwapStore()
+	s.SetReceived("USD/KRW", "M01", 2.5, 2.7)
+	s.SetDelta("USD/KRW", "M03", 7, 7.4)
+	s.SetReceived("USD/KRW", pricing.TenorSpot, 0, 0) // spot — 제외돼야
+	got := s.Tenors("USD/KRW")
+	if len(got) != 2 {
+		t.Fatalf("Tenors=%v, want 2 (M01,M03; spot 제외)", got)
 	}
-	_ = session.Pair("USD/KRW")
+}
+
+// ViewSnapshot — received+delta+effective 병합.
+func TestSwapStore_ViewSnapshot(t *testing.T) {
+	s := NewSwapStore()
+	s.SetReceived("USD/KRW", "M01", 2.5, 2.7)
+	s.SetDelta("USD/KRW", "M01", 0.05, -0.03)
+	views := s.ViewSnapshot()
+	if len(views) != 1 {
+		t.Fatalf("views %d, want 1", len(views))
+	}
+	v := views[0]
+	if !near(v.RecvBid, 2.5) || !near(v.DeltaBid, 0.05) || !near(v.EffBid, 2.55) {
+		t.Errorf("view=%+v", v)
+	}
 }

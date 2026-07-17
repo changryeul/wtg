@@ -66,31 +66,19 @@
     var num = function (x) { return (x == null) ? 0 : Number(x); };
     var fmt = function (x) { return (x === 0 || x == null) ? "" : Number(x).toFixed(4); };
 
-    // 수신값(로이터) + delta(pricing table) 를 (pair,tenor) 로 병합.
+    // 서버가 병합한 view (received+delta+effective) 를 그대로 사용.
     async function load() {
       var stat = document.getElementById("stat");
       stat.textContent = "불러오는 중…";
       try {
-        var results = await Promise.all([
-          fetch("/v1/admin/swap-received", { headers: authHeaders() }),
-          fetch("/v1/admin/pricing/table", { headers: authHeaders() }),
-        ]);
-        var recvR = results[0], tblR = results[1];
-        var received = recvR.ok ? await recvR.json() : [];
-        var deltas = [];
-        if (tblR.ok) { var doc = await tblR.json(); deltas = (doc && doc.swap_point) || []; }
-
-        var map = {};
-        (received || []).forEach(function (e) {
-          map[e.pair + "|" + e.tenor] = { pair: e.pair, tenor: e.tenor, rbid: num(e.bid), rask: num(e.ask), dbid: 0, dask: 0 };
+        var resp = await fetch("/v1/admin/swap", { headers: authHeaders() });
+        if (!resp.ok) { stat.textContent = "실패: HTTP " + resp.status; return; }
+        var views = await resp.json();
+        var list = (views || []).map(function (v) {
+          return { pair: v.pair, tenor: v.tenor, rbid: num(v.recv_bid), rask: num(v.recv_ask), dbid: num(v.delta_bid), dask: num(v.delta_ask) };
         });
-        (deltas || []).forEach(function (e) {
-          var k = e.pair + "|" + e.tenor;
-          if (!map[k]) map[k] = { pair: e.pair, tenor: e.tenor, rbid: 0, rask: 0, dbid: 0, dask: 0 };
-          map[k].dbid = num(e.bid_amount); map[k].dask = num(e.ask_amount);
-        });
-        render(Object.keys(map).map(function (k) { return map[k]; }));
-        stat.textContent = Object.keys(map).length + " 건";
+        render(list);
+        stat.textContent = list.length + " 건";
       } catch (e) { stat.textContent = "오류: " + e; }
     }
 

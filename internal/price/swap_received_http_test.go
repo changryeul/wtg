@@ -8,47 +8,47 @@ import (
 	"testing"
 )
 
-// 주입(POST) 후 조회(GET) 왕복.
-func TestSwapReceivedHTTP_InjectThenList(t *testing.T) {
-	store := NewReceivedSwapStore()
-
-	// 주입.
-	body := `{"updates":[{"pair":"USD/KRW","tenor":"M01","bid":2.5,"ask":2.7}]}`
-	req := httptest.NewRequest(http.MethodPost, "/v1/pricing/swap-received", strings.NewReader(body))
+func postJSON(t *testing.T, h http.HandlerFunc, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 	rec := httptest.NewRecorder()
-	SwapReceivedInjectHandler(store)(rec, req)
+	h(rec, req)
+	return rec
+}
+
+// received 주입 + delta 설정 → view 병합(effective) 확인.
+func TestSwapHTTP_ReceivedDeltaView(t *testing.T) {
+	store := NewSwapStore()
+
+	// 1) 로이터 수신 주입.
+	rec := postJSON(t, SwapReceivedInjectHandler(store), `{"updates":[{"pair":"USD/KRW","tenor":"M01","bid":2.5,"ask":2.7}]}`)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("inject status=%d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("received status=%d", rec.Code)
 	}
-	var ir map[string]int
-	_ = json.Unmarshal(rec.Body.Bytes(), &ir)
-	if ir["applied"] != 1 {
-		t.Errorf("applied=%d, want 1", ir["applied"])
+	// 2) 운영자 조정(delta).
+	rec = postJSON(t, SwapDeltaHandler(store), `{"updates":[{"pair":"USD/KRW","tenor":"M01","bid":0.05,"ask":-0.03}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delta status=%d", rec.Code)
 	}
-
-	// store 에 실제 반영됐는지.
-	m, ok := store.Get("USD/KRW", "M01")
-	if !ok || m.BidAmount != 2.5 || m.AskAmount != 2.7 {
-		t.Errorf("store Get=%+v ok=%v", m, ok)
-	}
-
-	// 조회.
-	greq := httptest.NewRequest(http.MethodGet, "/v1/pricing/swap-received", nil)
+	// 3) view — effective = received + delta.
+	greq := httptest.NewRequest(http.MethodGet, "/", nil)
 	grec := httptest.NewRecorder()
-	SwapReceivedListHandler(store)(grec, greq)
-	var list []SwapReceivedEntry
-	if err := json.Unmarshal(grec.Body.Bytes(), &list); err != nil {
+	SwapViewHandler(store)(grec, greq)
+	var views []SwapView
+	if err := json.Unmarshal(grec.Body.Bytes(), &views); err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Pair != "USD/KRW" || list[0].Bid != 2.5 {
-		t.Errorf("list=%+v", list)
+	if len(views) != 1 {
+		t.Fatalf("views %d, want 1", len(views))
+	}
+	v := views[0]
+	if !near(v.RecvBid, 2.5) || !near(v.DeltaBid, 0.05) || !near(v.EffBid, 2.55) || !near(v.EffAsk, 2.67) {
+		t.Errorf("view=%+v", v)
 	}
 }
 
-func TestSwapReceivedHTTP_InjectNilStore(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/v1/pricing/swap-received", strings.NewReader(`{}`))
-	rec := httptest.NewRecorder()
-	SwapReceivedInjectHandler(nil)(rec, req)
+func TestSwapHTTP_NilStore(t *testing.T) {
+	rec := postJSON(t, SwapReceivedInjectHandler(nil), `{}`)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("nil store status=%d, want 503", rec.Code)
 	}

@@ -61,7 +61,13 @@ func TestForwardSnapshot_AllTenors(t *testing.T) {
 		{CustomerID: "alice", Pair: "USD/KRW", BidDelta: -0.01, AskDelta: -0.01, Mode: "add", Priority: 100},
 	})
 
-	handler := ForwardSnapshotHandler(ForwardSnapshotDeps{Store: store, Best: best}, true)
+	// swap store (add 규약: forward = spot + swap). received 로 tenor 등록.
+	swapStore := NewSwapStore()
+	swapStore.SetReceived("USD/KRW", "1W", 0.05, 0.07)
+	swapStore.SetReceived("USD/KRW", "1M", 0.15, 0.25)
+	swapStore.SetReceived("USD/KRW", "3M", 0.40, 0.55)
+
+	handler := ForwardSnapshotHandler(ForwardSnapshotDeps{Store: store, Best: best, Swap: swapStore}, true)
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
@@ -123,11 +129,14 @@ func TestForwardSnapshot_AllTenors(t *testing.T) {
 	if !near(oneM.SwapBid, 0.15) || !near(oneM.SwapAsk, 0.25) {
 		t.Errorf("1M swap: %+v", oneM)
 	}
-	if !near(got.Spot.RawBid-oneM.Bid, 0.21) {
-		t.Errorf("1M total bid 차이 = %v, want 0.21", got.Spot.RawBid-oneM.Bid)
+	// add 규약: forward = spot(margined) + swap.
+	//   bid = spotBid(=RawBid-0.06) + 0.15 → RawBid 대비 +0.09
+	//   ask = spotAsk(=RawAsk+0.06) + 0.25 → RawAsk 대비 +0.31
+	if !near(oneM.Bid-got.Spot.RawBid, 0.09) {
+		t.Errorf("1M forward bid - RawBid = %v, want 0.09 (spot margin -0.06 + swap +0.15)", oneM.Bid-got.Spot.RawBid)
 	}
 	if !near(oneM.Ask-got.Spot.RawAsk, 0.31) {
-		t.Errorf("1M total ask 차이 = %v, want 0.31", oneM.Ask-got.Spot.RawAsk)
+		t.Errorf("1M forward ask - RawAsk = %v, want 0.31", oneM.Ask-got.Spot.RawAsk)
 	}
 }
 

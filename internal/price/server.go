@@ -100,8 +100,8 @@ type Server struct {
 	// endpoint 미등록 (forward/lock 은 영향 X).
 	swapIndex      quoteid.SwapIndex
 	swapMetrics    *AtomicSwapLockMetrics
-	swapPointStore DocStore           // POST /v1/pricing/swap 의 etcd 저장소 (nil=503)
-	swapReceived   *ReceivedSwapStore // 로이터 수신 swap staging (AttachSwapReceived, nil=미노출)
+	swapPointStore DocStore   // POST /v1/pricing/swap 의 etcd 저장소 (nil=503)
+	swapStore      *SwapStore // 로이터 수신 + 운영자 delta swap (AttachSwapStore, nil=미노출)
 
 	totalRecv  atomic.Uint64
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
@@ -259,10 +259,10 @@ func (s *Server) AttachPricingSwapWriter(store DocStore) {
 	s.swapPointStore = store
 }
 
-// AttachSwapReceived — 로이터 수신 swap staging store 주입. 주입/조회 endpoint
-// (POST/GET /v1/pricing/swap-received) 노출 + AlgoStream SwapProvider 의 received 원천.
-func (s *Server) AttachSwapReceived(store *ReceivedSwapStore) {
-	s.swapReceived = store
+// AttachSwapStore — swap store(received+delta) 주입. 수신/조정/조회 endpoint 노출
+// + AlgoStream SwapProvider 의 effective 원천.
+func (s *Server) AttachSwapStore(store *SwapStore) {
+	s.swapStore = store
 }
 
 // registerSwapPointRoutes — 수동 스왑포인트 등록 (딜러/trn 발, cside/wtgswap).
@@ -270,9 +270,10 @@ func (s *Server) AttachSwapReceived(store *ReceivedSwapStore) {
 func (s *Server) registerSwapPointRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/pricing/swap",
 		SwapPointHandler(SwapPointDeps{Store: s.swapPointStore, Logger: s.logger}, s.cfg.DevMode))
-	// 로이터 수신 swap staging — 피드 주입 + admin 표시.
-	mux.HandleFunc("POST /v1/pricing/swap-received", SwapReceivedInjectHandler(s.swapReceived))
-	mux.HandleFunc("GET /v1/pricing/swap-received", SwapReceivedListHandler(s.swapReceived))
+	// swap store — 로이터 수신 주입 / 운영자 delta 설정 / 병합 조회 (admin 화면).
+	mux.HandleFunc("POST /v1/pricing/swap-received", SwapReceivedInjectHandler(s.swapStore))
+	mux.HandleFunc("POST /v1/pricing/swap-delta", SwapDeltaHandler(s.swapStore))
+	mux.HandleFunc("GET /v1/pricing/swap", SwapViewHandler(s.swapStore))
 	var statsFn func() BestStats
 	if s.best != nil {
 		statsFn = s.best.Stats
@@ -752,7 +753,7 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	if s.pricingStore != nil && s.best != nil {
 		mux.HandleFunc("GET /v1/quote/forward-snapshot",
 			ForwardSnapshotHandler(ForwardSnapshotDeps{
-				Store: s.pricingStore, Best: s.best, Cross: s.crossConsumer,
+				Store: s.pricingStore, Best: s.best, Cross: s.crossConsumer, Swap: s.swapStore,
 			}, s.cfg.DevMode))
 		// S2. Spot-only lite endpoint — 매칭 엔진의 spot 거래 hot path 용.
 		// forward tenor 루프 skip → latency 절감. bulk pair 지원.

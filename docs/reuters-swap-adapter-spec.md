@@ -80,12 +80,14 @@ swap_ask = round(atof(swap->ask) / 10^zdiv, zdiv);
 mds `onrecv_swap` 은 **수동 override(`swap_bid_man`)가 설정돼 있으면 로이터 수신을
 무시**한다(`if (!isnan(swap_bid_man)) return;`). 즉 mds 도 human override 개념이 있었다.
 
-WTG 매핑:
-- 로이터 수신 → `ReceivedSwapStore` (본 어댑터).
-- 운영자 조정 → `PricingTable.SwapPoint`(delta) — 기존 경로.
-- **effective = received + delta** (delta/skew 모델). mds 의 "override 시 수신 무시"는
-  WTG 에선 "delta 로 조정"으로 대체(자동 무시 대신 조정값 합산). 완전 override 가
-  필요하면 delta 대신 절대 override 필드를 admin 에서 선택(추후).
+WTG 매핑 (2026-07-17 방향 A — 전 층 mds add 규약):
+- 로이터 수신 → `SwapStore.SetReceived` (`POST /v1/pricing/swap-received`).
+- 운영자 조정 → `SwapStore.SetDelta` (`POST /v1/pricing/swap-delta`, admin 화면).
+  — 엔진의 customer `PricingTable.SwapPoint`(bid 음수·spread-widen 규약)와 **분리된
+  전용 delta store**. 부호 혼선 방지.
+- **effective = received + delta** (add 규약: `forward = spot + effective`). mds 의
+  "override 시 수신 무시"는 WTG 에선 "delta 로 조정"으로 대체(합산). 완전 override 가
+  필요하면 절대 override 필드를 추후 선택.
 
 ## 7. 확정 필요 (TBD — 구현 전 결정)
 

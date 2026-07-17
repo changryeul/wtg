@@ -60,6 +60,9 @@ type ForwardSnapshotDeps struct {
 	// Cross — 옵션. 있으면 BEST cache miss 시 cross 합성 cache 도 시도
 	// → forward-snapshot 이 cross pair (예: JPY/KRW) 도 응답 가능.
 	Cross *CrossRateConsumer
+	// Swap — 옵션. received+delta effective swap 원천 (add 규약). 있으면 forward 는
+	// spot(margined) + effective 로 산정 (mds/algo 와 동일 규약). nil 이면 tenor 미노출.
+	Swap *SwapStore
 }
 
 // ForwardSnapshotHandler — GET /v1/quote/forward-snapshot
@@ -132,24 +135,29 @@ func ForwardSnapshotHandler(deps ForwardSnapshotDeps, devMode bool) http.Handler
 			return
 		}
 
-		// 2. SPOT customer-applied.
+		// 2. SPOT customer-applied (마진만, swap 무관).
 		spotCQ := tbl.ApplyForCustomer(spotRaw, profile, pricing.TenorSpot, now, customerID)
 
-		// 3. tenor 목록 — swap_point 에 등록된 (pair, tenor) 들.
-		tenors := tenorsForPair(tbl, session.Pair(pair))
-
-		// 4. 각 tenor 별 forward + swap 분해.
-		ts := make([]ForwardSnapshotTenor, 0, len(tenors))
-		for _, tn := range tenors {
-			fcq := tbl.ApplyForCustomer(spotRaw, profile, tn, now, customerID)
-			swap := tbl.SwapPoint[pricing.SwapKey{Pair: session.Pair(pair), Tenor: tn}]
-			ts = append(ts, ForwardSnapshotTenor{
-				Tenor:   string(tn),
-				Bid:     fcq.Bid,
-				Ask:     fcq.Ask,
-				SwapBid: swap.BidAmount,
-				SwapAsk: swap.AskAmount,
-			})
+		// 3~4. forward = spot(margined) + effective swap[tenor] (add 규약, mds/algo 동일).
+		//   swap 은 시장 레벨(received+delta) — customer 무관. tenor 는 swap store 에서.
+		ts := []ForwardSnapshotTenor{}
+		if deps.Swap != nil {
+			pr := session.Pair(pair)
+			tenors := deps.Swap.Tenors(pr)
+			sort.Slice(tenors, func(i, j int) bool { return tenors[i] < tenors[j] })
+			for _, tn := range tenors {
+				eff, ok := deps.Swap.Effective(pr, tn)
+				if !ok {
+					continue
+				}
+				ts = append(ts, ForwardSnapshotTenor{
+					Tenor:   string(tn),
+					Bid:     spotCQ.Bid + eff.BidAmount, // forward = spot + swap
+					Ask:     spotCQ.Ask + eff.AskAmount,
+					SwapBid: eff.BidAmount, // effective (received+delta)
+					SwapAsk: eff.AskAmount,
+				})
+			}
 		}
 
 		out := ForwardSnapshot{
@@ -169,25 +177,6 @@ func ForwardSnapshotHandler(deps ForwardSnapshotDeps, devMode bool) http.Handler
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)
 	}
-}
-
-// tenorsForPair — PricingTable.SwapPoint 에서 해당 pair 의 모든 tenor 추출 + 정렬.
-//
-// 정렬은 wire 일관성용 (sorted-key) — 결과 JSON 의 tenors 배열 순서가 호출 간에
-// 안정적이어야 클라이언트 diff/cache 가 단순해짐.
-func tenorsForPair(tbl *pricing.PricingTable, pair session.Pair) []pricing.Tenor {
-	set := make(map[pricing.Tenor]struct{})
-	for k := range tbl.SwapPoint {
-		if k.Pair == pair {
-			set[k.Tenor] = struct{}{}
-		}
-	}
-	out := make([]pricing.Tenor, 0, len(set))
-	for t := range set {
-		out = append(out, t)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
 }
 
 func writeForwardErr(w http.ResponseWriter, code int, msg string) {

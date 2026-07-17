@@ -29,6 +29,16 @@ build/
 /load-gen
 /quote-diff
 /fx-sync
+/mci-edge-fix-md
+/mci-edge-fix-ord
+/algo-tester
+/mock-lp
+/fix-tester
+/fix-md-tester
+/quote-replay
+/spot-load-gen
+/ws-load-gen
+/tcp-tester
 
 # svc-specs 배포용 zip 패키지 — docs/svc-specs/*.md 에서 재생성 (산출물)
 docs/svc-specs.zip

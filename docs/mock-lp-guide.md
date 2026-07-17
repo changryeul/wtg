@@ -7,9 +7,13 @@
 ## 0. 경로
 
 ```
-mock-lp ──UDP FIX(35=W)──▶ quote-forwarder ──gRPC PublishTick──▶ mci-price ──▶ algo-tester
-        (LP별 결정적 호가+체결)   (--publish-mode grpc)          (BEST/cross/swap)  (AlgoQuote 관찰)
+                                                          ┌─(SubscribeAlgo)──────────▶ algo-tester   [algo 봇] raw BEST
+mock-lp ─UDP FIX─▶ quote-forwarder ─gRPC PublishTick─▶ mci-price
+ (LP별 결정적 호가)  (--publish-mode grpc)   (BEST/cross/swap) └─(SubscribeQuote, Profile 마진)▶ mci-edge-price ─ws─▶ web/HTS  [고객]
 ```
+
+**두 소비 경로가 다르다** — algo 봇은 raw BEST/per-source(`SubscribeAlgo`, §3~5),
+고객(web/HTS)은 Profile 마진 적용 quote(`mci-edge-price /v1/subscribe` ws, §6).
 
 - **quote-forwarder 가 필수** — mock-lp 는 UDP 를 forwarder 로 보내고, forwarder 가
   mci-price gRPC 로 중계한다. forwarder 없이 mock-lp 만 쏘면 아무 데도 안 들어간다.
@@ -122,7 +126,53 @@ curl -s localhost:8082/v1/best-stats  | jq .
 curl -s localhost:8082/v1/price-stats | jq .
 ```
 
-## 6. cross (CNH/KRW 등) 검증
+## 6. client 경로 (mci-edge-price ws) — 고객이 받는 quote
+
+§3~5 의 algo-tester 는 raw BEST(`SubscribeAlgo`)다. **실제 web/HTS 고객**은
+mci-edge-price 의 ws(`/v1/subscribe`)로 **Profile 마진 적용 quote**(`SubscribeQuote`)를 받는다.
+
+**조건 2가지**:
+1. mci-price 를 `--pricing` + `--profiles` 로 띄워야 Profile quote 가 생성된다
+   (§3 처럼 `--symbols` 만 주면 edge ws 는 붙어도 **빈** 상태).
+2. mci-edge-price 를 `--quote-stream` 으로 upstream(:50051)에 붙인다.
+
+### 터미널 1 — mci-price (pricing/profiles 포함)
+```bash
+./build/bin/mci-price --no-broker --dev --listen :8082 --grpc 127.0.0.1:50051 \
+  --algo-stream --symbols etc/symbols.json \
+  --pricing etc/pricing.json --profiles etc/profiles.json
+```
+→ 로그에 `PricingConsumer 활성 ... profile_count:7` 확인. (터미널 2 forwarder, 터미널 4 mock-lp 는 §3 그대로)
+
+### 터미널 5 — mci-edge-price (client hop)
+```bash
+./build/bin/mci-edge-price --dev --listen :8083 --upstream 127.0.0.1:50051 --quote-stream
+```
+
+### 터미널 6 — client ws (websocat 로 web/HTS 흉내)
+```bash
+websocat "ws://127.0.0.1:8083/v1/subscribe?x_wtg_user=alice01&profile=WEB.BRANCH.VIP"
+```
+- 붙기만 하면 전체 pair 수신. 필터하려면 stdin 으로 제어 프레임:
+  `{"type":"subscribe","pairs":["USD/KRW"]}` → 서버가 `{"type":"subscribed","pairs":[...]}` echo.
+- 운영은 `?access_token=<JWT>`, dev 는 `?x_wtg_user=<id>` (+ dev 한정 `?profile=` override).
+
+### 기대값 (client 가 받는 것)
+BEST `1380.10 / 1380.20` 에 **Profile 마진**이 먹어 스프레드가 벌어진다:
+
+| profile | USD/KRW 마진 | client bid / ask |
+|---|---|---|
+| `WEB.BRANCH.VIP` | 0.02 | 1380.08 / 1380.22 |
+| `WEB.BRANCH.GOLD` | 0.05 | 1380.05 / 1380.25 |
+| `WEB.BRANCH.STD` | 0.10 | 1380.00 / 1380.30 |
+
+→ profile(Tier)별로 값이 달라지는 게 마진이 먹은 증거. (마진 카탈로그 `etc/pricing.json`)
+
+> **간단히**: `wtg-stack-up.sh` 는 mci-price(pricing/profiles) + mci-edge-price(:8083)를 이미
+> 함께 띄운다. `--with-forwarder` 만 추가하면 위 배선이 한 번에 — 단 tickloop 이 같은
+> 심볼을 섞으니, mock-lp 만 깨끗이 보려면 위 수동 방식.
+
+## 7. cross (CNH/KRW 등) 검증
 
 cross 합성은 etcd PairMaster formula 의존이라 shell 로컬 스택으론 어렵다 →
 embedded etcd 통합 테스트로 값까지 결정적 검증:
@@ -131,7 +181,7 @@ go test -tags integration ./internal/price/ -run TestMockLP_CrossE2E
 ```
 (mds worse-side div 산식과 값 일치 확인)
 
-## 7. 트러블슈팅
+## 8. 트러블슈팅
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
@@ -140,6 +190,8 @@ go test -tags integration ./internal/price/ -run TestMockLP_CrossE2E
 | BEST 값이 계속 흔들림 | `wtg-stack-up.sh` 의 tickloop 이 같은 심볼을 랜덤 주입 | 방법 A(격리 스크립트) 사용, 또는 tickloop 없는 수동 스택 |
 | KMB 가 BEST 에 안 잡힘 | forwarder 가 단일 `--listen` (30044)만 | `--multi "SMB:30044,KMB:30045"` 로 다중 원천 |
 | `wtg-status` 가 UP 인데 무응답 | 이 셸의 grep 가리기로 오탐 | `pgrep -f mci-price` + `lsof` 로 실제 확인 |
+| client ws(:8083) 붙었는데 quote 안 옴 | mci-price 에 `--pricing`/`--profiles` 없음 → Profile quote 미생성 | §6 대로 pricing/profiles 로드 + edge `--quote-stream` |
+| client 값이 raw BEST 와 같음(마진 0) | 해당 Tier 마진이 pricing 에 없거나 profile 미매칭 | `?profile=` 를 유효 키(예: WEB.BRANCH.VIP)로, `etc/pricing.json` 확인 |
 
 ## 관련
 - `cmd/mock-lp/{main.go,scenario.go}` — 시나리오 LP UDP FIX 송신

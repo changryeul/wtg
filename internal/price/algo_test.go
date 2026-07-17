@@ -257,6 +257,95 @@ func TestAlgoServer_PerSourceBackfill(t *testing.T) {
 	}
 }
 
+// mockSwapProvider — tenor별 effective swap mock.
+type mockSwapProvider struct {
+	tenors map[string][]string              // symbol → tenors
+	eff    map[string]map[string][2]float64 // symbol → tenor → {bid,ask} amount
+}
+
+func (m *mockSwapProvider) Tenors(symbol string) []string { return m.tenors[symbol] }
+func (m *mockSwapProvider) Effective(symbol, tenor string) (float64, float64, bool) {
+	if t, ok := m.eff[symbol]; ok {
+		if v, ok := t[tenor]; ok {
+			return v[0], v[1], true
+		}
+	}
+	return 0, 0, false
+}
+
+// forward tenor 구독자는 spot + effective swap 이 합성된 값을 받는다 (mds fold 대응).
+func TestAlgoServer_ForwardTenorSwapApplied(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 16})
+	defer s.Stop()
+	s.SetSwapProvider(&mockSwapProvider{
+		tenors: map[string][]string{"USDKRW": {"M01"}},
+		eff:    map[string]map[string][2]float64{"USDKRW": {"M01": {2.50, 2.70}}},
+	})
+
+	// M01 forward 구독자.
+	fwd := &algoSub{
+		symbolSet: map[string]struct{}{"USDKRW": {}},
+		tenorSet:  map[string]struct{}{"M01": {}},
+		ch:        make(chan *wtgpb.AlgoQuote, 8),
+		done:      make(chan struct{}),
+	}
+	s.registerSub(fwd)
+
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: "USDKRW", Bid: 1380.00, Ask: 1380.10, Src: SourceBest, TS: time.Now().UTC(),
+	})
+	s.OnTick(&Tick{Symbol: "USDKRW", Source: SourceBest, Body: body, Received: time.Now()})
+
+	select {
+	case q := <-fwd.ch:
+		if q.GetTenor() != "M01" {
+			t.Errorf("tenor=%q, want M01", q.GetTenor())
+		}
+		if !near(q.GetBid(), 1382.50) { // 1380.00 + 2.50
+			t.Errorf("forward bid=%v, want 1382.50 (spot+swap)", q.GetBid())
+		}
+		if !near(q.GetAsk(), 1382.80) { // 1380.10 + 2.70
+			t.Errorf("forward ask=%v, want 1382.80", q.GetAsk())
+		}
+	default:
+		t.Fatal("forward tenor 구독자가 M01 tick 을 못 받음")
+	}
+}
+
+// spot 구독자(tenors 미지정)는 swap 미적용 spot(tenor=SPT)만 받는다.
+func TestAlgoServer_SpotSubscriberNoSwap(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 16})
+	defer s.Stop()
+	s.SetSwapProvider(&mockSwapProvider{
+		tenors: map[string][]string{"USDKRW": {"M01"}},
+		eff:    map[string]map[string][2]float64{"USDKRW": {"M01": {2.50, 2.70}}},
+	})
+	spot := &algoSub{
+		symbolSet: map[string]struct{}{"USDKRW": {}},
+		ch:        make(chan *wtgpb.AlgoQuote, 8),
+		done:      make(chan struct{}),
+	}
+	s.registerSub(spot)
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: "USDKRW", Bid: 1380.00, Ask: 1380.10, Src: SourceBest, TS: time.Now().UTC(),
+	})
+	s.OnTick(&Tick{Symbol: "USDKRW", Source: SourceBest, Body: body, Received: time.Now()})
+
+	q := <-spot.ch
+	if q.GetTenor() != SpotTenor {
+		t.Errorf("tenor=%q, want %s (spot)", q.GetTenor(), SpotTenor)
+	}
+	if !near(q.GetBid(), 1380.00) {
+		t.Errorf("spot bid=%v, want 1380.00 (swap 미적용)", q.GetBid())
+	}
+	// forward(M01) 는 spot 구독자에게 안 와야.
+	for len(spot.ch) > 0 {
+		if x := <-spot.ch; x.GetTenor() != SpotTenor {
+			t.Errorf("spot 구독자가 tenor=%q 수신 (SPT 만 와야)", x.GetTenor())
+		}
+	}
+}
+
 // replayKeys — per-source 구독자는 source|symbol 키, BEST 모드는 symbol 키.
 func TestAlgoServer_ReplayKeys(t *testing.T) {
 	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})

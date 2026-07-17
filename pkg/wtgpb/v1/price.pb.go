@@ -95,7 +95,12 @@ type AlgoSubscribeRequest struct {
 	//   - 비어있음(기본) : BEST 모드 — 다중시장 합성 best(+cross)만 수신 (기존 동작).
 	//   - 지정          : per-source 모드 — 지정 원천의 raw 호가를 원천별로 수신
 	//     (automkm 처럼 카운터파티별 마켓메이킹용). AlgoQuote.source 로 구분.
-	Sources       []string `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
+	Sources []string `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
+	// tenors — forward 만기 필터 (예: ["M01","M03"]). mds mdquot[tenor] 대응.
+	//   - 비어있음(기본) : spot("SPT") 만 — swap 미적용 (기존 동작).
+	//   - 지정          : 지정 tenor 의 effective-swap 적용 forward 호가 수신.
+	//     AlgoQuote.tenor 로 구분. (spot 도 함께 원하면 "SPT" 포함)
+	Tenors        []string `protobuf:"bytes,5,rep,name=tenors,proto3" json:"tenors,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -158,6 +163,13 @@ func (x *AlgoSubscribeRequest) GetSources() []string {
 	return nil
 }
 
+func (x *AlgoSubscribeRequest) GetTenors() []string {
+	if x != nil {
+		return x.Tenors
+	}
+	return nil
+}
+
 // AlgoQuote — algo stream 의 1건. seq 는 심볼별 monotonic.
 type AlgoQuote struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -187,7 +199,11 @@ type AlgoQuote struct {
 	// source — 시세 원천. "BEST"(다중시장 합성) / "CROSS"(재정환율) 또는 원천별
 	// 구독 시 "SMB"/"KMB" 등 카운터파티. mds excode 대응 — automkm 의 원천별
 	// 마켓메이킹(state 가 (원천,symbol) 키잉)에 필요.
-	Source        string `protobuf:"bytes,11,opt,name=source,proto3" json:"source,omitempty"`
+	Source string `protobuf:"bytes,11,opt,name=source,proto3" json:"source,omitempty"`
+	// tenor — 만기. "SPT"=spot(swap 미적용), "M01"/"M03"… =forward(effective swap
+	// 적용된 값). mds fold 의 mdquot[tenor] 대응 — bid/ask 는 해당 tenor 의
+	// swap-applied 값. spot 구독(tenors 미지정)이면 "SPT".
+	Tenor         string `protobuf:"bytes,12,opt,name=tenor,proto3" json:"tenor,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -295,6 +311,13 @@ func (x *AlgoQuote) GetMid() float64 {
 func (x *AlgoQuote) GetSource() string {
 	if x != nil {
 		return x.Source
+	}
+	return ""
+}
+
+func (x *AlgoQuote) GetTenor() string {
+	if x != nil {
+		return x.Tenor
 	}
 	return ""
 }
@@ -1141,12 +1164,13 @@ var File_wtg_v1_price_proto protoreflect.FileDescriptor
 
 const file_wtg_v1_price_proto_rawDesc = "" +
 	"\n" +
-	"\x12wtg/v1/price.proto\x12\x06wtg.v1\"\x82\x01\n" +
+	"\x12wtg/v1/price.proto\x12\x06wtg.v1\"\x9a\x01\n" +
 	"\x14AlgoSubscribeRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x18\n" +
 	"\asymbols\x18\x02 \x03(\tR\asymbols\x12\x19\n" +
 	"\bfrom_seq\x18\x03 \x01(\x03R\afromSeq\x12\x18\n" +
-	"\asources\x18\x04 \x03(\tR\asources\"\x9d\x02\n" +
+	"\asources\x18\x04 \x03(\tR\asources\x12\x16\n" +
+	"\x06tenors\x18\x05 \x03(\tR\x06tenors\"\xb3\x02\n" +
 	"\tAlgoQuote\x12\x10\n" +
 	"\x03sym\x18\x01 \x01(\tR\x03sym\x12\x10\n" +
 	"\x03bid\x18\x02 \x01(\x01R\x03bid\x12\x10\n" +
@@ -1160,7 +1184,8 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\blast_qty\x18\t \x01(\x01R\alastQty\x12\x10\n" +
 	"\x03mid\x18\n" +
 	" \x01(\x01R\x03mid\x12\x16\n" +
-	"\x06source\x18\v \x01(\tR\x06source\"l\n" +
+	"\x06source\x18\v \x01(\tR\x06source\x12\x14\n" +
+	"\x05tenor\x18\f \x01(\tR\x05tenor\"l\n" +
 	"\n" +
 	"PublishAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\x04R\baccepted\x12\x18\n" +

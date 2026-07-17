@@ -94,6 +94,12 @@ message AlgoSubscribeRequest {
   //   - 지정          : per-source 모드 — 지정 원천의 raw 호가를 원천별로 수신
   //     (automkm 처럼 카운터파티별 마켓메이킹용). AlgoQuote.source 로 구분.
   repeated string sources = 4;
+
+  // tenors — forward 만기 필터 (예: ["M01","M03"]). mds mdquot[tenor] 대응.
+  //   - 비어있음(기본) : spot("SPT") 만 — swap 미적용 (기존 동작).
+  //   - 지정          : 지정 tenor 의 effective-swap 적용 forward 호가 수신.
+  //     AlgoQuote.tenor 로 구분. (spot 도 함께 원하면 "SPT" 포함)
+  repeated string tenors = 5;
 }
 
 // AlgoQuote — algo stream 의 1건. seq 는 심볼별 monotonic.
@@ -134,6 +140,11 @@ message AlgoQuote {
   // 구독 시 "SMB"/"KMB" 등 카운터파티. mds excode 대응 — automkm 의 원천별
   // 마켓메이킹(state 가 (원천,symbol) 키잉)에 필요.
   string source = 11;
+
+  // tenor — 만기. "SPT"=spot(swap 미적용), "M01"/"M03"… =forward(effective swap
+  // 적용된 값). mds fold 의 mdquot[tenor] 대응 — bid/ask 는 해당 tenor 의
+  // swap-applied 값. spot 구독(tenors 미지정)이면 "SPT".
+  string tenor = 12;
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와

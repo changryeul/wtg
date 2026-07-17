@@ -63,6 +63,9 @@ type AlgoStreamServer struct {
 	// perSourceSubs — sources 필터를 건 구독자 수. 0 이면 OnTick 이 raw 원천
 	// tick(BEST/CROSS 외)을 skip 해 기존 perf 유지 (per-source 수요 있을 때만 처리).
 	perSourceSubs atomic.Int64
+
+	// swapProvider — forward tenor 별 effective swap 제공 (nil=spot 전용).
+	swapProvider AlgoSwapProvider
 }
 
 // algoSub — 활성 subscribe stream 의 상태.
@@ -71,7 +74,10 @@ type algoSub struct {
 	symbolSet map[string]struct{} // 빈 map = 모두 허용
 	// sources — per-source 필터 (mds excode). 빈 map = BEST 모드(BEST/CROSS 만).
 	// 비어있지 않으면 per-source 모드 — 지정 원천의 raw 호가만 수신.
-	sources    map[string]struct{}
+	sources map[string]struct{}
+	// tenorSet — forward tenor 필터. 빈 map = spot(SPT) 만. 지정 시 그 tenor 의
+	// effective-swap 적용 forward 호가 수신 (mds fold 의 mdquot[tenor] 대응).
+	tenorSet   map[string]struct{}
 	ch         chan *wtgpb.AlgoQuote
 	dropsLocal atomic.Uint64
 
@@ -268,24 +274,76 @@ func (s *AlgoStreamServer) unregisterSub(sub *algoSub) {
 	}
 }
 
+// SpotTenor — spot(현물, swap 미적용) tenor 라벨. forward tenor 는 "M01" 등.
+const SpotTenor = "SPT"
+
+// AlgoSwapProvider — symbol 별 forward tenor + effective swap(received+delta) 제공.
+// mci-price 가 ReceivedSwapStore + PricingTable(delta) + SymbolMap 로 구현.
+type AlgoSwapProvider interface {
+	// Tenors 는 symbol 에 등록된 forward tenor 라벨 (SPOT 제외).
+	Tenors(symbol string) []string
+	// Effective 는 (symbol, tenor) 의 적용 swap bid/ask amount (received+delta).
+	Effective(symbol, tenor string) (bid, ask float64, ok bool)
+}
+
+// SetSwapProvider — forward swap 합성 provider 주입 (nil=spot 전용, 기존 동작).
+func (s *AlgoStreamServer) SetSwapProvider(p AlgoSwapProvider) { s.swapProvider = p }
+
 // isSynth — BEST/CROSS 합성 tick 인지 (BEST 모드 구독자 대상).
 func isSynth(source string) bool { return source == SourceBest || source == SourceCross }
 
-// streamKeyFor — seq·ring 스트림 단위 키. 합성(BEST/CROSS)은 symbol,
-// raw 원천은 source|symbol 로 분리 (원천별 seq 독립).
-func streamKeyFor(source, symbol string) string {
-	if isSynth(source) {
-		return symbol
+// streamKeyFor — seq·ring 스트림 단위 키. 합성(BEST/CROSS)=symbol, raw 원천=
+// source|symbol. forward tenor 는 @tenor 접미(spot/SPT 는 접미 없음 — 하위호환).
+func streamKeyFor(source, symbol, tenor string) string {
+	k := symbol
+	if !isSynth(source) {
+		k = source + "|" + symbol
 	}
-	return source + "|" + symbol
+	if tenor != "" && tenor != SpotTenor {
+		k += "@" + tenor
+	}
+	return k
 }
 
-// replayKeys — backfill replay 대상 stream key 리스트.
-//   - BEST 모드(sources 없음): symbol 키 (합성 ring). symbolSet 없으면 등록된
-//     합성 ring(= '|' 없는 key) 전부.
-//   - per-source 모드: source|symbol 키. symbolSet 있으면 sources×symbols 조합,
-//     없으면 등록된 ring 중 지정 source prefix 인 것 전부.
+// subTenors — 구독자의 replay 대상 tenor 목록 (빈 tenorSet=spot).
+func (s *AlgoStreamServer) subTenors(sub *algoSub) []string {
+	if len(sub.tenorSet) == 0 {
+		return []string{SpotTenor}
+	}
+	out := make([]string, 0, len(sub.tenorSet))
+	for tn := range sub.tenorSet {
+		out = append(out, tn)
+	}
+	return out
+}
+
+// replayKeys — backfill replay 대상 stream key. base(source/symbol) × tenor.
+// ring enum 으로 얻은 완성 키(@tenor 포함)는 그대로 통과.
 func (s *AlgoStreamServer) replayKeys(sub *algoSub) []string {
+	base := s.replayBaseKeys(sub)
+	tenors := s.subTenors(sub)
+	out := make([]string, 0, len(base)*len(tenors))
+	for _, bk := range base {
+		if strings.Contains(bk, "@") { // 이미 tenor 포함 (ring enum)
+			out = append(out, bk)
+			continue
+		}
+		for _, tn := range tenors {
+			k := bk
+			if tn != "" && tn != SpotTenor {
+				k += "@" + tn
+			}
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// replayBaseKeys — tenor 무관 base 키 (symbol 또는 source|symbol).
+//   - BEST 모드(sources 없음): symbol 키. symbolSet 없으면 등록된 합성 ring 전부.
+//   - per-source 모드: source|symbol 키. symbolSet 있으면 sources×symbols, 없으면
+//     등록 ring 중 지정 source prefix 전부.
+func (s *AlgoStreamServer) replayBaseKeys(sub *algoSub) []string {
 	if len(sub.sources) == 0 {
 		if len(sub.symbolSet) > 0 {
 			out := make([]string, 0, len(sub.symbolSet))
@@ -354,56 +412,78 @@ func (s *AlgoStreamServer) OnTick(t *Tick) {
 		return
 	}
 
-	// stream key — 합성은 symbol, raw 는 source|symbol 로 seq/ring 독립.
-	key := streamKeyFor(t.Source, t.Symbol)
-	seq := s.nextSeq(key)
+	// spot (tenor=SPT, swap 미적용) 항상 emit.
+	s.emitQuote(t, env, SpotTenor, env.Bid, env.Ask)
 
+	// forward tenors — effective swap 적용 (mds fold 의 mdquot[tenor] 대응).
+	// SwapProvider 미주입이면 spot 만 (기존 동작).
+	if p := s.swapProvider; p != nil {
+		for _, tn := range p.Tenors(t.Symbol) {
+			sb, sa, ok := p.Effective(t.Symbol, tn)
+			if !ok {
+				continue
+			}
+			s.emitQuote(t, env, tn, env.Bid+sb, env.Ask+sa)
+		}
+	}
+}
+
+// emitQuote — 한 (tenor) 의 AlgoQuote 를 seq 발급·ring 적재·fan-out.
+func (s *AlgoStreamServer) emitQuote(t *Tick, env quote.JSONEnvelope, tenor string, bid, ask float64) {
+	key := streamKeyFor(t.Source, t.Symbol, tenor)
 	q := &wtgpb.AlgoQuote{
 		Sym:            t.Symbol,
-		Bid:            env.Bid,
-		Ask:            env.Ask,
-		Seq:            seq,
+		Bid:            bid,
+		Ask:            ask,
+		Seq:            s.nextSeq(key),
 		TsSourceUnixNs: env.TS.UnixNano(),
 		TsWtgUnixNs:    t.Received.UnixNano(),
 		IsBackfill:     false,
-		Last:           env.Last, // 최근 시장 체결가 (mds fillprc 대응)
+		Last:           env.Last, // 시장 체결가 (mds fillprc 대응) — tenor 무관
 		LastQty:        env.LastQty,
-		Mid:            (env.Bid + env.Ask) / 2, // mds mdquot_calc_mid 대응 (refprctype=2)
-		Source:         t.Source,                // 원천 (BEST/CROSS/SMB/KMB…)
+		Mid:            (bid + ask) / 2, // 해당 tenor 의 mid
+		Source:         t.Source,
+		Tenor:          tenor,
 	}
-
-	// ring buffer (Phase B backfill 용). 값 복사로 저장.
 	if ring := s.ringFor(key); ring != nil {
 		ring.push(q)
 	}
-
 	s.ticksEmitted.Add(1)
+	s.fanout(q)
+}
 
-	// active subscriber 에게 fan-out. non-blocking — 다른 sub 격리.
-	// Phase C: drop 시 firstDropAt 기록 (watcher 가 timeout 판정에 사용).
+// fanout — q 를 매칭 구독자에게 non-blocking 송신 (symbol/source/tenor 필터).
+func (s *AlgoStreamServer) fanout(q *wtgpb.AlgoQuote) {
+	synth := isSynth(q.GetSource())
 	s.subsMu.RLock()
 	for sub := range s.subs {
 		if len(sub.symbolSet) > 0 {
-			if _, ok := sub.symbolSet[t.Symbol]; !ok {
+			if _, ok := sub.symbolSet[q.GetSym()]; !ok {
 				continue
 			}
 		}
 		// source 매칭: per-source 구독자는 지정 원천만, BEST 모드는 합성만.
 		if len(sub.sources) > 0 {
-			if _, ok := sub.sources[t.Source]; !ok {
+			if _, ok := sub.sources[q.GetSource()]; !ok {
 				continue
 			}
 		} else if !synth {
-			continue // BEST 모드 구독자는 raw 원천 tick 수신 X.
+			continue
+		}
+		// tenor 매칭: tenorSet 비면 spot(SPT) 만, 있으면 지정 tenor 만.
+		if len(sub.tenorSet) == 0 {
+			if q.GetTenor() != SpotTenor {
+				continue
+			}
+		} else if _, ok := sub.tenorSet[q.GetTenor()]; !ok {
+			continue
 		}
 		select {
 		case sub.ch <- q:
-			// send OK — 만약 slow 상태였으면 리셋 (일시적 폭주 회복 관대 정책).
 			sub.firstDropAt.Store(0)
 		default:
 			sub.dropsLocal.Add(1)
 			s.sendDrops.Add(1)
-			// 첫 drop 이면 시각 기록 (지속 drop watcher 가 판정).
 			sub.firstDropAt.CompareAndSwap(0, time.Now().UnixNano())
 		}
 	}
@@ -461,6 +541,7 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 		clientID:  req.GetClientId(),
 		symbolSet: make(map[string]struct{}, len(req.GetSymbols())),
 		sources:   make(map[string]struct{}, len(req.GetSources())),
+		tenorSet:  make(map[string]struct{}, len(req.GetTenors())),
 		ch:        make(chan *wtgpb.AlgoQuote, s.clientBufSize),
 		done:      make(chan struct{}),
 	}
@@ -472,6 +553,11 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 	for _, src := range req.GetSources() {
 		if src != "" {
 			sub.sources[src] = struct{}{}
+		}
+	}
+	for _, tn := range req.GetTenors() {
+		if tn != "" {
+			sub.tenorSet[tn] = struct{}{}
 		}
 	}
 	// 1) sub 등록 — 이 시점부터 새 tick 은 sub.ch 로 push.
@@ -523,6 +609,7 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 					LastQty:        orig.GetLastQty(),
 					Mid:            orig.GetMid(),
 					Source:         orig.GetSource(),
+					Tenor:          orig.GetTenor(),
 				}
 				if err := stream.Send(q); err != nil {
 					return err
@@ -549,7 +636,7 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 		case q := <-sub.ch:
 			// dedup: replay 이미 한 seq 는 skip. stream(합성=symbol / per-source=
 			// source|symbol) 별 최종 replay seq 이하는 이미 backfill 로 받았음.
-			dk := streamKeyFor(q.GetSource(), q.GetSym())
+			dk := streamKeyFor(q.GetSource(), q.GetSym(), q.GetTenor())
 			if end, ok := replayEndSeq[dk]; ok && q.GetSeq() <= end {
 				s.dedupSkipped.Add(1)
 				continue

@@ -53,12 +53,34 @@ WTG 는 단일 `config.yaml` 한 권이 아니라 **목적별로 분리된 4 lay
 
 ## 3. 로그 — 어디에, 어떤 형식
 
+### 3.0 통일 로깅 (`pkg/logging` — 전 바이너리 공통)
+
+모든 WTG 바이너리(서비스 + 검증 CLI)는 `pkg/logging.Init(svc, opts)` 하나로
+slog 를 초기화한다. 출력처는 **환경변수로 전환** — stderr(journald) ↔ 파일:
+
+| env | 기본 | 의미 |
+|---|---|---|
+| `WTG_LOG_DIR` | (빈값) | 빈값 → **stderr → journald**. 지정 → `<dir>/<svc>.log` (lumberjack 회전) |
+| `WTG_LOG_LEVEL` | `info` | debug/info/warn/error. flag `--log-level` 이 우선 |
+| `WTG_LOG_FORMAT` | `json` | json / text (text 는 trn 로그 가독성) |
+| `WTG_LOG_MAX_MB` / `_BACKUPS` / `_MAX_AGE` | 100 / 10 / 30 | 파일 모드 회전 정책 |
+
+- **모든 엔트리에 `svc` 태그 자동 부착** — 여러 서비스가 한 곳(journald/파일)에
+  섞여도 `jq 'select(.svc=="mci-price")'` 로 분리. 아래 모든 명령의 핵심 필터.
+- 한 곳(`wtg.env` EnvironmentFile)에서 전 서비스 일괄 제어
+  (`deploy/systemd/wtg.env.sample`).
+- 파일 열기 실패 시 stderr 폴백 (기동 막지 않음).
+- **두 운영 모드**:
+  - `WTG_LOG_DIR` 미설정(권장, 클라우드) → journald 로 수집. 회전/보존/질의 무관리 (§4.2).
+  - `WTG_LOG_DIR=~/nh-fxallone-server/win/log` → trn AP 로그 옆 파일 (§4.3).
+
 ### 3.1 위치
 
 | 환경 | 어디 |
 |---|---|
-| **dev (macOS 로컬)** | `logs/<service>.log` — `wtg-stack-up.sh` 가 `nohup ... > logs/<name>.log` 로 리디렉트 |
-| **운영 (Linux systemd)** | `journalctl -u wtg-<service>` — systemd unit 의 `StandardOutput=journal` |
+| **dev (macOS 로컬)** | `logs/<service>.log` — `wtg-stack-up.sh` 가 `nohup ... > logs/<name>.log` 로 리디렉트 (셸 리디렉트, `WTG_LOG_DIR` 과 별개) |
+| **운영 — journald (기본)** | `journalctl -u wtg-<service>` — `WTG_LOG_DIR` 미설정 시 stderr → systemd `StandardOutput=journal` |
+| **운영 — 파일 (win/log)** | `WTG_LOG_DIR` 설정 시 `<dir>/<svc>.log` (lumberjack 회전). trn AP 로그와 위치 통일 |
 | (선택) 운영 + Loki | Promtail / Vector agent 가 journald → Loki | Grafana 의 Explore 에서 검색 |
 
 dev 환경 logs 디렉토리 :
@@ -195,7 +217,40 @@ sudo journalctl -u wtg-mci-price -p warning --since "1 hour ago"
 # 디스크 사용량 확인 / 정리
 sudo journalctl --disk-usage
 sudo journalctl --vacuum-time=14d
+
+# svc 태그로 분리 (여러 서비스가 'wtg-*' 로 섞였을 때)
+sudo journalctl -u 'wtg-*' -o cat | jq 'select(.svc=="mci-edge-price")'
+
+# 사람이 보기 좋은 한 줄 요약
+sudo journalctl -u wtg-mci-price -o cat \
+  | jq -r '"\(.time) [\(.level)] \(.svc) \(.msg)"'
 ```
+
+### 4.3 운영 — 파일 모드 (`WTG_LOG_DIR` 설정 시)
+
+`wtg.env` 에 `WTG_LOG_DIR=/home/winway/nh-fxallone-server/win/log` 를 켜면
+서비스별 파일로 떨어진다 (trn AP 로그와 같은 자리):
+
+```bash
+cd ~/nh-fxallone-server/win/log
+
+# 실시간 (한/여러 서비스)
+tail -f mci-price.log
+tail -f mci-*.log
+
+# ERROR 만 / svc·필드 필터
+tail -f mci-price.log | jq 'select(.level=="ERROR")'
+grep -h ERROR mci-*.log | jq -r '"\(.time) \(.svc) \(.msg)"'
+
+# 회전본 (lumberjack: mci-price-2026-07-17T09-00-00.000.log.gz)
+zcat mci-price-*.log.gz | jq 'select(.msg|test("부팅"))'
+
+# 특정 요청 추적 (rid) — 여러 서비스 파일 가로질러
+grep -h '"rid":"f6a78d0ba82c6760"' mci-*.log | jq -r '"\(.time) \(.svc) \(.msg)"'
+```
+
+> 회전은 lumberjack 이 자동 (기본 100MB / 10개 / 30일). logrotate 불필요.
+> 조정: `WTG_LOG_MAX_MB` / `WTG_LOG_BACKUPS` / `WTG_LOG_MAX_AGE` (§3.0).
 
 ## 5. 로그 회전 / 보관
 
@@ -209,22 +264,15 @@ find logs -name '*.log' -mtime +14 -delete
 
 ### 5.2 운영 환경 (Linux)
 
-#### journald (권장)
+#### journald (권장 — `WTG_LOG_DIR` 미설정)
 - `/etc/systemd/journald.conf` 의 `SystemMaxUse=` / `MaxRetentionSec=` 로 자동 회전
 - 권장 : `SystemMaxUse=10G`, `MaxRetentionSec=14d`
 
-#### 또는 logrotate (별도 파일 로그)
-```
-# /etc/logrotate.d/wtg
-/var/log/wtg/*.log {
-    daily
-    rotate 14
-    compress
-    missingok
-    notifempty
-    copytruncate
-}
-```
+#### 파일 모드 (`WTG_LOG_DIR` 설정) — lumberjack 내장
+- `pkg/logging` 이 lumberjack 으로 **직접 회전** (기본 100MB / 10개 / 30일, gzip).
+  `WTG_LOG_MAX_MB` / `_BACKUPS` / `_MAX_AGE` 로 조정 (§3.0).
+- **logrotate 불필요** — 오히려 `copytruncate` 는 lumberjack 과 충돌하니 WTG
+  로그엔 쓰지 말 것. logrotate 는 trn 등 non-WTG 파일 로그 전용.
 
 ### 5.3 Loki 통합 (선택)
 

@@ -12,8 +12,10 @@
 #     last=체결가, source=BEST
 #   - per-source(SMB) 모드: 그 원천의 raw 호가 그대로, source=SMB
 #
-# cross(CNH/KRW)는 etcd PairMaster formula 의존이라 본 스크립트 범위 밖
-# (단위 테스트 pkg/pricing/crossrate_test + internal/price/algo_test 로 커버).
+# cross(CNH/KRW)는 etcd PairMaster formula 의존이라 로컬 etcd 바이너리가 없으면
+# shell 로 띄우기 어렵다 → embedded etcd 통합 테스트로 커버:
+#   go test -tags integration ./internal/price/ -run TestMockLP_CrossE2E
+# (mds worse-side div 산식과 값 일치까지 결정적 검증)
 #
 # 사용: scripts/mock-lp-verify.sh   (repo 루트에서)
 set -euo pipefail

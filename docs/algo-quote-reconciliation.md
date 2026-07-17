@@ -124,6 +124,17 @@ automkm 은 원천별 MM (state 가 (원천,symbol) 키잉). BEST 로 뭉치면 
 - **검증(컷오버 전)**: mds UDP(APSISE) 캡처 + SHM MDFOLD 덤프를 기준값으로 `algo-tester`
   수신값과 심볼·시각 정렬 후 bid/ask/mid/last 오차 대사.
 
+## 7. 결정적 e2e 검증 도구
+
+- `cmd/mock-lp` — LP별 결정적 호가/체결(FIX 269=2) 시나리오 송신 (`--scenario`/`--once`).
+- `scripts/mock-lp-verify.sh` — broker/etcd 없이 최소 스택 부팅 → mock-lp 송신 →
+  `algo-tester --json` 수신값 대사. **BEST**(bid=max/ask=min/mid/last) +
+  **per-source(SMB)** 원천값 자동 assert.
+- `internal/price/mocklp_cross_integration_test.go` (`-tags integration`) — embedded
+  etcd + 실 `EtcdPairWatcher`→`CrossRateConsumer` 배선으로 **cross(CNH/KRW)** 값을
+  mds worse-side div 산식과 일치까지 검증.
+- `cmd/algo-tester` — `--sources`(per-source) / `--json` / `--from-seq`(backfill).
+
 ## 관련
 - `docs/mds-replacement-plan.md` — mds 폐기 단계 + RTA(주문/체결 push) 대체
 - `docs/cs-ws-migration.md` — 외부고객 WS 경로 (§11 대사표)

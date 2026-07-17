@@ -240,6 +240,11 @@ func main() {
 	// Phase A (algo stream) — SubscribeAlgo 를 위한 별 서버. BestConsumer
 	// downstream 으로 등록 → 매 tick 을 심볼별 monotonic seq + per-symbol ring
 	// 에 저장 후 subscriber 에게 fan-out. Phase B 에서 from_seq > 0 backfill.
+	// 로이터 수신 swap staging (SHM fold 의 swap 파트 대체, in-memory). 피드가
+	// POST /v1/pricing/swap-received 로 주입, admin 이 표시·조정 후 반영.
+	swapReceived := price.NewReceivedSwapStore()
+	srv.AttachSwapReceived(swapReceived)
+
 	var algoSrv *price.AlgoStreamServer
 	if grpcSrv != nil && cfg.AlgoStreamEnabled {
 		algoSrv = price.NewAlgoStreamServer(logger, price.AlgoStreamOptions{
@@ -417,6 +422,12 @@ func main() {
 	// forward-snapshot endpoint 활성화 — Store 공유로 hot reload 자동 반영.
 	if pc != nil {
 		srv.AttachPricing(pc.Store())
+		// AlgoStream 에 swap provider 주입 — forward tenor 별 effective(received+delta)
+		// swap 합성 (mds fold 의 mdquot[tenor] 대응). pricing Store 가 delta 원천.
+		if algoSrv != nil {
+			algoSrv.SetSwapProvider(price.NewSwapProvider(swapReceived, pc.Store(), symbols))
+			logger.Info("AlgoStream swap provider 주입 — forward tenor effective swap 합성")
+		}
 	}
 	// 수동 스왑포인트 등록 endpoint (POST /v1/pricing/swap) — etcd 가 있을 때만.
 	// 거래 경로 기능이라 admin 이 아닌 price 상주 (딜러/trn 발 cside/wtgswap).

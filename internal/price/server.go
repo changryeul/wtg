@@ -100,7 +100,8 @@ type Server struct {
 	// endpoint 미등록 (forward/lock 은 영향 X).
 	swapIndex      quoteid.SwapIndex
 	swapMetrics    *AtomicSwapLockMetrics
-	swapPointStore DocStore // POST /v1/pricing/swap 의 etcd 저장소 (nil=503)
+	swapPointStore DocStore           // POST /v1/pricing/swap 의 etcd 저장소 (nil=503)
+	swapReceived   *ReceivedSwapStore // 로이터 수신 swap staging (AttachSwapReceived, nil=미노출)
 
 	totalRecv  atomic.Uint64
 	totalMatch atomic.Uint64 // exchange 필터 통과 건수
@@ -258,11 +259,20 @@ func (s *Server) AttachPricingSwapWriter(store DocStore) {
 	s.swapPointStore = store
 }
 
+// AttachSwapReceived — 로이터 수신 swap staging store 주입. 주입/조회 endpoint
+// (POST/GET /v1/pricing/swap-received) 노출 + AlgoStream SwapProvider 의 received 원천.
+func (s *Server) AttachSwapReceived(store *ReceivedSwapStore) {
+	s.swapReceived = store
+}
+
 // registerSwapPointRoutes — 수동 스왑포인트 등록 (딜러/trn 발, cside/wtgswap).
 // 거래 경로 기능이라 admin 이 아닌 mci-price 상주 (admin 은 비필수 콘솔).
 func (s *Server) registerSwapPointRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/pricing/swap",
 		SwapPointHandler(SwapPointDeps{Store: s.swapPointStore, Logger: s.logger}, s.cfg.DevMode))
+	// 로이터 수신 swap staging — 피드 주입 + admin 표시.
+	mux.HandleFunc("POST /v1/pricing/swap-received", SwapReceivedInjectHandler(s.swapReceived))
+	mux.HandleFunc("GET /v1/pricing/swap-received", SwapReceivedListHandler(s.swapReceived))
 	var statsFn func() BestStats
 	if s.best != nil {
 		statsFn = s.best.Stats

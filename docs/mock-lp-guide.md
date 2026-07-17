@@ -168,6 +168,35 @@ BEST `1380.10 / 1380.20` 에 **Profile 마진**이 먹어 스프레드가 벌어
 
 → profile(Tier)별로 값이 달라지는 게 마진이 먹은 증거. (마진 카탈로그 `etc/pricing.json`)
 
+### VIP quote 확인 — 프레임에 raw_bid/raw_ask + tier 가 같이 온다
+
+client quote 프레임은 **고객가(`bid/ask`)와 원본 BEST(`raw_bid/raw_ask`), `tier` 를
+한 프레임에** 담는다. 프레임 하나로 마진 적용 여부를 즉시 검증:
+
+```bash
+websocat "ws://127.0.0.1:8083/v1/subscribe?x_wtg_user=alice01&profile=WEB.BRANCH.VIP" \
+| jq 'select(.type=="quote" and .pair=="USD/KRW")
+      | {tier, bid, ask, raw_bid, raw_ask,
+         margin_bid:(.raw_bid-.bid), margin_ask:(.ask-.raw_ask)}'
+```
+기대 출력:
+```json
+{"tier":"VIP","bid":1380.08,"ask":1380.22,"raw_bid":1380.10,"raw_ask":1380.20,
+ "margin_bid":0.02,"margin_ask":0.02}
+```
+확인 포인트: ① `tier:"VIP"` (Profile 라우팅) ② `bid/ask`(고객가) vs `raw_bid/raw_ask`(원본 BEST)
+③ `margin_bid/ask=0.02` (VIP 마진 정확).
+
+**Tier 교차 검증** — profile 만 바꿔 재접속하면 마진 폭이 달라진다:
+```bash
+websocat "ws://127.0.0.1:8083/v1/subscribe?x_wtg_user=bob&profile=WEB.BRANCH.STD" \
+| jq 'select(.type=="quote" and .pair=="USD/KRW") | {tier, bid, ask, margin:(.raw_bid-.bid)}'
+# → tier:"STD", margin:0.10.  VIP 0.02 < GOLD 0.05 < STD 0.10 이면 정상.
+```
+
+quote 프레임 주요 필드: `bid/ask`(마진 적용 고객가), `raw_bid/raw_ask`(원본 BEST),
+`channel/site/tier/tenor`(Profile), `v`(pricing table version), `quote_id`/`valid_until_unix_nano`(거래 lock 용).
+
 > **간단히**: `wtg-stack-up.sh` 는 mci-price(pricing/profiles) + mci-edge-price(:8083)를 이미
 > 함께 띄운다. `--with-forwarder` 만 추가하면 위 배선이 한 번에 — 단 tickloop 이 같은
 > 심볼을 섞으니, mock-lp 만 깨끗이 보려면 위 수동 방식.

@@ -20,6 +20,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"math/rand"
 	"net"
@@ -195,7 +196,7 @@ func main() {
 	interval := flag.Duration("interval", 2*time.Second, "봉 emit 주기")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := logging.Init("dev-bar-faker", logging.Options{})
 
 	lis, err := net.Listen("tcp", *addr)
 	if err != nil {

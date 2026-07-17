@@ -27,7 +27,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"github.com/winwaysystems/wtg/pkg/logging"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -54,24 +55,30 @@ func main() {
 	once := flag.Bool("once", false, "1회만 송신 (--interval 무시)")
 	flag.Parse()
 
+	logger := logging.Init("mock-lp", logging.Options{})
+
 	feeds, err := parseFeeds(*feedsSpec)
 	if err != nil {
-		log.Fatalf("mock-lp: --feeds: %v", err)
+		logger.Error("--feeds 파싱 실패", slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	raw := []byte(defaultScenario)
 	if *scenarioPath != "" {
 		raw, err = os.ReadFile(*scenarioPath)
 		if err != nil {
-			log.Fatalf("mock-lp: 시나리오 읽기: %v", err)
+			logger.Error("시나리오 읽기 실패", slog.Any("error", err))
+			os.Exit(1)
 		}
 	}
 	sc, err := parseScenario(raw)
 	if err != nil {
-		log.Fatalf("mock-lp: %v", err)
+		logger.Error("초기화 실패", slog.Any("error", err))
+		os.Exit(1)
 	}
 	if len(sc.Quotes) == 0 {
-		log.Fatal("mock-lp: 시나리오에 quote 없음")
+		logger.Error("시나리오에 quote 없음")
+		os.Exit(1)
 	}
 
 	// dest 별 UDP conn 준비 (재사용).
@@ -79,11 +86,13 @@ func main() {
 	for lp, dest := range feeds {
 		addr, err := net.ResolveUDPAddr("udp", dest)
 		if err != nil {
-			log.Fatalf("mock-lp: dest %q(%s) 해석: %v", dest, lp, err)
+			logger.Error("dest 해석 실패", slog.String("dest", dest), slog.String("lp", lp), slog.Any("error", err))
+			os.Exit(1)
 		}
 		c, err := net.DialUDP("udp", nil, addr)
 		if err != nil {
-			log.Fatalf("mock-lp: dial %q: %v", dest, err)
+			logger.Error("dial 실패", slog.String("dest", dest), slog.Any("error", err))
+			os.Exit(1)
 		}
 		defer c.Close()
 		conns[lp] = c
@@ -92,7 +101,7 @@ func main() {
 	// 시나리오에 있으나 --feeds 에 없는 LP 경고 (오타/누락 조기 발견).
 	for _, q := range sc.Quotes {
 		if _, ok := feeds[q.LP]; !ok {
-			log.Printf("경고: LP %q 가 --feeds 에 없음 — 해당 quote skip (pair=%s)", q.LP, q.Pair)
+			logger.Warn("LP 가 --feeds 에 없음 — quote skip", slog.String("lp", q.LP), slog.String("pair", q.Pair))
 		}
 	}
 
@@ -105,7 +114,7 @@ func main() {
 				continue
 			}
 			if _, err := c.Write(buildSnapshot(q)); err != nil {
-				log.Printf("송신 실패 lp=%s pair=%s: %v", q.LP, q.Pair, err)
+				logger.Warn("송신 실패", slog.String("lp", q.LP), slog.String("pair", q.Pair), slog.Any("error", err))
 				skipped++
 				continue
 			}

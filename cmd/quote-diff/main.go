@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"math"
 	"net/http"
@@ -303,7 +304,7 @@ func main() {
 	)
 	flag.Parse()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := logging.Init("quote-diff", logging.Options{Format: "text"})
 
 	pairs := []string{}
 	for _, p := range strings.Split(*pairsStr, ",") {

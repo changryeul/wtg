@@ -14,7 +14,8 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"log"
+	"github.com/winwaysystems/wtg/pkg/logging"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -102,6 +103,8 @@ func main() {
 	dryRun := flag.Bool("dry-run", false, "송신 없이 파싱/필터 통계만")
 	flag.Parse()
 
+	logger := logging.Init("quote-replay", logging.Options{})
+
 	if *file == "" {
 		flag.Usage()
 		os.Exit(2)
@@ -120,11 +123,13 @@ func main() {
 		start := time.Now()
 		stats, err := replayFile(replayConfig{FilePath: *file, Dests: dests, Speed: *speed})
 		if err != nil {
-			log.Fatalf("replay %s: %v", *file, err)
+			logger.Error("replay 실패", slog.String("file", *file), slog.Any("error", err))
+			os.Exit(1)
 		}
-		log.Printf("pass %d 완료: lines=%d sent=%d skipped=%d bytes=%d elapsed=%s dests=%d",
-			i, stats.Lines, stats.Sent, stats.Skipped, stats.Bytes,
-			time.Since(start).Round(time.Millisecond), len(dests))
+		logger.Info("pass 완료",
+			slog.Int("pass", i), slog.Any("lines", stats.Lines), slog.Any("sent", stats.Sent),
+			slog.Any("skipped", stats.Skipped), slog.Any("bytes", stats.Bytes),
+			slog.Duration("elapsed", time.Since(start).Round(time.Millisecond)), slog.Int("dests", len(dests)))
 		if *loop != 0 && i >= *loop {
 			break
 		}

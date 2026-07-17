@@ -28,6 +28,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"io"
 	"log/slog"
 	"os"
@@ -58,7 +59,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	logger := newLogger(cfg.LogLevel)
+	logger := logging.Init("mci-price", logging.Options{Level: cfg.LogLevel})
 	logger.Info("mci-price 부팅",
 		slog.String("listen", cfg.ListenAddr),
 		slog.String("broker", fmt.Sprintf("%s:%d", cfg.BrokerHost, cfg.BrokerPort)),
@@ -821,20 +822,4 @@ func splitTrim(s, sep string) []string {
 		}
 	}
 	return out
-}
-
-func newLogger(level string) *slog.Logger {
-	var lvl slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
-	return slog.New(h)
 }

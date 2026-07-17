@@ -12,10 +12,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/winwaysystems/wtg/internal/admin"
@@ -39,7 +39,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	logger := newLogger(cfg.LogLevel)
+	logger := logging.Init("mci-admin", logging.Options{Level: cfg.LogLevel})
 	logger.Info("mci-admin 부팅",
 		slog.String("listen", cfg.ListenAddr),
 		slog.String("broker", fmt.Sprintf("%s:%d", cfg.BrokerHost, cfg.BrokerPort)),
@@ -62,20 +62,4 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("mci-admin 정상 종료")
-}
-
-func newLogger(level string) *slog.Logger {
-	var lvl slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
-	return slog.New(h)
 }

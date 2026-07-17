@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"os"
 	"strings"
@@ -43,7 +44,7 @@ func main() {
 	)
 	flag.Parse()
 
-	logger := newLogger(*logLevel)
+	logger := logging.Init("fx-sync", logging.Options{Level: *logLevel})
 
 	// Backend 구성.
 	var backend fxsync.Backend
@@ -163,19 +164,4 @@ func syncSiteMargin(ctx context.Context, backend fxsync.Backend, syncer *fxsync.
 	}
 	_, err = syncer.SyncSiteMargins(ctx, ms)
 	return err
-}
-
-func newLogger(level string) *slog.Logger {
-	var lvl slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
 }

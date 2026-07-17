@@ -7,7 +7,13 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/prometheus/client_golang v1.23.2
+	github.com/quickfixgo/enum v0.1.0
+	github.com/quickfixgo/field v0.1.0
+	github.com/quickfixgo/fix44 v0.1.0
+	github.com/quickfixgo/quickfix v0.9.10
+	github.com/quickfixgo/tag v0.1.0
 	github.com/redis/go-redis/v9 v9.19.0
+	github.com/shopspring/decimal v1.4.0
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	go.etcd.io/etcd/client/v3 v3.6.11
@@ -22,6 +28,7 @@ require (
 	golang.org/x/time v0.15.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
@@ -85,13 +92,7 @@ require (
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/quagmt/udecimal v1.8.0 // indirect
-	github.com/quickfixgo/enum v0.1.0 // indirect
-	github.com/quickfixgo/field v0.1.0 // indirect
-	github.com/quickfixgo/fix44 v0.1.0 // indirect
-	github.com/quickfixgo/quickfix v0.9.10 // indirect
-	github.com/quickfixgo/tag v0.1.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.3 // indirect
-	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/soheilhy/cmux v0.1.5 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
@@ -122,7 +123,6 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	sigs.k8s.io/json v0.0.0-20211020170558-c049b76a60c6 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect

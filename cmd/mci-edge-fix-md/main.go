@@ -13,6 +13,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -39,7 +40,7 @@ func main() {
 	flag.Var(&seedCPs, "seed-cp", "정적 counterparty seed. 형식: 'ID=PASSWORD,SITE,TIER,USID' (반복 가능)")
 	flag.Parse()
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(*logLevel)}))
+	logger := logging.Init("mci-edge-fix-md", logging.Options{Level: *logLevel})
 
 	cfg := md.DefaultConfig()
 	cfg.ListenPort = *listenPort
@@ -138,17 +139,4 @@ func (m *multiCP) Set(v string) error {
 	}
 	m.parsed[cid] = cp
 	return nil
-}
-
-func parseLevel(s string) slog.Level {
-	switch strings.ToLower(s) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
 }

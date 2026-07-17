@@ -15,10 +15,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -39,7 +39,7 @@ func main() {
 	)
 	flag.Parse()
 
-	logger := newLogger(*logLevel)
+	logger := logging.Init("mci-edge-tcp", logging.Options{Level: *logLevel})
 	srv, err := edgetcp.NewServer(edgetcp.Config{
 		ListenAddr:     *listen,
 		UpstreamURL:    *upstream,
@@ -65,19 +65,4 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("mci-edge-tcp 정상 종료")
-}
-
-func newLogger(level string) *slog.Logger {
-	var lvl slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
 }

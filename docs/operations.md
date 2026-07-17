@@ -104,6 +104,24 @@ WHERE after_compression_total_bytes IS NOT NULL;
 flag / env 우선순위는 **flag > env > default**. 모든 서비스 공통으로
 `-log-level`, `-dev` 가 존재 — 표에서는 생략.
 
+### 1.0. 로깅 (전 서비스 공통 — `pkg/logging`)
+
+전 서비스가 `pkg/logging.Init(svc, opts)` 하나로 slog 를 초기화한다 (cmd/*/main.go
+복붙 제거). 출력처는 **설정형** — 환경변수 하나로 stderr(journald) ↔ 파일 전환:
+
+| env | 기본 | 의미 |
+|---|---|---|
+| `WTG_LOG_DIR` | (빈값) | 빈값 → **stderr → journald** (`journalctl -u 'wtg-*'`). 지정 → `<dir>/<svc>.log` (lumberjack 회전) |
+| `WTG_LOG_LEVEL` | `info` | debug/info/warn/error. flag `--log-level` 이 우선 |
+| `WTG_LOG_FORMAT` | `json` | json / text (text 는 trn 로그 가독성) |
+| `WTG_LOG_MAX_MB` / `_BACKUPS` / `_MAX_AGE` | 100 / 10 / 30 | 파일 모드 회전 정책 |
+
+- 모든 엔트리에 `svc` 태그 자동 부착 (파일 집계·journald 구분).
+- **클라우드/systemd (권장)**: `WTG_LOG_DIR` 미설정 → journald 가 회전/보존/질의 전담 (무관리).
+- **NH trn 병존**: `WTG_LOG_DIR=~/nh-fxallone-server/win/log` → trn AP 로그 옆에 파일로.
+- 한 곳(`wtg.env` EnvironmentFile)에서 전 서비스 일괄 제어 (`deploy/systemd/wtg.env.sample`).
+- 파일 열기 실패 시 stderr 폴백 (기동 막지 않음).
+
 ### 1.1. mci-api — Internal REST (`:8080`)
 
 | flag                                            | env                              | 의미                                                                                                                                                                                | 운영 필수도                  |

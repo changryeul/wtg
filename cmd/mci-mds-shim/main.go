@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -24,6 +23,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/internal/mdsshim"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/pricing"
 )
@@ -43,20 +43,10 @@ func main() {
 	zdiv := flag.Int("zdiv", 0, "수치 스케일 (10^zdiv 로 나눔) — TODO: symbols 카탈로그 연동 전 고정값")
 	flag.Parse()
 
-	// 로그 출력 — --log-dir 지정 시 <dir>/mci-mds-shim.log (EC2 표준:
+	// 로그 출력 — 공통 pkg/logging 로 통일. --log-dir 는 WTG_LOG_DIR 별칭
+	// (지정 시 <dir>/mci-mds-shim.log, lumberjack 회전. EC2 표준:
 	// ~/nh-fxallone-server/win/log — trn AP 로그와 위치 통일).
-	logOut := os.Stderr
-	if *logDir != "" {
-		f, err := os.OpenFile(filepath.Join(*logDir, "mci-mds-shim.log"),
-			os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "로그 파일 열기 실패:", err)
-			os.Exit(1)
-		}
-		defer f.Close()
-		logOut = f
-	}
-	logger := slog.New(slog.NewTextHandler(logOut, nil))
+	logger := logging.Init("mci-mds-shim", logging.Options{Dir: *logDir, Format: "text"})
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

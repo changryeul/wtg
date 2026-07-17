@@ -15,10 +15,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/winwaysystems/wtg/internal/api"
@@ -33,7 +33,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	logger := newLogger(cfg.LogLevel)
+	logger := logging.Init("mci-api", logging.Options{Level: cfg.LogLevel})
 	logger.Info("mci-api 부팅",
 		slog.String("listen", cfg.ListenAddr),
 		slog.String("broker", fmt.Sprintf("%s:%d", cfg.BrokerHost, cfg.BrokerPort)),
@@ -88,18 +88,3 @@ func main() {
 
 // newLogger 는 LogLevel 문자열에 따라 slog.Logger 를 생성한다.
 // 운영에서는 JSON, 개발에서는 텍스트 핸들러로 시작 (둘 다 stdout).
-func newLogger(level string) *slog.Logger {
-	var lvl slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		lvl = slog.LevelDebug
-	case "warn":
-		lvl = slog.LevelWarn
-	case "error":
-		lvl = slog.LevelError
-	default:
-		lvl = slog.LevelInfo
-	}
-	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
-	return slog.New(h)
-}

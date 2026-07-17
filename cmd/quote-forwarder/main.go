@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"net"
 	"net/http"
@@ -213,7 +214,7 @@ func main() {
 	)
 	flag.Parse()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := logging.Init("quote-forwarder", logging.Options{Format: "text"})
 
 	feeds, err := parseFeedSpec(*multi, *listen, *feed, *bindAddr)
 	if err != nil {

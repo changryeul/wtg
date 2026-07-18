@@ -91,7 +91,40 @@ Profile 라우팅 + 마진 적용된 합성(BEST) 시세.
 - **재연결**: 클라이언트 책임. 끊기면 backoff 후 재연결하고 필터를 다시 보낸다.
 - **TLS**: 운영은 `wss://`.
 
-## 5. Web 클라이언트 (JavaScript) — 자동재연결 + 재구독 포함
+## 5. 서버측 구독 처리 — 중복 / 취소 / 끊김 / slow 격리
+
+클라이언트가 알아둘 서버(mci-edge-price) 동작. 구현은 `internal/edge/price/{registry,server}.go`.
+
+### 업스트림은 단일 공유 stream
+edge 는 mci-price 로 `SubscribeQuote` gRPC 를 **한 개만** 열고(끊기면 자동 재시도),
+들어온 quote 를 접속한 ws client 들에게 fan-out 한다. **client 수와 무관하게 업스트림
+stream 은 1개**. 통화 구독/취소는 업스트림 재구독이 아니라 **edge 안 per-연결 필터 셋
+변경**일 뿐 — 가볍고 즉시 반영.
+
+### 구독 중복 — 자동 무시
+- pair 필터는 **set(map)** 이라 같은 통화를 두 번 `subscribe` 해도 엔트리 하나 → **중복
+  전달 없음**. tick 은 연결당 통화별 1회.
+- **같은 유저가 연결을 2개**(예: 웹+HTS) 열면 각각 **독립 연결**로 취급돼 둘 다 받는다
+  (시세는 broadcast 모델 — usid 로 합치지 않음). 한쪽을 끊어도 다른 쪽 영향 없음.
+
+### 구독 취소 — 빈 셋이면 all 복귀 (정지 아님)
+- `{"type":"unsubscribe","pairs":[...]}` 로 필터에서 제거.
+- ⚠️ **마지막 통화까지 빼서 필터가 비면 "전체(all) 수신" 으로 되돌아간다** — 스트림이
+  멈추는 게 아니다. **완전히 끊으려면 WebSocket 연결을 닫아야** 한다.
+
+### 연결 끊김 — 자동 정리
+- 클라 종료 / TCP 끊김 / read·write 에러 → 서버가 그 연결을 **`Close()`(idempotent)** 하고
+  구독자 목록에서 **제거**. 리소스 누수 없음.
+- **half-open 감지**: 서버 주기 ping 에 pong 이 `WsPongTimeout` 안에 안 오면 서버가 끊는다.
+  → 죽은 연결도 자동 회수. 클라는 끊김 감지 시 backoff 재연결 + 필터 재전송(§6/§7 예제).
+
+### slow client — 자동 격리
+- 각 연결에 송신 큐(기본 256). 클라가 **느려서 큐가 가득 차면 그 연결만 강제 종료**
+  ("slow consumer 격리") — 느린 클라가 **다른 클라를 지연시키지 않는다**(per-client 격리).
+- 큐 80% 도달 시 backpressure 경보 누적 → admin "N7 backpressure 이력".
+- 함의: 클라는 tick 을 **제때 소비**해야 한다(무거운 렌더링은 분리). 끊기면 재연결.
+
+## 6. Web 클라이언트 (JavaScript) — 자동재연결 + 재구독 포함
 
 ```javascript
 class QuoteClient {
@@ -153,7 +186,7 @@ const qc = new QuoteClient({
 qc.connect();
 ```
 
-## 6. HTS / EMP (레거시 C++, WinHTTP WebSocket)
+## 7. HTS / EMP (레거시 C++, WinHTTP WebSocket)
 
 기존 broker subscribe 를 걷어내고 WinHTTP 로 WS 연결. envelope 은 legacy 포트
 (:8089)로 받아 **기존 파서를 그대로** 쓴다.
@@ -222,7 +255,7 @@ void quote_recv_loop(void) {
 
 전환 운영 세팅(legacy 포트 기동 등)은 `docs/cs-ws-migration.md` 참조.
 
-## 7. 요점
+## 8. 요점
 
 | 항목 | 값 |
 |---|---|
@@ -232,6 +265,7 @@ void quote_recv_loop(void) {
 | 필터 | 미전송 시 전체, `{"type":"subscribe","pairs":[...]}` 로 한정 |
 | envelope | best(`type:quote`) / legacy(`entries`) |
 | keepalive | 서버 주기 ping, 클라이언트 pong 자동. 재연결은 클라이언트 책임 |
+| 구독 lifecycle | 중복 subscribe 무시(set), unsubscribe 로 다 비우면 all 복귀(정지 X — 끊으려면 연결 close), 끊김·slow 는 서버가 자동 회수·격리 (§5) |
 | TLS | 운영 `wss://` |
 
 ## 관련 문서

@@ -78,8 +78,8 @@ broker 로 전달(passthrough)한다.
    │      val  : cookie_t (binary, 348 bytes)
    │      ttl  : 8h (또는 정책 합의값)
    │ 7. JWT 발급:
-   │      payload: { sid: session_id, usid, exp, iat, chan }
-   │      서명: HS256 또는 RS256
+   │      payload: { sid, usid, site, tier, exp, iat, chan }
+   │      서명: RS256 (mci-api private key --jwt-key) — §6
    ▼
 [브라우저]
    │ 응답: HttpOnly + Secure 쿠키 또는 Authorization header 로 JWT 회신
@@ -140,30 +140,60 @@ WTG 코드에 어떤 비즈니스 룰도 없다. 거부 사유는 모두 엔진 
 
 ## 6. JWT 설계
 
-### Payload (claim)
+### 메커니즘 한눈에 (발급 → 검증 → 갱신)
+
+핵심은 **RS256 비대칭** — 발급은 mci-api 의 private key 한 곳, 검증은 edge 의
+public key. edge(DMZ)는 검증만 되고 **위조는 불가**. 구현: `pkg/auth/jwt.go`
+(`Issuer.Sign` / `Verifier.Verify`, alg=RS256 **고정**).
+
+```
+                       ┌───────────────── mci-api (Internal, private key --jwt-key) ────────────────┐
+  ①로그인               │  broker LOGON → 엔진 인증 + cookie_t                                        │
+ client ─POST /v1/login─▶  cookie_t → SessionStore[sid]                                              │
+ {usid,passwd}         │  Site/Tier 서버 결정(UserProfileResolver, 클라입력 무시)                     │
+                       │  Claims{sid,usid,site,tier,exp} ── private key 로 RS256 Sign ──▶ access_token │
+                       │  refresh_token 발급 (RefreshStore, 8h)                                      │
+        ◀──────────────┘  { access_token, refresh_token, expires_at }                                
+                                                                                                      
+  ②매 요청 (ws 는 ?access_token= 쿼리 → 헤더 변환)                                                     
+ client ─token 첨부─▶ mci-edge-* (DMZ, public key --jwt-pub)                                          
+                       Verify: 서명(public key) + alg=RS256 + exp 확인 → Principal{usid,site,tier}     
+                       → DB 불요(stateless). site/tier 로 Profile 매칭 → 마진 시세 fan-out             
+                       (tier 가 서명 안에 있어 클라가 등급 위조 불가)                                    
+                                                                                                      
+  ③access 만료 → 재로그인 없이 갱신                                                                    
+ client ─POST /v1/refresh {refresh_token}─▶ mci-api → 새 access_token                                 
+```
+
+- **usid**(누구) = 엔진 LOGON 이 정한 신원 → ws 등록·push 타겟 키.
+- **sid**(세션) → SessionStore → **cookie_t** → 매매 요청 시 broker 에 첨부(권한 판정은 엔진). §1 위임 모델.
+
+### Payload (claim) — `pkg/auth.Claims`
 
 ```json
 {
-  "sid": "01HJK...",      // session id (Redis key suffix)
-  "usid": "trader01",     // 사용자 ID (debug/log 용)
-  "chan": "WEB",          // mqhdr.chan[4] 와 동일 코드
+  "sid": "01HJK...",      // session id (SessionStore key) → cookie_t 복원용
+  "usid": "trader01",     // 사용자 ID (누구인가 — ws 등록/push 타겟)
+  "chan": "WEB",          // 채널 코드 (mqhdr.chan[4])
+  "site": "BRANCH",       // 거래주체 ─┐ Profile 결정 → 마진 등급
+  "tier": "VIP",          // 고객 등급 ─┘ (서명돼 있어 위조 불가)
   "iat": 1735689600,
-  "exp": 1735690500,      // access: 15분
+  "exp": 1735690500,      // access: 짧게 (분 단위)
   "jti": "01HJK..."       // 단일 사용 검증용
 }
 ```
 
-`coki[256]` 자체는 JWT 에 넣지 않는다 (크기 + 보안). Redis 에만 저장.
+`coki[256]`(cookie_t) 자체는 JWT 에 넣지 않는다 (크기 + 보안). SessionStore(Redis)에만 저장.
 
-### 서명
+### 서명 — RS256 고정 (코드 강제)
 
-| 알고리즘 | 장단점 |
+| 알고리즘 | |
 |---------|-------|
-| **HS256** (대칭) | 단순, 키 1개. WTG 내부에서만 검증 시 적합 |
-| **RS256** (비대칭) | edge 가 검증 가능, 키 회전 용이. 권장 |
+| **RS256** (비대칭) | **채택·고정**. edge 는 public key 만 → DMZ 노출돼도 위조 불가, 키 회전(`kid`) 용이 |
+| ~~HS256~~ (대칭) | 미채택. 대칭키는 검증자 모두가 발급 능력을 갖게 돼 DMZ 부적합 |
 
-→ **RS256 권장**. mci-edge-api 는 public key 만 보유하므로, 시크릿이 DMZ
-에 노출되지 않는다.
+- `Verifier.Verify` 는 header `alg` 가 RS256 이 아니면 `ErrJWTUnsupportedAlg` 로 거부 (alg confusion 방어).
+- 키 배포: 발급자 mci-api `--jwt-key`(private PEM), 검증자 edge `--jwt-pub`(public PEM). 회전은 header `kid` + `KeyMap`.
 
 ### 만료/갱신
 

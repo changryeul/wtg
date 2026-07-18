@@ -233,11 +233,16 @@ JWT 의 `site`/`tier` 는 로그인 때 **`UserProfileResolver.Resolve(usid)`** 
 - **매핑 seam**: `internal/fxsync.GradeMapper` — 고객 DB 원시 등급/조직 코드를
   `session.Tier`(VIP/GOLD/STD) / `session.Site`(BRANCH/HQ) 로 변환. 미등록 코드는
   fallback(STD/BRANCH) — 로그인 자체는 막지 않음. 운영 등급 체계 확정 시 매핑표만 채움.
-- **주기 실행**: cron/interval 로 `fx-sync --table=user_profile`. 등급 변경은 다음
-  sync + (해당 사용자) 재로그인 시 반영. admin UI 수동 등록은 미등록 사용자 예외용.
+- **writer 결정 (확정)**: **fx-sync 배치 pull**. 고객 DB 를 주기적으로 SELECT →
+  etcd 미러. (고객/login 서비스가 그 키에 직접 push 하는 event 방식도 가능하지만
+  본 프로젝트는 배치로 확정 — 운영 단순, 고객 DB 무수정.)
+- **운영**: cron 으로 `fx-sync --table=user_profile` (또는 `--table=all`) 주기 실행.
+- **freshness (배치의 함의)**: 등급 변경은 *다음 sync + 해당 고객 재로그인* 시 반영.
+  즉시 반영이 필요한 케이스(긴급 강등 등)는 수동 `fx-sync` 1회 + 세션 강제 만료로 커버.
+  admin UI 수동 등록은 미등록 사용자 예외용.
 - **현황**: File backend(dev, `etc/db-mirror/user_profile.json`) + Syncer + GradeMapper
-  구현·검증 완료. **Oracle backend(실 SELECT)는 고객 마스터 테이블/컬럼 + 등급 체계
-  확정 후** — 그때 `GradeMapper` 표만 채우면 됨.
+  구현·검증 완료 (단위 + `sync→EtcdResolver→tier` 통합 e2e). **남은 것: Oracle backend
+  (실 SELECT) — 고객 마스터 테이블/컬럼 + 등급 체계 확정 후 `GradeMapper` 표만 채움.**
 
 ---
 

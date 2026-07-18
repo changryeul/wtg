@@ -140,14 +140,14 @@ client 접속(웹 대신 websocat — stdin 으로 control 전송):
 websocat "ws://127.0.0.1:8083/v1/subscribe?x_wtg_user=alice01&profile=WEB.BRANCH.VIP"
 ```
 
-| 시나리오 | 조작 | 기대 (관찰 창) |
-|---|---|---|
-| 필터 구독 | stdin `{"type":"subscribe","pairs":["USD/KRW"]}` | `pairs:["USD/KRW"]`, USD/KRW 만 수신 |
-| **중복 무시** | 같은 subscribe 재전송 | `pairs` 그대로 (엔트리 안 늘어남) |
-| **취소→all 복귀** | `{"type":"unsubscribe","pairs":["USD/KRW"]}` | `pairs:null`, USD/KRW+USDCNH 다시 다 옴 (정지 아님) |
-| **다중연결 독립** | 같은 usid 로 websocat 하나 더 | `count:2`, 다른 `id` 2개. 한쪽 닫아도 다른 쪽 유지 |
-| **끊김 정리** | websocat Ctrl-C | `count` 즉시 −1, 서버 로그 `구독 종료` |
-| **slow 격리** | `websocat ... \| (while read l; do sleep 1; done)` + `mock-lp --interval 5ms` | `queue_depth`가 `cap`(256)까지 상승 → `slow consumer 격리` 로그 + 그 연결만 사라짐, 정상 client 는 유지 |
+| 시나리오          | 조작                                                                            | 기대 (관찰 창)                                                                          |
+| ------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 필터 구독         | stdin `{"type":"subscribe","pairs":["USD/KRW"]}`                              | `pairs:["USD/KRW"]`, USD/KRW 만 수신                                                  |
+| **중복 무시**     | 같은 subscribe 재전송                                                              | `pairs` 그대로 (엔트리 안 늘어남)                                                            |
+| **취소→all 복귀** | `{"type":"unsubscribe","pairs":["USD/KRW"]}`                                  | `pairs:null`, USD/KRW+USDCNH 다시 다 옴 (정지 아님)                                        |
+| **다중연결 독립**   | 같은 usid 로 websocat 하나 더                                                       | `count:2`, 다른 `id` 2개. 한쪽 닫아도 다른 쪽 유지                                              |
+| **끊김 정리**     | websocat Ctrl-C                                                               | `count` 즉시 −1, 서버 로그 `구독 종료`                                                       |
+| **slow 격리**   | `websocat ... \| (while read l; do sleep 1; done)` + `mock-lp --interval 5ms` | `queue_depth`가 `cap`(256)까지 상승 → `slow consumer 격리` 로그 + 그 연결만 사라짐, 정상 client 는 유지 |
 
 > 스트리밍이 시끄러우면 control 을 먼저 보내 `/v1/connections` 로 확인하고, quote 흐름은
 > mock-lp 로 따로 켜서 본다. 완전 정지는 unsubscribe 가 아니라 연결 close 임에 주의.

@@ -10,12 +10,12 @@
 
 WTG 는 단일 `config.yaml` 한 권이 아니라 **목적별로 분리된 4 layer**:
 
-| layer | 위치 | 무엇을 결정 | 변경 시 |
-|---|---|---|---|
-| **1. CLI flag** | systemd unit (`/etc/systemd/system/wtg-*.service` 의 `ExecStart=`) | listen 포트 / TLS 경로 / endpoint 주소 / feature toggle | 서비스 재시작 (10초 down) |
-| **2. 환경변수** | `/etc/wtg/wtg.env` (systemd `EnvironmentFile=`) | broker / Redis / etcd endpoint / 시크릿 / Grafana password | 서비스 재시작 |
-| **3. 정적 JSON** | `/opt/wtg/etc/*.json` | 통화쌍 / Profile / 마진 초기 seed (운영은 거의 안 씀) | mci-price 재시작 (정적 모드에서만) |
-| **4. etcd watch** | etcd `wtg/*` keys — admin UI 가 GUI 로 편집 | 라우팅 룰 / 정책 / 마진 / Profile / QuoteID 엔진 / rate-limit | **즉시 hot reload (0초)** |
+| layer             | 위치                                                                | 무엇을 결정                                                  | 변경 시                     |
+| ----------------- | ----------------------------------------------------------------- | ------------------------------------------------------- | ------------------------ |
+| **1. CLI flag**   | systemd unit (`/etc/systemd/system/wtg-*.service` 의 `ExecStart=`) | listen 포트 / TLS 경로 / endpoint 주소 / feature toggle       | 서비스 재시작 (10초 down)       |
+| **2. 환경변수**       | `/etc/wtg/wtg.env` (systemd `EnvironmentFile=`)                   | broker / Redis / etcd endpoint / 시크릿 / Grafana password | 서비스 재시작                  |
+| **3. 정적 JSON**    | `/opt/wtg/etc/*.json`                                             | 통화쌍 / Profile / 마진 초기 seed (운영은 거의 안 씀)                 | mci-price 재시작 (정적 모드에서만) |
+| **4. etcd watch** | etcd `wtg/*` keys — admin UI 가 GUI 로 편집                           | 라우팅 룰 / 정책 / 마진 / Profile / QuoteID 엔진 / rate-limit     | **즉시 hot reload (0초)**   |
 
 운영 환경에서 운영자가 만지는 빈도 :
 
@@ -76,12 +76,12 @@ slog 를 초기화한다. 출력처는 **환경변수로 전환** — stderr(jou
 
 ### 3.1 위치
 
-| 환경 | 어디 |
-|---|---|
-| **dev (macOS 로컬)** | `logs/<service>.log` — `wtg-stack-up.sh` 가 `nohup ... > logs/<name>.log` 로 리디렉트 (셸 리디렉트, `WTG_LOG_DIR` 과 별개) |
-| **운영 — journald (기본)** | `journalctl -u wtg-<service>` — `WTG_LOG_DIR` 미설정 시 stderr → systemd `StandardOutput=journal` |
-| **운영 — 파일 (win/log)** | `WTG_LOG_DIR` 설정 시 `<dir>/<svc>.log` (lumberjack 회전). trn AP 로그와 위치 통일 |
-| (선택) 운영 + Loki | Promtail / Vector agent 가 journald → Loki | Grafana 의 Explore 에서 검색 |
+| 환경                     | 어디                                                                                                           |                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------- |
+| **dev (macOS 로컬)**     | `logs/<service>.log` — `wtg-stack-up.sh` 가 `nohup ... > logs/<name>.log` 로 리디렉트 (셸 리디렉트, `WTG_LOG_DIR` 과 별개) |                         |
+| **운영 — journald (기본)** | `journalctl -u wtg-<service>` — `WTG_LOG_DIR` 미설정 시 stderr → systemd `StandardOutput=journal`                |                         |
+| **운영 — 파일 (win/log)**  | `WTG_LOG_DIR` 설정 시 `<dir>/<svc>.log` (lumberjack 회전). trn AP 로그와 위치 통일                                       |                         |
+| (선택) 운영 + Loki         | Promtail / Vector agent 가 journald → Loki                                                                    | Grafana 의 Explore 에서 검색 |
 
 dev 환경 logs 디렉토리 :
 ```

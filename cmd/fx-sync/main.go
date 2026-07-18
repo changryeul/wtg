@@ -1,11 +1,14 @@
 // fx-sync — 외환 운영 DB 의 마스터 데이터를 WTG etcd 로 미러링하는 CLI.
 //
-// 대상 테이블: currency / pair / swap / hq_margin / site_margin / user_profile
+// 대상 테이블: currency / pair / swap / hq_margin / site_margin / user_profile / customer_margin
 // (--table=all 로 일괄). Oracle backend 는 향후 — 현재 FileBackend(JSON mock).
 //
 // user_profile: 고객 등급 → 시세 Profile(Site/Tier) 을 etcd
 // wtg/auth/user-profiles/{usid} 로 미러 → mci-api login 이 EtcdUserProfileResolver
 // 로 읽어 JWT.site/tier 에 반영 (login 코드 무변경). 상세 docs/auth.md §6.5.
+//
+// customer_margin: 고객별 스프레드 → wtg/pricing/table customer_margin(override).
+// tier 대체 (미등록만 tier fallback). 상세 docs/customer-spread-sync.md.
 //
 // 사용:
 //
@@ -22,7 +25,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/winwaysystems/wtg/pkg/logging"
 	"log/slog"
 	"os"
 	"strings"
@@ -31,6 +33,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/internal/fxsync"
+	"github.com/winwaysystems/wtg/pkg/logging"
 )
 
 func main() {
@@ -88,7 +91,7 @@ func main() {
 	// 테이블 별 처리.
 	tables := strings.Split(*table, ",")
 	if *table == "all" {
-		tables = []string{"currency", "pair", "swap", "hq_margin", "site_margin", "user_profile"}
+		tables = []string{"currency", "pair", "swap", "hq_margin", "site_margin", "user_profile", "customer_margin"}
 	}
 	exitCode := 0
 	for _, t := range tables {
@@ -123,6 +126,11 @@ func main() {
 				logger.Error("user_profile sync 실패", slog.Any("error", err))
 				exitCode = 1
 			}
+		case "customer_margin":
+			if err := syncCustomerMargin(ctx, backend, syncer); err != nil {
+				logger.Error("customer_margin sync 실패", slog.Any("error", err))
+				exitCode = 1
+			}
 		default:
 			logger.Warn("unknown table — skip", slog.String("table", t))
 		}
@@ -145,6 +153,15 @@ func syncUserProfile(ctx context.Context, backend fxsync.Backend, syncer *fxsync
 		return fmt.Errorf("LoadUserProfiles: %w", err)
 	}
 	_, err = syncer.SyncUserProfiles(ctx, ups)
+	return err
+}
+
+func syncCustomerMargin(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Syncer) error {
+	cs, err := backend.LoadCustomerSpreads(ctx)
+	if err != nil {
+		return fmt.Errorf("LoadCustomerSpreads: %w", err)
+	}
+	_, err = syncer.SyncCustomerMargins(ctx, cs)
 	return err
 }
 

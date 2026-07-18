@@ -76,6 +76,17 @@ func (s *Syncer) SyncUserProfiles(ctx context.Context, ups UserProfiles) (SyncRe
 	return s.runSync(ctx, "user-profile", "auth/user-profiles/", items)
 }
 
+// SyncCustomerMargins — 고객 스프레드를 wtg/pricing/table 의 customer_margin 레이어로
+// PUT (Mode=override). version++ → mci-price EtcdTableWatcher hot reload → 고객별 quote.
+// 스프레드 미등록/inactive 고객은 CustomerMargin 에서 빠져 tier/HQ margin 으로 fallback.
+func (s *Syncer) SyncCustomerMargins(ctx context.Context, cs CustomerSpreads) (SyncResult, error) {
+	return s.modifyPricingDoc(ctx, "customer_margin", func(doc *pricing.PricingTableDoc) (int, int) {
+		entries := customerSpreadsToEntries(cs)
+		doc.CustomerMargin = entries
+		return len(cs), len(entries)
+	})
+}
+
 // SyncSwapPoints — wtg/pricing/table 의 swap_point 만 read-modify-write 로 교체.
 // 다른 layer (HQ / Site / Customer / TimeWindows / Holidays) 는 보존.
 // version 자동 증가 → mci-price EtcdTableWatcher hot reload.

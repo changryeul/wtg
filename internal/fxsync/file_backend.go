@@ -83,6 +83,15 @@ func (b *FileBackend) LoadUserProfiles(_ context.Context) (UserProfiles, error) 
 	return out, nil
 }
 
+// LoadCustomerSpreads — customer_margin.json ({usid,pair,bid_delta,ask_delta,active}).
+func (b *FileBackend) LoadCustomerSpreads(_ context.Context) (CustomerSpreads, error) {
+	var out CustomerSpreads
+	if err := b.readJSON("customer_margin.json", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // readJSON — 파일 read + JSON unmarshal. 누락 파일은 빈 결과 + nil err (호출자
 // 가 v 의 zero value 유지).
 func (b *FileBackend) readJSON(filename string, v any) error {

@@ -31,4 +31,7 @@ type Backend interface {
 	// GradeMapper 로 enum 화, File backend 는 이미 enum 형태 JSON 을 읽는다.
 	// Active=false 도 반환 — sync 가 etcd 삭제 mark 로 사용.
 	LoadUserProfiles(ctx context.Context) (UserProfiles, error)
+	// LoadCustomerSpreads — 고객 스프레드 마스터 또는 customer_margin.json.
+	// 고객별 절대 스프레드 → pricing CustomerMargin(override). Active=false 도 반환.
+	LoadCustomerSpreads(ctx context.Context) (CustomerSpreads, error)
 }

@@ -26,4 +26,9 @@ type Backend interface {
 
 	// LoadSiteMargins — TB_FXB_CMG015M (표준영업점) 또는 site_margin.json.
 	LoadSiteMargins(ctx context.Context) (SiteMargins, error)
+	// LoadUserProfiles — 고객 마스터(등급) 또는 user_profile.json.
+	// 고객 등급 → 시세 Profile(Site/Tier). Oracle backend 는 raw 코드를
+	// GradeMapper 로 enum 화, File backend 는 이미 enum 형태 JSON 을 읽는다.
+	// Active=false 도 반환 — sync 가 etcd 삭제 mark 로 사용.
+	LoadUserProfiles(ctx context.Context) (UserProfiles, error)
 }

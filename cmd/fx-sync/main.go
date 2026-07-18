@@ -1,14 +1,18 @@
 // fx-sync — 외환 운영 DB 의 마스터 데이터를 WTG etcd 로 미러링하는 CLI.
 //
-// Step 1 (현재): Currency (TB_FXB_CMG005M) + FileBackend (JSON mock) 만.
-// 향후 단계: Pair / Cross 산식 / Swap / Margin / Holiday 등 추가.
+// 대상 테이블: currency / pair / swap / hq_margin / site_margin / user_profile
+// (--table=all 로 일괄). Oracle backend 는 향후 — 현재 FileBackend(JSON mock).
+//
+// user_profile: 고객 등급 → 시세 Profile(Site/Tier) 을 etcd
+// wtg/auth/user-profiles/{usid} 로 미러 → mci-api login 이 EtcdUserProfileResolver
+// 로 읽어 JWT.site/tier 에 반영 (login 코드 무변경). 상세 docs/auth.md §6.5.
 //
 // 사용:
 //
 //	# file mock 으로 dev 시드.
 //	fx-sync --source=file --source-dir=./etc/db-mirror \
 //	        --etcd=127.0.0.1:2379 --etcd-prefix=wtg/ \
-//	        --table=currency
+//	        --table=user_profile
 //
 //	# (향후) Oracle 직접:
 //	fx-sync --source=oracle --dsn=oracle://... --table=all
@@ -84,7 +88,7 @@ func main() {
 	// 테이블 별 처리.
 	tables := strings.Split(*table, ",")
 	if *table == "all" {
-		tables = []string{"currency", "pair", "swap", "hq_margin", "site_margin"}
+		tables = []string{"currency", "pair", "swap", "hq_margin", "site_margin", "user_profile"}
 	}
 	exitCode := 0
 	for _, t := range tables {
@@ -114,6 +118,11 @@ func main() {
 				logger.Error("site_margin sync 실패", slog.Any("error", err))
 				exitCode = 1
 			}
+		case "user_profile":
+			if err := syncUserProfile(ctx, backend, syncer); err != nil {
+				logger.Error("user_profile sync 실패", slog.Any("error", err))
+				exitCode = 1
+			}
 		default:
 			logger.Warn("unknown table — skip", slog.String("table", t))
 		}
@@ -127,6 +136,15 @@ func syncCurrency(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Sy
 		return fmt.Errorf("LoadCurrencies: %w", err)
 	}
 	_, err = syncer.SyncCurrencies(ctx, cs)
+	return err
+}
+
+func syncUserProfile(ctx context.Context, backend fxsync.Backend, syncer *fxsync.Syncer) error {
+	ups, err := backend.LoadUserProfiles(ctx)
+	if err != nil {
+		return fmt.Errorf("LoadUserProfiles: %w", err)
+	}
+	_, err = syncer.SyncUserProfiles(ctx, ups)
 	return err
 }
 

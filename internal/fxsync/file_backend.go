@@ -73,6 +73,16 @@ func (b *FileBackend) LoadSiteMargins(_ context.Context) (SiteMargins, error) {
 	return out, nil
 }
 
+// LoadUserProfiles — user_profile.json (이미 enum 형태 {usid,site,tier,active}) 읽기.
+// Oracle backend 는 raw 등급코드를 GradeMapper 로 변환하지만, dev file 은 변환 완료본.
+func (b *FileBackend) LoadUserProfiles(_ context.Context) (UserProfiles, error) {
+	var out UserProfiles
+	if err := b.readJSON("user_profile.json", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // readJSON — 파일 read + JSON unmarshal. 누락 파일은 빈 결과 + nil err (호출자
 // 가 v 의 zero value 유지).
 func (b *FileBackend) readJSON(filename string, v any) error {

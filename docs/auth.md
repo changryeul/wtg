@@ -32,21 +32,21 @@ broker 로 전달(passthrough)한다.
 
 ## 2. 책임 분담
 
-| 항목 | WTG | 매매 엔진 |
-|-----|-----|----------|
-| 사용자 본인 확인 (id/pw) | ✅ 1차 입력 받음 → 엔진에 LOGON 위임 | ✅ 비밀번호 검증, cookie 발급 |
-| MFA (TOTP) | ✅ web 에서 의무화 | ❌ |
-| JWT 발급/검증 | ✅ | ❌ |
-| 세션 만료 / 갱신 | ✅ web 세션 | (별개로) cookie 유효성 검증 |
-| 거래 권한 | ❌ | ✅ |
-| 주문 한도 (1회/일별) | ❌ | ✅ |
-| 통화쌍 활성화 여부 | ❌ | ✅ |
-| 거래시간 검증 | ❌ | ✅ |
-| Slippage 한도 | ❌ | ✅ |
-| 동시 로그인 정책 | ✅ web 세션 단위 | ✅ 엔진 측 KILL 명령 활용 |
-| Rate limit (요청 빈도) | ✅ IP/user 단위 | ✅ 엔진 측 사용자별 TPS |
-| 봇/이상 트래픽 탐지 | ✅ | ❌ |
-| Audit log | ✅ login/logout/security 이벤트 | ✅ 거래 감사 |
+| 항목                 | WTG                         | 매매 엔진                |
+| ------------------ | --------------------------- | -------------------- |
+| 사용자 본인 확인 (id/pw)  | ✅ 1차 입력 받음 → 엔진에 LOGON 위임   | ✅ 비밀번호 검증, cookie 발급 |
+| MFA (TOTP)         | ✅ web 에서 의무화                | ❌                    |
+| JWT 발급/검증          | ✅                           | ❌                    |
+| 세션 만료 / 갱신         | ✅ web 세션                    | (별개로) cookie 유효성 검증  |
+| 거래 권한              | ❌                           | ✅                    |
+| 주문 한도 (1회/일별)      | ❌                           | ✅                    |
+| 통화쌍 활성화 여부         | ❌                           | ✅                    |
+| 거래시간 검증            | ❌                           | ✅                    |
+| Slippage 한도        | ❌                           | ✅                    |
+| 동시 로그인 정책          | ✅ web 세션 단위                 | ✅ 엔진 측 KILL 명령 활용    |
+| Rate limit (요청 빈도) | ✅ IP/user 단위                | ✅ 엔진 측 사용자별 TPS      |
+| 봇/이상 트래픽 탐지        | ✅                           | ❌                    |
+| Audit log          | ✅ login/logout/security 이벤트 | ✅ 거래 감사              |
 
 ---
 
@@ -197,9 +197,9 @@ public key. edge(DMZ)는 검증만 되고 **위조는 불가**. 구현: `pkg/aut
 
 ### 만료/갱신
 
-| 토큰 | 수명 | 사용처 |
-|-----|-----|-------|
-| Access JWT | 15분 | 모든 API 요청 |
+| 토큰            | 수명  | 사용처                      |
+| ------------- | --- | ------------------------ |
+| Access JWT    | 15분 | 모든 API 요청                |
 | Refresh token | 8시간 | access 재발급 (HttpOnly 쿠키) |
 
 8시간 후 강제 재로그인. 매매 시간에 맞춰 정책 조정 가능 (운영 합의 필요).
@@ -209,6 +209,35 @@ public key. edge(DMZ)는 검증만 되고 **위조는 불가**. 구현: `pkg/aut
 - 정상 로그아웃: Redis 세션 즉시 삭제 → `sid` 가 무효화되어 access JWT 도
   실질적으로 사용 불가
 - 강제 로그아웃 (관리자/이상거래): 동일하게 Redis 세션 삭제 + 엔진 KILL 통보
+
+### 6.5 고객 등급(tier) 출처 — Site/Tier 는 어디서 오나
+
+JWT 의 `site`/`tier` 는 로그인 때 **`UserProfileResolver.Resolve(usid)`** 가 결정해
+박는다 (클라 입력 무시 — 위조 방지). resolver backend:
+
+| backend | 소스 | 용도 |
+|---|---|---|
+| `StaticResolver` | JSON 파일 (in-memory) | dev / 단일 인스턴스 |
+| `EtcdResolver` | etcd `wtg/auth/user-profiles/{usid}` (watch) | **운영 표준** — 다중 인스턴스 hot reload |
+
+**고객 DB 의 등급을 자동 반영** — `fx-sync` 가 고객 마스터를 etcd 로 미러 (login 코드 무변경):
+
+```
+[고객 DB] ──fx-sync --table=user_profile──▶ etcd wtg/auth/user-profiles/{usid}
+  grade    (GradeMapper: 등급코드→Tier)      = {site, tier} JSON
+                                                    │ watch (즉시 hot reload)
+                                                    ▼
+                                   mci-api login 의 EtcdResolver → JWT.site/tier
+```
+
+- **매핑 seam**: `internal/fxsync.GradeMapper` — 고객 DB 원시 등급/조직 코드를
+  `session.Tier`(VIP/GOLD/STD) / `session.Site`(BRANCH/HQ) 로 변환. 미등록 코드는
+  fallback(STD/BRANCH) — 로그인 자체는 막지 않음. 운영 등급 체계 확정 시 매핑표만 채움.
+- **주기 실행**: cron/interval 로 `fx-sync --table=user_profile`. 등급 변경은 다음
+  sync + (해당 사용자) 재로그인 시 반영. admin UI 수동 등록은 미등록 사용자 예외용.
+- **현황**: File backend(dev, `etc/db-mirror/user_profile.json`) + Syncer + GradeMapper
+  구현·검증 완료. **Oracle backend(실 SELECT)는 고객 마스터 테이블/컬럼 + 등급 체계
+  확정 후** — 그때 `GradeMapper` 표만 채우면 됨.
 
 ---
 

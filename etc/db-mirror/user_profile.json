@@ -1,0 +1,5 @@
+[
+  {"usid":"alice01",  "site":"BRANCH", "tier":"VIP",  "active":true},
+  {"usid":"bob02",    "site":"BRANCH", "tier":"GOLD", "active":true},
+  {"usid":"charlie03","site":"HQ",     "tier":"STD",  "active":true}
+]

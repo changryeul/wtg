@@ -9,6 +9,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
+	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/pricing"
 	"github.com/winwaysystems/wtg/pkg/session"
 )
@@ -57,6 +58,22 @@ func (s *Syncer) SyncCurrencies(ctx context.Context, currencies Currencies) (Syn
 		items = append(items, syncItem{id: c.Code, active: c.Active, payload: c})
 	}
 	return s.runSync(ctx, "currency", "currency/", items)
+}
+
+// SyncUserProfiles — 고객 등급 → 시세 Profile 매핑을 etcd 에 PUT.
+// 키: wtg/auth/user-profiles/{usid} → auth.UserProfile{site,tier} JSON
+// (mci-api 의 EtcdUserProfileResolver 가 watch 로 hot reload → login JWT 반영).
+// Active=false 는 삭제 (그 사용자는 Profile 미등록 → 마진 fallback).
+func (s *Syncer) SyncUserProfiles(ctx context.Context, ups UserProfiles) (SyncResult, error) {
+	items := make([]syncItem, 0, len(ups))
+	for _, up := range ups {
+		items = append(items, syncItem{
+			id:      up.Usid,
+			active:  up.Active,
+			payload: auth.UserProfile{Site: up.Site, Tier: up.Tier},
+		})
+	}
+	return s.runSync(ctx, "user-profile", "auth/user-profiles/", items)
 }
 
 // SyncSwapPoints — wtg/pricing/table 의 swap_point 만 read-modify-write 로 교체.

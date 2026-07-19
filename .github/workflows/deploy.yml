@@ -132,17 +132,33 @@ jobs:
             --chown="$DEPLOY_USER":"$DEPLOY_USER" ./ "$WTG_HOME/src/"
 
           sudo cp deploy/ec2/wtg-*.service /etc/systemd/system/
+          # timer (fx-sync 주기 sync) 도 설치. nullglob — timer 없으면 루프 skip.
+          shopt -s nullglob
+          for tf in deploy/ec2/wtg-*.timer; do
+            sudo cp "$tf" /etc/systemd/system/
+          done
+          shopt -u nullglob
           sudo systemctl daemon-reload
 
       - name: Write env file
         env:
           FIX_PUSH_SECRET_ENV: ${{ secrets.FIX_PUSH_SECRET }}
+          WTG_DSN_ENV: ${{ secrets.WTG_DSN }}
         run: |
           set -euo pipefail
           umask 077
           tmp=$(mktemp)
-          printf 'BROKER_HOST=127.0.0.1\nBROKER_PORT=11217\nFIX_PUSH_SECRET=%s\n' \
-            "$FIX_PUSH_SECRET_ENV" > "$tmp"
+          # 유닛이 참조하는 env — 누락 시 forwarder(--price-grpc)/chart(--dsn) 빈값으로 깨짐.
+          # WTG_PRICE_GRPC: 시세 gRPC-only fan-in (forwarder → 로컬 mci-price:50051).
+          # WTG_DSN: TimescaleDB (chart 용, secret 미설정이면 빈값 — chart 미기동일 뿐 무해).
+          {
+            printf 'BROKER_HOST=127.0.0.1\n'
+            printf 'BROKER_PORT=11217\n'
+            printf 'FIX_PUSH_SECRET=%s\n' "$FIX_PUSH_SECRET_ENV"
+            printf 'WTG_PRICE_GRPC=127.0.0.1:50051\n'
+            printf 'WTG_DSN=%s\n' "$WTG_DSN_ENV"
+            printf 'WTG_LOG_LEVEL=info\n'
+          } > "$tmp"
           sudo install -m 0600 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$tmp" "$WTG_HOME/wtg.env"
           rm -f "$tmp"
 
@@ -177,6 +193,13 @@ jobs:
             wtg-quote-forwarder wtg-dev-feed
           # wtg-mci-mds-shim 은 조건부 자산 — unit 은 설치되지만 enable 하지 않음.
           # 재빌드 불가 client 가 인벤토리에서 확인되면 목록에 복귀 (mds-replacement-plan Stage 2)
+          # wtg-mci-chart / wtg-mci-edge-chart 는 TimescaleDB 의존 — DB 준비 후 수동 enable.
+
+          # fx-sync timer — 고객 등급(user_profile)+스프레드(customer_margin) → etcd.
+          # timer 활성화 + 즉시 1회 sync (etcd 는 위에서 먼저 기동됨). 실패는 비치명.
+          sudo systemctl enable --now wtg-fx-sync.timer
+          sudo systemctl start wtg-fx-sync.service || \
+            echo "::warning::fx-sync 초기 sync 실패 — timer 가 재시도 (etc/db-mirror·etcd 확인)"
 
       # 설치된 바이너리가 이 커밋으로 빌드됐는지 검증 — stale artifact 를
       # 조용히 성공시키지 않고 배포 실패로 잡는다 (2026-07-15 사고 방어).

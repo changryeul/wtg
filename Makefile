@@ -26,7 +26,7 @@ CMDS := $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard cmd/*/*.go)))))
 .PHONY: all build test test-v test-race test-integration vet fmt fmt-check tidy clean install \
         lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside \
         wtgprice wtgprice-clean test-wtgprice \
-        wtgquery wtgquery-clean test-wtgquery $(CMDS)
+        wtgquery wtgquery-clean test-wtgquery price-ha-verify $(CMDS)
 
 all: build
 
@@ -129,6 +129,12 @@ vulncheck:
 
 # composite lint 타겟 — 정적 분석 묶음.
 lint: fmt-check vet staticcheck
+
+# 시세 gRPC-only HA e2e — 1 forwarder(hub) → 2 mci-price Active-Active +
+# warm-up gate + failover 를 실 바이너리로 검증 (jq 필요). docs/price-ha-grpc.md.
+# make ci 에는 미포함 — 4-프로세스 e2e (부팅·타이밍 의존) 라 릴리즈/수동 검증용.
+price-ha-verify:
+	./scripts/price-ha-verify.sh
 
 # CI 가 수행하는 전체 검증을 로컬에서 한 번에.
 # commit/PR 전에 `make ci` 로 사전 검증 권장.

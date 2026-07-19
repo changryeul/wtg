@@ -35,6 +35,7 @@ make test-wtgprice      # C SDK ↔ SwapLockHandler wire 호환성 (build tag=wt
 make wtgquery           # PoC — cside/wtgquery C SDK 빌드 (mds W9501S01 종가 조회의 mci-chart REST wrapper)
 make wtgquery-clean     # cside/wtgquery 산출물 정리
 make test-wtgquery      # C SDK ↔ mci-chart /v1/chart + mci-price /v1/best-stats wire 호환성 (build tag=wtgquery)
+make price-ha-verify    # 시세 gRPC-only HA e2e — 1 hub → 2 mci-price Active-Active + warm-up + failover (실 바이너리, jq 필요; ci 미포함)
 ```
 
 `cmd/<service>/main.go` 추가 시 자동으로 빌드 대상에 포함된다 (Makefile 가 `cmd/*/*.go` glob).
@@ -333,6 +334,7 @@ make test-wtgprice      # C SDK ↔ SwapLockHandler wire 호환성 (build tag=wt
 make wtgquery           # PoC — cside/wtgquery C SDK 빌드 (mds W9501S01 종가 조회의 mci-chart REST wrapper)
 make wtgquery-clean     # cside/wtgquery 산출물 정리
 make test-wtgquery      # C SDK ↔ mci-chart /v1/chart + mci-price /v1/best-stats wire 호환성 (build tag=wtgquery)
+make price-ha-verify    # 시세 gRPC-only HA e2e — 1 hub → 2 mci-price Active-Active + warm-up + failover (실 바이너리, jq 필요; ci 미포함)
 ```
 
 `cmd/<service>/main.go` 추가 시 자동으로 빌드 대상에 포함된다 (Makefile 가 `cmd/*/*.go` glob).

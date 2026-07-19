@@ -89,6 +89,7 @@ WTG_DSN=postgres://wtg:<password>@db1.<env>.internal/wtg?sslmode=require
 
 ```bash
 sudo cp /tmp/wtg-systemd/wtg-*.service /etc/systemd/system/
+sudo cp /tmp/wtg-systemd/wtg-fx-sync.timer /etc/systemd/system/   # 마스터 데이터 미러
 sudo systemctl daemon-reload
 
 # 순서대로 활성화 (인프라 → 핵심 → DMZ)
@@ -98,6 +99,26 @@ sudo systemctl enable --now wtg-mci-edge-price
 sleep 3
 sudo systemctl enable --now wtg-mci-admin
 ```
+
+### 4.1 카탈로그 시드 + fx-sync (등급/스프레드)
+
+```bash
+# 1) 정적 카탈로그 (pricing/profiles/symbols) → etcd. 최초 1회.
+sudo -u winway ./deploy/seed-catalog.sh
+
+# 2) fx-sync — 통화/마진 + 고객 등급(user_profile) + 고객 스프레드(customer_margin)
+#    를 etcd 로 미러. 최초 1회 즉시 + 이후 timer 가 5분 주기.
+sudo systemctl enable --now wtg-fx-sync.timer
+sudo systemctl start wtg-fx-sync.service     # 부팅 대기 없이 즉시 1회
+```
+> ⚠️ 순서: **seed-catalog(pricing 통째 PUT) → fx-sync(customer_margin 레이어만 교체)**.
+> seed-catalog 를 fx-sync 뒤에 재실행하면 customer_margin 이 덮여 다음 timer 까지 공백.
+> Oracle 확정 전까지 source=file(`etc/db-mirror/*.json`) — 실 데이터로 교체 후 sync.
+
+### 4.2 (선택) 다중 인스턴스 HA
+
+단일 인스턴스면 skip. HA 로 갈 땐 `deploy/ec2/ha/README.md` 절차
+(forwarder hub + `wtg-mci-price@N` + `WTG_TICK_HUB`). 검증 `make price-ha-verify`.
 
 ---
 

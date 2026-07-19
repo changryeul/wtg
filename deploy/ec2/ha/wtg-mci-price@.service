@@ -1,0 +1,43 @@
+# [HA 변형] WTG mci-price — 다중 인스턴스 템플릿. %i = 인스턴스 번호 (1,2,3...).
+#   sudo systemctl enable --now wtg-mci-price@1 wtg-mci-price@2
+# 포트: HTTP 808%i (8081,8082...), gRPC 5005%i (50051,50052...).
+#
+# 각 인스턴스가 forwarder 허브(${WTG_TICK_HUB})에 dial-in 구독 → 각자 full 스트림
+# → 결정적 BEST (Active-Active). --no-broker: 시세 gRPC-only (broker 미사용).
+# edge 는 gRPC round_robin 으로 인스턴스들에 분산 (mci-price-ha.md §2.1).
+# 상세 docs/price-ha-grpc.md.
+#
+# 단일 인스턴스 유닛(wtg-mci-price.service)과 동시 사용 금지 — 포트 충돌.
+[Unit]
+Description=WTG mci-price #%i — 시세 fan-out (HA, tick-source dial-in)
+After=network-online.target wtg-etcd.service
+Wants=network-online.target wtg-etcd.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+# %i 로 포트 분리 — HTTP 808%i / gRPC 5005%i. (2자리 인스턴스는 유닛 복제 권장)
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-price \
+    --no-broker \
+    --listen=:808%i \
+    --grpc=:5005%i \
+    --tick-source=${WTG_TICK_HUB} \
+    --symbols=/home/winway/nh-fxallone-server/wtg/etc/symbols.json \
+    --etcd=http://127.0.0.1:2379 \
+    --warmup=2 --warmup-max=30
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-price@%i
+
+[Install]
+WantedBy=multi-user.target

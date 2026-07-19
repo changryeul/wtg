@@ -1,0 +1,38 @@
+# [HA 변형] WTG quote-forwarder — hub 모드. 단일 인스턴스용 grpc 모드
+# (deploy/ec2/wtg-quote-forwarder.service) 대신 사용.
+#
+# 다중 mci-price Active-Active fan-in: forwarder 가 TickIngestService 서버가 되고,
+# N개 mci-price 가 --tick-source 로 dial-in 구독 → forwarder 가 구독자 전체에 fan-out.
+# 상세 docs/price-ha-grpc.md.
+#
+# 전환: 이 파일을 wtg-quote-forwarder.service 로 설치 (기존 grpc 유닛 대체).
+[Unit]
+Description=WTG quote-forwarder — UDP FIX 시세 → TickIngestService 허브 (HA fan-in)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/quote-forwarder \
+    --multi=SMB:30044,KMB:30045 \
+    --bind=127.0.0.1 \
+    --publish-mode=hub \
+    --tick-listen=${WTG_TICK_HUB} \
+    --metrics=127.0.0.1:9091
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-quote-forwarder
+
+[Install]
+WantedBy=multi-user.target

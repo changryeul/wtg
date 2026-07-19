@@ -1,0 +1,13 @@
+# WTG fx-sync 주기 실행 — 마스터 데이터(고객 등급/스프레드 포함)를 etcd 로 미러.
+# 부팅 2분 후 1회 + 이후 5분 주기. 등급/스프레드 변경은 다음 sync + 재로그인 시 반영.
+# 긴급 반영: `sudo systemctl start wtg-fx-sync.service` 수동 1회.
+[Unit]
+Description=WTG fx-sync 주기 실행 (마스터 데이터 → etcd)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

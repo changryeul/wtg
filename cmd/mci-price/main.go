@@ -72,6 +72,19 @@ func main() {
 		slog.Int("print", cfg.PrintFirstN),
 	)
 
+	// 다중 tick-source (dual-active forwarder HA) → (source,seq) dedup 자동 활성.
+	if !cfg.TickDedup {
+		n := 0
+		for _, a := range strings.Split(cfg.TickSource, ",") {
+			if strings.TrimSpace(a) != "" {
+				n++
+			}
+		}
+		if n > 1 {
+			cfg.TickDedup = true
+			logger.Info("dual-active tick-source 감지 — dedup 자동 활성", slog.Int("sources", n))
+		}
+	}
 	srv := price.NewServer(cfg, logger)
 	if cfg.BestEnabled {
 		logger.Info("BestConsumer 활성 — 다중시장 best 호가 산정",

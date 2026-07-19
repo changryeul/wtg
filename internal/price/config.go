@@ -86,6 +86,16 @@ type Config struct {
 	// (docs/price-ha-grpc.md). 다중 지정(dual-active forwarder HA) 시 중복 tick 주의.
 	TickSource string
 
+	// TickDedup — dual-active forwarder HA 시 (source,seq) 중복 tick 제거.
+	// 다중 tick-source 구독 시 자동 활성 (main 에서 설정). 단일 source 는 불요.
+	TickDedup bool
+
+	// WarmupSec / WarmupMaxSec — warm-up gate. 부팅 후 tick 을 볼 때까지 not-ready
+	// (/v1/ready 503) → edge/LB 가 skip. WarmupSec 경과+tick 있으면 ready,
+	// WarmupMaxSec 경과 시 tick 없어도 ready (stuck 방지). 0 이면 기본값.
+	WarmupSec    int
+	WarmupMaxSec int
+
 	LogLevel string
 
 	// gRPC TLS — Internal mci-price 의 PriceService 가 mTLS 요구하도록.
@@ -562,6 +572,10 @@ func LoadConfig(args []string) (Config, error) {
 		"broker 연결 skip — gRPC PublishTick + DevTick 만 입력 source 로 사용 (dev/test 또는 운영 broker bypass 전환)")
 	fs.StringVar(&cfg.TickSource, "tick-source", cfg.TickSource,
 		"quote-forwarder TickIngestService 주소 CSV (forwarder --tick-listen). SubscribeTicks 로 dial-in 구독. 시세 gRPC-only HA fan-in")
+	fs.BoolVar(&cfg.TickDedup, "tick-dedup", cfg.TickDedup,
+		"(source,seq) 중복 tick 제거 — dual-active forwarder HA 용. 다중 --tick-source 시 자동 활성")
+	fs.IntVar(&cfg.WarmupSec, "warmup", cfg.WarmupSec, "warm-up gate — tick 관측 후 ready 까지 최소 대기 초 (0=기본 2s). /v1/ready")
+	fs.IntVar(&cfg.WarmupMaxSec, "warmup-max", cfg.WarmupMaxSec, "warm-up gate — tick 없어도 ready 되는 상한 초 (0=기본 30s)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.GRPCTLSCertFile, "grpc-tls-cert", cfg.GRPCTLSCertFile, "gRPC TLS 서버 cert PEM")
 	fs.StringVar(&cfg.GRPCTLSKeyFile, "grpc-tls-key", cfg.GRPCTLSKeyFile, "gRPC TLS 서버 key PEM")
@@ -670,4 +684,20 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// WarmupDuration — warm-up gate 최소 대기 (기본 2s).
+func (c Config) WarmupDuration() time.Duration {
+	if c.WarmupSec > 0 {
+		return time.Duration(c.WarmupSec) * time.Second
+	}
+	return 2 * time.Second
+}
+
+// WarmupMaxDuration — tick 없어도 ready 되는 상한 (기본 30s).
+func (c Config) WarmupMaxDuration() time.Duration {
+	if c.WarmupMaxSec > 0 {
+		return time.Duration(c.WarmupMaxSec) * time.Second
+	}
+	return 30 * time.Second
 }

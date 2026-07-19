@@ -108,6 +108,11 @@ type Server struct {
 	totalDrop  atomic.Uint64 // 디코딩 실패 등
 	totalTicks atomic.Uint64 // 실제 처리된 envelope (tick) 수.
 
+	// dedup — dual-active forwarder HA 시 (source,seq) 중복 제거. nil = 비활성.
+	dedup *tickDedup
+	// ready — warm-up gate. /v1/ready 로 노출, edge/LB healthcheck 소비.
+	ready *readiness
+
 	// e2e latency — envelope.ts (cooker 측 시각) vs IngestEnvelopes 진입 시각.
 	// 운영 가시화 — broker vs grpc path 의 정량적 비교, P99 추세 모니터링.
 	latency LatencyTracker
@@ -133,6 +138,11 @@ func NewServer(cfg Config, logger *slog.Logger, consumers ...TickConsumer) *Serv
 		logger:     logger,
 		conflation: NewConflation(),
 		metrics:    metrics.NewRegistry(),
+		ready:      newReadiness(cfg.WarmupDuration(), cfg.WarmupMaxDuration()),
+	}
+	// dual-active forwarder HA — 다중 tick-source 구독 시 (source,seq) dedup.
+	if cfg.TickDedup {
+		s.dedup = newTickDedup()
 	}
 	if cfg.BestEnabled {
 		s.best = NewBestConsumer(BestOptions{
@@ -544,6 +554,14 @@ func (s *Server) IngestEnvelopes(body []byte, baseTick *Tick) {
 
 	ingressTS := time.Now()
 	for _, env := range envs {
+		// dual-active forwarder HA — (source, seq) 중복 tick drop (dedup 활성 시).
+		// BEST 는 멱등이나 체결·bar 중복 집계 방지. seq==0/src="" 은 통과.
+		if s.dedup != nil && s.dedup.seen(env.Src, env.Seq) {
+			s.totalDrop.Add(1)
+			continue
+		}
+		// warm-up gate — tick 관측 (readiness 판정용).
+		s.ready.markTick()
 		// e2e latency — cooker 가 매긴 ts vs 본 함수 진입 시각.
 		s.latency.Observe(env.TS, ingressTS)
 		// envelope 별 sub-tick — Symbol/Source 를 envelope 으로 덮어쓴다.
@@ -658,6 +676,15 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			"service": "mci-price",
 			"time":    time.Now().UTC().Format(time.RFC3339),
 		})
+	})
+	// warm-up gate — 인스턴스가 tick 을 충분히 봐 BEST 가 완전해지면 200, 아니면 503.
+	// edge round_robin / LB healthcheck 가 소비 → warm-up 중 인스턴스는 라우팅 skip.
+	mux.HandleFunc("GET /v1/ready", func(w http.ResponseWriter, r *http.Request) {
+		if s.ready.isReady() {
+			writeJSON(w, http.StatusOK, map[string]any{"ready": true})
+			return
+		}
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ready": false, "reason": "warming up"})
 	})
 	mux.HandleFunc("GET /v1/price-stats", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.Stats())

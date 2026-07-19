@@ -57,6 +57,7 @@ func (s *Server) DevTickHandler() http.HandlerFunc {
 		// 정상 path 와 동일한 카운터 / consumer 호출.
 		s.totalRecv.Add(1)
 		s.totalMatch.Add(1)
+		s.ready.markTick() // warm-up gate (IngestEnvelopes 우회 경로도 마킹)
 		s.conflation.Update(tick)
 		for _, c := range s.consumers {
 			c.OnTick(tick)

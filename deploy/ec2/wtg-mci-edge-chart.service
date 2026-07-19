@@ -1,0 +1,31 @@
+# WTG mci-edge-chart (DMZ) — TLS + JWT 인증 + IP CIDR + rate-limit →
+# Internal mci-chart(:8086) reverse-proxy (REST + WS 봉).
+# mci-edge-price 유닛과 동일 패턴 — TLS/CIDR 는 필요 시 flag 추가 (env 로 주입).
+[Unit]
+Description=WTG mci-edge-chart — DMZ 차트 게이트웨이 (→ mci-chart)
+After=network-online.target wtg-mci-chart.service
+Wants=network-online.target wtg-mci-chart.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-chart \
+    --listen=:8087 \
+    --upstream=http://127.0.0.1:8086 \
+    --jwt-pub=/home/winway/nh-fxallone-server/wtg/etc/jwt-public.pem
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-edge-chart
+
+[Install]
+WantedBy=multi-user.target

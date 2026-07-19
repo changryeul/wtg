@@ -1,0 +1,32 @@
+# WTG mci-chart — TimescaleDB historical 봉 REST + ws 라이브 봉 (SubscribeBar).
+# TimescaleDB(외부) + mci-price(라이브 봉 SubscribeBar) 의존.
+# DSN 은 wtg.env 의 WTG_DSN (postgres://... — quote_bars hypertable).
+[Unit]
+Description=WTG mci-chart — 봉 차트 REST + 라이브 ws (TimescaleDB + mci-price)
+After=network-online.target wtg-mci-price.service
+Wants=network-online.target wtg-mci-price.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/nh-fxallone-server/wtg
+EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-chart \
+    --listen=:8086 \
+    --dsn=${WTG_DSN} \
+    --upstream=127.0.0.1:50051 \
+    --subscriber-id=mci-chart
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-chart
+
+[Install]
+WantedBy=multi-user.target

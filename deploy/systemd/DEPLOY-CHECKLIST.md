@@ -115,7 +115,22 @@ sudo systemctl start wtg-fx-sync.service     # 부팅 대기 없이 즉시 1회
 > seed-catalog 를 fx-sync 뒤에 재실행하면 customer_margin 이 덮여 다음 timer 까지 공백.
 > Oracle 확정 전까지 source=file(`etc/db-mirror/*.json`) — 실 데이터로 교체 후 sync.
 
-### 4.2 (선택) 다중 인스턴스 HA
+### 4.2 (선택) 차트 — mci-chart / mci-edge-chart
+
+TimescaleDB 필요. DB 미구축이면 skip (시세/매매는 chart 없이 동작).
+
+```bash
+# 사전: TimescaleDB 에 quote_bars hypertable (etc/sql/quote_bars.sql) + WTG_DSN 설정.
+psql "$WTG_DSN" -f /home/winway/nh-fxallone-server/wtg/etc/sql/quote_bars.sql
+
+sudo systemctl enable --now wtg-mci-chart      # :8086 (REST + 라이브 봉)
+sleep 3
+sudo systemctl enable --now wtg-mci-edge-chart # :8087 (DMZ 게이트웨이)
+```
+> mci-chart 는 mci-price 의 SubscribeBar 로 라이브 봉을 받고 TimescaleDB 에 영속.
+> DMZ TLS/CIDR/rate-limit 는 필요 시 유닛 ExecStart 에 flag 추가.
+
+### 4.3 (선택) 다중 인스턴스 HA
 
 단일 인스턴스면 skip. HA 로 갈 땐 `deploy/ec2/ha/README.md` 절차
 (forwarder hub + `wtg-mci-price@N` + `WTG_TICK_HUB`). 검증 `make price-ha-verify`.

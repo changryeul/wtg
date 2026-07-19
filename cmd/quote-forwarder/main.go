@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/winwaysystems/wtg/internal/forwarder/tickhub"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/otelinit"
@@ -207,6 +208,7 @@ func main() {
 		feedBuffer   = flag.Int("feed-buffer", 8192, "feed 별 reader → worker 채널 버퍼 크기. 가득 차면 reader 가 명시적 drop (kernel silent drop 회피, queue_drop 카운터로 가시화).")
 		publishMode  = flag.String("publish-mode", "grpc", "envelope publish 전송 path: grpc (mci-price 직접 PublishTick — 신규 구축 기본) | broker (PRICE exchange broadcast — NH 레거시 interop) | both (전환기 dual-write 진단)")
 		priceGRPCURL = flag.String("price-grpc", "127.0.0.1:50051", "grpc/both 모드에서 사용할 mci-price gRPC 주소. ws 가 아니라 grpc — host:port")
+		tickListen   = flag.String("tick-listen", "127.0.0.1:50060", "hub 모드에서 TickIngestService gRPC 서버 listen 주소 (mci-price 가 SubscribeTicks 로 dial-in). 시세 gRPC-only HA")
 		otelEndpoint = flag.String("otel-endpoint", "", "OTel OTLP gRPC endpoint (비면 비활성)")
 		otelInsecure = flag.Bool("otel-insecure", false, "OTel gRPC TLS 없음 (dev)")
 		otelStdout   = flag.Bool("otel-stdout", false, "OTel span stdout (debug)")
@@ -249,8 +251,8 @@ func main() {
 	// grpc 모드는 broker 의 시세 fan-out 부하를 분리해서 broker 가 매매 RPC 에만
 	// 집중하도록 한다.
 	mode := strings.ToLower(*publishMode)
-	if mode != "broker" && mode != "grpc" && mode != "both" {
-		logger.Error("--publish-mode 는 broker / grpc / both 중 하나", slog.String("got", mode))
+	if mode != "broker" && mode != "grpc" && mode != "both" && mode != "hub" {
+		logger.Error("--publish-mode 는 broker / grpc / both / hub 중 하나", slog.String("got", mode))
 		os.Exit(2)
 	}
 	logger.Info("publish 설정",
@@ -271,6 +273,19 @@ func main() {
 		}
 		sharedGRPCPub = gp
 		defer sharedGRPCPub.Close()
+	}
+	// hub 모드 — forwarder 가 TickIngestService 서버. mci-price 들이 dial-in 구독,
+	// forwarder 가 구독자 전체에 fan-out (broker FANOUT 대체, gRPC-only HA).
+	var sharedHubPub *hubPublisher
+	if mode == "hub" {
+		hub := tickhub.New(logger)
+		hubSrv, herr := startTickHubServer(*tickListen, hub, logger)
+		if herr != nil {
+			logger.Error("tick 허브 서버 초기화 실패", slog.Any("err", herr))
+			os.Exit(1)
+		}
+		defer hubSrv.GracefulStop()
+		sharedHubPub = newHubPublisher(hub)
 	}
 
 	// 각 feed 마다 (UDP listener + 독립 broker connection) goroutine.
@@ -360,6 +375,9 @@ func main() {
 			} else {
 				pub = bp
 			}
+		} else if mode == "hub" {
+			// hub mode — forwarder 가 서버. 구독자(mci-price) 전체에 fan-out.
+			pub = sharedHubPub
 		} else {
 			// grpc mode — broker connection 자체 skip. 4 feed 가 공유하는 grpc stream.
 			pub = sharedGRPCPub

@@ -80,6 +80,12 @@ type Config struct {
 	// (mci-push 의 동등 옵션과 같은 패턴 — 자세히는 docs/push-monitoring.md 참조)
 	NoBroker bool
 
+	// TickSource — quote-forwarder TickIngestService 주소 CSV (forwarder 의
+	// --tick-listen). 채워지면 mci-price 가 각 주소에 SubscribeTicks 로 dial-in 해서
+	// raw tick 을 구독 (broker subscribe / PublishTick 대체). 시세 gRPC-only HA fan-in
+	// (docs/price-ha-grpc.md). 다중 지정(dual-active forwarder HA) 시 중복 tick 주의.
+	TickSource string
+
 	LogLevel string
 
 	// gRPC TLS — Internal mci-price 의 PriceService 가 mTLS 요구하도록.
@@ -554,6 +560,8 @@ func LoadConfig(args []string) (Config, error) {
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드")
 	fs.BoolVar(&cfg.NoBroker, "no-broker", cfg.NoBroker,
 		"broker 연결 skip — gRPC PublishTick + DevTick 만 입력 source 로 사용 (dev/test 또는 운영 broker bypass 전환)")
+	fs.StringVar(&cfg.TickSource, "tick-source", cfg.TickSource,
+		"quote-forwarder TickIngestService 주소 CSV (forwarder --tick-listen). SubscribeTicks 로 dial-in 구독. 시세 gRPC-only HA fan-in")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.GRPCTLSCertFile, "grpc-tls-cert", cfg.GRPCTLSCertFile, "gRPC TLS 서버 cert PEM")
 	fs.StringVar(&cfg.GRPCTLSKeyFile, "grpc-tls-key", cfg.GRPCTLSKeyFile, "gRPC TLS 서버 key PEM")

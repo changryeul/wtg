@@ -457,3 +457,130 @@ var PriceService_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "wtg/v1/price.proto",
 }
+
+const (
+	TickIngestService_SubscribeTicks_FullMethodName = "/wtg.v1.TickIngestService/SubscribeTicks"
+)
+
+// TickIngestServiceClient is the client API for TickIngestService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// TickIngestService — quote-forwarder 가 host (시세 gRPC-only HA fan-in).
+// broker FANOUT 대체: mci-price 가 SubscribeTicks 로 dial-in 해서 raw tick stream 을
+// 구독한다. forwarder 는 dial-in 한 구독자 전체에 fan-out (slow consumer 자동 격리).
+//
+// 방향이 PublishTick 과 반대:
+//
+//	mci-price (client) ─SubscribeTicks─▶ forwarder (server) ─stream Tick─▶ mci-price
+//
+// 다중 mci-price 가 각자 dial → 각자 full 스트림 → 결정적 BEST (Active-Active).
+// forwarder 재시작 시 mci-price 가 자동 재 dial (self-heal). 상세 docs/price-ha-grpc.md.
+type TickIngestServiceClient interface {
+	SubscribeTicks(ctx context.Context, in *SubscribeTicksRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Tick], error)
+}
+
+type tickIngestServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewTickIngestServiceClient(cc grpc.ClientConnInterface) TickIngestServiceClient {
+	return &tickIngestServiceClient{cc}
+}
+
+func (c *tickIngestServiceClient) SubscribeTicks(ctx context.Context, in *SubscribeTicksRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Tick], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &TickIngestService_ServiceDesc.Streams[0], TickIngestService_SubscribeTicks_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[SubscribeTicksRequest, Tick]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TickIngestService_SubscribeTicksClient = grpc.ServerStreamingClient[Tick]
+
+// TickIngestServiceServer is the server API for TickIngestService service.
+// All implementations must embed UnimplementedTickIngestServiceServer
+// for forward compatibility.
+//
+// TickIngestService — quote-forwarder 가 host (시세 gRPC-only HA fan-in).
+// broker FANOUT 대체: mci-price 가 SubscribeTicks 로 dial-in 해서 raw tick stream 을
+// 구독한다. forwarder 는 dial-in 한 구독자 전체에 fan-out (slow consumer 자동 격리).
+//
+// 방향이 PublishTick 과 반대:
+//
+//	mci-price (client) ─SubscribeTicks─▶ forwarder (server) ─stream Tick─▶ mci-price
+//
+// 다중 mci-price 가 각자 dial → 각자 full 스트림 → 결정적 BEST (Active-Active).
+// forwarder 재시작 시 mci-price 가 자동 재 dial (self-heal). 상세 docs/price-ha-grpc.md.
+type TickIngestServiceServer interface {
+	SubscribeTicks(*SubscribeTicksRequest, grpc.ServerStreamingServer[Tick]) error
+	mustEmbedUnimplementedTickIngestServiceServer()
+}
+
+// UnimplementedTickIngestServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedTickIngestServiceServer struct{}
+
+func (UnimplementedTickIngestServiceServer) SubscribeTicks(*SubscribeTicksRequest, grpc.ServerStreamingServer[Tick]) error {
+	return status.Error(codes.Unimplemented, "method SubscribeTicks not implemented")
+}
+func (UnimplementedTickIngestServiceServer) mustEmbedUnimplementedTickIngestServiceServer() {}
+func (UnimplementedTickIngestServiceServer) testEmbeddedByValue()                           {}
+
+// UnsafeTickIngestServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to TickIngestServiceServer will
+// result in compilation errors.
+type UnsafeTickIngestServiceServer interface {
+	mustEmbedUnimplementedTickIngestServiceServer()
+}
+
+func RegisterTickIngestServiceServer(s grpc.ServiceRegistrar, srv TickIngestServiceServer) {
+	// If the following call panics, it indicates UnimplementedTickIngestServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&TickIngestService_ServiceDesc, srv)
+}
+
+func _TickIngestService_SubscribeTicks_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(SubscribeTicksRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(TickIngestServiceServer).SubscribeTicks(m, &grpc.GenericServerStream[SubscribeTicksRequest, Tick]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type TickIngestService_SubscribeTicksServer = grpc.ServerStreamingServer[Tick]
+
+// TickIngestService_ServiceDesc is the grpc.ServiceDesc for TickIngestService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var TickIngestService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "wtg.v1.TickIngestService",
+	HandlerType: (*TickIngestServiceServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "SubscribeTicks",
+			Handler:       _TickIngestService_SubscribeTicks_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "wtg/v1/price.proto",
+}

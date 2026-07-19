@@ -75,6 +75,24 @@ service PriceService {
   rpc SubscribeAlgo(AlgoSubscribeRequest) returns (stream AlgoQuote);
 }
 
+// TickIngestService — quote-forwarder 가 host (시세 gRPC-only HA fan-in).
+// broker FANOUT 대체: mci-price 가 SubscribeTicks 로 dial-in 해서 raw tick stream 을
+// 구독한다. forwarder 는 dial-in 한 구독자 전체에 fan-out (slow consumer 자동 격리).
+//
+// 방향이 PublishTick 과 반대:
+//   mci-price (client) ─SubscribeTicks─▶ forwarder (server) ─stream Tick─▶ mci-price
+//
+// 다중 mci-price 가 각자 dial → 각자 full 스트림 → 결정적 BEST (Active-Active).
+// forwarder 재시작 시 mci-price 가 자동 재 dial (self-heal). 상세 docs/price-ha-grpc.md.
+service TickIngestService {
+  rpc SubscribeTicks(SubscribeTicksRequest) returns (stream Tick);
+}
+
+// SubscribeTicksRequest — mci-price 구독 요청.
+message SubscribeTicksRequest {
+  string subscriber_id = 1;  // mci-price 인스턴스 식별 (진단/로그)
+}
+
 // AlgoSubscribeRequest — 시스템 트레이딩 client 의 구독 요청.
 message AlgoSubscribeRequest {
   // 구독 clientid — 다중 인스턴스 구분 + admin 진단 (예: "hedge-bot-01").

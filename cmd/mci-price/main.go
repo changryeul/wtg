@@ -479,6 +479,23 @@ func main() {
 		logger.Info("Swap metrics 등록 — wtg_swap_lock_*, wtg_swap_validate_total, wtg_swap_consume_total, wtg_consume_swap_partial_race_total")
 	}
 
+	// 5b) TickSubscriber — quote-forwarder TickIngestService 에 dial-in 구독
+	//     (시세 gRPC-only HA fan-in). broker subscribe / PublishTick 수신 대체.
+	//     다중 forwarder(dual-active) 지정 시 각각 goroutine.
+	tickSubID := "mci-price"
+	if h, err := os.Hostname(); err == nil && h != "" {
+		tickSubID = "mci-price@" + h
+	}
+	for _, addr := range strings.Split(cfg.TickSource, ",") {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		sub := price.NewTickSubscriber(srv, addr, tickSubID, logger)
+		go sub.Run(ctx)
+		logger.Info("TickSubscriber 기동 (gRPC-only HA fan-in)", slog.String("tick_source", addr))
+	}
+
 	// 6) Server 시작 (블로킹).
 	if err := srv.Start(ctx); err != nil {
 		logger.Error("mci-price 종료", slog.Any("error", err))

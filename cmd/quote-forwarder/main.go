@@ -1,19 +1,19 @@
-// quote-forwarder — mds 의 UDP FIX 시세를 mymq broker 로 broadcast 발행한다.
+// quote-forwarder — UDP FIX 시세를 파싱·정규화해 mci-price 로 발행하는 수집 어댑터.
 //
-// 흐름:
+// 흐름 (신규 구축 기본 — gRPC-only):
 //
-//	replay_smb2/kmb2/ebs2  ─UDP→  forwarder  ─FCCast/SubBroadcast→  broker
-//	                                                                    ↓
-//	                                                                mci-push (representative receiver)
-//	                                                                    ↓
-//	                                                                ws → 브라우저
+//	LP/mds/mock-lp  ─UDP FIX→  forwarder  ─gRPC PublishTick→  mci-price
+//	                            (35=W/X 파싱 → v1 envelope)   (BEST·마진·고객별)
 //
 // FIX 4.4 의 Market Data Snapshot(35=W) / Incremental Refresh(35=X) 를 파싱해서
-// 의미 있는 JSON envelope (symbol/bid/ask/trade px·qty) 으로 변환한 뒤 broadcast.
+// 의미 있는 JSON envelope (symbol/bid/ask/trade px·qty) 으로 변환한 뒤 발행.
 // 원본 FIX wire 가 필요하면 --include-fix=true 로 envelope 에 같이 박는다.
 //
-// broadcast prefix 의 LogonID 를 빈 값으로 두므로 mci-push 의 dispatcher 가
-// 전체 ws 사용자에게 fan-out 한다 (시세는 사용자별 구독이 아닌 공통 채널).
+// 발행 경로(--publish-mode):
+//   - grpc (기본): mci-price 직접 PublishTick. 하류(SubscribeQuote)와 일관된 gRPC-native.
+//   - broker: PRICE exchange 로 FCCast/SubBroadcast — **NH 레거시 mymqd interop 전용**.
+//     (LogonID 빈 값 → mci-push dispatcher 가 전체 ws fan-out. 시세는 공통 채널)
+//   - both: 전환기 dual-write 진단.
 package main
 
 import (
@@ -205,7 +205,7 @@ func main() {
 		batchMax     = flag.Int("batch-max", 14, "한 broker message 에 묶을 envelope 최대 개수 (1=batch 비활성). pushdata.msgb 1512B 한계 — typical envelope 105B × 14 = 1485B (마진 27B). over-size 시 split fallback 으로 안전.")
 		batchTimeout = flag.Duration("batch-timeout", 10*time.Millisecond, "batch 가 batch-max 에 도달 못해도 이 시간 후 강제 flush")
 		feedBuffer   = flag.Int("feed-buffer", 8192, "feed 별 reader → worker 채널 버퍼 크기. 가득 차면 reader 가 명시적 drop (kernel silent drop 회피, queue_drop 카운터로 가시화).")
-		publishMode  = flag.String("publish-mode", "broker", "envelope publish 전송 path: broker (PRICE exchange, 기본) | grpc (mci-price 직접 PublishTick) | both (dual-write 진단)")
+		publishMode  = flag.String("publish-mode", "grpc", "envelope publish 전송 path: grpc (mci-price 직접 PublishTick — 신규 구축 기본) | broker (PRICE exchange broadcast — NH 레거시 interop) | both (전환기 dual-write 진단)")
 		priceGRPCURL = flag.String("price-grpc", "127.0.0.1:50051", "grpc/both 모드에서 사용할 mci-price gRPC 주소. ws 가 아니라 grpc — host:port")
 		otelEndpoint = flag.String("otel-endpoint", "", "OTel OTLP gRPC endpoint (비면 비활성)")
 		otelInsecure = flag.Bool("otel-insecure", false, "OTel gRPC TLS 없음 (dev)")

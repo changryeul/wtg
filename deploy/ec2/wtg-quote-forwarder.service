@@ -16,8 +16,8 @@ EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
 ExecStart=/home/winway/nh-fxallone-server/wtg/bin/quote-forwarder \
     --multi=SMB:30044,KMB:30045 \
     --bind=127.0.0.1 \
-    --broker-host=${BROKER_HOST} \
-    --broker-port=${BROKER_PORT} \
+    --publish-mode=grpc \
+    --price-grpc=${WTG_PRICE_GRPC} \
     --metrics=127.0.0.1:9091
 
 Restart=on-failure

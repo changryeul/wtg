@@ -174,9 +174,12 @@ func runLoginChain(ctx context.Context, deps *Deps, signMsg, clientIP string) (*
 	// ② OTP seam — 이번 범위 제외 (스펙 §2). 도입 시 W1107A01 호출 삽입 지점.
 
 	// ③ 세션개설.
+	// COMHDR maca / input fxUserNm 은 엔진 로그인내역(CSC015L)의 NOT NULL 컬럼.
+	// web 게이트웨이는 클라이언트 MAC 을 알 수 없으므로 "WEB" placeholder,
+	// 표시명은 아직 미확보라 lgnId 로 채운다 (엔진은 CSC004M 에 실명 보유).
 	out3, err := callChainStep(ctx, deps, "session", cfg.sessionAlias(), res.LgnID,
-		map[string]interface{}{"loip": clientIP},
-		map[string]interface{}{"prGb": "1", "fxUserNo": res.LgnID, "lgnId": res.LgnID})
+		map[string]interface{}{"loip": clientIP, "maca": "WEB"},
+		map[string]interface{}{"prGb": "1", "fxUserNo": res.LgnID, "fxUserNm": res.LgnID, "lgnId": res.LgnID})
 	if err != nil {
 		return nil, err
 	}

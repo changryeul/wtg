@@ -41,6 +41,14 @@ echo "==> 라우팅 alias (transaction alias → exchange/routing_key)"
   '{"alias":"W1101T01","exchange":"dom","routing_key":"W1101T01","active":true,"comment":"공인인증 테스트 트랜잭션 (dev)"}' >/dev/null
 echo "  put wtg/routes/W1101T01 → dom/W1101T01"
 
+# chain 로그인 사슬 (--login-mode=chain) — 미시드여도 dom/<alias> fallback 으로
+# 동작하지만, 정책/감사 일관성 위해 명시 시드 (docs/auth.md §3.1).
+for tc in W1101S02 W1130A02 W1130A03; do
+  "$ETCDCTL" --endpoints="$EP" put "wtg/routes/$tc" \
+    "{\"alias\":\"$tc\",\"exchange\":\"dom\",\"routing_key\":\"$tc\",\"active\":true,\"comment\":\"chain 로그인 사슬\"}" >/dev/null
+  echo "  put wtg/routes/$tc → dom/$tc"
+done
+
 echo "==> user-profiles (usid→Site/Tier — login JWT claims 용)"
 "$ETCDCTL" --endpoints="$EP" put wtg/auth/user-profiles/tester01 \
   '{"site":"HQ","tier":"VIP"}' >/dev/null

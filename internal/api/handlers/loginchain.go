@@ -3,9 +3,14 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
 	"strings"
 
+	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/routing"
 )
@@ -182,4 +187,77 @@ func strField(m map[string]interface{}, key string) string {
 		return strings.TrimSpace(v)
 	}
 	return ""
+}
+
+// chainLoginData 는 chain 모드의 /v1/login 요청 data.
+type chainLoginData struct {
+	SignMsg string `json:"signMsg"`
+}
+
+// loginViaChain 은 chain 모드의 /v1/login 처리 (스펙 §4).
+// 사슬 완주 후 세션/JWT 발급은 legacy 와 동일하게 finishLogin 공유.
+func loginViaChain(deps *Deps, w http.ResponseWriter, r *http.Request,
+	req LoginRequest, channel string,
+) {
+	var in chainLoginData
+	if len(req.Data) > 0 {
+		if err := json.Unmarshal(req.Data, &in); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_json", "data 파싱 실패: "+err.Error())
+			return
+		}
+	}
+	if in.SignMsg == "" {
+		writeError(w, http.StatusBadRequest, "missing_sign_msg",
+			"chain 로그인은 data.signMsg (인증서명) 필수")
+		return
+	}
+
+	res, err := runLoginChain(r.Context(), deps, in.SignMsg, clientIPOf(r))
+	if err != nil {
+		var stepErr *chainStepError
+		if errors.As(err, &stepErr) {
+			// 엔진 거부 — errn 그대로 노출 (위임 원칙, legacy 와 동일 포맷).
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error":   "login_failed",
+				"errn":    stepErr.Errn,
+				"errm":    stepErr.Errm,
+				"message": stepErr.Error(),
+			})
+			return
+		}
+		deps.Logger.WarnContext(r.Context(), "chain 로그인 실패",
+			slog.String("rid", middleware.RequestIDFromContext(r.Context())),
+			slog.Any("error", err))
+		status, code, msg := mapBrokerError(err)
+		writeError(w, status, code, msg)
+		return
+	}
+
+	// 응답 data — cifNo 는 노출하지 않는다 (실명번호, 스펙 §4).
+	dataOut, _ := json.Marshal(map[string]string{
+		"lgnId":          res.LgnID,
+		"svrCert":        res.SvrCert,
+		"fwdPreChkPopYn": res.FwdPreChkPopYn,
+		"apllBsopYmd":    res.ApllBsopYmd,
+		"wlbrYmd":        res.WlbrYmd,
+		"nxtBsopYmd":     res.NxtBsopYmd,
+		"lgnTs":          res.LgnTs,
+	})
+	finishLogin(deps, w, r, channel, res.LgnID, nil, res.LgnIdntCon, res.CifNo, dataOut)
+}
+
+// clientIPOf 는 클라이언트 IP — X-Forwarded-For (edge 뒤) 첫 항목, 없으면 RemoteAddr.
+// W1130A02 의 COMHDR loip 로 전달되어 엔진 세션 식별번호(lgnIdntCon) 재료가 된다.
+func clientIPOf(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i > 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

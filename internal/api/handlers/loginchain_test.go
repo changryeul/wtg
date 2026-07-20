@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -232,5 +235,107 @@ func TestRunLoginChainNoSpec(t *testing.T) {
 	_, err := runLoginChain(context.Background(), deps, "SIGNMSG", "10.0.0.7")
 	if err == nil || !strings.Contains(err.Error(), "명세") {
 		t.Errorf("명세 미등록 에러여야 함: %v", err)
+	}
+}
+
+func TestLoginChainHandlerSuccess(t *testing.T) {
+	reg := newChainSvcIO(t)
+	var calls []*mymq.FrameInput
+	caller := chainFakeCaller(t, &calls, map[string]func() (*mymq.Reply, error){
+		"W1101S02": func() (*mymq.Reply, error) {
+			return &mymq.Reply{Body: chainReply(t, reg, "W1101S02", map[string]interface{}{
+				"cifNo": "1234567890", "lgnId": "hong01", "svrCert": "CERTDATA",
+			})}, nil
+		},
+		"W1130A02": func() (*mymq.Reply, error) {
+			return &mymq.Reply{Body: chainReply(t, reg, "W1130A02", map[string]interface{}{
+				"lgnIdntCon": "IDNT-1", "apllBsopYmd": "20260720",
+			})}, nil
+		},
+	})
+	deps := chainDeps(caller, reg)
+	store := newStoreForTest(t)
+	deps.Sessions = store
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/login",
+		strings.NewReader(`{"data":{"signMsg":"SIGNMSG"}}`))
+	req.RemoteAddr = "10.0.0.7:51234"
+	rr := httptest.NewRecorder()
+	Login(deps)(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp LoginResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.SessionID == "" {
+		t.Fatal("session_id 없음")
+	}
+	// 세션 검증 — usid=lgnId, LgnIdntCon/CifNo 보관, Cookie nil.
+	sess, err := store.Get(context.Background(), resp.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Usid != "hong01" || sess.LgnIdntCon != "IDNT-1" || sess.CifNo != "1234567890" {
+		t.Errorf("세션: usid=%q lgn=%q cif=%q", sess.Usid, sess.LgnIdntCon, sess.CifNo)
+	}
+	if sess.Cookie != nil {
+		t.Error("chain 세션에 Cookie 가 있으면 안 됨")
+	}
+	// 응답 data — 영업일/lgnId 노출 + cifNo 미노출.
+	var data map[string]any
+	if err := json.Unmarshal(resp.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["apllBsopYmd"] != "20260720" || data["lgnId"] != "hong01" {
+		t.Errorf("data=%v", data)
+	}
+	if _, ok := data["cifNo"]; ok {
+		t.Error("cifNo 는 응답에 노출 금지")
+	}
+}
+
+func TestLoginChainHandlerCertRejected(t *testing.T) {
+	reg := newChainSvcIO(t)
+	var calls []*mymq.FrameInput
+	caller := chainFakeCaller(t, &calls, map[string]func() (*mymq.Reply, error){
+		"W1101S02": func() (*mymq.Reply, error) {
+			return &mymq.Reply{Errn: 91001, ErrMsg: "인증서 검증 실패"}, nil
+		},
+	})
+	deps := chainDeps(caller, reg)
+	deps.Sessions = newStoreForTest(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/login",
+		strings.NewReader(`{"data":{"signMsg":"BAD"}}`))
+	rr := httptest.NewRecorder()
+	Login(deps)(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &body)
+	if body["error"] != "login_failed" || body["errn"] != float64(91001) {
+		t.Errorf("body=%v", body)
+	}
+}
+
+func TestLoginChainHandlerMissingSignMsg(t *testing.T) {
+	deps := chainDeps(&fakeCaller{reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+		t.Fatal("broker 호출되면 안 됨")
+		return nil, nil
+	}}, newChainSvcIO(t))
+	deps.Sessions = newStoreForTest(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/login",
+		strings.NewReader(`{"data":{}}`))
+	rr := httptest.NewRecorder()
+	Login(deps)(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

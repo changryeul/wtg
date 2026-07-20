@@ -105,6 +105,13 @@ func Login(deps *Deps) http.HandlerFunc {
 			channel = "WEB"
 		}
 
+		// chain 모드 — 엔진 인증 사슬 (W1101S02→W1130A02) 오케스트레이션.
+		// legacy (단일 LOGON + cookie_t) 와 상호 배타 (--login-mode).
+		if deps.LoginChain != nil {
+			loginViaChain(deps, w, r, req, channel)
+			return
+		}
+
 		frame := &mymq.FrameInput{
 			Func: mymq.FCTran,
 			Subc: mymq.SubTranMsg,
@@ -150,65 +157,7 @@ func Login(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		sid, err := auth.NewSessionID()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "rng", err.Error())
-			return
-		}
-		ttl := deps.SessionTTL
-		if ttl <= 0 {
-			ttl = defaultSessionTTL
-		}
-		now := time.Now()
-		// Profile 권위 출처 — UserProfileResolver 로 usid → (Site, Tier).
-		// 클라이언트가 body 로 보낸 Site/Tier (req.Site/req.Tier) 는 무시.
-		// resolver 가 nil 이거나 미등록 usid 면 빈 값 → 시세 quote 매칭 비활성
-		// (raw broadcast 만 수신). 운영자가 mci-admin 에서 등록할 때까지 안전한
-		// degraded mode 로 동작.
 		usid := cookieUsid(reply.Cookie)
-		var site, tier string
-		if deps.UserProfiles != nil {
-			up, err := deps.UserProfiles.Resolve(r.Context(), usid)
-			if err == nil {
-				site = string(up.Site)
-				tier = string(up.Tier)
-			} else if !errors.Is(err, auth.ErrUserProfileNotFound) {
-				deps.Logger.WarnContext(r.Context(), "UserProfile Resolve 실패 — 빈 Profile 로 진행",
-					slog.String("usid", usid),
-					slog.Any("error", err),
-				)
-			}
-		}
-		profile := session.Profile{
-			Channel: session.Channel(channel),
-			Site:    session.Site(site),
-			Tier:    session.Tier(tier),
-		}
-		sess := &auth.Session{
-			ID:        sid,
-			Usid:      usid,
-			Channel:   channel,
-			Cookie:    reply.Cookie,
-			IssuedAt:  now,
-			ExpiresAt: now.Add(ttl),
-			Profile:   profile,
-			LogonID:   session.LogonID(usid), // 임시: Usid 와 동일. broadcast prefix 가 별도면 조정.
-		}
-		if err := deps.Sessions.Put(r.Context(), sess); err != nil {
-			deps.Logger.ErrorContext(r.Context(), "세션 저장 실패",
-				slog.Any("error", err),
-			)
-			writeError(w, http.StatusInternalServerError, "session_store", err.Error())
-			return
-		}
-
-		// auth.md §10 audit — 추후 audit emitter 통합 시 LOGIN_SUCCESS 기록.
-		deps.Logger.InfoContext(r.Context(), "로그인 성공",
-			slog.String("usid", sess.Usid),
-			slog.String("sid", sid),
-			slog.String("chan", channel),
-		)
-
 		var dataOut json.RawMessage
 		if len(reply.Body) > 0 {
 			if json.Valid(reply.Body) {
@@ -220,65 +169,135 @@ func Login(deps *Deps) http.HandlerFunc {
 			}
 		}
 
-		resp := LoginResponse{
-			SessionID: sid,
-			ExpiresAt: sess.ExpiresAt,
-			Channel:   channel,
-			Data:      dataOut,
-		}
-
-		// access JWT 발급 — Issuer 가 구성된 경우.
-		if deps.JWTIssuer != nil {
-			accessTTL := deps.AccessTokenTTL
-			if accessTTL <= 0 {
-				accessTTL = defaultAccessTTL
-			}
-			accessExp := now.Add(accessTTL)
-			tok, err := deps.JWTIssuer.Sign(auth.Claims{
-				SID:  sid,
-				Usid: sess.Usid,
-				Chan: channel,
-				Site: site,
-				Tier: tier,
-				EXP:  accessExp.Unix(),
-			})
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "jwt_sign", err.Error())
-				return
-			}
-			resp.AccessToken = tok
-			resp.AccessExpAt = &accessExp
-		}
-
-		// refresh token 발급 — RefreshStore 가 구성된 경우.
-		if deps.RefreshStore != nil {
-			refreshTTL := deps.RefreshTokenTTL
-			if refreshTTL <= 0 {
-				refreshTTL = defaultRefreshTTL
-			}
-			refreshExp := now.Add(refreshTTL)
-			rt, err := auth.NewRefreshTokenString()
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "rng", err.Error())
-				return
-			}
-			if err := deps.RefreshStore.Put(r.Context(), &auth.RefreshToken{
-				Token:     rt,
-				SID:       sid,
-				Usid:      sess.Usid,
-				Channel:   channel,
-				IssuedAt:  now,
-				ExpiresAt: refreshExp,
-			}); err != nil {
-				writeError(w, http.StatusInternalServerError, "refresh_store", err.Error())
-				return
-			}
-			resp.RefreshToken = rt
-			resp.RefreshExpAt = &refreshExp
-		}
-
-		writeJSON(w, http.StatusOK, resp)
+		finishLogin(deps, w, r, channel, usid, reply.Cookie, "", "", dataOut)
 	}
+}
+
+// finishLogin 은 인증 완료 후 공통 마무리 — 세션 저장 + JWT/refresh 발급 + 응답.
+// legacy (cookie_t) / chain (lgnIdntCon) 양쪽이 공유한다.
+// cookie 와 lgnIdntCon/cifNo 는 상호 배타 — 모드에 따라 한쪽만 채워진다.
+func finishLogin(deps *Deps, w http.ResponseWriter, r *http.Request,
+	channel, usid string, cookie *mymq.Cookie, lgnIdntCon, cifNo string,
+	dataOut json.RawMessage,
+) {
+	sid, err := auth.NewSessionID()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "rng", err.Error())
+		return
+	}
+	ttl := deps.SessionTTL
+	if ttl <= 0 {
+		ttl = defaultSessionTTL
+	}
+	now := time.Now()
+	// Profile 권위 출처 — UserProfileResolver 로 usid → (Site, Tier).
+	// 클라이언트가 body 로 보낸 Site/Tier (req.Site/req.Tier) 는 무시.
+	// resolver 가 nil 이거나 미등록 usid 면 빈 값 → 시세 quote 매칭 비활성
+	// (raw broadcast 만 수신). 운영자가 mci-admin 에서 등록할 때까지 안전한
+	// degraded mode 로 동작.
+	var site, tier string
+	if deps.UserProfiles != nil {
+		up, err := deps.UserProfiles.Resolve(r.Context(), usid)
+		if err == nil {
+			site = string(up.Site)
+			tier = string(up.Tier)
+		} else if !errors.Is(err, auth.ErrUserProfileNotFound) {
+			deps.Logger.WarnContext(r.Context(), "UserProfile Resolve 실패 — 빈 Profile 로 진행",
+				slog.String("usid", usid),
+				slog.Any("error", err),
+			)
+		}
+	}
+	profile := session.Profile{
+		Channel: session.Channel(channel),
+		Site:    session.Site(site),
+		Tier:    session.Tier(tier),
+	}
+	sess := &auth.Session{
+		ID:         sid,
+		Usid:       usid,
+		Channel:    channel,
+		Cookie:     cookie,
+		LgnIdntCon: lgnIdntCon,
+		CifNo:      cifNo,
+		IssuedAt:   now,
+		ExpiresAt:  now.Add(ttl),
+		Profile:    profile,
+		LogonID:    session.LogonID(usid), // 임시: Usid 와 동일. broadcast prefix 가 별도면 조정.
+	}
+	if err := deps.Sessions.Put(r.Context(), sess); err != nil {
+		deps.Logger.ErrorContext(r.Context(), "세션 저장 실패",
+			slog.Any("error", err),
+		)
+		writeError(w, http.StatusInternalServerError, "session_store", err.Error())
+		return
+	}
+
+	// auth.md §10 audit — 추후 audit emitter 통합 시 LOGIN_SUCCESS 기록.
+	deps.Logger.InfoContext(r.Context(), "로그인 성공",
+		slog.String("usid", sess.Usid),
+		slog.String("sid", sid),
+		slog.String("chan", channel),
+	)
+
+	resp := LoginResponse{
+		SessionID: sid,
+		ExpiresAt: sess.ExpiresAt,
+		Channel:   channel,
+		Data:      dataOut,
+	}
+
+	// access JWT 발급 — Issuer 가 구성된 경우.
+	if deps.JWTIssuer != nil {
+		accessTTL := deps.AccessTokenTTL
+		if accessTTL <= 0 {
+			accessTTL = defaultAccessTTL
+		}
+		accessExp := now.Add(accessTTL)
+		tok, err := deps.JWTIssuer.Sign(auth.Claims{
+			SID:  sid,
+			Usid: sess.Usid,
+			Chan: channel,
+			Site: site,
+			Tier: tier,
+			EXP:  accessExp.Unix(),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "jwt_sign", err.Error())
+			return
+		}
+		resp.AccessToken = tok
+		resp.AccessExpAt = &accessExp
+	}
+
+	// refresh token 발급 — RefreshStore 가 구성된 경우.
+	if deps.RefreshStore != nil {
+		refreshTTL := deps.RefreshTokenTTL
+		if refreshTTL <= 0 {
+			refreshTTL = defaultRefreshTTL
+		}
+		refreshExp := now.Add(refreshTTL)
+		rt, err := auth.NewRefreshTokenString()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "rng", err.Error())
+			return
+		}
+		if err := deps.RefreshStore.Put(r.Context(), &auth.RefreshToken{
+			Token:     rt,
+			SID:       sid,
+			Usid:      sess.Usid,
+			Channel:   channel,
+			IssuedAt:  now,
+			ExpiresAt: refreshExp,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "refresh_store", err.Error())
+			return
+		}
+		resp.RefreshToken = rt
+		resp.RefreshExpAt = &refreshExp
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // cookieUsid 는 cookie.Usid (NUL 패딩된 [16]byte) 를 string 으로 trim.

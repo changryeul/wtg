@@ -85,6 +85,25 @@ broker 로 전달(passthrough)한다.
    │ 응답: HttpOnly + Secure 쿠키 또는 Authorization header 로 JWT 회신
 ```
 
+### 3.1 chain 모드 — NH 엔진 인증 사슬 (`--login-mode=chain`)
+
+위 그림은 legacy (단일 LOGON + cookie_t) 기준. NH 엔진은 cookie_t 발급이 없고
+로그인이 **다단계 사슬**이다 — chain 모드에서 mci-api 가 오케스트레이션한다:
+
+```
+POST /v1/login {"data":{"signMsg":"<인증서명>"}}
+  ① W1101S02 공인인증서 인증  → cifNo + lgnId  (fxUserNo ≡ lgnId)
+     (② W1107A01 OTP — 현재 미사용 seam)
+  ③ W1130A02 로그인처리        → lgnIdntCon + 영업일
+  세션: Cookie=nil, LgnIdntCon/CifNo 보관 → JWT/refresh 발급은 legacy 와 동일
+  로그아웃: W1130A03 에 lgnIdntCon 반납 (실패해도 WTG 세션은 삭제)
+```
+
+`lgnIdntCon` 은 엔진의 로그인내역(`TB_FXB_CSC015L`) 정리용일 뿐 거래 서비스가
+검증하지 않는다 — 실효 세션은 WTG JWT/Redis. 조사 근거와 설계 상세는
+`docs/engine-auth-login-mapping.md` +
+`docs/superpowers/specs/2026-07-20-engine-login-chain-design.md`.
+
 ---
 
 ## 4. 흐름 — 인증된 트랜잭션 (예: 신규 주문)

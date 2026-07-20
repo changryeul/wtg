@@ -76,6 +76,8 @@ type sessionDTO struct {
 	Usid       string          `json:"usid"`
 	Channel    string          `json:"channel"`
 	CookieB64  string          `json:"cookie_b64,omitempty"`
+	LgnIdntCon string          `json:"lgn_idnt_con,omitempty"`
+	CifNo      string          `json:"cif_no,omitempty"`
 	IssuedAt   time.Time       `json:"issued_at"`
 	ExpiresAt  time.Time       `json:"expires_at"`
 	LastSeenAt time.Time       `json:"last_seen_at"`
@@ -88,6 +90,8 @@ func toDTO(s *Session) *sessionDTO {
 		ID:         s.ID,
 		Usid:       s.Usid,
 		Channel:    s.Channel,
+		LgnIdntCon: s.LgnIdntCon,
+		CifNo:      s.CifNo,
 		IssuedAt:   s.IssuedAt,
 		ExpiresAt:  s.ExpiresAt,
 		LastSeenAt: s.LastSeenAt,
@@ -107,6 +111,8 @@ func fromDTO(d *sessionDTO) (*Session, error) {
 		ID:         d.ID,
 		Usid:       d.Usid,
 		Channel:    d.Channel,
+		LgnIdntCon: d.LgnIdntCon,
+		CifNo:      d.CifNo,
 		IssuedAt:   d.IssuedAt,
 		ExpiresAt:  d.ExpiresAt,
 		LastSeenAt: d.LastSeenAt,

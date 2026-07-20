@@ -44,10 +44,16 @@ type Session struct {
 	ID         string       // 외부 노출용 불투명 식별자 (auth.md §6 의 sid)
 	Usid       string       // 사용자 ID (cookie.Usid 와 동일, 디버깅/감사용)
 	Channel    string       // 채널 코드 ("WEB" / "ADMIN" / "FIX" 등) - legacy 필드, 신규 코드는 Profile.Channel 사용
-	Cookie     *mymq.Cookie // 매매 엔진에 첨부할 cookie_t
+	Cookie     *mymq.Cookie // 매매 엔진에 첨부할 cookie_t (legacy 로그인. chain 모드는 nil)
 	IssuedAt   time.Time    // 발급 시각
 	ExpiresAt  time.Time    // 만료 시각 (auth.md §6 refresh 만료, default 8h)
 	LastSeenAt time.Time    // 마지막 사용 시각 (슬라이딩 TTL 용)
+
+	// chain 모드 (엔진 인증 사슬) 전용 — cookie_t 대신 보관.
+	// LgnIdntCon 은 W1130A02 가 발급한 엔진 세션 열쇠 (로그아웃 시 W1130A03 반납용).
+	// CifNo 는 실명번호 (고객 식별자 — 응답 미노출, 추후 고객별 스프레드 조회 대비).
+	LgnIdntCon string
+	CifNo      string
 
 	// 시세 fan-out 용. 로그인 시 확정되며 이후 immutable.
 	// TODO: Site/Tier 는 매매엔진 cookie_t 의 Coki 페이로드 스펙 합의 후 채움.

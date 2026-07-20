@@ -255,3 +255,36 @@ func TestRedisStore_PrefixIsolation(t *testing.T) {
 
 // Store 인터페이스 구현 컴파일 타임 보장.
 var _ Store = (*RedisStore)(nil)
+
+// chain 모드 세션 — Cookie 없이 LgnIdntCon/CifNo 만 보관하는 세션의 왕복.
+func TestRedisStore_ChainSessionRoundTrip(t *testing.T) {
+	store, _, cleanup := newTestRedis(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	in := &Session{
+		ID:         "sid-chain-1",
+		Usid:       "hong01",
+		Channel:    "WEB",
+		Cookie:     nil, // chain 모드 — cookie_t 없음
+		LgnIdntCon: "202607201030|AA:BB|10.0.0.7|hong01",
+		CifNo:      "1234567890",
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}
+	if err := store.Put(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	out, err := store.Get(ctx, "sid-chain-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.LgnIdntCon != in.LgnIdntCon {
+		t.Errorf("LgnIdntCon=%q, want %q", out.LgnIdntCon, in.LgnIdntCon)
+	}
+	if out.CifNo != in.CifNo {
+		t.Errorf("CifNo=%q, want %q", out.CifNo, in.CifNo)
+	}
+	if out.Cookie != nil {
+		t.Errorf("Cookie 는 nil 이어야 함")
+	}
+}

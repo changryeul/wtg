@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -73,6 +74,32 @@ func Logout(deps *Deps) http.HandlerFunc {
 		// LOGOFF 트랜잭션 — cookie 첨부.
 		var brokerErrn uint32
 		var brokerErrm string
+
+		// chain 모드 — 세션의 lgnIdntCon 을 W1130A03 으로 반납.
+		// 실패해도 세션 삭제는 진행 (멱등 — 기존 LOGOFF semantics 와 동일).
+		if deps.LoginChain != nil && p.SessionID != "" {
+			if sess, err := deps.Sessions.Get(r.Context(), p.SessionID); err == nil && sess.LgnIdntCon != "" {
+				_, err := callChainStep(r.Context(), deps, "logout",
+					deps.LoginChain.logoutAlias(), sess.Usid,
+					map[string]interface{}{"loip": clientIPOf(r)},
+					map[string]interface{}{
+						"prGb":       "1",
+						"fxUserNo":   sess.Usid,
+						"lgnIdntCon": sess.LgnIdntCon,
+					})
+				if err != nil {
+					var stepErr *chainStepError
+					if errors.As(err, &stepErr) {
+						brokerErrn, brokerErrm = stepErr.Errn, stepErr.Errm
+					}
+					deps.Logger.WarnContext(r.Context(), "W1130A03 반납 실패 — 세션은 삭제 진행",
+						slog.String("sid", p.SessionID),
+						slog.Any("error", err),
+					)
+				}
+			}
+		}
+
 		if p.Cookie != nil {
 			frame := &mymq.FrameInput{
 				Func:   mymq.FCTran,

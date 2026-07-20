@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/winwaysystems/wtg/internal/api/middleware"
+	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/svcio"
 )
@@ -337,5 +339,80 @@ func TestLoginChainHandlerMissingSignMsg(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLogoutChainReturnsLgnIdntCon(t *testing.T) {
+	reg := newChainSvcIO(t)
+	var calls []*mymq.FrameInput
+	caller := chainFakeCaller(t, &calls, map[string]func() (*mymq.Reply, error){
+		"W1130A03": func() (*mymq.Reply, error) {
+			return &mymq.Reply{Body: chainReply(t, reg, "W1130A03",
+				map[string]interface{}{"dummy": "0"})}, nil
+		},
+	})
+	deps := chainDeps(caller, reg)
+	store := newStoreForTest(t)
+	deps.Sessions = store
+
+	sess := &auth.Session{
+		ID: "sid-1", Usid: "hong01", Channel: "WEB",
+		LgnIdntCon: "IDNT-1", ExpiresAt: time.Now().Add(time.Hour),
+	}
+	if err := store.Put(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/logout", nil)
+	req = req.WithContext(middleware.ContextWithPrincipal(req.Context(), &middleware.Principal{
+		Usid: "hong01", Channel: "WEB", SessionID: "sid-1",
+	}))
+	rr := httptest.NewRecorder()
+	Logout(deps)(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	// W1130A03 이 lgnIdntCon 을 실어 호출됐는지.
+	if len(calls) != 1 || calls[0].Rkey != "W1130A03" {
+		t.Fatalf("calls=%d", len(calls))
+	}
+	if !strings.Contains(string(calls[0].Body), "IDNT-1") {
+		t.Errorf("lgnIdntCon 미포함: %q", string(calls[0].Body))
+	}
+	// 세션은 삭제됨.
+	if _, err := store.Get(context.Background(), "sid-1"); err == nil {
+		t.Error("세션이 삭제돼야 함")
+	}
+}
+
+func TestLogoutChainEngineFailureStillDeletes(t *testing.T) {
+	reg := newChainSvcIO(t)
+	var calls []*mymq.FrameInput
+	caller := chainFakeCaller(t, &calls, map[string]func() (*mymq.Reply, error){
+		"W1130A03": func() (*mymq.Reply, error) {
+			return &mymq.Reply{Errn: 99999, ErrMsg: "엔진 오류"}, nil
+		},
+	})
+	deps := chainDeps(caller, reg)
+	store := newStoreForTest(t)
+	deps.Sessions = store
+	_ = store.Put(context.Background(), &auth.Session{
+		ID: "sid-2", Usid: "hong01", Channel: "WEB",
+		LgnIdntCon: "IDNT-2", ExpiresAt: time.Now().Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/logout", nil)
+	req = req.WithContext(middleware.ContextWithPrincipal(req.Context(), &middleware.Principal{
+		Usid: "hong01", Channel: "WEB", SessionID: "sid-2",
+	}))
+	rr := httptest.NewRecorder()
+	Logout(deps)(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d", rr.Code)
+	}
+	if _, err := store.Get(context.Background(), "sid-2"); err == nil {
+		t.Error("엔진 실패에도 세션은 삭제돼야 함 (멱등)")
 	}
 }

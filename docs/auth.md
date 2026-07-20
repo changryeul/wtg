@@ -104,6 +104,12 @@ POST /v1/login {"data":{"signMsg":"<인증서명>"}}
 `docs/engine-auth-login-mapping.md` +
 `docs/superpowers/specs/2026-07-20-engine-login-chain-design.md`.
 
+**인증서 미적용 과도기 (`--login-skip-cert`)**: 인증서 검증을 아직 붙이지
+않은 개발/과도기에는 ① W1101S02 를 건너뛰고 클라이언트가 `data.lgnId` 로
+신원을 직접 전달한다 (`{"data":{"lgnId":"..."}}`) → ③ W1130A02 만 호출.
+이 경우 사용자는 이미 `CSC004M` 에 존재해야 한다 (① 이 하던 upsert 가 없으므로).
+**운영 전환 시 반드시 제거** — 실 인증서 경로로 대체.
+
 ---
 
 ## 4. 흐름 — 인증된 트랜잭션 (예: 신규 주문)

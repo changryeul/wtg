@@ -24,6 +24,12 @@ type LoginChainConfig struct {
 	CertAlias    string // ① 공인인증서 인증. 빈값이면 "W1101S02"
 	SessionAlias string // ③ 로그인처리·세션개설. 빈값이면 "W1130A02"
 	LogoutAlias  string // 로그아웃 반납. 빈값이면 "W1130A03"
+
+	// SkipCert 가 true 면 ① 인증서 인증(W1101S02)을 건너뛰고, 클라이언트가
+	// data.lgnId (+cifNo) 로 직접 전달한 신원으로 ③ W1130A02 만 호출한다.
+	// 인증서 검증을 아직 붙이지 않은 개발/과도기 모드 — 운영에서는 false.
+	// (사용자는 CSC004M 에 이미 존재해야 함 — ① 이 하던 upsert 가 없으므로.)
+	SkipCert bool
 }
 
 const (
@@ -152,23 +158,31 @@ func callChainStep(ctx context.Context, deps *Deps, step, alias, enforceUsid str
 //
 // fxUserNo ≡ lgnId (W1101S02 가 CSC004M/CSC005R upsert — 소스 확인,
 // docs/engine-auth-login-mapping.md §6.2).
-func runLoginChain(ctx context.Context, deps *Deps, signMsg, clientIP string) (*chainResult, error) {
+//
+// SkipCert 모드면 ① 을 건너뛰고 in.LgnId/in.CifNo 를 신원으로 사용한다.
+func runLoginChain(ctx context.Context, deps *Deps, in chainLoginData, clientIP string) (*chainResult, error) {
 	cfg := deps.LoginChain
 
-	// ① 인증서 인증.
-	out1, err := callChainStep(ctx, deps, "cert", cfg.certAlias(), "",
-		map[string]interface{}{"loip": clientIP},
-		map[string]interface{}{"prGb": "1", "signMsg": signMsg})
-	if err != nil {
-		return nil, err
-	}
-	res := &chainResult{
-		CifNo:   strField(out1, "cifNo"),
-		LgnID:   strField(out1, "lgnId"),
-		SvrCert: strField(out1, "svrCert"),
-	}
-	if res.LgnID == "" {
-		return nil, fmt.Errorf("chain cert: 응답에 lgnId 없음")
+	var res *chainResult
+	if cfg.SkipCert {
+		// ① skip — 클라이언트 제공 신원 사용 (인증서 검증 미적용 과도기 모드).
+		res = &chainResult{LgnID: in.LgnId, CifNo: in.CifNo}
+	} else {
+		// ① 인증서 인증.
+		out1, err := callChainStep(ctx, deps, "cert", cfg.certAlias(), "",
+			map[string]interface{}{"loip": clientIP},
+			map[string]interface{}{"prGb": "1", "signMsg": in.SignMsg})
+		if err != nil {
+			return nil, err
+		}
+		res = &chainResult{
+			CifNo:   strField(out1, "cifNo"),
+			LgnID:   strField(out1, "lgnId"),
+			SvrCert: strField(out1, "svrCert"),
+		}
+		if res.LgnID == "" {
+			return nil, fmt.Errorf("chain cert: 응답에 lgnId 없음")
+		}
 	}
 
 	// ② OTP seam — 이번 범위 제외 (스펙 §2). 도입 시 W1107A01 호출 삽입 지점.
@@ -204,8 +218,11 @@ func strField(m map[string]interface{}, key string) string {
 }
 
 // chainLoginData 는 chain 모드의 /v1/login 요청 data.
+// SkipCert 모드면 lgnId(+cifNo)를, 아니면 signMsg 를 사용한다.
 type chainLoginData struct {
 	SignMsg string `json:"signMsg"`
+	LgnId   string `json:"lgnId"`
+	CifNo   string `json:"cifNo"`
 }
 
 // loginViaChain 은 chain 모드의 /v1/login 처리 (스펙 §4).
@@ -220,13 +237,19 @@ func loginViaChain(deps *Deps, w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	if in.SignMsg == "" {
+	if deps.LoginChain.SkipCert {
+		if in.LgnId == "" {
+			writeError(w, http.StatusBadRequest, "missing_lgn_id",
+				"auth-skip chain 로그인은 data.lgnId 필수")
+			return
+		}
+	} else if in.SignMsg == "" {
 		writeError(w, http.StatusBadRequest, "missing_sign_msg",
 			"chain 로그인은 data.signMsg (인증서명) 필수")
 		return
 	}
 
-	res, err := runLoginChain(r.Context(), deps, in.SignMsg, clientIPOf(r))
+	res, err := runLoginChain(r.Context(), deps, in, clientIPOf(r))
 	if err != nil {
 		var stepErr *chainStepError
 		if errors.As(err, &stepErr) {

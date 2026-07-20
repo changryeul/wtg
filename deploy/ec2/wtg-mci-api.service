@@ -23,6 +23,8 @@ Environment=WTG_API_LOG_LEVEL=debug
 #        (middleware/auth.go authenticate) JWT 경로도 공존. 운영 전환 시 제거 필수.
 # --login-mode=chain: NH 엔진 인증 사슬 (W1101S02→W1130A02, lgnIdntCon 보관).
 #        svc-inc-dir 필수 — docs/auth.md §3.1.
+# --login-skip-cert: ① 인증서 인증(W1101S02) 건너뛰고 data.lgnId 로 세션만 개설.
+#        인증서 미적용 과도기 — 운영 전환 시 이 줄 제거 (사용자는 CSC004M 존재 필요).
 ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-api \
     --listen=:8080 \
     --broker-host=${BROKER_HOST} \
@@ -34,7 +36,8 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-api \
     --jwt-key=/home/winway/nh-fxallone-server/wtg/etc/jwt-private.pem \
     --svc-common-header=/home/winway/nh-fxallone-server/win/src/inc/com/comhdr.h \
     --svc-inc-dir=/home/winway/nh-fxallone-server/win/src/inc/trn \
-    --login-mode=chain
+    --login-mode=chain \
+    --login-skip-cert
 
 Restart=on-failure
 RestartSec=10

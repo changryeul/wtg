@@ -70,6 +70,11 @@ type Config struct {
 	LoginSessionAlias string
 	LoginLogoutAlias  string
 
+	// LoginSkipCert — chain 모드에서 ① 인증서 인증(W1101S02)을 건너뛰고
+	// 클라이언트가 data.lgnId 로 직접 전달한 신원으로 세션만 개설한다.
+	// 인증서 검증 미적용 개발/과도기 모드 — 운영에서는 false.
+	LoginSkipCert bool
+
 	// 로그 레벨 ("debug" / "info" / "warn" / "error"). 기본 "info".
 	LogLevel string
 
@@ -306,6 +311,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_API_LOGIN_MODE"); v != "" {
 		cfg.LoginMode = v
 	}
+	if v := os.Getenv("WTG_API_LOGIN_SKIP_CERT"); v == "1" || v == "true" {
+		cfg.LoginSkipCert = true
+	}
 
 	// flag 가 env 를 덮어씀 (CLI 가 가장 강력).
 	fs := flag.NewFlagSet("mci-api", flag.ContinueOnError)
@@ -322,6 +330,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.LoginCertAlias, "login-cert-alias", cfg.LoginCertAlias, "chain ① 인증서 인증 alias (기본 W1101S02)")
 	fs.StringVar(&cfg.LoginSessionAlias, "login-session-alias", cfg.LoginSessionAlias, "chain ③ 세션개설 alias (기본 W1130A02)")
 	fs.StringVar(&cfg.LoginLogoutAlias, "login-logout-alias", cfg.LoginLogoutAlias, "chain 로그아웃 반납 alias (기본 W1130A03)")
+	fs.BoolVar(&cfg.LoginSkipCert, "login-skip-cert", cfg.LoginSkipCert, "chain 모드에서 ① 인증서 인증(W1101S02) 건너뛰고 data.lgnId 로 세션만 개설 (인증서 미적용 과도기 — 운영 금지)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (예: otel-collector:4317). 비면 비활성")
 	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
@@ -373,6 +382,9 @@ func LoadConfig(args []string) (Config, error) {
 		}
 	default:
 		return cfg, fmt.Errorf("--login-mode: %q — legacy | chain 중 하나", cfg.LoginMode)
+	}
+	if cfg.LoginSkipCert && cfg.LoginMode != "chain" {
+		return cfg, fmt.Errorf("--login-skip-cert 는 --login-mode=chain 에서만 유효")
 	}
 	return cfg, nil
 }

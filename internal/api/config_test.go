@@ -38,3 +38,20 @@ func TestLoadConfigLoginModeDefaultLegacy(t *testing.T) {
 		t.Errorf("기본은 legacy: %q", cfg.LoginMode)
 	}
 }
+
+func TestLoadConfigLoginSkipCertRequiresChain(t *testing.T) {
+	_, err := LoadConfig([]string{"--login-skip-cert"})
+	if err == nil || !strings.Contains(err.Error(), "chain") {
+		t.Errorf("skip-cert 는 chain 필요: %v", err)
+	}
+}
+
+func TestLoadConfigLoginSkipCertOK(t *testing.T) {
+	cfg, err := LoadConfig([]string{"--login-mode=chain", "--svc-inc-dir=/tmp/inc", "--login-skip-cert"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.LoginSkipCert {
+		t.Error("LoginSkipCert 여야 함")
+	}
+}

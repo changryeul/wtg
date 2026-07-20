@@ -151,7 +151,7 @@ func TestRunLoginChainSuccess(t *testing.T) {
 	})
 	deps := chainDeps(caller, reg)
 
-	res, err := runLoginChain(context.Background(), deps, "SIGNMSG", "10.0.0.7")
+	res, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestRunLoginChainCertRejected(t *testing.T) {
 	})
 	deps := chainDeps(caller, reg)
 
-	_, err := runLoginChain(context.Background(), deps, "BADSIGN", "10.0.0.7")
+	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "BADSIGN"}, "10.0.0.7")
 	var stepErr *chainStepError
 	if !errors.As(err, &stepErr) {
 		t.Fatalf("chainStepError 아님: %v", err)
@@ -226,7 +226,7 @@ func TestRunLoginChainSessionRejected(t *testing.T) {
 	})
 	deps := chainDeps(caller, reg)
 
-	_, err := runLoginChain(context.Background(), deps, "SIGNMSG", "10.0.0.7")
+	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7")
 	var stepErr *chainStepError
 	if !errors.As(err, &stepErr) {
 		t.Fatalf("chainStepError 아님: %v", err)
@@ -243,7 +243,7 @@ func TestRunLoginChainNoSpec(t *testing.T) {
 		return nil, nil
 	}}, svcio.NewRegistry())
 
-	_, err := runLoginChain(context.Background(), deps, "SIGNMSG", "10.0.0.7")
+	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7")
 	if err == nil || !strings.Contains(err.Error(), "명세") {
 		t.Errorf("명세 미등록 에러여야 함: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestRunLoginChainCertBusinessRejected(t *testing.T) {
 	})
 	deps := chainDeps(caller, reg)
 
-	_, err := runLoginChain(context.Background(), deps, "BADSIGN", "10.0.0.7")
+	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "BADSIGN"}, "10.0.0.7")
 	var stepErr *chainStepError
 	if !errors.As(err, &stepErr) {
 		t.Fatalf("chainStepError 아님: %v", err)
@@ -454,5 +454,52 @@ func TestRunLoginChainCertBusinessRejected(t *testing.T) {
 	}
 	if len(calls) != 1 {
 		t.Errorf("① 거부 후 ③ 호출되면 안 됨: %d", len(calls))
+	}
+}
+
+// SkipCert 모드 — ① 을 건너뛰고 클라이언트 lgnId 로 ③ 만 호출.
+func TestRunLoginChainSkipCert(t *testing.T) {
+	reg := newChainSvcIO(t)
+	var calls []*mymq.FrameInput
+	caller := chainFakeCaller(t, &calls, map[string]func() (*mymq.Reply, error){
+		"W1130A02": func() (*mymq.Reply, error) {
+			return &mymq.Reply{Body: chainReply(t, reg, "W1130A02", map[string]interface{}{
+				"lgnIdntCon": "IDNT-SK", "apllBsopYmd": "20260720",
+			})}, nil
+		},
+	})
+	deps := chainDeps(caller, reg)
+	deps.LoginChain.SkipCert = true
+
+	res, err := runLoginChain(context.Background(), deps,
+		chainLoginData{LgnId: "testuser1", CifNo: "005374848"}, "10.0.0.7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.LgnID != "testuser1" || res.CifNo != "005374848" || res.LgnIdntCon != "IDNT-SK" {
+		t.Errorf("res=%+v", res)
+	}
+	// ① 은 호출되지 않고 ③ 만.
+	if len(calls) != 1 || calls[0].Rkey != "W1130A02" {
+		t.Fatalf("calls=%d (W1101S02 호출되면 안 됨)", len(calls))
+	}
+}
+
+// SkipCert 모드 핸들러 — lgnId 누락 시 400.
+func TestLoginChainHandlerSkipCertMissingLgnId(t *testing.T) {
+	deps := chainDeps(&fakeCaller{reply: func(ctx context.Context, in *mymq.FrameInput) (*mymq.Reply, error) {
+		t.Fatal("broker 호출되면 안 됨")
+		return nil, nil
+	}}, newChainSvcIO(t))
+	deps.LoginChain.SkipCert = true
+	deps.Sessions = newStoreForTest(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/login",
+		strings.NewReader(`{"data":{"signMsg":"X"}}`))
+	rr := httptest.NewRecorder()
+	Login(deps)(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

@@ -386,10 +386,12 @@ func (s *Server) Start(ctx context.Context) error {
 			CertAlias:    s.cfg.LoginCertAlias,
 			SessionAlias: s.cfg.LoginSessionAlias,
 			LogoutAlias:  s.cfg.LoginLogoutAlias,
+			SkipCert:     s.cfg.LoginSkipCert,
 		}
 		s.logger.Info("로그인 chain 모드 활성 — 엔진 인증 사슬",
 			slog.String("cert", s.cfg.LoginCertAlias),
-			slog.String("session", s.cfg.LoginSessionAlias))
+			slog.String("session", s.cfg.LoginSessionAlias),
+			slog.Bool("skip_cert", s.cfg.LoginSkipCert))
 	}
 	// Idempotency-Key 처리 — Redis (다중 인스턴스 공유) 또는 Memory (단일).
 	if s.cfg.IdempotencyEnabled {

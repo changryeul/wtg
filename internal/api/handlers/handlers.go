@@ -90,6 +90,11 @@ type Deps struct {
 	// SvcIO — svc I/O 명세 registry (--svc-inc-dir 부팅 옵션). nil 이면 자동
 	// marshalling 비활성 — data 는 항상 raw passthrough (wire.go 참조).
 	SvcIO *svcio.Registry
+
+	// LoginChain — 엔진 인증 사슬 (chain 모드) 설정. nil 이면 legacy
+	// (단일 LOGON + cookie_t). 채워지면 /v1/login 이 W1101S02 → W1130A02
+	// 사슬을 오케스트레이션한다. SvcIO 필수 (부팅 시 검증 — config.go).
+	LoginChain *LoginChainConfig
 }
 
 // writeJSON 은 표준 JSON 응답 헬퍼. 에러 발생 시 access log 가 캡처하므로

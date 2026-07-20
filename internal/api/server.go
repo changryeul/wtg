@@ -379,6 +379,18 @@ func (s *Server) Start(ctx context.Context) error {
 		TxRing:       txRing,
 		SvcIO:        svcReg,
 	}
+	// chain 로그인 모드 — 엔진 인증 사슬 (W1101S02→W1130A02). config.go 가
+	// svc-inc-dir 필수 검증을 이미 통과시킨 상태.
+	if s.cfg.LoginMode == "chain" {
+		deps.LoginChain = &handlers.LoginChainConfig{
+			CertAlias:    s.cfg.LoginCertAlias,
+			SessionAlias: s.cfg.LoginSessionAlias,
+			LogoutAlias:  s.cfg.LoginLogoutAlias,
+		}
+		s.logger.Info("로그인 chain 모드 활성 — 엔진 인증 사슬",
+			slog.String("cert", s.cfg.LoginCertAlias),
+			slog.String("session", s.cfg.LoginSessionAlias))
+	}
 	// Idempotency-Key 처리 — Redis (다중 인스턴스 공유) 또는 Memory (단일).
 	if s.cfg.IdempotencyEnabled {
 		var backend string

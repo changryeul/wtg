@@ -59,6 +59,17 @@ type Config struct {
 	SvcIncDir           string
 	SvcCommonHeaderFile string
 
+	// LoginMode — /v1/login 동작. "legacy"(기본, 빈값 동일) = 단일 LOGON +
+	// cookie_t. "chain" = 엔진 인증 사슬 (W1101S02→W1130A02, cookie 없음).
+	// chain 은 SvcIncDir 필수 — 전문 조립이 svc I/O 명세에 의존.
+	// docs/superpowers/specs/2026-07-20-engine-login-chain-design.md 참조.
+	LoginMode string
+
+	// chain 모드 단계별 alias override (비면 W1101S02/W1130A02/W1130A03).
+	LoginCertAlias    string
+	LoginSessionAlias string
+	LoginLogoutAlias  string
+
 	// 로그 레벨 ("debug" / "info" / "warn" / "error"). 기본 "info".
 	LogLevel string
 
@@ -292,6 +303,9 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_API_REDIS_MODE"); v != "" {
 		cfg.RedisMode = v
 	}
+	if v := os.Getenv("WTG_API_LOGIN_MODE"); v != "" {
+		cfg.LoginMode = v
+	}
 
 	// flag 가 env 를 덮어씀 (CLI 가 가장 강력).
 	fs := flag.NewFlagSet("mci-api", flag.ContinueOnError)
@@ -304,6 +318,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.JWTKeyFile, "jwt-key", cfg.JWTKeyFile, "RS256 JWT 발급용 RSA private key PEM (비면 session_id Bearer 만)")
 	fs.StringVar(&cfg.SvcIncDir, "svc-inc-dir", cfg.SvcIncDir, "매매 svc 헤더 디렉터리 (콤마 구분) — data JSON object 자동 전문 조립")
 	fs.StringVar(&cfg.SvcCommonHeaderFile, "svc-common-header", cfg.SvcCommonHeaderFile, "공통 transaction 헤더 파일 (comhdr.h)")
+	fs.StringVar(&cfg.LoginMode, "login-mode", cfg.LoginMode, "로그인 모드: legacy(기본) | chain (엔진 인증 사슬 W1101S02→W1130A02). chain 은 --svc-inc-dir 필수")
+	fs.StringVar(&cfg.LoginCertAlias, "login-cert-alias", cfg.LoginCertAlias, "chain ① 인증서 인증 alias (기본 W1101S02)")
+	fs.StringVar(&cfg.LoginSessionAlias, "login-session-alias", cfg.LoginSessionAlias, "chain ③ 세션개설 alias (기본 W1130A02)")
+	fs.StringVar(&cfg.LoginLogoutAlias, "login-logout-alias", cfg.LoginLogoutAlias, "chain 로그아웃 반납 alias (기본 W1130A03)")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (예: otel-collector:4317). 비면 비활성")
 	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
@@ -346,6 +364,15 @@ func LoadConfig(args []string) (Config, error) {
 	}
 	if _, err := routing.ParseSeedPolicy(cfg.DevRoutesPolicy); err != nil {
 		return cfg, err
+	}
+	switch cfg.LoginMode {
+	case "", "legacy":
+	case "chain":
+		if cfg.SvcIncDir == "" {
+			return cfg, fmt.Errorf("--login-mode=chain 은 --svc-inc-dir 필수 (전문 조립이 svc I/O 명세 의존)")
+		}
+	default:
+		return cfg, fmt.Errorf("--login-mode: %q — legacy | chain 중 하나", cfg.LoginMode)
 	}
 	return cfg, nil
 }

@@ -68,15 +68,18 @@ type chainResult struct {
 	LgnTs          string
 }
 
-// chainStepError 는 엔진이 사슬의 특정 단계를 거부한 경우 (errn passthrough).
+// chainStepError 는 엔진이 사슬의 특정 단계를 거부한 경우.
+// 거부는 두 층위 — mymq errn (broker/전송 층) 또는 COMHDR eflg=1 + rcod/mesg
+// (trn 업무 층, W1101S02 의 fnSetMsg). 어느 쪽이든 그대로 노출 (위임 원칙).
 type chainStepError struct {
 	Step string // "cert" | "session" | "logout"
-	Errn uint32
+	Errn uint32 // mymq errn (업무 거부면 0)
+	Rcod string // COMHDR 응답코드 (예: "10808")
 	Errm string
 }
 
 func (e *chainStepError) Error() string {
-	return fmt.Sprintf("login chain %s 단계 거부: errn=%d %s", e.Step, e.Errn, e.Errm)
+	return fmt.Sprintf("login chain %s 단계 거부: errn=%d rcod=%s %s", e.Step, e.Errn, e.Rcod, e.Errm)
 }
 
 // resolveChainRoute 는 alias 를 exchange/routing_key 로 resolve 한다.
@@ -126,9 +129,17 @@ func callChainStep(ctx context.Context, deps *Deps, step, alias, enforceUsid str
 	if mqErr := reply.AsError(); mqErr != nil {
 		return nil, &chainStepError{Step: step, Errn: reply.Errn, Errm: reply.ErrMsg}
 	}
-	_, out, err = wireParseReply(spec, reply.Body)
+	hdr, out, err := wireParseReply(spec, reply.Body)
 	if err != nil {
 		return nil, fmt.Errorf("chain %s 응답 파싱: %w", step, err)
+	}
+	// trn 업무 거부 — COMHDR eflg '1' + rcod/mesg (fnSetMsg 컨벤션).
+	if eflg := strField(hdr, "eflg"); eflg != "" && eflg != "0" {
+		return nil, &chainStepError{
+			Step: step,
+			Rcod: strField(hdr, "rcod"),
+			Errm: strField(hdr, "mesg"),
+		}
 	}
 	return out, nil
 }
@@ -220,6 +231,7 @@ func loginViaChain(deps *Deps, w http.ResponseWriter, r *http.Request,
 			writeJSON(w, http.StatusUnauthorized, map[string]any{
 				"error":   "login_failed",
 				"errn":    stepErr.Errn,
+				"rcod":    stepErr.Rcod,
 				"errm":    stepErr.Errm,
 				"message": stepErr.Error(),
 			})

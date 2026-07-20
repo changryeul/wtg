@@ -30,6 +30,9 @@ func newChainSvcIO(t *testing.T) *svcio.Registry {
 		{Name: "usid", CType: "char", Size: 30},
 		{Name: "loip", CType: "char", Size: 15},
 		{Name: "cont", CType: "char", Size: 1},
+		{Name: "eflg", CType: "char", Size: 1},
+		{Name: "rcod", CType: "char", Size: 5},
+		{Name: "mesg", CType: "char", Size: 64},
 	})
 	dir := t.TempDir()
 	specs := map[string]string{
@@ -85,15 +88,21 @@ typedef struct {	// Output
 	return reg
 }
 
-// chainReply 는 spec 의 Output 필드로 fake 응답 전문을 조립한다.
+// chainReply 는 spec 의 Output 필드로 fake 정상 응답 전문을 조립한다 (eflg='0').
 func chainReply(t *testing.T, reg *svcio.Registry, rkey string, out map[string]interface{}) []byte {
+	t.Helper()
+	return chainReplyHdr(t, reg, rkey, map[string]interface{}{"trxc": rkey, "eflg": "0"}, out)
+}
+
+// chainReplyHdr 는 COMHDR 값까지 지정하는 fake 응답 조립 (업무 거부 등).
+func chainReplyHdr(t *testing.T, reg *svcio.Registry, rkey string,
+	hdr map[string]interface{}, out map[string]interface{}) []byte {
 	t.Helper()
 	spec, ok := reg.Get(rkey)
 	if !ok {
 		t.Fatalf("spec %s 없음", rkey)
 	}
-	body, err := svcio.SerializeWithHeader(spec.HeaderFields,
-		map[string]interface{}{"trxc": rkey}, spec.Output, out)
+	body, err := svcio.SerializeWithHeader(spec.HeaderFields, hdr, spec.Output, out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,5 +423,36 @@ func TestLogoutChainEngineFailureStillDeletes(t *testing.T) {
 	}
 	if _, err := store.Get(context.Background(), "sid-2"); err == nil {
 		t.Error("엔진 실패에도 세션은 삭제돼야 함 (멱등)")
+	}
+}
+
+// trn 업무 거부 — mymq errn=0 이지만 COMHDR eflg='1' + rcod/mesg (실 EC2 에서
+// 확인된 W1101S02 fnSetMsg 컨벤션, 예: RA 서버 오류 rcod=10808).
+func TestRunLoginChainCertBusinessRejected(t *testing.T) {
+	reg := newChainSvcIO(t)
+	var calls []*mymq.FrameInput
+	caller := chainFakeCaller(t, &calls, map[string]func() (*mymq.Reply, error){
+		"W1101S02": func() (*mymq.Reply, error) {
+			return &mymq.Reply{Body: chainReplyHdr(t, reg, "W1101S02",
+				map[string]interface{}{"trxc": "W1101S02", "eflg": "1", "rcod": "10808",
+					"mesg": "cert check fail"},
+				map[string]interface{}{})}, nil
+		},
+	})
+	deps := chainDeps(caller, reg)
+
+	_, err := runLoginChain(context.Background(), deps, "BADSIGN", "10.0.0.7")
+	var stepErr *chainStepError
+	if !errors.As(err, &stepErr) {
+		t.Fatalf("chainStepError 아님: %v", err)
+	}
+	if stepErr.Step != "cert" || stepErr.Rcod != "10808" {
+		t.Errorf("step=%s rcod=%q", stepErr.Step, stepErr.Rcod)
+	}
+	if !strings.Contains(stepErr.Errm, "cert check fail") {
+		t.Errorf("mesg 누락: %q", stepErr.Errm)
+	}
+	if len(calls) != 1 {
+		t.Errorf("① 거부 후 ③ 호출되면 안 됨: %d", len(calls))
 	}
 }

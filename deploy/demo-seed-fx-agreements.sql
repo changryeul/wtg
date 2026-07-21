@@ -21,6 +21,7 @@
 --   CSC004M  사용자 10건          (FX_USER_NO demo01..demo10, LGN_ID 동일)
 --   CSC005R  사용자-고객 관계 10건
 --   CSC003M  결제계좌 20건        (고객당 원화1 + 외화1)
+--   TRC001M  상품별거래한도 20건   (고객당 SPT+FWD × USD, 넉넉한 한도 — 주문 통과용)
 --
 -- 검증: 고객목록조회(W1401S01)를 **관리부점 필터 없이**(mngmBrcd 공란) 호출하면
 --       10건이 그대로 조회된다. 특정 부점코드로 필터하면 엔진 쿼리의
@@ -47,7 +48,7 @@ DECLARE
     PROCEDURE purge IS
     BEGIN
         FOR t IN (SELECT column_value tbl FROM TABLE(sys.odcivarchar2list(
-                    'TB_FXB_CSC003M','TB_FXB_CSC005R','TB_FXB_CSC004M',
+                    'TB_FXB_TRC001M','TB_FXB_CSC003M','TB_FXB_CSC005R','TB_FXB_CSC004M',
                     'TB_FXB_CSC001M','TB_FXB_CMC001F'))) LOOP
             EXECUTE IMMEDIATE 'DELETE FROM '||v_schema||'.'||t.tbl
                               ||' WHERE FX_SYS_LSMD_ID = :1' USING v_marker;
@@ -109,6 +110,20 @@ BEGIN
           ||' FX_SYS_LSMD_ID, FX_SYS_LSMD_TS) '
           ||'VALUES (:1, ''2'', :2, ''Y'', ''1'', ''Y'', ''Y'', 1000000, :3, SYSDATE)'
           USING v_cust, 'DEMO'||LPAD(i,2,'0')||'FCY', v_marker;
+
+        -- 상품별거래한도 (TRC001M) — 없으면 1일한도=0 이라 주문이 32578 로 막힘.
+        -- FX_USER_NO='ALL' 로 고객 단위 한도 등록 (per-user 조회도 ALL 로 fallback).
+        -- SPT/FWD × USD, 넉넉한 한도(1일 1억달러, 1회 1억/최소 0).
+        FOR p IN (SELECT column_value pd FROM TABLE(sys.odcivarchar2list('SPT','FWD'))) LOOP
+            EXECUTE IMMEDIATE 'INSERT INTO '||v_schema||'.TB_FXB_TRC001M '
+              ||'(WBCS_RLNM_ALTR_NO, FX_USER_NO, FX_PDCD, CRCD, '
+              ||' CUS_STUP_MXMM_TRN_AMT, DD1_MXMM_TRAB_AMT, RND1_MXMM_TRAB_AMT, '
+              ||' RND1_MNMM_TRAB_AMT, EMP_CRDN_MXMM_TRN_AMT, USE_YN, '
+              ||' FX_SYS_LSMD_ID, FX_SYS_LSMD_TS) '
+              ||'VALUES (:1, ''ALL'', :2, ''USD'', '
+              ||' 100000000, 100000000, 100000000, 0, 100000000, ''Y'', :3, SYSDATE)'
+              USING v_cust, p.pd, v_marker;
+        END LOOP;
     END LOOP;
 
     COMMIT;

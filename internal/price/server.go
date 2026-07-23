@@ -803,6 +803,13 @@ func (s *Server) startHTTP(ctx context.Context) error {
 		s.logger.Info("Forward quote-lock endpoint 활성 — POST /v1/quote/forward/lock",
 			slog.Duration("validity", s.quoteIDValidity))
 	}
+	// 고객 영업점마진 조회 — 매칭엔진(mat) 의 f_get_cust_prc 가 로컬 마진 SHM 대신
+	// mci-price 를 SoT 로 호출한다 (마진 일원화). pricingStore 만 있으면 노출.
+	if s.pricingStore != nil {
+		mux.HandleFunc("GET /v1/customer-margin",
+			CustomerMarginHandler(s.pricingStore, s.cfg.DevMode))
+		s.logger.Info("고객마진 endpoint 활성 — GET /v1/customer-margin (mat f_get_cust_prc SoT)")
+	}
 	s.registerSwapLockRoutes(mux)
 	s.registerSwapPointRoutes(mux)
 	// 운영 진단 — gRPC stream 카탈로그 (누가 구독 중인가). grpcSrv 가 주입된

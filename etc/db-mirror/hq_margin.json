@@ -1,9 +1,8 @@
 [
-  {"pair": "USD/KRW", "tier": "VIP",  "bid_amount": 0.02, "ask_amount": 0.02},
-  {"pair": "USD/KRW", "tier": "GOLD", "bid_amount": 0.05, "ask_amount": 0.05},
-  {"pair": "USD/KRW", "tier": "STD",  "bid_amount": 0.10, "ask_amount": 0.10},
-  {"pair": "USD/KRW", "tier": "",     "bid_amount": 0.15, "ask_amount": 0.15},
-  {"pair": "EUR/KRW", "tier": "VIP",  "bid_amount": 0.05, "ask_amount": 0.05},
-  {"pair": "EUR/KRW", "tier": "STD",  "bid_amount": 0.20, "ask_amount": 0.20},
-  {"pair": "JPY/KRW", "tier": "",     "bid_amount": 0.005, "ask_amount": 0.005}
+  {"pair": "USD/KRW", "tier": "", "bid_amount": 0.2,    "ask_amount": 0.1},
+  {"pair": "EUR/KRW", "tier": "", "bid_amount": 0.63,   "ask_amount": 0.52},
+  {"pair": "JPY/KRW", "tier": "", "bid_amount": 0.003,  "ask_amount": 0.003},
+  {"pair": "EUR/USD", "tier": "", "bid_amount": 0.0003, "ask_amount": 0.0003},
+  {"pair": "USD/JPY", "tier": "", "bid_amount": 0.03,   "ask_amount": 0.03},
+  {"pair": "GBP/USD", "tier": "", "bid_amount": 0.0002, "ask_amount": 0.0002}
 ]

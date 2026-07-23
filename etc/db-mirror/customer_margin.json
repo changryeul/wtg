@@ -1,6 +1,37 @@
 [
-  {"usid":"alice01",  "pair":"USD/KRW", "bid_delta":0.15, "ask_delta":0.20, "active":true},
-  {"usid":"alice01",  "pair":"EUR/KRW", "bid_delta":0.25, "ask_delta":0.30, "active":true},
-  {"usid":"bob02",    "pair":"USD/KRW", "bid_delta":0.30, "ask_delta":0.35, "active":true},
-  {"usid":"9000000001","pair":"USD/KRW","bid_delta":0.50, "ask_delta":0.30, "active":true}
+  {
+    "usid": "alice01",
+    "pair": "USD/KRW",
+    "bid_delta": 0.15,
+    "ask_delta": 0.2,
+    "active": true
+  },
+  {
+    "usid": "alice01",
+    "pair": "EUR/KRW",
+    "bid_delta": 0.25,
+    "ask_delta": 0.3,
+    "active": true
+  },
+  {
+    "usid": "bob02",
+    "pair": "USD/KRW",
+    "bid_delta": 0.3,
+    "ask_delta": 0.35,
+    "active": true
+  },
+  {
+    "usid": "9000000001",
+    "pair": "USD/KRW",
+    "bid_delta": 0.5,
+    "ask_delta": 0.3,
+    "active": true
+  },
+  {
+    "usid": "demo01",
+    "pair": "USD/KRW",
+    "bid_delta": 0.5,
+    "ask_delta": 0.3,
+    "active": true
+  }
 ]

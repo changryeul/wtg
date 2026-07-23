@@ -1,11 +1,11 @@
 # WTG fx-sync — 고객 등급(user_profile) + 고객 스프레드(customer_margin) 를 etcd
 # 로 미러. oneshot — timer 가 주기 실행.
 #
-# ⚠️ --table 은 user_profile,customer_margin 만 (--table=all 아님):
-#   base 마진(hq/site/swap)·통화·페어는 seed-catalog.sh 의 pricing.json 이 소유.
-#   fx-sync 가 --table=all 로 그 레이어를 db-mirror 빈/샘플로 덮어쓰면 충돌.
-#   Oracle backend 로 전 마스터 데이터를 fx-sync 가 소유하게 되면 --table=all +
-#   seed-catalog 은퇴 (docs/customer-spread-sync.md / auth.md §6.5).
+# --table: user_profile,customer_margin + hq_margin,site_margin (2026-07-23 확장).
+#   hq_margin = 엔진 CMG019M(그룹 본점마진) 미러 (tier "" 와일드카드) — 표시가=체결가
+#   정렬의 핵심. site_margin = [] (엔진에 대응 레이어 없음 → 표시가에서도 제거).
+#   swap/통화/페어는 여전히 seed-catalog.sh 소유 — --table=all 금지.
+#   Oracle backend 확정 시 CMG019M 직접 조회로 교체 (docs/customer-spread-sync.md).
 #
 # 현재 source=file (etc/db-mirror/{user_profile,customer_margin}.json).
 # Oracle 확정 시 --source=oracle + DSN 으로 교체.
@@ -24,7 +24,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/fx-sync \
     --source=file \
     --source-dir=/home/winway/nh-fxallone-server/wtg/etc/db-mirror \
     --etcd=127.0.0.1:2379 \
-    --table=user_profile,customer_margin
+    --table=user_profile,customer_margin,hq_margin,site_margin
 
 StandardOutput=journal
 StandardError=journal

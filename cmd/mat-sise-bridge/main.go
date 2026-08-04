@@ -159,22 +159,22 @@ func toPairSymb(sym string) string {
 // 필드 오프셋은 x86-64 기본 정렬 기준(time[9] 뒤 3B 패딩 → double 8B 정렬).
 func encodeAPSISE(symb string, bid, ask, mid, last float64, now time.Time) []byte {
 	b := make([]byte, szAPSISE)
-	copy(b[0:2], "FA")               // type — FA(spot), FB(swap)는 mat_sis 가 거름
-	b[2] = 'B'                        // excode — mat_sis 는 'B'(BEST) 만 수용
-	b[3] = 'B'                        // bidex
-	b[4] = 'B'                        // offerex
-	copyFixed(b[5:12], symb)          // symb[7] "USD/KRW"
-	copyFixed(b[12:44], symb+now.Format("20060102150405")) // id[32] (진단용)
-	copyFixed(b[44:52], now.Format("20060102"))            // date[8]
+	copy(b[0:2], "FA")                                                                     // type — FA(spot), FB(swap)는 mat_sis 가 거름
+	b[2] = 'B'                                                                             // excode — mat_sis 는 'B'(BEST) 만 수용
+	b[3] = 'B'                                                                             // bidex
+	b[4] = 'B'                                                                             // offerex
+	copyFixed(b[5:12], symb)                                                               // symb[7] "USD/KRW"
+	copyFixed(b[12:44], symb+now.Format("20060102150405"))                                 // id[32] (진단용)
+	copyFixed(b[44:52], now.Format("20060102"))                                            // date[8]
 	copyFixed(b[52:61], fmt.Sprintf("%s%03d", now.Format("150405"), now.Nanosecond()/1e6)) // time[9] HHMMSSSSS
 	// @61..63 padding (0)
-	putF64(b[64:72], bid)  // usdbid  (USD/KRW 기준가; 본 심볼이 USD/KRW 면 bid 와 동일)
-	putF64(b[72:80], ask)  // usdoffer
-	putF64(b[80:88], bid)  // bidprc
-	putF64(b[88:96], ask)  // offerprc
-	putF64(b[96:104], 0)   // bidqty  (USD/KRW 는 항상 0)
-	putF64(b[104:112], 0)  // offerqty
-	putF64(b[112:120], mid) // midprc
+	putF64(b[64:72], bid)    // usdbid  (USD/KRW 기준가; 본 심볼이 USD/KRW 면 bid 와 동일)
+	putF64(b[72:80], ask)    // usdoffer
+	putF64(b[80:88], bid)    // bidprc
+	putF64(b[88:96], ask)    // offerprc
+	putF64(b[96:104], 0)     // bidqty  (USD/KRW 는 항상 0)
+	putF64(b[104:112], 0)    // offerqty
+	putF64(b[112:120], mid)  // midprc
 	putF64(b[120:128], last) // fillprc (최근 시장 체결가)
 	return b
 }

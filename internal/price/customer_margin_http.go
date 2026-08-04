@@ -17,7 +17,9 @@ import (
 // 의 **총** 스프레드다 (quote = BEST ± delta). 엔진 체결가는 본점마진(SHM, CMG019M
 // 미러 = etcd hq_margin) 위에 영업점마진을 **가산**하므로, 여기서는 총스프레드에서
 // 본점마진을 뺀 영업점 몫만 반환한다:
-//   체결가 = 시세 + 본점(hq) + 영업점(delta - hq) = 시세 + delta = 고객이 본 quote ✓
+//
+//	체결가 = 시세 + 본점(hq) + 영업점(delta - hq) = 시세 + delta = 고객이 본 quote ✓
+//
 // hq 조회는 tier 와일드카드("") — fx-sync 가 CMG019M 그룹마진을 tier "" 로 미러한다.
 type CustomerMarginResponse struct {
 	CustomerID string  `json:"customer_id"`

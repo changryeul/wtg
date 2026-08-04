@@ -12,8 +12,8 @@ EC2 엔진 연동 환경에서 **algotrd**(STOP/OCO/트레일링 조건부주문
 
 | 구성 | 위치 | 역할 |
 |-----|------|-----|
-| `algotrd` / `algotrdcli` | EC2 `/fxwin/app/autotrd/` | 조건부주문 봇 본체 / 주문 주입 CLI |
-| algo 시세 브리지 | `mat/bin/mat-sise-bridge` 2번째 인스턴스 | mci-price gRPC `SubscribeAlgo` → APSISE 128B → UDP `127.0.0.1:30122` (mat_sis 용 `:30022` 와 별개) |
+| `algotrd` / `algotrdcli` | EC2 `/fxwin/app/autotrd/` | 조건부주문 봇 본체 / 주문 주입 CLI. **mat-start 후크 + 영업일 배치(0600)가 `algotrd-restart.sh` 로 자동 재기동** (ALGO_TYMD=오늘) |
+| algo 시세 브리지 | `mat/bin/mat-sise-bridge` 2번째 인스턴스 (`algo-bridge-run.sh`) | mci-price gRPC `SubscribeAlgo` → APSISE 128B → UDP `127.0.0.1:30122` (mat_sis 용 `:30022` 와 별개). **proc_d(process.cfg `abridge`) 감시 — mci-price 재시작 시 자동 respawn** |
 | WTG 브링업 stub | `autotrd/wtg-build/{market_stub,rta_stub}.c` | mds SHM 대체(excode 'B'→"SMB") / 체결통보 `ATOEXE` 구독 |
 | 주문 trn | `W3100A01` (시장거래 `ordnOrgnDcd=5`) | 검증 7게이트 → broker `MESORD` → mat (FEP 대신 mat 재배선됨) |
 | 체결통보 | `WD300002` → exchange `ATOEXE`/rkey `AEX` | 체결 시 `fnWtgAlgoExeSend` publish → algotrd `proc_fill` (OCO 자동취소/트레일링 재무장의 전제) |
@@ -28,27 +28,29 @@ mci-price (BEST) ─gRPC SubscribeAlgo→ 브리지 ─UDP:30122→ algotrd 트�
 
 ## 기동 절차 (재기동 포함)
 
-순서가 중요하다 — broker 재시작 시 mat/trn 의 MES 라우팅이 desync 되므로 항상 전체 순서로.
+algo 스택은 **전부 자동 관리**된다 — 수동 단계는 mymqreboot → mat-start.sh 뿐.
 
 ```bash
-# 0. (전제) 엔진 스택 — 반드시 winway 유저로. root 실행 금지, & 백그라운드 금지
+# 반드시 winway 유저로. root 실행 금지, & 백그라운드 금지
 sudo -u winway bash -lc "cd mymq/bin && yes y | ./mymqreboot"
 sudo -u winway bash /home/winway/nh-fxallone-server/mat/bin/mat-start.sh
-
-# 1. algo 전용 시세 브리지 (:30122, setsid 로 detach)
-sudo -u winway setsid /home/winway/nh-fxallone-server/mat/bin/mat-sise-bridge \
-  --target 127.0.0.1:50051 --symbols USDKRW,EURKRW,JPYKRW,EURUSD,USDJPY,GBPUSD \
-  --mcast 127.0.0.1:30122 >/tmp/algo-bridge.log 2>&1 </dev/null &
-
-# 2. algotrd — setsid 필수 (nohup 만으론 세션 종료 시 죽음). ALGO_TYMD = 오늘 영업일
-cd /fxwin/app/autotrd
-setsid bash -c "ALGO_SISE_PORT=30122 ALGO_TYMD=$(date +%Y%m%d) exec ./algotrd" \
-  >/tmp/algotrd-run.log 2>&1 </dev/null &
 ```
 
-- `ALGO_TYMD` 는 **엔진 기준영업일과 일치**해야 한다. today 모드(WB500101 이 매 영업일
-  0600 자동 롤)에선 오늘 날짜. 안 맞으면 주문이 옛 영업일을 실어 mat 에 도달하지 못한다.
-- algotrd 중복 기동 주의 — 재기동 전 `pkill -9 algotrd` + pidfile 제거.
+mat-start.sh 하나로: mat 스택(proc_d) + **algo 브리지(:30122, proc_d `abridge`)** +
+**algotrd(`algotrd-restart.sh`, ALGO_TYMD=오늘 자동)** 가 함께 올라온다.
+
+자동 복구 매트릭스:
+
+| 이벤트 | algo 복구 주체 |
+|-----|------|
+| mci-price 재시작 (WTG deploy) | proc_d 가 브리지 respawn (수 초). algotrd 는 영향 없음 |
+| algotrd/브리지 개별 사망 | 브리지=proc_d respawn / algotrd=다음 mat-start 또는 영업일 배치 (급하면 `algotrd-restart.sh` 수동 1회) |
+| mymqreboot (broker 재시작) | mat-start.sh 재실행 → 전부 복원 |
+| 영업일 전환 | 영업일 배치(0600, mymqappd)가 `algotrd-restart.sh` 로 ALGO_TYMD 갱신 재기동 |
+
+- `ALGO_TYMD` 는 **엔진 기준영업일과 일치**해야 한다 — 위 자동 경로는 모두 오늘 날짜로
+  계산한다. 수동 기동이 필요하면 `algotrd-restart.sh [yyyymmdd]` 를 쓸 것 (pidfile
+  정리 + pkill -9 + env 세팅 포함 — 직접 setsid 기동 금지).
 - 재기동 직후 1~5분은 broker 응답 라우팅이 flaky (`call_W3100A01 failed` 간헐) —
   settle 후 검증할 것. 판정 기준은 mymq_call 성공 여부가 아니라 **mat 로그 도달 여부**.
 

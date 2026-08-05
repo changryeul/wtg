@@ -22,6 +22,22 @@ const (
 	w9501s02OutLen = 30*16 + 2 + 4*16 // 546
 )
 
+// 웹(/v1/tx) 경로는 mci-api svcio 가 COMHDR(512B, comhdr.h) 를 input 앞에 붙인다 —
+// C 원장 AP 와 동일한 규약 (AP 는 헤더를 에코하고 eflg/rcod/mesg 로 결과를 알린다).
+// C-SDK raw 경로 (wtgquery 계열) 는 input 만 온다 — 길이로 판별한다.
+const (
+	comhdrLen     = 512
+	comhdrEflgOff = 182 // char eflg[1] — '0' 정상 / '1' 오류
+)
+
+// splitComhdr 는 body 를 (COMHDR, input) 으로 나눈다. COMHDR 없으면 hdr=nil.
+func splitComhdr(b []byte, inLen int) (hdr, in []byte) {
+	if len(b) >= comhdrLen+inLen {
+		return b[:comhdrLen], b[comhdrLen:]
+	}
+	return nil, b
+}
+
 // W9501S02Request 는 파싱된 W9501S02 입력이다.
 type W9501S02Request struct {
 	Exnm   string // 'BEST' 등 — 현재 BEST 만 의미 (mci-price 가 BEST 산출)
@@ -89,12 +105,15 @@ func BuildW9501S02Reply(req *W9501S02Request, q *SpotQuote) []byte {
 }
 
 // HandleW9501S02 은 W9504A01/W9501S01 핸들러와 동일 응답 규약 (DirOrigin + navi 역순).
+// 웹 경로 (COMHDR 동반) 는 응답도 COMHDR 에코 (eflg='0') + output 으로 돌려준다 —
+// mci-api 가 응답 COMHDR 의 eflg/rcod/mesg 를 header 로, output 을 data 로 역직렬화한다.
 func HandleW9501S02(u *mymq.Unsolicited, spot SpotFunc) (*mymq.FrameInput, error) {
 	if cString(u.Header.Rkey[:]) != RkeyW9501S02 {
 		return nil, nil
 	}
 	reply := newReplyFrame(u)
-	req, err := ParseW9501S02(u.Body)
+	hdr, in := splitComhdr(u.Body, w9501s02InLen)
+	req, err := ParseW9501S02(in)
 	if err != nil {
 		reply.Errn = 1
 		return reply, err
@@ -104,6 +123,14 @@ func HandleW9501S02(u *mymq.Unsolicited, spot SpotFunc) (*mymq.FrameInput, error
 		reply.Errn = 1
 		return reply, fmt.Errorf("mdsshim: spot 조회 실패 (pair=%s): %w", req.Pair, err)
 	}
-	reply.Body = BuildW9501S02Reply(req, q)
+	out := BuildW9501S02Reply(req, q)
+	if hdr != nil {
+		h := make([]byte, comhdrLen)
+		copy(h, hdr)
+		h[comhdrEflgOff] = '0'
+		reply.Body = append(h, out...)
+	} else {
+		reply.Body = out
+	}
 	return reply, nil
 }

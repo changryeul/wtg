@@ -79,3 +79,20 @@ func TestBuildW9501S02Reply(t *testing.T) {
 		t.Errorf("source = %q %q, want 'B'", out[480], out[481])
 	}
 }
+
+func TestSplitComhdr(t *testing.T) {
+	in := w9501s02Input("BEST", "USD/KRW", "20260807", "")
+	// C-SDK raw 경로 — COMHDR 없음
+	if hdr, body := splitComhdr(in, w9501s02InLen); hdr != nil || len(body) != w9501s02InLen {
+		t.Fatalf("raw 경로 오판: hdr=%v len=%d", hdr != nil, len(body))
+	}
+	// 웹 경로 — COMHDR(512B) + input
+	withHdr := append(make([]byte, comhdrLen), in...)
+	hdr, body := splitComhdr(withHdr, w9501s02InLen)
+	if hdr == nil || len(hdr) != comhdrLen || len(body) != w9501s02InLen {
+		t.Fatalf("웹 경로 오판: hdr=%d body=%d", len(hdr), len(body))
+	}
+	if req, err := ParseW9501S02(body); err != nil || req.Pair != "USD/KRW" {
+		t.Fatalf("COMHDR 분리 후 파싱 실패: %v", err)
+	}
+}

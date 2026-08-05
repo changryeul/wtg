@@ -11,8 +11,8 @@ import (
 // W9501S02_in_t / out_t 와 동일 (__MID__ 블록 제외):
 // in 64B (exnm16 + symb16 + pay_ymd16 + exp_ymd16),
 // out 546B (16B×30 + source 1B×2 + 16B×4).
-// 백엔드는 mci-price GET /v1/quote/spot 의 raw 호가 — 원본 mds 도 LP/BEST raw 를
-// 반환하고, 마진은 클라이언트 밴드마진(fn_getBndMrgn)이 얹는 구조라 raw 가 등가다.
+// 백엔드는 mci-price GET /v1/quote/spot 의 profile 마진 적용가 — 신아키텍처는
+// 서버가 고객별 마진 포함 시세를 내려주고 클라이언트는 계산하지 않는다.
 // NH 주문화면 32종 (4001/4002/4004/4203, 8001/8002 MM 등) 이 시장가 세팅에 쓴다.
 
 const RkeyW9501S02 = "W9501S02"

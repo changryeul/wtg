@@ -178,8 +178,10 @@ func etcdApplier(cli *clientv3.Client, key string, logger *slog.Logger) mdsshim.
 }
 
 // chartFetch 는 mci-chart GET /v1/chart?tf=1d 를 ChartFunc 으로 배선한다.
-// spotFetch 는 mci-price /v1/quote/spot 에서 raw 호가 (마진 전) 를 가져온다 —
-// 원본 mds 의 W9501S02 는 LP/BEST raw 시세를 반환하고 마진은 클라이언트가 얹는다.
+// spotFetch 는 mci-price /v1/quote/spot 에서 profile 마진 **적용가** 를 가져온다.
+// 신아키텍처 확정: 마진 계산은 서버가 하고 클라이언트는 받은 시세를 그대로 쓴다 —
+// W9501S02 의 bid/ask 가 곧 해당 고객(profile)의 최종 호가다.
+// TODO: COMHDR usid → etcd user-profiles 조회로 고객별 profile 해소 (현재는 --spot-profile 고정).
 func spotFetch(base, profile string) mdsshim.SpotFunc {
 	return func(pair string) (*mdsshim.SpotQuote, error) {
 		q := url.Values{"pair": {pair}, "profile": {profile}}
@@ -195,8 +197,8 @@ func spotFetch(base, profile string) mdsshim.SpotFunc {
 		var body struct {
 			Spots []struct {
 				Pair   string  `json:"pair"`
-				RawBid float64 `json:"raw_bid"`
-				RawAsk float64 `json:"raw_ask"`
+				Bid    float64 `json:"bid"`
+				Ask    float64 `json:"ask"`
 				Source string  `json:"source"`
 			} `json:"spots"`
 		}
@@ -207,7 +209,7 @@ func spotFetch(base, profile string) mdsshim.SpotFunc {
 			return nil, fmt.Errorf("spot %s: 데이터 없음", pair)
 		}
 		s := body.Spots[0]
-		return &mdsshim.SpotQuote{Bid: s.RawBid, Ask: s.RawAsk, Source: s.Source}, nil
+		return &mdsshim.SpotQuote{Bid: s.Bid, Ask: s.Ask, Source: s.Source}, nil
 	}
 }
 

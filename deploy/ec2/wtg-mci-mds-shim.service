@@ -1,5 +1,5 @@
 # WTG mci-mds-shim — mds query-server (W9500) 대체 wire 호환 AP.
-# W950x 고정폭 전문 (현재 W9504A01 스왑포인트 / W9501S01 종가) 을 받아
+# W950x 고정폭 전문 (W9504A01 스왑포인트 / W9501S01 종가 / W9501S02 시세스냅샷) 을 받아
 # WTG 백엔드 (etcd pricing / mci-chart) 로 변환한다.
 # 전환 계획: docs/mds-replacement-plan.md Stage 2.
 [Unit]
@@ -21,6 +21,7 @@ ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-mds-shim \
     --broker-port=${BROKER_PORT} \
     --etcd=127.0.0.1:2379 \
     --chart-url=http://127.0.0.1:8086 \
+    --price-url=http://127.0.0.1:8082 \
     --log-dir=/home/winway/nh-fxallone-server/win/log
 
 Restart=on-failure

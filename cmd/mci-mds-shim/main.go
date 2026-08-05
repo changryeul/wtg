@@ -39,6 +39,8 @@ func main() {
 	etcdPass := flag.String("etcd-pass", "", "etcd 비밀번호 (옵션)")
 	pricingKey := flag.String("pricing-key", "wtg/pricing/table", "PricingTableDoc 이 저장된 etcd key")
 	chartURL := flag.String("chart-url", "http://127.0.0.1:8086", "mci-chart base URL (W9501S01 백엔드)")
+	priceURL := flag.String("price-url", "http://127.0.0.1:8082", "mci-price base URL (W9501S02 spot 백엔드)")
+	spotProfile := flag.String("spot-profile", "WEB.HQ.VIP", "spot 조회 profile (raw 호가를 쓰므로 마진표만 통과)")
 	logDir := flag.String("log-dir", "", "로그 디렉토리 (빈값=stderr). EC2 표준: ~/nh-fxallone-server/win/log")
 	zdiv := flag.Int("zdiv", 0, "수치 스케일 (10^zdiv 로 나눔) — TODO: symbols 카탈로그 연동 전 고정값")
 	flag.Parse()
@@ -84,7 +86,7 @@ func main() {
 	defer cli.Close()
 
 	// rkey 바인딩 — broker 가 이 rkey 들의 transaction 을 우리 큐로 라우팅.
-	for _, rkey := range []string{mdsshim.RkeyW9504A01, mdsshim.RkeyW9501S01} {
+	for _, rkey := range []string{mdsshim.RkeyW9504A01, mdsshim.RkeyW9501S01, mdsshim.RkeyW9501S02} {
 		if err := cli.BindService(ctx, *xchg, rkey); err != nil {
 			logger.Error("bind_service 실패", slog.String("rkey", rkey), slog.Any("error", err))
 			os.Exit(1)
@@ -110,6 +112,9 @@ func main() {
 			reply, err := mdsshim.HandleW9504A01(u, zdivFn, applier)
 			if reply == nil && err == nil {
 				reply, err = mdsshim.HandleW9501S01(u, chartFetch(*chartURL))
+			}
+			if reply == nil && err == nil {
+				reply, err = mdsshim.HandleW9501S02(u, spotFetch(*priceURL, *spotProfile))
 			}
 			if err != nil {
 				logger.Error("요청 처리 실패", slog.Any("error", err))
@@ -173,6 +178,39 @@ func etcdApplier(cli *clientv3.Client, key string, logger *slog.Logger) mdsshim.
 }
 
 // chartFetch 는 mci-chart GET /v1/chart?tf=1d 를 ChartFunc 으로 배선한다.
+// spotFetch 는 mci-price /v1/quote/spot 에서 raw 호가 (마진 전) 를 가져온다 —
+// 원본 mds 의 W9501S02 는 LP/BEST raw 시세를 반환하고 마진은 클라이언트가 얹는다.
+func spotFetch(base, profile string) mdsshim.SpotFunc {
+	return func(pair string) (*mdsshim.SpotQuote, error) {
+		q := url.Values{"pair": {pair}, "profile": {profile}}
+		httpCli := http.Client{Timeout: 3 * time.Second}
+		resp, err := httpCli.Get(base + "/v1/quote/spot?" + q.Encode())
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("spot %s: %s", pair, resp.Status)
+		}
+		var body struct {
+			Spots []struct {
+				Pair   string  `json:"pair"`
+				RawBid float64 `json:"raw_bid"`
+				RawAsk float64 `json:"raw_ask"`
+				Source string  `json:"source"`
+			} `json:"spots"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		if len(body.Spots) == 0 {
+			return nil, fmt.Errorf("spot %s: 데이터 없음", pair)
+		}
+		s := body.Spots[0]
+		return &mdsshim.SpotQuote{Bid: s.RawBid, Ask: s.RawAsk, Source: s.Source}, nil
+	}
+}
+
 func chartFetch(base string) mdsshim.ChartFunc {
 	return func(pair string) ([]mdsshim.ChartBar, error) {
 		q := url.Values{"pair": {pair}, "tf": {"1d"}, "limit": {"16"}}

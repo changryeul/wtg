@@ -68,6 +68,21 @@ func wireBuildBody(reg *svcio.Registry, rkey, enforceUsid string,
 		hdr[k] = v
 	}
 
+	// 입력 반복부(일괄주문 등 다건 요청) — 웹은 서버 struct[] 필드명(ORDN_LST 등, 화면마다 다름)을
+	// 모르므로 표준 키 "_irec" 배열로 보낸다. spec 의 첫 struct[] 필드(Repeat!=0 && Children>0)에 매핑해
+	// 화면별 분기 없이 일괄 TR 을 지원한다. 명시적 필드명이 이미 있으면 그걸 존중.
+	if irec, ok := obj["_irec"]; ok {
+		for _, f := range spec.Input {
+			if f.Repeat != 0 && len(f.Children) > 0 {
+				if _, exists := obj[f.Name]; !exists {
+					obj[f.Name] = irec
+				}
+				break
+			}
+		}
+		delete(obj, "_irec")
+	}
+
 	body, err := svcio.SerializeWithHeader(spec.HeaderFields, hdr, spec.Input, obj)
 	if err != nil {
 		return nil, nil, fmt.Errorf("svc 명세 직렬화 (%s): %w", rkey, err)

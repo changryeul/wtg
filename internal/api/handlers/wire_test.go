@@ -31,8 +31,24 @@ typedef struct {	// Output
 	if err := os.WriteFile(filepath.Join(dir, "W9999T01.h"), []byte(hdr), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// 입력 반복부(struct[]) 있는 TR — _irec 매핑 테스트용.
+	hdr2 := `typedef struct {	// Input
+	char	cnt			 [   2];  // 건수
+	struct {
+		char	code		 [   3];  // 코드
+		char	amt			 [   5];  // 금액
+	} LST[1];
+} W9998A01_I;
+
+typedef struct {	// Output
+	char 	result			[ 10];  // 결과
+} W9998A01_O;
+`
+	if err := os.WriteFile(filepath.Join(dir, "W9998A01.h"), []byte(hdr2), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	reg.SetDirHeaderDefault(dir, "COMHDR")
-	if n, _, err := reg.LoadDir(dir, nil); err != nil || n != 1 {
+	if n, _, err := reg.LoadDir(dir, nil); err != nil || n != 2 {
 		t.Fatalf("LoadDir: n=%d err=%v", n, err)
 	}
 	return reg
@@ -92,4 +108,23 @@ func TestWireParseReply(t *testing.T) {
 	if out["result"] != "OK" {
 		t.Errorf("out=%v", out)
 	}
+}
+
+func TestWireBuildBodyIrec(t *testing.T) {
+	reg := newTestSvcIO(t)
+	// 웹은 서버 struct[] 필드명(LST)을 모르고 표준 키 _irec 배열로 보낸다 → LST 에 매핑.
+	body, spec, err := wireBuildBody(reg, "W9998A01", "tester01", nil,
+		json.RawMessage(`{"cnt":"2","_irec":[{"code":"USD","amt":"100"},{"code":"KRW","amt":"200"}]}`))
+	if err != nil || spec == nil {
+		t.Fatalf("err=%v spec=%v", err, spec)
+	}
+	// COMHDR(48) + cnt(2) + LST[i] 는 spec Repeat 에 따라 조립. 반복부가 실제로 직렬화됐는지
+	// 첫 행 code=USD, amt=100 이 body 에 나타나는지 확인.
+	if !strings.Contains(string(body), "USD") || !strings.Contains(string(body), "100") {
+		t.Fatalf("입력 반복부 1행 미직렬화: %q", string(body))
+	}
+	if !strings.Contains(string(body), "KRW") || !strings.Contains(string(body), "200") {
+		t.Fatalf("입력 반복부 2행 미직렬화(Repeat=-1 가변 확인): %q", string(body))
+	}
+	// _irec 키는 소비돼 사라져야(원시 필드로 새지 않음).
 }

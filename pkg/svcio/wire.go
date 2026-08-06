@@ -87,12 +87,17 @@ func DeserializeWithHeader(headerFields []Field, outputFields []Field, buf []byt
 func writeFields(buf *bytes.Buffer, fields []Field, input map[string]interface{}) error {
 	for _, f := range fields {
 		if len(f.Children) > 0 {
-			// nested struct — orec[N] 또는 orec[].
-			rep := f.Repeat
-			if rep <= 0 {
-				rep = 1 // input 미명시 시 1회
-			}
+			// nested struct — orec[N] 고정 / orec[] 가변.
 			rows := nestedRows(input, f.Name)
+			rep := f.Repeat
+			switch {
+			case rep < 0:
+				// 가변 grid (Repeat=-1) — 실제 입력 행 수만큼 직렬화(일괄주문 N건 등).
+				// 기존엔 rep=1 로 고정돼 첫 행만 전송되고 나머지가 유실됐다.
+				rep = len(rows)
+			case rep == 0:
+				rep = 1 // 비반복(단일) — input 미명시 시 1회
+			}
 			for i := 0; i < rep; i++ {
 				var rowInput map[string]interface{}
 				if i < len(rows) {

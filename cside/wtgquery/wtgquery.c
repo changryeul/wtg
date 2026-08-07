@@ -509,6 +509,100 @@ int wtg_query_w9501s01(wtg_query_client_t *cli, const W9501S01_in_t *in,
     return WTGQUERY_OK;
 }
 
+/* wtg_query_intraday_ohlc — 오늘(UTC) 1m 봉 집계 → 당일 OHLC.
+ * 봉을 배열에 담지 않고 순회하며 first/max/min 누적 (O(1) 메모리). */
+int wtg_query_intraday_ohlc(wtg_query_client_t *cli, const char *symb,
+                            wtg_intraday_ohlc_t *out) {
+    if (cli == NULL || symb == NULL || out == NULL) return WTGQUERY_E_INVALID;
+    memset(out, 0, sizeof(*out));
+    cli->last_http_status = 0;
+    cli->last_errno = 0;
+    cli->last_error_body[0] = 0;
+
+    char pair[8];
+    if (symb_to_pair(symb, pair) < 0) return WTGQUERY_E_INVALID;
+
+    /* from = 오늘 00:00:00Z, to = 지금 */
+    char from_rfc[24], to_rfc[24];
+    time_t now = time(NULL);
+    struct tm tmv;
+    gmtime_r(&now, &tmv);
+    strftime(to_rfc,   sizeof(to_rfc),   "%Y-%m-%dT%H:%M:%SZ", &tmv);
+    strftime(from_rfc, sizeof(from_rfc), "%Y-%m-%dT00:00:00Z", &tmv);
+
+    char pair_esc[32], from_esc[32], to_esc[32];
+    if (url_escape_into(pair_esc, sizeof(pair_esc), pair) < 0) return WTGQUERY_E_OVERSIZE;
+    if (url_escape_into(from_esc, sizeof(from_esc), from_rfc) < 0) return WTGQUERY_E_OVERSIZE;
+    if (url_escape_into(to_esc,   sizeof(to_esc),   to_rfc)   < 0) return WTGQUERY_E_OVERSIZE;
+
+    char request[REQ_BUF_MAX];
+    int rlen = snprintf(request, sizeof(request),
+        "GET /v1/chart?pair=%s&tf=1m&from=%s&to=%s&limit=2000 HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        pair_esc, from_esc, to_esc, cli->host, cli->port);
+    if (rlen < 0 || rlen >= (int)sizeof(request)) return WTGQUERY_E_OVERSIZE;
+
+    /* 하루 1440 1m 봉 여유 — 1MB. */
+    size_t cap = 1024 * 1024;
+    char *resp = (char *)malloc(cap);
+    if (resp == NULL) return WTGQUERY_E_INVALID;
+    int n = tcp_round_trip(cli, request, (size_t)rlen, resp, cap);
+    if (n < 0) { free(resp); return n; }
+    resp[((size_t)n < cap) ? (size_t)n : cap - 1] = 0;
+
+    int status;
+    const char *bptr = NULL;
+    int rc = http_status_and_body(cli, resp, &status, &bptr);
+    if (rc != WTGQUERY_OK) { free(resp); return rc; }
+
+    const char *bars_v = json_find_key(bptr, "bars");
+    if (bars_v == NULL) { free(resp); return WTGQUERY_E_PARSE; }
+    bars_v = skip_ws(bars_v);
+    if (*bars_v != '[') { free(resp); return WTGQUERY_E_PARSE; }
+    const char *cur = bars_v + 1;
+    int nb = 0;
+
+    for (;;) {
+        cur = skip_ws(cur);
+        if (*cur == ']' || *cur == 0) break;
+        if (*cur == ',') { cur = skip_ws(cur + 1); }
+        if (*cur != '{') { free(resp); return WTGQUERY_E_PARSE; }
+        const char *inside = cur + 1;
+
+        double ob, oa, hb, ha, lb, la, cb, ca;
+        if (extract_double(inside, "open_bid",  &ob) < 0 ||
+            extract_double(inside, "open_ask",  &oa) < 0 ||
+            extract_double(inside, "high_bid",  &hb) < 0 ||
+            extract_double(inside, "high_ask",  &ha) < 0 ||
+            extract_double(inside, "low_bid",   &lb) < 0 ||
+            extract_double(inside, "low_ask",   &la) < 0 ||
+            extract_double(inside, "close_bid", &cb) < 0 ||
+            extract_double(inside, "close_ask", &ca) < 0) {
+            free(resp); return WTGQUERY_E_PARSE;
+        }
+
+        if (nb == 0) {
+            out->open_bid = ob; out->open_ask = oa;
+            out->high_bid = hb; out->high_ask = ha;
+            out->low_bid  = lb; out->low_ask  = la;
+        } else {
+            if (hb > out->high_bid) out->high_bid = hb;
+            if (ha > out->high_ask) out->high_ask = ha;
+            if (lb < out->low_bid)  out->low_bid  = lb;
+            if (la < out->low_ask)  out->low_ask  = la;
+        }
+        nb++;
+        cur = json_skip_object_body(cur + 1);
+        if (cur == NULL) { free(resp); return WTGQUERY_E_PARSE; }
+    }
+
+    out->nbars = nb;
+    free(resp);
+    return WTGQUERY_OK;
+}
+
 /* ====================== W9501S02 / S03 ====================== */
 
 /* exnm 의 첫 글자 → mds 의 1-char source code.

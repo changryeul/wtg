@@ -255,6 +255,34 @@ int wtg_query_w9501s03(wtg_query_client_t *cli,
                        W9501S03_out_t *out, size_t out_cap);
 
 /*
+ * wtg_intraday_ohlc_t — 당일(UTC) in-progress OHLC 집계 결과.
+ * mds 의 SHM 일봉(mdquot.open/high/low, 틱마다 실시간 갱신) 대체. WTG 는 오늘
+ * 1d 봉이 UTC 자정에야 close/영속되므로, 대신 오늘 1m 봉을 집계해 산출한다.
+ * close/현재가는 호출측이 live 시세(best-stats)로 채우므로 여기선 open/high/low 만.
+ */
+typedef struct {
+    double open_bid, open_ask;   /* 당일 첫 1m 봉의 open */
+    double high_bid, high_ask;   /* 당일 1m 봉 high 의 max */
+    double low_bid,  low_ask;    /* 당일 1m 봉 low 의 min */
+    int    nbars;                /* 집계된 봉 수 (0 이면 오늘 봉 없음 — 필드 무효) */
+} wtg_intraday_ohlc_t;
+
+/*
+ * wtg_query_intraday_ohlc — 오늘(UTC 00:00~now) 1m 봉을 집계해 당일 OHLC 산출.
+ *
+ * 백엔드: GET /v1/chart?pair=..&tf=1m&from=<오늘00:00>&to=<now>&limit=2000.
+ * 봉을 저장하지 않고 파싱하며 min/max/first 누적 (O(1) 메모리 — 하루 1440봉 안전).
+ *
+ * @cli   init 된 클라이언트 (mci-chart host:port).
+ * @symb  통화쌍 — "USDKRW" 또는 "USD/KRW" (내부에서 pair 변환).
+ * @out   결과. nbars==0 이면 오늘 봉 없음 (콜드스타트 직후 등) — 호출측이 판단.
+ *
+ * 반환: WTGQUERY_OK 또는 WTGQUERY_E_*.
+ */
+int wtg_query_intraday_ohlc(wtg_query_client_t *cli, const char *symb,
+                            wtg_intraday_ohlc_t *out);
+
+/*
  * wtg_query_strerror — 반환 코드의 짧은 식별 메시지. static const,
  * 호출자 free 안 함, thread-safe.
  */

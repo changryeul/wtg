@@ -41,6 +41,9 @@ func main() {
 	chartURL := flag.String("chart-url", "http://127.0.0.1:8086", "mci-chart base URL (W9501S01 백엔드)")
 	priceURL := flag.String("price-url", "http://127.0.0.1:8082", "mci-price base URL (W9501S02 spot 백엔드)")
 	spotProfile := flag.String("spot-profile", "WEB.HQ.VIP", "spot 조회 profile (raw 호가를 쓰므로 마진표만 통과)")
+	serveS02 := flag.Bool("serve-w9501s02", false, "W9501S02(실시간 스냅샷) 를 이 셔임이 처리할지. "+
+		"기본 false — 서버 trn W9500(win/src/trn/W9500)이 풀 파리티로 이관해 담당 (docs/mds-replacement-plan.md). "+
+		"셔임은 W9504A01(스왑)/W9501S01(종가)만 유지. 롤백 시 true 로 셔임 단독 복귀")
 	logDir := flag.String("log-dir", "", "로그 디렉토리 (빈값=stderr). EC2 표준: ~/nh-fxallone-server/win/log")
 	zdiv := flag.Int("zdiv", 0, "수치 스케일 (10^zdiv 로 나눔) — TODO: symbols 카탈로그 연동 전 고정값")
 	flag.Parse()
@@ -113,7 +116,8 @@ func main() {
 			if reply == nil && err == nil {
 				reply, err = mdsshim.HandleW9501S01(u, chartFetch(*chartURL))
 			}
-			if reply == nil && err == nil {
+			if *serveS02 && reply == nil && err == nil {
+				// W9501S02 는 기본 off — 서버 trn W9500 이 담당 (풀 파리티 이관).
 				reply, err = mdsshim.HandleW9501S02(u, spotFetch(*priceURL, *spotProfile))
 			}
 			if err != nil {

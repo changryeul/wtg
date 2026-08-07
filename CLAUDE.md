@@ -115,6 +115,8 @@ broker subscribe path skip, HTTP/gRPC 만으로 단독 부팅. PoC / 회귀 / �
 | Internal | `mci-price` | 8082 (HTTP) / 50051 (gRPC) | `ChannelWeb` | 시세 fan-out + **BestConsumer** (다중시장 best 산정, mds 모델) + Aggregator (OHLC 봉) + PricingConsumer + SubscribeBar gRPC + **AlgoStream** (`SubscribeAlgo` — algo 봇 전용 stream, per-client isolation + slow client evict). `--no-broker` 로 standalone 부팅 가능 |
 | Internal | `mci-chart` | 8086 | (gRPC client) | TimescaleDB historical 봉 REST + ws 라이브 봉 (SubscribeBar) |
 | Internal | `quote-forwarder` | UDP 30044~30051 | `ChannelAdmin` | UDP FIX 4.4 시세 → reader/worker 분리 + **batch publish** (default 14 envelope/msg) → **mci-price gRPC PublishTick** (기본, gRPC-only). broker broadcast 는 레거시 옵션 |
+| Internal | `mat-sise-bridge` | UDP mcast 30022 | (gRPC client) | **매칭엔진(mat) 시세 브리지** — mci-price `SubscribeAlgo`(raw BEST, 마진 미적용) → APSISE 128B 바이너리 전문 UDP mcast → `mat_sis` → Mat SHM `sise_curr`. 마진은 mat 이, 시세는 mci-price 가 담당 |
+| Internal | `mci-mds-shim` | (broker queue) | `dom` (mds 조회계 큐 승계) | **mds query-server (W9500) 대체** wire 호환 AP — broker 에 mds 조회계 큐 이름으로 등록, W950x 고정폭 전문 수신 → WTG 백엔드 변환. **W9504A01** (수동 스왑포인트 → trn W2006A01 무수정 호출 → etcd pricing) + **W9501S02** (실시간 시세 스냅샷 → mci-price `/v1/quote/spot` profile 마진 적용가; NH 주문화면 32종 시장가 세팅 경로). `docs/mds-replacement-plan.md` |
 | 검증 | `mci-test` | — | — | Phase 1 ckey echo 검증 CLI |
 | 검증 | `load-gen` | — | — | UDP 시세 부하 생성기 (`scripts/load-test.sh` 의 low/mid/high 시나리오). delivery/drop/sub_drops 측정 |
 | 검증 | `mock-lp` | — | — | **시나리오형 mock LP** — LP(SMB/KMB/EBS/CMB)별 **결정적** 호가/체결(FIX 269=2)을 UDP 35=W 로 송신. per-source→BestConsumer→cross→AlgoQuote(last/mid/source) 경로를 값까지 결정적 e2e 검증 (load-gen 은 랜덤 부하, mock-lp 는 시나리오 검증). `--scenario`/`--once`/`--interval`. **e2e 자동 대사: `scripts/mock-lp-verify.sh`** (broker/etcd 없이 최소 스택 부팅 → BEST/per-source 기대값 assert) |
@@ -156,7 +158,9 @@ pkg/                     # 공유 라이브러리 (단방향 DAG, 도메인 laye
   metrics/ netutil/ ratelimit/ tlsutil/
   wtgpb/                 # gRPC 생성 코드 (admin↔mci-api, edge↔internal, chart↔price)
 cmd/                     # 서비스 entrypoint
-  mci-{api,push,price,chart,admin,test} mci-edge-{api,push,price,chart,fix,md}
+  mci-{api,push,price,chart,admin,test} mci-edge-{api,push,price,chart,fix-ord,fix-md,tcp}
+  mci-mds-shim           # mds query-server(W9500) 대체 wire 호환 AP (broker 큐 승계 → etcd pricing)
+  mat-sise-bridge        # 매칭엔진(mat) 시세 브리지 — SubscribeAlgo BEST → APSISE UDP mcast → mat_sis SHM
   quote-forwarder
   load-gen               # 부하 생성기 (scripts/load-test.sh 가 wrap)
   mock-lp                # 시나리오형 mock LP — LP별 결정적 호가/체결 UDP FIX 송신 (경로 e2e 검증)
@@ -174,13 +178,16 @@ internal/                # 서비스별 비즈니스 로직
                          # + Archiver (pgx → TimescaleDB) + PricingConsumer
                          # + JSONCookerDecoder + ParseEnvelopes (단일/배열 auto-detect)
                          # + GRPCServer + EtcdProfileSource (etcd watch)
+                         # + customer_margin_http (mat 매칭엔진에 고객마진 REST 공급 — 표시가=체결가 정합)
   chart/                 # REST (Repository.QueryBars) + WS Hub + SubscribeBar 수신
   admin/                 # 운영 콘솔 — 라우팅/정책/symbols/pricing/profiles CRUD
   push/                  # mci-push 핸들러 — broker rep receiver + HTTP push (Phase 2.x)
                          # + Dispatcher (ws fan-out) + Registry (consistent hash ring)
                          # + MultiClient sticky + mTLS / X-Push-Secret 인증
   fxsync/                # fx-sync 백엔드 — Backend 인터페이스 (file / Oracle) + Syncer (etcd write)
-  api/ edge/{api,price,push,chart,fix,md}
+  mdsshim/               # mci-mds-shim 백엔드 — W950x 고정폭 전문 파서/핸들러
+                         # W9504A01 (trn 무수정 호출 + etcd pricing write) + W9501S02 (실시간 시세 스냅샷, COMHDR 판별)
+  api/ edge/{api,price,push,chart,fix,md,tcp}
 cside/                   # C SDK 모음 (POSIX socket, 외부 의존 0 — 운영 C svc 가 WTG 호출)
   wtgpush/               # Phase 2.6 — libwtgpush.a + wtgpush.h (mci-push HTTP push, broker 우회)
                          # sample.c 빌드/실행으로 wire 호환 직접 검증
@@ -296,6 +303,7 @@ WTG 코드에 **거래 한도/통화쌍 활성/거래시간/slippage 같은 비�
 - `docs/routing.md` — alias→exchange/rkey 변환, Registry, SeedPolicy 상세
 - `docs/operations.md` — 서비스별 flag/env 카탈로그 + mci-admin 운영 작업 + 부트스트랩 순서
 - `docs/auth.md` — 인증·권한 위임 명세 (Site/Tier 추가 후)
+- `docs/engine-auth-login-mapping.md` — 엔진 인증/로그인 사슬 ↔ WTG 매핑 조사 노트 (nh W1100/W1101 `.pc` 추적 → chain 로그인 모드 설계 근거)
 - `docs/customer-connections.md` — 고객별 접속 관리 한 권 가이드 (login → JWT → ws → fan-out 3 트랙 → backpressure 격리 → 다중 인스턴스 → 운영 endpoint). alice/bob/charlie 풀 시나리오 예시 + FAQ
 - `docs/client-quote-subscribe.md` — 클라이언트(web/HTS) 시세 구독 코딩 가이드 (WS `/v1/subscribe` + JWT 쿼리 인증 + best/legacy envelope + subscribe/unsubscribe control + JS/WinHTTP 예제). 클라이언트 개발자 전달용
 - `docs/charset-handling.md` — CP949↔UTF-8 처리 (2026-07-15 결정: 엔진/DB CP949 유지 + WTG 경계 변환). 경로별 처리표 + svcio encodeWire/decodeWire + 레거시 EUC-KR/신규 web 클라 가이드
@@ -331,6 +339,7 @@ WTG 코드에 **거래 한도/통화쌍 활성/거래시간/slippage 같은 비�
 
 ### 운영 / 관측
 - `docs/operations.md` — (핵심) 서비스별 flag/env + 부트스트랩 순서
+- `docs/mci-price-maintenance.md` — mci-price 유지보수 가이드 (폐쇄망·단독 작업자용) — 10분 지도 + 작업별 레시피 (Go 낯설고 C 익숙한 개발자 가정)
 - `deploy/README.md` — EC2 배포 가이드 (GitHub Actions self-hosted runner + native binary + systemd, docker 미사용)
 - `docs/observability.md` — 운영 진단/관측 통합 가이드 (silent 가드 / metric / endpoint / admin UI 5 페이지)
 - `docs/monitoring.md` — 일반 모니터링 가이드 (Prometheus / Grafana)
@@ -348,7 +357,10 @@ WTG 코드에 **거래 한도/통화쌍 활성/거래시간/slippage 같은 비�
 - `docs/mci-test-runbook.md` — `mci-test` CLI 운용 절차 (ckey echo 등 GO/NO-GO 검증)
 - `docs/admin-ui-test-guide.md` — mci-admin UI 21개 페이지 별 화면/동작/테스트 시나리오
 - `docs/cs-ws-migration.md` — legacy cs framework (Visual C++) 가 broker subscribe → mci-edge-price WS 로 마이그레이션. WinHTTP WebSocket 예시 + envelope 호환 옵션 + 일정 안내
+- `docs/edge-tcp-cs-protocol.md` — mci-edge-tcp ↔ 레거시 cs raw TCP wire 프로토콜 (프레이밍 + 실 캡처/cs 소스 검증). `cmd/tcp-tester` 로 검증
+- `docs/edge-tcp-quote-push.md` — edge-tcp 양방향 확장 설계 (A안, 구현 전) — 지속 TCP 위 서버 능동 시세 push 로 레거시 cs 의 broker ExchangeQuote subscribe 경로 대체 (broker publish 끊기 선행 조건)
 - `docs/mds-coverage.md` — NH mds (C 시장 데이터 시스템) → WTG cover 매트릭스. DB/arbit/OTP/FOS 제외 시 cover 범위 + 회색지대 (W9501 종가) + 남는 작업 (W9500 wire adapter / pcap replay / SHM→gRPC latency 측정)
+- `docs/mds-replacement-plan.md` — mds 조회계(W950x) → WTG 단계적 전환 계획. Stage 0 (quote-replay dual-run 게이트) → Stage 2 (`mci-mds-shim` broker 큐 승계, W9504A01 수동 스왑포인트 수직 관통)
 - `docs/mes-broker-adapter.md` — MES 주문/체결 (trn ↔ mat) wfa TCP → MyMQ broker 큐 치환 어댑터. 양측 대칭 (`wtgmes_wtg.c`/`wtgmes_mes.c`), `MAT_MES_TRANSPORT` 토글, 빌드/검증 게이트
 - `docs/fix-gateway-design.md` — `mci-edge-fix-ord` DMZ gateway 설계 (외부 FIX 4.4 카운터파티 → broker). QuickFIX/Go + etcd counterparty 룰 + drop copy (mci-push HTTP push 재사용) + `/v1/tx` alias 1개. Phase A~D 로드맵 ~1개월
 - `docs/quickfix-go-spike.md` — QuickFIX/Go 의존성 spike (Phase A 진입 전 평가). deps 6개 / vulncheck 깨끗 / boilerplate 84 LOC / multi-session 자동 지원 → **GO 판정**. Phase A 의 1주 견적 (~1,500 LOC + tests) 일관

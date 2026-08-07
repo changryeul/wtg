@@ -89,7 +89,14 @@ func main() {
 	defer cli.Close()
 
 	// rkey 바인딩 — broker 가 이 rkey 들의 transaction 을 우리 큐로 라우팅.
-	for _, rkey := range []string{mdsshim.RkeyW9504A01, mdsshim.RkeyW9501S01, mdsshim.RkeyW9501S02} {
+	// W9501S02 는 서버 trn W9500 으로 이관되므로 기본 미바인딩 (serveS02=false).
+	// 바인딩까지 빼야 (dom,W9501S02) 라우팅포인트가 trn 에게 열린다 — dispatch 만
+	// 막으면 셔임이 라우팅포인트를 점유해 trn 등록이 무시된다.
+	rkeys := []string{mdsshim.RkeyW9504A01, mdsshim.RkeyW9501S01}
+	if *serveS02 {
+		rkeys = append(rkeys, mdsshim.RkeyW9501S02)
+	}
+	for _, rkey := range rkeys {
 		if err := cli.BindService(ctx, *xchg, rkey); err != nil {
 			logger.Error("bind_service 실패", slog.String("rkey", rkey), slog.Any("error", err))
 			os.Exit(1)

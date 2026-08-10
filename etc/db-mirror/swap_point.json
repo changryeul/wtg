@@ -1,8 +1,21 @@
 [
+  {"pair": "USD/KRW", "tenor": "SPOT", "bid_amount": 0.00, "ask_amount": 0.00},
   {"pair": "USD/KRW", "tenor": "1W", "bid_amount": 0.05, "ask_amount": 0.07},
+  {"pair": "USD/KRW", "tenor": "2W", "bid_amount": 0.09, "ask_amount": 0.13},
   {"pair": "USD/KRW", "tenor": "1M", "bid_amount": 0.15, "ask_amount": 0.25},
+  {"pair": "USD/KRW", "tenor": "2M", "bid_amount": 0.27, "ask_amount": 0.40},
   {"pair": "USD/KRW", "tenor": "3M", "bid_amount": 0.40, "ask_amount": 0.55},
   {"pair": "USD/KRW", "tenor": "6M", "bid_amount": 0.80, "ask_amount": 1.10},
+  {"pair": "USD/KRW", "tenor": "9M", "bid_amount": 1.20, "ask_amount": 1.65},
+  {"pair": "USD/KRW", "tenor": "1Y", "bid_amount": 1.60, "ask_amount": 2.20},
+
+  {"pair": "EUR/KRW", "tenor": "SPOT", "bid_amount": 0.00, "ask_amount": 0.00},
+  {"pair": "EUR/KRW", "tenor": "1W", "bid_amount": 0.06, "ask_amount": 0.10},
+  {"pair": "EUR/KRW", "tenor": "2W", "bid_amount": 0.11, "ask_amount": 0.18},
   {"pair": "EUR/KRW", "tenor": "1M", "bid_amount": 0.20, "ask_amount": 0.32},
-  {"pair": "EUR/KRW", "tenor": "3M", "bid_amount": 0.55, "ask_amount": 0.78}
+  {"pair": "EUR/KRW", "tenor": "2M", "bid_amount": 0.37, "ask_amount": 0.55},
+  {"pair": "EUR/KRW", "tenor": "3M", "bid_amount": 0.55, "ask_amount": 0.78},
+  {"pair": "EUR/KRW", "tenor": "6M", "bid_amount": 1.05, "ask_amount": 1.50},
+  {"pair": "EUR/KRW", "tenor": "9M", "bid_amount": 1.55, "ask_amount": 2.15},
+  {"pair": "EUR/KRW", "tenor": "1Y", "bid_amount": 2.05, "ask_amount": 2.85}
 ]

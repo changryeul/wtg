@@ -85,7 +85,7 @@ func DeserializeWithHeader(headerFields []Field, outputFields []Field, buf []byt
 }
 
 func writeFields(buf *bytes.Buffer, fields []Field, input map[string]interface{}) error {
-	for _, f := range fields {
+	for i, f := range fields {
 		if len(f.Children) > 0 {
 			// nested struct — orec[N] 고정 / orec[] 가변.
 			rows := nestedRows(input, f.Name)
@@ -115,6 +115,13 @@ func writeFields(buf *bytes.Buffer, fields []Field, input map[string]interface{}
 			continue
 		}
 		v := strFromInput(input, f.Name)
+		// 가변 grid(orec[]) 바로 앞의 count 필드(nrec/*_cnt)가 입력에 없으면
+		// 다음 grid 행 수로 자동 채움 — 클라가 orec 배열만 보내도 count 정합.
+		// (미채움 시 count 공백 → 수신 AP 가 건수 파싱 실패 → 전체 유실)
+		if v == "" && isCountFieldName(f.Name) && i+1 < len(fields) &&
+			len(fields[i+1].Children) > 0 && fields[i+1].Repeat < 0 {
+			v = strconv.Itoa(len(nestedRows(input, fields[i+1].Name)))
+		}
 		encoded := encodeWire(v, sz)
 		buf.Write(encoded)
 	}

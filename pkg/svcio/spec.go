@@ -199,7 +199,8 @@ func isCountFieldName(s string) bool {
 		return false
 	}
 	switch s {
-	case "rcnt", "cnt", "count":
+	case "rcnt", "cnt", "count", "nrec":
+		// nrec — mds W950x 다건(bulk) 서비스 컨벤션 (W9501S03 등). cside/wtgquery 도 동일.
 		return true
 	}
 	return strings.HasSuffix(s, "_cnt") || strings.HasSuffix(s, "_count")

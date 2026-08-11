@@ -94,7 +94,8 @@ func main() {
 	// 막으면 셔임이 라우팅포인트를 점유해 trn 등록이 무시된다.
 	rkeys := []string{mdsshim.RkeyW9504A01, mdsshim.RkeyW9501S01}
 	if *serveS02 {
-		rkeys = append(rkeys, mdsshim.RkeyW9501S02)
+		// W9501S03(다건)은 S02 의 bulk — 같은 serve 플래그로 함께 이동.
+		rkeys = append(rkeys, mdsshim.RkeyW9501S02, mdsshim.RkeyW9501S03)
 	}
 	for _, rkey := range rkeys {
 		if err := cli.BindService(ctx, *xchg, rkey); err != nil {
@@ -126,6 +127,10 @@ func main() {
 			if *serveS02 && reply == nil && err == nil {
 				// W9501S02 는 기본 off — 서버 trn W9500 이 담당 (풀 파리티 이관).
 				reply, err = mdsshim.HandleW9501S02(u, spotFetch(*priceURL, *spotProfile))
+			}
+			if *serveS02 && reply == nil && err == nil {
+				// W9501S03(다건 현재가) — S02 bulk. 같은 spot 백엔드로 N건 채움.
+				reply, err = mdsshim.HandleW9501S03(u, spotFetch(*priceURL, *spotProfile))
 			}
 			if err != nil {
 				logger.Error("요청 처리 실패", slog.Any("error", err))

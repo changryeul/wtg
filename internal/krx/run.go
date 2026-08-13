@@ -25,6 +25,11 @@ func (srv *Server) Start(ctx context.Context, cfg Config) error {
 	if cfg.Demo {
 		go srv.runDemoSource(ctx, cfg)
 	}
+	if cfg.Mcast {
+		if err := srv.runMcastSource(ctx, cfg); err != nil {
+			return err
+		}
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

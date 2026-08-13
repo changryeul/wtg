@@ -25,6 +25,7 @@ type Server struct {
 	logger   *slog.Logger
 	upgrader websocket.Upgrader
 	connSeq  atomic.Uint64
+	mstats   McastStats
 }
 
 // NewServer — Hub + 로거.

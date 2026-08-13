@@ -231,5 +231,7 @@ push 빌더(bpush.h) + 내부 시세 struct(bcheg.h)를 모델로 이관:
   오프셋/파싱이 C 구조체와 불일치한 것 (컴파일러가 struct 오프셋을 계산하므로
   손으로 센 Go 오프셋 드리프트를 자동 검출).
 - 대상 7종: A306F/A301K/B606F/B601K/H306F/A006F/A001B (가격/수량/수익률/문자/승수 등).
-- sise `.h`(무의존)+`cc` 필요 → 없으면 skip(그린). `make ci` 미포함(외부 헤더 의존).
+- 헤더는 **리포 vendored**(`cside/krxverify/inc/*.h`, 순수 char[] struct)라 `cc` 만
+  있으면 **자립 동작**(외부 sise 폴더 불요). 원 sise inc 경로를 인자로 주면 원본 대조도 가능.
+  `make ci` 미포함(선택 게이트). WTG↔sise 분리 배경은 그 디렉토리 README 참고.
 - **결과: 7 레코드 전 필드 일치** — Go 오프셋/파싱이 C 구조체 레이아웃과 동치 확인.

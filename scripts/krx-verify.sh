@@ -6,12 +6,13 @@
 # 레이아웃과 어긋나면 diff 로 드러난다. docs/krx-sise-design.md §11.7.
 #
 # 사용:  scripts/krx-verify.sh [sise_inc_dir]
-#   sise_inc_dir 기본값: ~/mywork/yuanta/sise/sise/src/inc
-# sise .h(순수 char[], 무의존)와 cc 가 있어야 하며, 없으면 skip(0 종료).
+#   기본값: 리포 내 vendored 헤더 cside/krxverify/inc (self-contained — 외부 sise 폴더 불요).
+#   원 sise 폴더로 대조하려면 그 inc 경로를 인자로 전달.
+# cc 만 있으면 동작(없으면 skip). vendored .h 는 순수 char[] struct (무의존).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INC="${1:-$HOME/mywork/yuanta/sise/sise/src/inc}"
+INC="${1:-$ROOT/cside/krxverify/inc}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

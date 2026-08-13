@@ -71,6 +71,9 @@ func defaultMciTargets() []MciTarget {
 		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics", Tier: "dmz", Upstream: "mci-price", Access: "WS :8083", External: true},
 		{Name: "mci-edge-fix-md", URL: "http://127.0.0.1:5012/stats", Tier: "dmz", Upstream: "mci-price", Access: "FIX :5011", External: true},
 		{Name: "mci-edge-push", URL: "http://127.0.0.1:8084/v1/ping", Tier: "dmz", Upstream: "mci-push", Access: "WS :8084", External: true},
+		// KRX 선물/옵션/채권 시세 gateway (트랙2). KRX 멀티캐스트 직수신(mcast) →
+		// 종목구독 web ws fan-out. 내부 upstream 없이 자체 수신이라 Upstream 공란.
+		{Name: "mci-edge-krx", URL: "http://127.0.0.1:8085/healthz", Tier: "dmz", Access: "WS :8085 / UDP mcast", External: true},
 	}
 }
 

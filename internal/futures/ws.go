@@ -108,10 +108,14 @@ func (srv *Server) Ingest(b []byte) (string, int, int, error) {
 		return "", 0, 0, errShort
 	}
 	switch string(b[0:2]) {
-	case "KA":
+	case "KA": // 선물/옵션 체결 (파생 공용)
 		return srv.IngestKA(b)
-	case "KB":
+	case "KB": // 선물/옵션 호가
 		return srv.IngestKB(b)
+	case "BA": // 채권 체결
+		return srv.IngestBA(b)
+	case "BB": // 채권 호가
+		return srv.IngestBB(b)
 	default:
 		return "", 0, 0, errUnknownTR
 	}
@@ -133,6 +137,24 @@ func (srv *Server) IngestKB(b []byte) (string, int, int, error) {
 		return "", 0, 0, err
 	}
 	return srv.fanout(fb.Code, fb)
+}
+
+// IngestBA — BA(채권 체결) 고정폭 전문 → bond.trade JSON 종목구독 fan-out.
+func (srv *Server) IngestBA(b []byte) (string, int, int, error) {
+	bt, err := futpkg.DecodeBACheg(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return srv.fanout(bt.Code, bt)
+}
+
+// IngestBB — BB(채권 호가) 고정폭 전문 → bond.book JSON 종목구독 fan-out.
+func (srv *Server) IngestBB(b []byte) (string, int, int, error) {
+	bb, err := futpkg.DecodeBBHoga(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return srv.fanout(bb.Code, bb)
 }
 
 // fanout — envelope 를 JSON 직렬화해 code 로 종목구독 fan-out.

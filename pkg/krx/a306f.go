@@ -45,18 +45,20 @@ func DecodeA306F(b []byte) (*FutTrade, error) {
 		DnLimit:      ffloat(b, 163, 9),  // lldp 동적하한
 	}
 	// 직전대비 — C 정답지 set_fcheg_diff (fut_real.c) 그대로: 체결가 vs 직전가.
-	ft.Cdiff, ft.Crate, ft.Csign = prevTradeDiff(last, pprc)
+	ft.Cdiff, ft.Crate, ft.Csign = PriceDiff(last, pprc)
 	return ft, nil
 }
 
-// prevTradeDiff 는 직전대비(대비/등락률/부호)를 계산한다 — C set_fcheg_diff 이관.
-// cPrc<=0 || pPrc<=0 || 보합 → (0,0," "). 그 외 diff/rate + 부호(등락률 방향).
-func prevTradeDiff(cPrc, pPrc float64) (diff, rate float64, sign string) {
-	if cPrc <= 0 || pPrc <= 0 || cPrc == pPrc {
+// PriceDiff 는 현재가(cur)의 기준가(ref) 대비 등락(대비/등락률/부호)을 계산한다.
+// C 정답지 set_fcheg_diff / set_fsise_diff 의 공통 수식·가드:
+// cur<=0 || ref<=0 || 보합 → (0,0," "). 그 외 diff=cur-ref, rate=diff/ref*100,
+// 부호는 등락률 방향(+/-/' '). 직전대비(ref=직전가)·전일대비(ref=전일종가/기준가) 공용.
+func PriceDiff(cur, ref float64) (diff, rate float64, sign string) {
+	if cur <= 0 || ref <= 0 || cur == ref {
 		return 0, 0, " "
 	}
-	diff = cPrc - pPrc
-	rate = diff / pPrc * 100.0
+	diff = cur - ref
+	rate = diff / ref * 100.0
 	switch {
 	case rate > 0:
 		sign = "+"

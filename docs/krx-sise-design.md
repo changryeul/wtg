@@ -202,7 +202,21 @@ else { cDif=cPrc-pPrc; cRat=cDif/pPrc*100; sign=cRat>0?'+':cRat<0?'-':' '; }
 - `IngestA306F` 가 `applyFutSettle` 로 후속 체결에 settle/finalSettle/settleCd 주입.
 - FutTrade 필드: `settle`/`finalSettle`/`settleCd`.
 
-### 11.5 남은 미이관
-- 호가(B606F): 등락 계산 없음(호가는 대비 미산정) → 대사 불필요.
-- 채권 raw(A301K 체결 → A001B 마스터 조인 / B601K 호가): 선물과 동형으로 후속.
+### 11.5 채권 raw 대사 (A301K 체결 / B601K 호가)
+채권 raw TR 은 C 피드에 핸들러가 없어(=런타임 정답지 없음) `.h` 레이아웃 + BA/BB
+push 빌더(bpush.h) + 내부 시세 struct(bcheg.h)를 모델로 이관:
+- `DecodeA301K`(223B) → `BondTrade`: cprc/cvol/camt/tyld + OHLC + OHL수익률 + tvol/tamt.
+- `DecodeB601K`(462B) → `BondBook`: hoga[5] 인터리브(sprc/bprc/svol/bvol/syld/byld), stvl/btvl.
+- **직전대비**(diff/rate/sign): A301K 는 직전가 미포함 → `MasterCache.bondPrev` 로 code별
+  직전 체결가 보관(`BondPrevAndSet`), 체결가 대비. 모델은 bcheg.h `pPrc`/`cDif`(선물 동형).
+- **전일대비**(yDiff/yRate/ySign): 채권은 전일종가 TR 이 없음(A001B 는 bprc 만) →
+  **기준가(bprc)** 를 기준으로 계산. C BA push 의 ydif 와 동형(기준가 대비).
+- 수식/가드는 선물과 공통 `wire.PriceDiff` (set_fcheg_diff/set_fsise_diff 이관).
+- `IngestA001B` 가 이제 마스터를 캐시(PutBond)해야 전일대비가 채워짐(기존 fan-out만 → 수정).
+- 테스트: `a301k_test`/`b601k_test`(offset/guard), `enrich_test.TestBondEnrichment`(2틱 e2e).
+
+### 11.6 남은 미이관
+- 호가(B606F/B601K): 등락 계산 없음(호가는 대비 미산정) → 대사 불필요.
 - 색상코드(COLORD/COLORL): web 이 부호로 자체 렌더 → 미이관.
+- 실 캡처 런타임 대조: 정적(오프셋/수식) 대사는 완료. `.dat`/pcap 을 C·Go 양쪽에
+  흘려 값 최종 대조는 별도 게이트 (docs/mds-replacement-plan Stage 0 quote-replay 유사).

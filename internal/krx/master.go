@@ -10,18 +10,20 @@ import (
 // 도착하면 마스터의 전일종가로 등락(diff/rate)을 채우는 enrichment 에 쓰인다.
 // 마스터는 저빈도(장 초 1회 + 갱신)라 map + RWMutex 로 충분.
 type MasterCache struct {
-	mu     sync.RWMutex
-	fut    map[string]*wire.FutMaster
-	bond   map[string]*wire.BondMaster
-	settle map[string]*wire.FutSettle // H306F 정산가 (체결 enrich 용)
+	mu       sync.RWMutex
+	fut      map[string]*wire.FutMaster
+	bond     map[string]*wire.BondMaster
+	settle   map[string]*wire.FutSettle // H306F 정산가 (체결 enrich 용)
+	bondPrev map[string]float64         // 채권 직전 체결가 (직전대비용 — A301K 는 직전가 미포함)
 }
 
 // NewMasterCache — 빈 캐시.
 func NewMasterCache() *MasterCache {
 	return &MasterCache{
-		fut:    map[string]*wire.FutMaster{},
-		bond:   map[string]*wire.BondMaster{},
-		settle: map[string]*wire.FutSettle{},
+		fut:      map[string]*wire.FutMaster{},
+		bond:     map[string]*wire.BondMaster{},
+		settle:   map[string]*wire.FutSettle{},
+		bondPrev: map[string]float64{},
 	}
 }
 
@@ -70,6 +72,18 @@ func (c *MasterCache) GetSettle(code string) *wire.FutSettle {
 	return c.settle[code]
 }
 
+// BondPrevAndSet 은 채권 직전대비용으로 직전 체결가를 반환하고 현재가로 갱신한다
+// (A301K 는 직전가를 싣지 않아 code 별 last 를 WTG 가 보관). cur<=0 이면 갱신 skip.
+func (c *MasterCache) BondPrevAndSet(code string, cur float64) float64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prev := c.bondPrev[code]
+	if cur > 0 {
+		c.bondPrev[code] = cur
+	}
+	return prev
+}
+
 // enrichFutTrade 는 체결(A306F 등)에 마스터의 전일종가/기준가로 등락(전일대비)을 채운다.
 // 정답지는 C 피드 fut_real.c 의 set_fsise_diff — 그 수식/가드를 그대로 옮긴다:
 //   - 기준값 yPrc = 전일종가(yprc). yprc<=0 이면 기준가(bprc)로 대체.
@@ -112,6 +126,22 @@ func applyFutSettle(ft *wire.FutTrade, s *wire.FutSettle) {
 	ft.Settle = s.Settle
 	ft.FinalSettle = s.FinalSettle
 	ft.SettleCd = s.SettleCd
+}
+
+// enrichBondTrade 는 채권 체결(A301K)에 직전대비/전일대비를 채운다.
+//   - 직전대비(diff/rate/sign): 체결가 vs 직전 체결가(prevPrc, WTG 캐시).
+//   - 전일대비(yDiff/yRate/ySign): 체결가 vs 기준가(A001B bprc). 채권은 전일종가 TR 이
+//     없어 기준가를 기준으로 삼는다 (C BA push 의 ydif 와 동형 — 기준가 대비).
+//
+// 수식/가드는 선물과 공통(wire.PriceDiff). 마스터/직전가 미도착 시 해당 대비 0.
+func enrichBondTrade(bt *wire.BondTrade, m *wire.BondMaster, prevPrc float64) {
+	if bt == nil {
+		return
+	}
+	bt.Diff, bt.Rate, bt.Sign = wire.PriceDiff(bt.Last, prevPrc)
+	if m != nil {
+		bt.YDiff, bt.YRate, bt.YSign = wire.PriceDiff(bt.Last, m.BasePrc)
+	}
 }
 
 // dirSign — 등락 방향부호 (+ 상승 / - 하락 / ' ' 보합).

@@ -121,6 +121,10 @@ func (srv *Server) Ingest(b []byte) (string, int, int, error) {
 			return srv.IngestA006F(b)
 		case "H306F": // 파생 정산가격
 			return srv.IngestH306F(b)
+		case "A301K": // (트랙2) 채권 체결 원 TR
+			return srv.IngestA301K(b)
+		case "B601K": // (트랙2) 채권 우선호가 원 TR
+			return srv.IngestB601K(b)
 		case "A001B": // 채권 종목정보 마스터
 			return srv.IngestA001B(b)
 		}
@@ -218,13 +222,35 @@ func (srv *Server) IngestB606F(b []byte) (string, int, int, error) {
 	return srv.fanout(fb.Code, fb)
 }
 
-// IngestA001B — A001B(채권 종목정보 마스터) → bond.master JSON 종목구독 fan-out.
+// IngestA001B — A001B(채권 종목정보 마스터) → 캐시 저장 + bond.master fan-out.
+// 기준가(BasePrc)를 캐시해 후속 A301K 체결의 전일대비 계산에 쓴다.
 func (srv *Server) IngestA001B(b []byte) (string, int, int, error) {
 	m, err := wire.DecodeA001B(b)
 	if err != nil {
 		return "", 0, 0, err
 	}
+	srv.masters.PutBond(m)
 	return srv.fanout(m.Code, m)
+}
+
+// IngestA301K — (트랙2) 원 채권 체결 A301K → 직전대비(캐시)+전일대비(A001B) enrich → bond.trade.
+func (srv *Server) IngestA301K(b []byte) (string, int, int, error) {
+	bt, err := wire.DecodeA301K(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	prev := srv.masters.BondPrevAndSet(bt.Code, bt.Last)
+	enrichBondTrade(bt, srv.masters.GetBond(bt.Code), prev)
+	return srv.fanout(bt.Code, bt)
+}
+
+// IngestB601K — (트랙2) 원 채권 우선호가 B601K → bond.book fan-out.
+func (srv *Server) IngestB601K(b []byte) (string, int, int, error) {
+	bb, err := wire.DecodeB601K(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return srv.fanout(bb.Code, bb)
 }
 
 // fanout — envelope 를 JSON 직렬화해 code 로 종목구독 fan-out.

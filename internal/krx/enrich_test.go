@@ -176,6 +176,39 @@ func TestEnrichGroundTruth(t *testing.T) {
 	}
 }
 
+// TestBondEnrichment — A001B 기준가 캐시 + 직전 체결가 캐시로 채권 체결의
+// 전일대비(기준가 대비)·직전대비(직전 체결가 대비)가 채워지는지 e2e.
+func TestBondEnrichment(t *testing.T) {
+	srv := NewServer(nil)
+	const code = "KR1035020310"
+
+	// 마스터(기준가 10240) 캐시.
+	m := &wire.BondMaster{Kind: "bond.master", Code: code, BasePrc: 10240.00}
+	srv.masters.PutBond(m)
+
+	// 1틱: 직전가 없음(prev 0) → 직전대비 보합, 전일대비는 기준가 대비.
+	bt1 := &wire.BondTrade{Kind: "bond.trade", Code: code, Last: 10250.00}
+	prev1 := srv.masters.BondPrevAndSet(code, bt1.Last)
+	enrichBondTrade(bt1, srv.masters.GetBond(code), prev1)
+	if bt1.Sign != " " || bt1.Diff != 0 {
+		t.Errorf("1틱 직전대비 보합 아님: diff=%v sign=%q", bt1.Diff, bt1.Sign)
+	}
+	if bt1.YDiff != 10.00 || bt1.YSign != "+" {
+		t.Errorf("1틱 전일대비(기준가): yDiff=%v ySign=%q, want 10 +", bt1.YDiff, bt1.YSign)
+	}
+
+	// 2틱(10245): 직전대비 = 10245-10250 = -5(하락), 전일대비 = 10245-10240 = +5.
+	bt2 := &wire.BondTrade{Kind: "bond.trade", Code: code, Last: 10245.00}
+	prev2 := srv.masters.BondPrevAndSet(code, bt2.Last)
+	enrichBondTrade(bt2, srv.masters.GetBond(code), prev2)
+	if bt2.Diff != -5.00 || bt2.Sign != "-" {
+		t.Errorf("2틱 직전대비: diff=%v sign=%q, want -5 -", bt2.Diff, bt2.Sign)
+	}
+	if bt2.YDiff != 5.00 || bt2.YSign != "+" {
+		t.Errorf("2틱 전일대비: yDiff=%v ySign=%q, want 5 +", bt2.YDiff, bt2.YSign)
+	}
+}
+
 // TestDirSign — 방향부호 3-way.
 func TestDirSign(t *testing.T) {
 	cases := []struct {

@@ -34,14 +34,17 @@ type Config struct {
 // DefaultConfig — 기본값.
 func DefaultConfig() Config {
 	return Config{
-		ListenAddr:      ":8085",
-		LogLevel:        "info",
-		WsPing:          30 * time.Second,
-		Demo:            false,
-		DemoCodes:       "101V6000,105V3000",
-		DemoInterval:    time.Second,
+		ListenAddr:   ":8085",
+		LogLevel:     "info",
+		WsPing:       30 * time.Second,
+		Demo:         false,
+		DemoCodes:    "101V6000,105V3000",
+		DemoInterval: time.Second,
+		// KRX 파생/채권 멀티캐스트 (sise kbfut_sise.conf/kbond_sise.conf):
+		// 파생 60641(A0 마스터)/60642(A3·G7·B6 시세)/60643(기타),
+		// 채권 60631(시세)/60632(마스터). 5포트 모두 join → 선물+채권 커버.
 		McastGroup:      "227.10.20.10",
-		McastPorts:      "60641,60642,60643",
+		McastPorts:      "60641,60642,60643,60631,60632",
 		McastRcvBuf:     32 * 1024 * 1024,
 		OtelSampleRatio: 1.0,
 	}

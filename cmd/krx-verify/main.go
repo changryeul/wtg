@@ -13,15 +13,21 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	wire "github.com/winwaysystems/wtg/pkg/krx"
 )
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: krx-verify <gen|decode> <capture.dat>")
+		fmt.Fprintln(os.Stderr, "usage:")
+		fmt.Fprintln(os.Stderr, "  krx-verify gen    <capture.dat>")
+		fmt.Fprintln(os.Stderr, "  krx-verify decode <capture.dat>")
+		fmt.Fprintln(os.Stderr, "  krx-verify replay <capture.dat> <group:port> [count] [interval]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -33,6 +39,15 @@ func main() {
 	case "decode":
 		if err := decode(os.Args[2]); err != nil {
 			fmt.Fprintln(os.Stderr, "decode:", err)
+			os.Exit(1)
+		}
+	case "replay":
+		if len(os.Args) < 4 {
+			fmt.Fprintln(os.Stderr, "usage: krx-verify replay <capture.dat> <group:port> [count] [interval]")
+			os.Exit(2)
+		}
+		if err := replay(os.Args[2], os.Args[3], os.Args[4:]); err != nil {
+			fmt.Fprintln(os.Stderr, "replay:", err)
 			os.Exit(1)
 		}
 	default:
@@ -208,6 +223,80 @@ func buildA001B() []byte {
 	put(b, 185, 14, "3.250000") // cprt
 	put(b, 294, 11, "10240.00") // bprc
 	return b
+}
+
+// ── replay ───────────────────────────────────────────────────────────────
+
+// replay 는 length-prefixed 캡처의 각 레코드를 원 TR 1건 = UDP datagram 1개로
+// 멀티캐스트 addr(group:port)에 송신한다 — 장외 시간에도 mci-edge-krx --mcast
+// e2e 를 돌릴 수 있게 KRX 실시간(datagram 당 1 TR)을 흉내낸다.
+// args: [count [interval]] — count 회 반복(기본 1), interval 간격(기본 100ms).
+func replay(path, addr string, args []string) error {
+	count, interval := 1, 100*time.Millisecond
+	if len(args) >= 1 {
+		if v, err := strconv.Atoi(args[0]); err == nil {
+			count = v
+		}
+	}
+	if len(args) >= 2 {
+		if d, err := time.ParseDuration(args[1]); err == nil {
+			interval = d
+		}
+	}
+	raddr, err := net.ResolveUDPAddr("udp4", addr)
+	if err != nil {
+		return err
+	}
+	conn, err := net.DialUDP("udp4", nil, raddr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	recs, err := readRecords(path)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "replay %d 레코드 → %s (count=%d interval=%s)\n", len(recs), addr, count, interval)
+	sent := 0
+	for c := 0; c < count; c++ {
+		for _, r := range recs {
+			if _, err := conn.Write(r); err != nil {
+				return err
+			}
+			sent++
+			time.Sleep(interval)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "송신 %d datagram\n", sent)
+	return nil
+}
+
+// readRecords 는 length-prefixed 캡처를 payload 슬라이스 목록으로 읽는다.
+func readRecords(path string) ([][]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	r := bufio.NewReader(f)
+	var out [][]byte
+	var lp [4]byte
+	for {
+		if _, err := io.ReadFull(r, lp[:]); err != nil {
+			break
+		}
+		n := binary.BigEndian.Uint32(lp[:])
+		if n == 0 || n > 70000 {
+			break
+		}
+		buf := make([]byte, n)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			break
+		}
+		out = append(out, buf)
+	}
+	return out, nil
 }
 
 // ── decode ───────────────────────────────────────────────────────────────

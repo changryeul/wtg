@@ -26,7 +26,7 @@ CMDS := $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard cmd/*/*.go)))))
 .PHONY: all build test test-v test-race test-integration vet fmt fmt-check tidy clean install \
         lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside \
         wtgprice wtgprice-clean test-wtgprice \
-        wtgquery wtgquery-clean test-wtgquery price-ha-verify krx-verify $(CMDS)
+        wtgquery wtgquery-clean test-wtgquery price-ha-verify krx-verify krx-e2e $(CMDS)
 
 all: build
 
@@ -141,6 +141,11 @@ price-ha-verify:
 # sise .h + cc 필요 (없으면 skip). 인자로 헤더 경로 지정 가능. docs/krx-sise-design.md §11.7.
 krx-verify:
 	./scripts/krx-verify.sh $(SISE_INC)
+
+# KRX 트랙2 실 바이너리 e2e (장외 재생) — gen→replay(UDP mcast)→mci-edge-krx
+# --mcast→parse→ws→krx-tester. 라이브(장중) 검증은 docs/krx-live-verify.md 경로 A.
+krx-e2e:
+	./scripts/krx-replay-e2e.sh
 
 # CI 가 수행하는 전체 검증을 로컬에서 한 번에.
 # commit/PR 전에 `make ci` 로 사전 검증 권장.

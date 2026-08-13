@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	errShort     = errors.New("krx: ingest 전문 2바이트 미만")
+	errShort     = errors.New("krx: ingest 전문 5바이트 미만")
 	errUnknownTR = errors.New("krx: 미지원 TR type")
 )
 
@@ -104,79 +104,30 @@ func (srv *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	srv.logger.Info("futures ws 종료", slog.String("id", id))
 }
 
-// Ingest — 전문 앞 2바이트(type)로 KA(체결)/KB(호가) 자동 판별 후 디코드·fan-out.
-// 실 피드/합성 공통 진입점. 미지원 type 은 오류.
+// Ingest — 전문 앞 5바이트 TR코드로 판별 후 디코드·fan-out (트랙2, 원 KRX TR 직수신).
+// 실 피드/합성 공통 진입점. 미지원 코드는 errUnknownTR.
 func (srv *Server) Ingest(b []byte) (string, int, int, error) {
-	if len(b) < 2 {
+	if len(b) < 5 {
 		return "", 0, 0, errShort
 	}
-	// 마스터(원 KRX TR)는 앞 5바이트 TR코드로 먼저 판별 (KA/KB 등 push 2B type 보다 우선).
-	if len(b) >= 5 {
-		switch string(b[0:5]) {
-		case "A306F": // (트랙2) 파생 체결 원 TR
-			return srv.IngestA306F(b)
-		case "B606F": // (트랙2) 파생 호가 원 TR
-			return srv.IngestB606F(b)
-		case "A006F": // 파생 종목정보 마스터
-			return srv.IngestA006F(b)
-		case "H306F": // 파생 정산가격
-			return srv.IngestH306F(b)
-		case "A301K": // (트랙2) 채권 체결 원 TR
-			return srv.IngestA301K(b)
-		case "B601K": // (트랙2) 채권 우선호가 원 TR
-			return srv.IngestB601K(b)
-		case "A001B": // 채권 종목정보 마스터
-			return srv.IngestA001B(b)
-		}
-	}
-	switch string(b[0:2]) {
-	case "KA": // 선물/옵션 체결 (파생 공용)
-		return srv.IngestKA(b)
-	case "KB": // 선물/옵션 호가
-		return srv.IngestKB(b)
-	case "BA": // 채권 체결
-		return srv.IngestBA(b)
-	case "BB": // 채권 호가
-		return srv.IngestBB(b)
+	switch string(b[0:5]) {
+	case "A306F": // 파생 체결
+		return srv.IngestA306F(b)
+	case "B606F": // 파생 호가
+		return srv.IngestB606F(b)
+	case "A006F": // 파생 종목정보 마스터
+		return srv.IngestA006F(b)
+	case "H306F": // 파생 정산가격
+		return srv.IngestH306F(b)
+	case "A301K": // 채권 체결
+		return srv.IngestA301K(b)
+	case "B601K": // 채권 우선호가
+		return srv.IngestB601K(b)
+	case "A001B": // 채권 종목정보 마스터
+		return srv.IngestA001B(b)
 	default:
 		return "", 0, 0, errUnknownTR
 	}
-}
-
-// IngestKA — KA(체결) 고정폭 전문 → fut.trade JSON 종목구독 fan-out.
-func (srv *Server) IngestKA(b []byte) (string, int, int, error) {
-	t, err := wire.DecodeKChe(b)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	return srv.fanout(t.Code, t)
-}
-
-// IngestKB — KB(호가) 고정폭 전문 → fut.book JSON 종목구독 fan-out.
-func (srv *Server) IngestKB(b []byte) (string, int, int, error) {
-	fb, err := wire.DecodeKHoga(b)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	return srv.fanout(fb.Code, fb)
-}
-
-// IngestBA — BA(채권 체결) 고정폭 전문 → bond.trade JSON 종목구독 fan-out.
-func (srv *Server) IngestBA(b []byte) (string, int, int, error) {
-	bt, err := wire.DecodeBACheg(b)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	return srv.fanout(bt.Code, bt)
-}
-
-// IngestBB — BB(채권 호가) 고정폭 전문 → bond.book JSON 종목구독 fan-out.
-func (srv *Server) IngestBB(b []byte) (string, int, int, error) {
-	bb, err := wire.DecodeBBHoga(b)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	return srv.fanout(bb.Code, bb)
 }
 
 // IngestA006F — A006F(파생 종목정보 마스터) → 캐시 저장 + fut.master fan-out.

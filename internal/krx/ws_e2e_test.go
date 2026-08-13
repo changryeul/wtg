@@ -12,9 +12,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// buildKA — 합성 KA 전문(234B). code/last 지정.
-func buildKA(code string, last float64) []byte {
-	b := make([]byte, 234)
+// buildA306Ffor — 합성 A306F 원 체결(173B). code/last(=cprc) 지정.
+func buildA306Ffor(code string, last float64) []byte {
+	b := make([]byte, 173)
 	for i := range b {
 		b[i] = ' '
 	}
@@ -24,14 +24,10 @@ func buildKA(code string, last float64) []byte {
 		}
 		copy(b[off:off+n], s)
 	}
-	put(0, 2, "KA")
-	put(2, 12, code)
-	put(24, 9, fmt.Sprintf("%-9.02f", last)) // oprc
-	put(34, 9, fmt.Sprintf("%-9.02f", last)) // hprc
-	put(44, 9, fmt.Sprintf("%-9.02f", last)) // lprc
-	put(54, 9, fmt.Sprintf("%-9.02f", last)) // eprc last
-	put(107, 1, "+")
-	put(108, 12, "090005123456")
+	put(0, 5, "A306F")
+	put(17, 12, code)
+	put(35, 12, "090005123456")
+	put(47, 9, fmt.Sprintf("%9.02f", last)) // cprc 체결가
 	return b
 }
 
@@ -57,11 +53,11 @@ func TestE2E_SubscribeFanout(t *testing.T) {
 	waitFor(t, func() bool { return len(srv.Hub().subs) == 1 && subscribedHas(srv, "101V6000") })
 
 	// 미구독 종목 주입 → 수신 없어야
-	if _, sent, _, err := srv.IngestKA(buildKA("105V3000", 100.00)); err != nil || sent != 0 {
+	if _, sent, _, err := srv.IngestA306F(buildA306Ffor("105V3000", 100.00)); err != nil || sent != 0 {
 		t.Fatalf("미구독 105V3000 sent=%d err=%v (want 0)", sent, err)
 	}
 	// 구독 종목 주입 → 수신
-	if _, sent, _, err := srv.IngestKA(buildKA("101V6000", 265.75)); err != nil || sent != 1 {
+	if _, sent, _, err := srv.IngestA306F(buildA306Ffor("101V6000", 265.75)); err != nil || sent != 1 {
 		t.Fatalf("구독 101V6000 sent=%d err=%v (want 1)", sent, err)
 	}
 
@@ -79,9 +75,9 @@ func TestE2E_SubscribeFanout(t *testing.T) {
 		t.Errorf("수신 JSON 예상밖: %s", msg)
 	}
 
-	// 같은 구독 종목의 호가(KB)도 Ingest 자동판별로 fan-out 되는지 (conn 정상일 때 먼저)
-	if _, sent, _, err := srv.Ingest(buildKBfor("101V6000")); err != nil || sent != 1 {
-		t.Fatalf("호가 KB sent=%d err=%v (want 1)", sent, err)
+	// 같은 구독 종목의 호가(B606F)도 Ingest 자동판별로 fan-out 되는지 (conn 정상일 때 먼저)
+	if _, sent, _, err := srv.Ingest(buildB606Ffor("101V6000")); err != nil || sent != 1 {
+		t.Fatalf("호가 B606F sent=%d err=%v (want 1)", sent, err)
 	}
 	c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, msg2, err := c.ReadMessage()
@@ -105,18 +101,18 @@ func TestE2E_SubscribeFanout(t *testing.T) {
 	}
 }
 
-// buildKBfor — 지정 종목의 최소 KB(호가) 전문(362B).
-func buildKBfor(code string) []byte {
-	b := make([]byte, 362)
+// buildB606Ffor — 지정 종목의 최소 B606F(호가) 원 TR(324B).
+func buildB606Ffor(code string) []byte {
+	b := make([]byte, 324)
 	for i := range b {
 		b[i] = ' '
 	}
-	copy(b[0:2], "KB")
-	copy(b[2:14], code)
-	copy(b[14:26], "090005123456")
-	// sell[0]/buy[0] 1단만 값 (prc@so+1)
-	copy(b[122+1:122+10], fmt.Sprintf("%-9.02f", 265.80))
-	copy(b[242+1:242+10], fmt.Sprintf("%-9.02f", 265.75))
+	copy(b[0:5], "B606F")
+	copy(b[17:29], code)
+	copy(b[35:47], "090005123456")
+	// hoga[0] @47 — sprc@0/bprc@9 1단만 값.
+	copy(b[47:56], fmt.Sprintf("%9.02f", 265.80))
+	copy(b[56:65], fmt.Sprintf("%9.02f", 265.75))
 	return b
 }
 

@@ -70,11 +70,11 @@ func (srv *Server) runDemoSource(ctx context.Context, cfg Config) {
 			for i, code := range codes {
 				base := 200.0 + float64(i)*50.0
 				last := base + float64(tick%20)*0.05
-				if _, _, _, err := srv.IngestKA(demoKA(code, last)); err != nil {
-					srv.logger.Warn("데모 KA ingest", slog.Any("error", err))
+				if _, _, _, err := srv.IngestA306F(demoA306F(code, last)); err != nil {
+					srv.logger.Warn("데모 A306F ingest", slog.Any("error", err))
 				}
-				if _, _, _, err := srv.IngestKB(demoKB(code, last)); err != nil {
-					srv.logger.Warn("데모 KB ingest", slog.Any("error", err))
+				if _, _, _, err := srv.IngestB606F(demoB606F(code, last)); err != nil {
+					srv.logger.Warn("데모 B606F ingest", slog.Any("error", err))
 				}
 			}
 			tick++
@@ -92,32 +92,35 @@ func splitCodes(s string) []string {
 	return out
 }
 
-// demoKA / demoKB — 합성 전문 (테스트 buildKA/KB 와 동형, 시연용 최소 필드).
-func demoKA(code string, last float64) []byte {
-	b := make([]byte, 234)
+// demoA306F / demoB606F — 합성 원 TR (트랙2 파싱 경로 시연용 최소 필드).
+// 오프셋은 pkg/krx a306f.go / b606f.go 와 동일 (A306F.h / B606F.h).
+func demoA306F(code string, last float64) []byte {
+	b := make([]byte, 173) // SZA306F
 	for i := range b {
 		b[i] = ' '
 	}
-	copy(b[0:2], "KA")
-	copy(b[2:14], code)
-	copy(b[24:33], fmt.Sprintf("%-9.02f", last)) // oprc
-	copy(b[34:43], fmt.Sprintf("%-9.02f", last)) // hprc
-	copy(b[44:53], fmt.Sprintf("%-9.02f", last)) // lprc
-	copy(b[54:63], fmt.Sprintf("%-9.02f", last)) // eprc last
-	copy(b[107:108], "+")
-	copy(b[108:120], time.Now().Format("150405000")+"000")
+	copy(b[0:5], "A306F")
+	copy(b[17:29], code)
+	copy(b[35:47], time.Now().Format("150405000")+"000")
+	copy(b[47:56], fmt.Sprintf("%9.02f", last))        // cprc 체결가
+	copy(b[83:92], fmt.Sprintf("%9.02f", last))        // oprc 시가
+	copy(b[92:101], fmt.Sprintf("%9.02f", last+0.10))  // hprc 고가
+	copy(b[101:110], fmt.Sprintf("%9.02f", last-0.10)) // lprc 저가
+	copy(b[110:119], fmt.Sprintf("%9.02f", last))      // pprc 직전가
+	copy(b[153:154], "2")                              // ftcd 매수
 	return b
 }
 
-func demoKB(code string, last float64) []byte {
-	b := make([]byte, 362)
+func demoB606F(code string, last float64) []byte {
+	b := make([]byte, 324) // SZB606F
 	for i := range b {
 		b[i] = ' '
 	}
-	copy(b[0:2], "KB")
-	copy(b[2:14], code)
-	copy(b[14:26], time.Now().Format("150405000")+"000")
-	copy(b[122+1:122+10], fmt.Sprintf("%-9.02f", last+0.05)) // sell[0] prc
-	copy(b[242+1:242+10], fmt.Sprintf("%-9.02f", last))      // buy[0] prc
+	copy(b[0:5], "B606F")
+	copy(b[17:29], code)
+	copy(b[35:47], time.Now().Format("150405000")+"000")
+	// hoga[0] @47 — sprc@0/bprc@9.
+	copy(b[47:56], fmt.Sprintf("%9.02f", last+0.05)) // sell[0] 매도우선
+	copy(b[56:65], fmt.Sprintf("%9.02f", last))      // buy[0]  매수우선
 	return b
 }

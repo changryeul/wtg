@@ -107,6 +107,13 @@ func (srv *Server) Ingest(b []byte) (string, int, int, error) {
 	if len(b) < 2 {
 		return "", 0, 0, errShort
 	}
+	// 마스터(원 KRX TR)는 앞 5바이트 TR코드로 먼저 판별 (KA/KB 등 push 2B type 보다 우선).
+	if len(b) >= 5 {
+		switch string(b[0:5]) {
+		case "A006F": // 파생 종목정보 마스터
+			return srv.IngestA006F(b)
+		}
+	}
 	switch string(b[0:2]) {
 	case "KA": // 선물/옵션 체결 (파생 공용)
 		return srv.IngestKA(b)
@@ -155,6 +162,15 @@ func (srv *Server) IngestBB(b []byte) (string, int, int, error) {
 		return "", 0, 0, err
 	}
 	return srv.fanout(bb.Code, bb)
+}
+
+// IngestA006F — A006F(파생 종목정보 마스터) → fut.master JSON 종목구독 fan-out.
+func (srv *Server) IngestA006F(b []byte) (string, int, int, error) {
+	m, err := futpkg.DecodeA006F(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return srv.fanout(m.Code, m)
 }
 
 // fanout — envelope 를 JSON 직렬화해 code 로 종목구독 fan-out.

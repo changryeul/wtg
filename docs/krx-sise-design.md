@@ -142,3 +142,49 @@ web 클라는 구독 시작 시 **현재가 스냅샷**이 필요(이후 push �
 - `internal/push` (`mci-push`) — pushdata 수신 + ws fan-out + HTTP push endpoint
 - `internal/edge/push` (`mci-edge-push`) — DMZ web ws fan-out
 - `docs/push-*.md` — push 트랙 운영/테스트/보안 가이드
+
+## 11. 정답지 대사 — 트랙2 A306F 체결 등락 (C 피드 fut_real.c 기준)
+
+트랙2(Go raw 파싱)의 값 정확성을 C 피드(`~/mywork/yuanta/sise` = 운영 정답지)와
+필드·수식 단위로 대사한 결과. 대상은 표시 필수인 **전일대비(diff/rate/sign)**.
+
+### 11.1 오프셋 대사 — `A306F_T` (inc/A306F.h) ↔ `pkg/krx.DecodeA306F`
+| 필드 | C 오프셋 | Go 오프셋 | 폭 | 판정 |
+|-----|---------|----------|----|-----|
+| code | 17 | 17 | 12 | ✅ |
+| time | 35 | 35 | 12 | ✅ |
+| cprc(체결가) | 47 | 47 | 9 | ✅ → Last/Cprc |
+| cvol | 56 | 56 | 9 | ✅ |
+| nprc/fprc(근·원월) | 65/74 | 65/74 | 9 | ✅ |
+| oprc/hprc/lprc | 83/92/101 | 83/92/101 | 9 | ✅ |
+| pprc(직전가) | 110 | 110 | 9 | ✅ |
+| tvol/tamt | 119/131 | 119/131 | 12/22 | ✅ |
+| ftcd(매도매수) | 153 | 153 | 1 | ✅ → Bs |
+| uldp/lldp(동적상하한) | 154/163 | 154/163 | 9 | ✅ → Up/DnLimit |
+| **총 길이** | 173 | `SZA306F`=173 | | ✅ |
+
+스케일: C `l_s2d = atof()` (무스케일), KRX 가격은 소수점 포함 ASCII → Go `ffloat`
+(`TrimSpace`+`ParseFloat`) 와 동치. ✅
+
+### 11.2 수식 대사 — 전일대비 (`set_fsise_diff` ↔ `enrichFutTrade`)
+C 원문 (fut_real.c:299-342) 을 그대로 이관:
+```
+yPrc = fsise.yPrc(전일종가);  if(yPrc<=0) yPrc = fsise.bPrc(기준가);   // 대체
+sign = ' ';
+if(yPrc<=0 || ePrc<=0 || yPrc==ePrc) { diff=0; rate=0; }              // 가드
+else { diff = ePrc - yPrc; rate = diff/yPrc*100; sign = rate>0?'+':rate<0?'-':' '; }
+```
+- yPrc/bPrc 모두 **A006F 마스터**에서 옴 (yprc→PrevClose, bprc→BasePrc) → `MasterCache`.
+- 전송 `prevClose` 는 C(`rts->yprc=fsise.yPrc`)와 동일하게 **대체 전 원 전일종가**.
+- 최초 이관 시 누락했던 3건을 정답지 대사로 발견·수정:
+  1. **기준가 fallback** (yprc≤0 → bprc) 누락 → 신규상장 등락 미표시.
+  2. **체결가≤0 가드** 누락 → 음수 diff 오산.
+  3. `!=0` → **`<=0`** (음수 전일종가 무효 처리).
+- 대사 테스트: `internal/krx/enrich_test.go`(`TestEnrichGroundTruth` 6 케이스 —
+  상승/하락/보합/기준가대체/체결가0/둘다0).
+
+### 11.3 미이관 (후속)
+- **직전대비**(`set_fcheg_diff` cDif/cRat/csgn — 직전가 pPrc 대비): tick 색상용 부수 필드.
+  현재 `FutTrade` 미포함 — 필요 시 `PrevTradePrc`/`Csgn` 추가.
+- **정산가(Settle)**: H306F(정산가 TR) 미구현 → 0. 채권/G706F 와 함께 후속.
+- 호가(B606F): 등락 계산 없음(호가는 대비 미산정) → 대사 불필요.

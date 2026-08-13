@@ -53,7 +53,12 @@ func (c *MasterCache) GetBond(code string) *wire.BondMaster {
 	return c.bond[code]
 }
 
-// enrichFutTrade 는 체결(A306F 등)에 마스터 전일종가로 등락/기준가를 채운다.
+// enrichFutTrade 는 체결(A306F 등)에 마스터의 전일종가/기준가로 등락(전일대비)을 채운다.
+// 정답지는 C 피드 fut_real.c 의 set_fsise_diff — 그 수식/가드를 그대로 옮긴다:
+//   - 기준값 yPrc = 전일종가(yprc). yprc<=0 이면 기준가(bprc)로 대체.
+//   - yPrc<=0 || ePrc(체결가)<=0 || 보합(yPrc==ePrc) → diff=0, rate=0, 부호 보합(' ').
+//   - 그 외 diff = ePrc-yPrc, rate = diff/yPrc*100, 부호는 rate 방향.
+// 전송하는 prevClose 필드는 (C 와 동일하게) 대체 전 원 전일종가를 그대로 싣는다.
 // 마스터 미도착(nil)이면 그대로 (diff/rate 0) — 마스터 도착 후 후속 체결부터 채워짐.
 func enrichFutTrade(ft *wire.FutTrade, m *wire.FutMaster) {
 	if ft == nil || m == nil {
@@ -63,10 +68,20 @@ func enrichFutTrade(ft *wire.FutTrade, m *wire.FutMaster) {
 	if ft.BasePrc == 0 {
 		ft.BasePrc = m.BasePrc
 	}
-	if m.PrevClose != 0 {
-		ft.Diff = ft.Last - m.PrevClose
-		ft.Rate = ft.Diff / m.PrevClose * 100.0
+
+	yPrc := m.PrevClose
+	if yPrc <= 0 { // 전일종가 없으면 기준가로 대체 (신규상장/구분코드 등)
+		yPrc = m.BasePrc
 	}
+	ePrc := ft.Last
+	if yPrc <= 0 || ePrc <= 0 || yPrc == ePrc {
+		ft.Diff = 0
+		ft.Rate = 0
+		ft.Sign = " "
+		return
+	}
+	ft.Diff = ePrc - yPrc
+	ft.Rate = ft.Diff / yPrc * 100.0
 	ft.Sign = dirSign(ft.Diff)
 }
 

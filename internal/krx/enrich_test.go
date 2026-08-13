@@ -97,6 +97,43 @@ func TestMasterJoinEnrichment(t *testing.T) {
 	t.Logf("enriched fut.trade = %s", js)
 }
 
+// TestEnrichGroundTruth — C 피드 fut_real.c set_fsise_diff 정답지 수식/가드 대사.
+// 각 케이스는 (전일종가 yprc, 기준가 bprc, 체결가 last) → 기대 (diff, rate, sign).
+func TestEnrichGroundTruth(t *testing.T) {
+	cases := []struct {
+		name              string
+		yprc, bprc, last  float64
+		wantDiff, wantRat float64
+		wantSign          string
+	}{
+		{"상승", 265.50, 265.00, 265.75, 0.25, 0.25 / 265.50 * 100, "+"},
+		{"하락", 265.50, 265.00, 265.00, -0.50, -0.50 / 265.50 * 100, "-"},
+		{"보합_yprc==eprc", 265.50, 265.00, 265.50, 0, 0, " "},
+		{"전일종가0_기준가대체", 0, 100.00, 101.00, 1.00, 1.00 / 100.00 * 100, "+"},
+		{"체결가0_가드", 265.50, 265.00, 0, 0, 0, " "},
+		{"둘다0_가드", 0, 0, 100.00, 0, 0, " "},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ft := &wire.FutTrade{Code: "T", Last: c.last}
+			enrichFutTrade(ft, &wire.FutMaster{Code: "T", PrevClose: c.yprc, BasePrc: c.bprc})
+			if math.Abs(ft.Diff-c.wantDiff) > 1e-9 {
+				t.Errorf("diff=%v, want %v", ft.Diff, c.wantDiff)
+			}
+			if math.Abs(ft.Rate-c.wantRat) > 1e-9 {
+				t.Errorf("rate=%v, want %v", ft.Rate, c.wantRat)
+			}
+			if ft.Sign != c.wantSign {
+				t.Errorf("sign=%q, want %q", ft.Sign, c.wantSign)
+			}
+			// prevClose 는 (C 와 동일) 대체 전 원 전일종가.
+			if ft.PrevClose != c.yprc {
+				t.Errorf("prevClose=%v, want %v (원 전일종가)", ft.PrevClose, c.yprc)
+			}
+		})
+	}
+}
+
 // TestDirSign — 방향부호 3-way.
 func TestDirSign(t *testing.T) {
 	cases := []struct {

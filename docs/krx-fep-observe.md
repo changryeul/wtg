@@ -90,16 +90,18 @@ $WTG/bin/krx-tester --url ws://127.0.0.1:8085/v1/subscribe \
 $WTG/bin/krx-tester --url ws://127.0.0.1:8085/v1/subscribe --symbols 101V6000 --json
 ```
 
-### 방법 2 — 브라우저 임시 화면 (눈으로)
-`docs/krx-ws-test-client.html` (단일 파일, 외부 의존 0). ws 접근 가능한 PC 에서 열어
-URL(`ws://<host>:8085/v1/subscribe`)·종목 입력 → Connect → 실시간 표로 last/전일대비/
-직전대비/호가/정산 표시. 정식 프론트 전 확인용 + 프론트 개발 참고.
+### 방법 2 — 브라우저 화면 (눈으로)
+**내장 인스펙터 (권장)** — mci-edge-krx 가 `GET /` 로 확인 화면을 직접 서빙한다.
+브라우저로 **`http://<host>:8085/`** 만 열면 됨 (ws URL 은 접속 주소에서 자동 도출).
+종목 입력 → Connect → last/전일대비/직전대비/호가/정산 실시간 표(상승 빨강/하락 파랑).
 
 내 노트북에서 EC2(사설망)를 볼 때는 SSH 포트포워드:
 ```bash
 ssh -L 8085:127.0.0.1:8085 fxec2      # 터널 유지
-# 그 상태로 krx-ws-test-client.html 을 브라우저로 열고 URL=ws://127.0.0.1:8085/v1/subscribe
+# 브라우저로 http://127.0.0.1:8085/ 열기
 ```
+(파일로 열고 싶으면 `docs/krx-ws-test-client.html` 단일 파일도 동일 기능 — file:// 사용 시
+URL 을 수동 입력.)
 
 ### 방법 3 — websocat 한 줄 (CLI 대안)
 ```bash

@@ -19,6 +19,7 @@ func (srv *Server) Start(ctx context.Context, cfg Config) error {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "ok conns=%d\n", srv.hub.Count())
 	})
+	mux.HandleFunc("/", srv.ServeInspector) // 내장 시세 확인 화면 (정확히 "/" 만)
 
 	httpSrv := &http.Server{Addr: cfg.ListenAddr, Handler: mux}
 

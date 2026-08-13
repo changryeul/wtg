@@ -1,0 +1,111 @@
+<!doctype html>
+<!-- mci-edge-krx 내장 인스펙터 — GET / 로 서빙. 같은 서버의 /v1/subscribe 에 붙어
+     fut/bond trade·book 을 실시간 표로. "MCI 가 받아 client 로 전달"을 눈으로 확인. -->
+<meta charset="utf-8">
+<title>mci-edge-krx inspector</title>
+<style>
+  body { font: 13px/1.5 -apple-system, sans-serif; margin: 16px; }
+  input { font: inherit; padding: 4px 6px; }
+  #url { width: 380px; } #syms { width: 320px; }
+  button { font: inherit; padding: 4px 12px; cursor: pointer; }
+  #stat { margin: 8px 0; font-weight: bold; }
+  table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 3px 8px; text-align: right; }
+  th { background: #f2f2f2; }
+  td.code { text-align: left; font-family: monospace; }
+  .up { color: #c00; } .dn { color: #06c; } .flat { color: #666; }
+  #log { margin-top: 12px; height: 160px; overflow: auto; background: #111; color: #0f0;
+         font-family: monospace; font-size: 11px; padding: 8px; white-space: pre-wrap; }
+</style>
+
+<h3>mci-edge-krx inspector <small style="font-weight:normal">— KRX 시세 ws 확인</small></h3>
+<div>
+  ws URL: <input id="url">
+  종목(콤마): <input id="syms" value="101V6000,105V3000,201S3000,167V3000,KR103501GA31">
+  <button id="btn">Connect</button>
+</div>
+<div id="stat">disconnected</div>
+
+<table id="tbl">
+  <thead><tr>
+    <th class="code">code</th><th>kind</th><th>last</th><th>전일대비</th><th>등락률%</th>
+    <th>직전대비</th><th>ask0</th><th>bid0</th><th>settle</th><th>updates</th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+<div id="log"></div>
+
+<script>
+let ws = null, rx = 0;
+const rows = {};
+const tbody = document.querySelector('#tbl tbody');
+const stat = document.getElementById('stat');
+const logEl = document.getElementById('log');
+
+// ws URL 을 현재 접속 주소에서 자동 도출 (SSH 터널/직접 무관).
+(function () {
+  const u = document.getElementById('url');
+  if (location.host) u.value = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/v1/subscribe';
+  else u.value = 'ws://127.0.0.1:8085/v1/subscribe';
+})();
+
+function log(m) { logEl.textContent += m + '\n'; logEl.scrollTop = logEl.scrollHeight; }
+function cls(v) { return v > 0 ? 'up' : v < 0 ? 'dn' : 'flat'; }
+function num(v, d = 2) { return (v == null) ? '' : Number(v).toFixed(d); }
+
+function row(code) {
+  if (rows[code]) return rows[code];
+  const tr = document.createElement('tr');
+  for (let i = 0; i < 10; i++) tr.appendChild(document.createElement('td'));
+  tr.cells[0].className = 'code';
+  tr.cells[0].textContent = code;
+  tbody.appendChild(tr);
+  rows[code] = tr; tr._n = 0;
+  return tr;
+}
+
+function apply(d) {
+  const tr = row(d.code);
+  tr._n++;
+  tr.cells[9].textContent = tr._n;
+  if (d.kind === 'fut.trade' || d.kind === 'bond.trade') {
+    tr.cells[1].textContent = d.kind.split('.')[0];
+    tr.cells[2].textContent = num(d.last);
+    const isBond = d.kind === 'bond.trade';
+    const yd = isBond ? d.yDiff : d.diff;
+    const yr = isBond ? d.yRate : d.rate;
+    tr.cells[3].textContent = num(yd); tr.cells[3].className = cls(yd);
+    tr.cells[4].textContent = num(yr, 4);
+    tr.cells[5].textContent = num(d.cdiff); tr.cells[5].className = cls(d.cdiff);
+    if (d.settle) tr.cells[8].textContent = num(d.settle);
+  } else if (d.kind === 'fut.book' || d.kind === 'bond.book') {
+    const a = d.ask && d.ask[0], b = d.bid && d.bid[0];
+    if (a) tr.cells[6].textContent = num(a.prc) + '×' + a.vol;
+    if (b) tr.cells[7].textContent = num(b.prc) + '×' + b.vol;
+  }
+}
+
+function toggle() {
+  if (ws) { ws.close(); return; }
+  const url = document.getElementById('url').value.trim();
+  const syms = document.getElementById('syms').value.split(',').map(s => s.trim()).filter(Boolean);
+  ws = new WebSocket(url);
+  document.getElementById('btn').textContent = 'Disconnect';
+  ws.onopen = () => {
+    stat.textContent = 'connected → subscribe ' + syms.join(',');
+    ws.send(JSON.stringify({ type: 'subscribe', symbols: syms }));
+    log('OPEN, subscribed: ' + syms.join(','));
+  };
+  ws.onmessage = (e) => {
+    rx++;
+    try { apply(JSON.parse(e.data)); stat.textContent = 'connected — 수신 ' + rx + '건'; }
+    catch (err) { log('parse err: ' + e.data); }
+  };
+  ws.onclose = () => {
+    stat.textContent = 'disconnected (수신 ' + rx + '건)';
+    document.getElementById('btn').textContent = 'Connect'; ws = null; log('CLOSE');
+  };
+  ws.onerror = () => log('WS ERROR (URL/포트/네트워크 확인)');
+}
+document.getElementById('btn').addEventListener('click', toggle);
+</script>

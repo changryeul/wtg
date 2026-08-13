@@ -50,7 +50,7 @@ func TestE2E_SubscribeFanout(t *testing.T) {
 		t.Fatalf("subscribe write: %v", err)
 	}
 	// 구독이 서버에 반영될 시간
-	waitFor(t, func() bool { return len(srv.Hub().subs) == 1 && subscribedHas(srv, "101V6000") })
+	waitFor(t, func() bool { return srv.Hub().Count() == 1 && subscribedHas(srv, "101V6000") })
 
 	// 미구독 종목 주입 → 수신 없어야
 	if _, sent, _, err := srv.IngestA306F(buildA306Ffor("105V3000", 100.00)); err != nil || sent != 0 {

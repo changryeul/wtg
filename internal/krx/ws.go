@@ -112,6 +112,8 @@ func (srv *Server) Ingest(b []byte) (string, int, int, error) {
 		switch string(b[0:5]) {
 		case "A006F": // 파생 종목정보 마스터
 			return srv.IngestA006F(b)
+		case "A001B": // 채권 종목정보 마스터
+			return srv.IngestA001B(b)
 		}
 	}
 	switch string(b[0:2]) {
@@ -167,6 +169,15 @@ func (srv *Server) IngestBB(b []byte) (string, int, int, error) {
 // IngestA006F — A006F(파생 종목정보 마스터) → fut.master JSON 종목구독 fan-out.
 func (srv *Server) IngestA006F(b []byte) (string, int, int, error) {
 	m, err := wire.DecodeA006F(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return srv.fanout(m.Code, m)
+}
+
+// IngestA001B — A001B(채권 종목정보 마스터) → bond.master JSON 종목구독 fan-out.
+func (srv *Server) IngestA001B(b []byte) (string, int, int, error) {
+	m, err := wire.DecodeA001B(b)
 	if err != nil {
 		return "", 0, 0, err
 	}

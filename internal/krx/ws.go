@@ -15,7 +15,7 @@ import (
 
 var (
 	errShort     = errors.New("krx: ingest 전문 2바이트 미만")
-	errUnknownTR = errors.New("krx: 미지원 TR type (KA/KB 만)")
+	errUnknownTR = errors.New("krx: 미지원 TR type")
 )
 
 // Server 는 선물시세 종목구독 ws fan-out + 전문 수신(ingest) 진입점.
@@ -119,6 +119,8 @@ func (srv *Server) Ingest(b []byte) (string, int, int, error) {
 			return srv.IngestB606F(b)
 		case "A006F": // 파생 종목정보 마스터
 			return srv.IngestA006F(b)
+		case "H306F": // 파생 정산가격
+			return srv.IngestH306F(b)
 		case "A001B": // 채권 종목정보 마스터
 			return srv.IngestA001B(b)
 		}
@@ -191,8 +193,20 @@ func (srv *Server) IngestA306F(b []byte) (string, int, int, error) {
 	if err != nil {
 		return "", 0, 0, err
 	}
-	enrichFutTrade(ft, srv.masters.GetFut(ft.Code))
+	enrichFutTrade(ft, srv.masters.GetFut(ft.Code))    // 전일대비 (A006F)
+	applyFutSettle(ft, srv.masters.GetSettle(ft.Code)) // 정산가 (H306F)
 	return srv.fanout(ft.Code, ft)
+}
+
+// IngestH306F — (트랙2) 파생 정산가 H306F → 캐시 저장 + fut.settle fan-out.
+// 정산가/최종결제가를 code 별로 캐시해 후속 A306F 체결의 settle 필드를 채운다.
+func (srv *Server) IngestH306F(b []byte) (string, int, int, error) {
+	s, err := wire.DecodeH306F(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	srv.masters.PutSettle(s)
+	return srv.fanout(s.Code, s)
 }
 
 // IngestB606F — (트랙2) 원 파생 호가 B606F → fut.book fan-out.

@@ -183,8 +183,26 @@ else { diff = ePrc - yPrc; rate = diff/yPrc*100; sign = rate>0?'+':rate<0?'-':' 
 - 대사 테스트: `internal/krx/enrich_test.go`(`TestEnrichGroundTruth` 6 케이스 —
   상승/하락/보합/기준가대체/체결가0/둘다0).
 
-### 11.3 미이관 (후속)
-- **직전대비**(`set_fcheg_diff` cDif/cRat/csgn — 직전가 pPrc 대비): tick 색상용 부수 필드.
-  현재 `FutTrade` 미포함 — 필요 시 `PrevTradePrc`/`Csgn` 추가.
-- **정산가(Settle)**: H306F(정산가 TR) 미구현 → 0. 채권/G706F 와 함께 후속.
+### 11.3 직전대비 대사 (`set_fcheg_diff` ↔ `prevTradeDiff`)
+직전대비(직전가 pPrc 대비 등락)는 A306F TR 내부값(cprc,pprc)만으로 계산 →
+**decode-time**(`pkg/krx.DecodeA306F` 안 `prevTradeDiff`). 마스터 불필요.
+```
+if(cPrc<=0 || pPrc<=0 || cPrc==pPrc) { cDif=0; cRat=0; sign=' '; }
+else { cDif=cPrc-pPrc; cRat=cDif/pPrc*100; sign=cRat>0?'+':cRat<0?'-':' '; }
+```
+- Track1(KA)은 C 가 이미 계산해 실어보내므로 `DecodeKChe` 가 그대로 읽음
+  (pprc@209/cdif@218/crat@227/csgn@233).
+- FutTrade 필드: `prevTradePrc`/`cdiff`/`crate`/`csign`.
+
+### 11.4 정산가 대사 (H306F ↔ `DecodeH306F`+`applyFutSettle`)
+정산가/최종결제가는 A306F 에 없고 **H306F**(IFMSRID0009)로 별도 분배 → C 는
+`fsise.sPrc/lsPr/sPcd` 로 보관해 매 KA push 에 실어보냄. WTG 도 동형:
+- `DecodeH306F` (53B: code@5, sprc@23[18], spcd@41[2], lspr@43[8], lspc@51) → `FutSettle`.
+- `MasterCache.PutSettle` 로 code 별 캐시, `IngestH306F` 가 `fut.settle` 도 fan-out.
+- `IngestA306F` 가 `applyFutSettle` 로 후속 체결에 settle/finalSettle/settleCd 주입.
+- FutTrade 필드: `settle`/`finalSettle`/`settleCd`.
+
+### 11.5 남은 미이관
 - 호가(B606F): 등락 계산 없음(호가는 대비 미산정) → 대사 불필요.
+- 채권 raw(A301K 체결 → A001B 마스터 조인 / B601K 호가): 선물과 동형으로 후속.
+- 색상코드(COLORD/COLORL): web 이 부호로 자체 렌더 → 미이관.

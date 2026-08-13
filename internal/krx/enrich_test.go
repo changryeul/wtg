@@ -97,6 +97,48 @@ func TestMasterJoinEnrichment(t *testing.T) {
 	t.Logf("enriched fut.trade = %s", js)
 }
 
+// buildH306FMin — code + 정산가(sprc@23) + 구분(spcd@41) + 최종결제(lspr@43) 최소 프레임.
+func buildH306FMin(code string, settle, final float64, cd string) []byte {
+	b := make([]byte, wire.SZH306F)
+	for i := range b {
+		b[i] = ' '
+	}
+	putField(b, 0, 5, "H306F")
+	putField(b, 5, 12, code)
+	putField(b, 23, 18, fmt.Sprintf("%18.2f", settle))
+	putField(b, 41, 2, cd)
+	putField(b, 43, 8, fmt.Sprintf("%8.2f", final))
+	return b
+}
+
+// TestSettleEnrichment — H306F 정산가 캐시 후 A306F 체결의 settle 필드가 채워지는지 e2e.
+func TestSettleEnrichment(t *testing.T) {
+	srv := NewServer(nil)
+	const code = "101V6000"
+
+	// 정산가 도착 전 체결 — settle 0.
+	ft0, _ := wire.DecodeA306F(buildA306FMin(code, 265.75))
+	applyFutSettle(ft0, srv.masters.GetSettle(code))
+	if ft0.Settle != 0 || ft0.SettleCd != "" {
+		t.Fatalf("정산가 미도착인데 채워짐: settle=%v cd=%q", ft0.Settle, ft0.SettleCd)
+	}
+
+	// H306F 도착 — 캐시.
+	if _, _, _, err := srv.IngestH306F(buildH306FMin(code, 265.30, 265.40, "11")); err != nil {
+		t.Fatalf("H306F: %v", err)
+	}
+	if s := srv.masters.GetSettle(code); s == nil || s.Settle != 265.30 {
+		t.Fatalf("정산가 캐시 실패: %+v", s)
+	}
+
+	// 정산가 도착 후 체결 — settle/finalSettle/settleCd 채워짐.
+	ft, _ := wire.DecodeA306F(buildA306FMin(code, 265.75))
+	applyFutSettle(ft, srv.masters.GetSettle(code))
+	if ft.Settle != 265.30 || ft.FinalSettle != 265.40 || ft.SettleCd != "11" {
+		t.Errorf("정산가 미반영: settle=%v final=%v cd=%q", ft.Settle, ft.FinalSettle, ft.SettleCd)
+	}
+}
+
 // TestEnrichGroundTruth — C 피드 fut_real.c set_fsise_diff 정답지 수식/가드 대사.
 // 각 케이스는 (전일종가 yprc, 기준가 bprc, 체결가 last) → 기대 (diff, rate, sign).
 func TestEnrichGroundTruth(t *testing.T) {

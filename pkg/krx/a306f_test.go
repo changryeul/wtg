@@ -62,9 +62,19 @@ func TestDecodeA306F(t *testing.T) {
 	if ft.Bs != "2" || ft.UpLimit != 291.00 || ft.DnLimit != 240.00 {
 		t.Errorf("bs/상하한: %q/%v/%v", ft.Bs, ft.UpLimit, ft.DnLimit)
 	}
-	// 원 TR 엔 없는 필드는 0 (마스터 join 전)
+	// 직전대비 — decode-time (cprc 265.75 vs pprc 265.70).
+	if ft.PrevTradePrc != 265.70 {
+		t.Errorf("직전가=%v, want 265.70", ft.PrevTradePrc)
+	}
+	if d := ft.Cprc - ft.PrevTradePrc; ft.Cdiff-d > 1e-9 || d-ft.Cdiff > 1e-9 {
+		t.Errorf("cdiff=%v, want %v", ft.Cdiff, d)
+	}
+	if ft.Csign != "+" {
+		t.Errorf("csign=%q, want +", ft.Csign)
+	}
+	// 전일대비/정산가는 마스터·H306F join 전이라 0.
 	if ft.Diff != 0 || ft.PrevClose != 0 || ft.Settle != 0 {
-		t.Errorf("원 TR 미포함 필드가 0 아님: diff=%v prevClose=%v settle=%v", ft.Diff, ft.PrevClose, ft.Settle)
+		t.Errorf("join 전 필드가 0 아님: diff=%v prevClose=%v settle=%v", ft.Diff, ft.PrevClose, ft.Settle)
 	}
 	js, _ := json.Marshal(ft)
 	t.Logf("JSON = %s", js)

@@ -18,28 +18,34 @@ const SZKCheg = 234
 // FutTrade 는 선물 체결 시세 JSON envelope. 숫자는 원 전문의 %-9.02f/%ld 를 그대로
 // 파싱한 값 (가격 소수 2자리, diff/rate 는 부호 내장).
 type FutTrade struct {
-	Kind      string  `json:"kind"` // 항상 "fut.trade"
-	Code      string  `json:"code"` // 종목코드
-	Time      string  `json:"time"` // HHMMSSuuuuuu (12자리)
-	BasePrc   float64 `json:"basePrc"`
-	Open      float64 `json:"open"`
-	High      float64 `json:"high"`
-	Low       float64 `json:"low"`
-	Last      float64 `json:"last"`      // 현재가(종가) eprc
-	PrevClose float64 `json:"prevClose"` // 전일종가 yprc
-	Diff      float64 `json:"diff"`      // 전일대비 (부호 내장)
-	Settle    float64 `json:"settle"`    // 정산가 sprc
-	Rate      float64 `json:"rate"`      // 전일대비 등락률 (부호 내장)
-	Sign      string  `json:"sign"`      // 방향부호 +/-/' '
-	Bs        string  `json:"bs"`        // 최종 매도매수구분 ' '/0/1/2
-	Tvol      int64   `json:"tvol"`      // 누적 체결수량
-	Tamt      float64 `json:"tamt"`      // 누적 거래대금
-	Cprc      float64 `json:"cprc"`      // 체결가 (이번 틱)
-	Cvol      int64   `json:"cvol"`      // 거래량 (이번 틱)
-	NearPrc   float64 `json:"nearPrc"`   // 근월물체결가
-	FarPrc    float64 `json:"farPrc"`    // 원월물체결가
-	UpLimit   float64 `json:"upLimit"`   // 동적상한가
-	DnLimit   float64 `json:"dnLimit"`   // 동적하한가
+	Kind         string  `json:"kind"` // 항상 "fut.trade"
+	Code         string  `json:"code"` // 종목코드
+	Time         string  `json:"time"` // HHMMSSuuuuuu (12자리)
+	BasePrc      float64 `json:"basePrc"`
+	Open         float64 `json:"open"`
+	High         float64 `json:"high"`
+	Low          float64 `json:"low"`
+	Last         float64 `json:"last"`         // 현재가(종가) eprc
+	PrevClose    float64 `json:"prevClose"`    // 전일종가 yprc
+	Diff         float64 `json:"diff"`         // 전일대비 (부호 내장)
+	Rate         float64 `json:"rate"`         // 전일대비 등락률 (부호 내장)
+	Sign         string  `json:"sign"`         // 전일대비 방향부호 +/-/' '
+	Settle       float64 `json:"settle"`       // 정산가 sprc (H306F)
+	FinalSettle  float64 `json:"finalSettle"`  // 최종결제가 lspr (H306F)
+	SettleCd     string  `json:"settleCd"`     // 정산가구분코드 spcd (H306F)
+	Bs           string  `json:"bs"`           // 최종 매도매수구분 ' '/0/1/2
+	Tvol         int64   `json:"tvol"`         // 누적 체결수량
+	Tamt         float64 `json:"tamt"`         // 누적 거래대금
+	Cprc         float64 `json:"cprc"`         // 체결가 (이번 틱)
+	Cvol         int64   `json:"cvol"`         // 거래량 (이번 틱)
+	NearPrc      float64 `json:"nearPrc"`      // 근월물체결가
+	FarPrc       float64 `json:"farPrc"`       // 원월물체결가
+	UpLimit      float64 `json:"upLimit"`      // 동적상한가
+	DnLimit      float64 `json:"dnLimit"`      // 동적하한가
+	PrevTradePrc float64 `json:"prevTradePrc"` // 직전가 pprc
+	Cdiff        float64 `json:"cdiff"`        // 직전대비 (부호 내장)
+	Crate        float64 `json:"crate"`        // 직전대비 등락률 (부호 내장)
+	Csign        string  `json:"csign"`        // 직전대비 방향부호 +/-/' '
 }
 
 // DecodeKChe 는 KA 고정폭 전문(≥234B)을 FutTrade 로 파싱한다.
@@ -53,28 +59,34 @@ func DecodeKChe(b []byte) (*FutTrade, error) {
 	}
 	// 오프셋은 fpush.h KF_CHEG_RTS_T 필드 순서 (색상 필드 ocol/hcol/lcol/ecol 포함).
 	return &FutTrade{
-		Kind:      "fut.trade",
-		Code:      fstr(b, 2, 12),
-		BasePrc:   ffloat(b, 14, 9),
-		Open:      ffloat(b, 24, 9),
-		High:      ffloat(b, 34, 9),
-		Low:       ffloat(b, 44, 9),
-		Last:      ffloat(b, 54, 9),
-		PrevClose: ffloat(b, 63, 9),
-		Diff:      ffloat(b, 72, 9),
-		Settle:    ffloat(b, 81, 9),
-		Rate:      ffloat(b, 99, 6),
-		Sign:      fstr(b, 107, 1),
-		Time:      fstr(b, 108, 12),
-		Bs:        fstr(b, 120, 1),
-		Tvol:      fint(b, 121, 12),
-		Tamt:      ffloat(b, 133, 22),
-		Cprc:      ffloat(b, 155, 9),
-		Cvol:      fint(b, 164, 9),
-		NearPrc:   ffloat(b, 173, 9),
-		FarPrc:    ffloat(b, 182, 9),
-		UpLimit:   ffloat(b, 191, 9),
-		DnLimit:   ffloat(b, 200, 9),
+		Kind:         "fut.trade",
+		Code:         fstr(b, 2, 12),
+		BasePrc:      ffloat(b, 14, 9),
+		Open:         ffloat(b, 24, 9),
+		High:         ffloat(b, 34, 9),
+		Low:          ffloat(b, 44, 9),
+		Last:         ffloat(b, 54, 9),
+		PrevClose:    ffloat(b, 63, 9),
+		Diff:         ffloat(b, 72, 9),
+		Settle:       ffloat(b, 81, 9), // sprc 정산가
+		FinalSettle:  ffloat(b, 90, 9), // lspr 최종결제가
+		Rate:         ffloat(b, 99, 6),
+		SettleCd:     fstr(b, 105, 2), // spcd 정산가구분코드
+		Sign:         fstr(b, 107, 1),
+		Time:         fstr(b, 108, 12),
+		Bs:           fstr(b, 120, 1),
+		Tvol:         fint(b, 121, 12),
+		Tamt:         ffloat(b, 133, 22),
+		Cprc:         ffloat(b, 155, 9),
+		Cvol:         fint(b, 164, 9),
+		NearPrc:      ffloat(b, 173, 9),
+		FarPrc:       ffloat(b, 182, 9),
+		UpLimit:      ffloat(b, 191, 9),
+		DnLimit:      ffloat(b, 200, 9),
+		PrevTradePrc: ffloat(b, 209, 9), // pprc 직전가
+		Cdiff:        ffloat(b, 218, 9), // cdif 직전대비
+		Crate:        ffloat(b, 227, 6), // crat 직전대비율
+		Csign:        fstr(b, 233, 1),   // csgn 직전대비 부호
 	}, nil
 }
 

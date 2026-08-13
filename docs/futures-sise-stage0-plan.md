@@ -19,20 +19,29 @@
 - 야간·채권 도메인 — Stage 2
 - Go 전면 이관(futures-forwarder) — Stage 2
 
-## 1. 아키텍처 (Stage 0)
+## 1. 아키텍처 (Stage 0) — **시세 트랙 + 종목 구독** (2025 결정: 구독형 유력)
+
+push 트랙(user/broadcast) 대신 **시세 트랙(종목 구독 fan-out)** 채택. WTG 의
+`mci-edge-price` 가 이미 종목 구독(`Subscriber.MatchesPair`, control
+`{"type":"subscribe","pairs":[...]}`, `Registry.BroadcastForPair`)을 가지며 필터가
+심볼 문자열 기반이라 선물 종목코드에 그대로 동작 → **구독 인프라 재사용**.
 
 ```
 [기존 C 피드 kbfut_sise]  KRX mcast→파싱→KA 전문 (무변경)
-      │ myrq_push(pushdata_t: mkid=30, symb=종목, mask=시세, msgb=KA)
-      ▼  (Task 5: 대상 broker = WTG mymqd)
-[mci-push]  Dispatcher: Unsolicited 수신
-      │  ★Task 2: msgb type=="KA" → KA→JSON 디코드★
-      │  broadcast (LogonID 빈값)
+      │ push(pushdata_t: symb=종목, msgb=KA)  (Task 5: → WTG broker)
       ▼
-[mci-edge-push]  DMZ web ws fan-out (무변경 — JSON 그대로 운반)
+[mci-futures (internal)]  Unsolicited 수신 → ★KA→JSON decode (pkg/futures)★
+      │ gRPC SubscribeFutures stream (fut.trade JSON + code)   ※Stage0 는 in-proc/합성
       ▼
-[web]  ws 수신 {"kind":"fut.trade","code":...,"last":...}
+[mci-edge-futures (DMZ)]  종목구독 ws fan-out (edge-price Subscriber/Registry 패턴)
+      │ Hub.BroadcastBySymbol(code, json) — 구독한 conn 에게만
+      ▼
+[web]  /v1/subscribe + {"type":"subscribe","symbols":["101V6000"]}
+       → 구독 종목의 {"kind":"fut.trade",...} 만 수신
 ```
+
+**구독 안전성**: envelope 의 `code` 로 web 이 종목 식별 → broadcast→구독 전환이 wire
+무변경(additive). Stage 0 부터 종목 필터를 켜서 재작업 원천 차단.
 
 ## 2. De-risk 전략 — 0a(WTG 자체) / 0b(C 통합) 분리
 

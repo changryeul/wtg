@@ -1,11 +1,11 @@
-package futures
+package krx
 
 import (
 	"flag"
 	"time"
 )
 
-// Config 는 mci-edge-futures 설정.
+// Config 는 mci-edge-krx 설정.
 type Config struct {
 	ListenAddr string        // HTTP/WS listen (기본 :8085)
 	LogLevel   string        // 로그 레벨
@@ -40,7 +40,7 @@ func DefaultConfig() Config {
 // LoadConfig — args 파싱.
 func LoadConfig(args []string) (Config, error) {
 	cfg := DefaultConfig()
-	fs := flag.NewFlagSet("mci-edge-futures", flag.ContinueOnError)
+	fs := flag.NewFlagSet("mci-edge-krx", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP/WS listen 주소")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 (debug/info/warn/error)")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드")

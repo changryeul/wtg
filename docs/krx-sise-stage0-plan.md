@@ -1,7 +1,7 @@
 # 선물시세 → web — Stage 0 구현 계획 (트랙 1, JSON-first)
 
 > 목표: **선물 체결(KA) 1종목**이 `C 피드 → WTG(KA→JSON codec) → mci-push → mci-edge-push
-> → web ws` 로 **JSON 도달**함을 e2e 증명. 설계 근거: `docs/futures-sise-design.md`.
+> → web ws` 로 **JSON 도달**함을 e2e 증명. 설계 근거: `docs/krx-sise-design.md`.
 > 트랙 1(기존 C 수신/파싱 유지, WTG 는 codec+배포) + wire=JSON + codec 위치=WTG(Go).
 
 ## 0. Stage 0 범위 (in / out)
@@ -30,10 +30,10 @@ push 트랙(user/broadcast) 대신 **시세 트랙(종목 구독 fan-out)** 채�
 [기존 C 피드 kbfut_sise]  KRX mcast→파싱→KA 전문 (무변경)
       │ push(pushdata_t: symb=종목, msgb=KA)  (Task 5: → WTG broker)
       ▼
-[mci-futures (internal)]  Unsolicited 수신 → ★KA→JSON decode (pkg/futures)★
+[mci-futures (internal)]  Unsolicited 수신 → ★KA→JSON decode (pkg/krx)★
       │ gRPC SubscribeFutures stream (fut.trade JSON + code)   ※Stage0 는 in-proc/합성
       ▼
-[mci-edge-futures (DMZ)]  종목구독 ws fan-out (edge-price Subscriber/Registry 패턴)
+[mci-edge-krx (DMZ)]  종목구독 ws fan-out (edge-price Subscriber/Registry 패턴)
       │ Hub.BroadcastBySymbol(code, json) — 구독한 conn 에게만
       ▼
 [web]  /v1/subscribe + {"type":"subscribe","symbols":["101V6000"]}
@@ -52,7 +52,7 @@ C 피드·broker 배선은 환경 의존이라, **WTG 부분을 합성 KA 로 �
 
 ## 3. 태스크 분해
 
-### Task 1 — KA→JSON codec (`pkg/futures/kcheg.go`, 신규 pkg)
+### Task 1 — KA→JSON codec (`pkg/krx/kcheg.go`, 신규 pkg)
 - `KF_CHEG_RTS_T` 고정폭(fpush.h 오프셋)을 파싱하는 `DecodeKChe(b []byte) (*FutTrade, error)`.
   - 오프셋: type@0[2], code@2[12], bprc@14[9], (ocol@23[1]) oprc@24[9] … csgn 끝.
   - 숫자 필드는 `strings.TrimSpace` + `strconv.ParseFloat/Atoi`. 공백=0/미제공.
@@ -65,7 +65,7 @@ C 피드·broker 배선은 환경 의존이라, **WTG 부분을 합성 KA 로 �
 ### Task 2 — mci-push 디코드 훅 (`internal/push/futures_hook.go`)
 - Dispatcher 가 `*mymq.Unsolicited` 처리 시, pushdata 봉투를 `DecodePushData` 로 열어
   `type`(or `mkid==30` + `mask`=시세) 판별.
-- **선물 시세면** `pkg/futures.DecodeKChe(msgb)` → JSON → 그 JSON 을 broadcast body 로.
+- **선물 시세면** `pkg/krx.DecodeKChe(msgb)` → JSON → 그 JSON 을 broadcast body 로.
   (선물 아니면 기존 경로 그대로 — user push/notice 무변경)
 - 삽입점: Dispatcher 의 Unsolicited→fan-out 사이 transform. 최소 침습 = 기존
   `OnUnsolicited`/dispatch 앞단에 필터.
@@ -93,14 +93,14 @@ C 피드·broker 배선은 환경 의존이라, **WTG 부분을 합성 KA 로 �
 
 | 게이트 | 방법 | 통과 기준 |
 |---|---|---|
-| G1 codec | `go test ./pkg/futures/` | 합성 KA → JSON 필드 정확, 오프셋 정합 |
+| G1 codec | `go test ./pkg/krx/` | 합성 KA → JSON 필드 정확, 오프셋 정합 |
 | G2 훅 (in-proc) | dispatcher 에 Unsolicited 주입 단위테스트 | 선물=JSON broadcast, 비선물=무변경 |
 | G3 e2e 합성 (0a) | `fut-stage0-verify.sh` | web ws 가 결정적 KA 값 JSON 수신 |
 | G4 e2e 실피드 (0b) | 실 C 피드 1종목 | 실 체결 → web ws JSON |
 
 ## 5. 산출물
 
-- `pkg/futures/` — kcheg.go(codec) + 테스트 (재사용: Stage1 KB/채권 확장 기반)
+- `pkg/krx/` — kcheg.go(codec) + 테스트 (재사용: Stage1 KB/채권 확장 기반)
 - `internal/push/futures_hook.go` — 디코드 훅 + flag
 - `cmd/fut-tester/` — 합성 KA 주입 검증도구
 - `scripts/fut-stage0-verify.sh` — e2e 자동 검증

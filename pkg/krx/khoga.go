@@ -1,4 +1,4 @@
-package futures
+package krx
 
 import (
 	"fmt"
@@ -39,10 +39,10 @@ type FutBook struct {
 // DecodeKHoga 는 KB 고정폭 전문(≥362B)을 FutBook 으로 파싱한다.
 func DecodeKHoga(b []byte) (*FutBook, error) {
 	if len(b) < SZKHoga {
-		return nil, fmt.Errorf("futures: KB 전문 길이 미달 (%d < %d)", len(b), SZKHoga)
+		return nil, fmt.Errorf("krx: KB 전문 길이 미달 (%d < %d)", len(b), SZKHoga)
 	}
 	if t := fstr(b, 0, 2); t != "KB" {
-		return nil, fmt.Errorf("futures: KB 전문 아님 (type=%q)", t)
+		return nil, fmt.Errorf("krx: KB 전문 아님 (type=%q)", t)
 	}
 	fb := &FutBook{
 		Kind:   "fut.book",

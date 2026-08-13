@@ -3,7 +3,7 @@
 //
 // 기존 피드(C)는 KRX TR 을 파싱해 KA(체결)/KB(호가) 전문을 이미 생성한다. WTG 는 그
 // 깨끗한 KA/KB 를 받아 JSON 으로 디코드해 web ws 로 내보낸다 (docs/futures-sise-design.md).
-package futures
+package krx
 
 import (
 	"fmt"
@@ -46,10 +46,10 @@ type FutTrade struct {
 // 앞 2바이트가 "KA" 가 아니면 오류. 숫자 필드는 좌측정렬 공백패딩이라 Trim 후 파싱.
 func DecodeKChe(b []byte) (*FutTrade, error) {
 	if len(b) < SZKCheg {
-		return nil, fmt.Errorf("futures: KA 전문 길이 미달 (%d < %d)", len(b), SZKCheg)
+		return nil, fmt.Errorf("krx: KA 전문 길이 미달 (%d < %d)", len(b), SZKCheg)
 	}
 	if t := fstr(b, 0, 2); t != "KA" {
-		return nil, fmt.Errorf("futures: KA 전문 아님 (type=%q)", t)
+		return nil, fmt.Errorf("krx: KA 전문 아님 (type=%q)", t)
 	}
 	// 오프셋은 fpush.h KF_CHEG_RTS_T 필드 순서 (색상 필드 ocol/hcol/lcol/ecol 포함).
 	return &FutTrade{

@@ -1,4 +1,4 @@
-package futures
+package krx
 
 import "testing"
 

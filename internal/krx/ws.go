@@ -1,4 +1,4 @@
-package futures
+package krx
 
 import (
 	"encoding/json"
@@ -10,16 +10,16 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	futpkg "github.com/winwaysystems/wtg/pkg/futures"
+	wire "github.com/winwaysystems/wtg/pkg/krx"
 )
 
 var (
-	errShort     = errors.New("futures: ingest 전문 2바이트 미만")
-	errUnknownTR = errors.New("futures: 미지원 TR type (KA/KB 만)")
+	errShort     = errors.New("krx: ingest 전문 2바이트 미만")
+	errUnknownTR = errors.New("krx: 미지원 TR type (KA/KB 만)")
 )
 
 // Server 는 선물시세 종목구독 ws fan-out + 전문 수신(ingest) 진입점.
-// 배포 컴포넌트(mci-edge-futures)가 이걸 임베드한다. Stage 0 는 합성 ingest.
+// 배포 컴포넌트(mci-edge-krx)가 이걸 임베드한다. Stage 0 는 합성 ingest.
 type Server struct {
 	hub      *Hub
 	logger   *slog.Logger
@@ -130,7 +130,7 @@ func (srv *Server) Ingest(b []byte) (string, int, int, error) {
 
 // IngestKA — KA(체결) 고정폭 전문 → fut.trade JSON 종목구독 fan-out.
 func (srv *Server) IngestKA(b []byte) (string, int, int, error) {
-	t, err := futpkg.DecodeKChe(b)
+	t, err := wire.DecodeKChe(b)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -139,7 +139,7 @@ func (srv *Server) IngestKA(b []byte) (string, int, int, error) {
 
 // IngestKB — KB(호가) 고정폭 전문 → fut.book JSON 종목구독 fan-out.
 func (srv *Server) IngestKB(b []byte) (string, int, int, error) {
-	fb, err := futpkg.DecodeKHoga(b)
+	fb, err := wire.DecodeKHoga(b)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -148,7 +148,7 @@ func (srv *Server) IngestKB(b []byte) (string, int, int, error) {
 
 // IngestBA — BA(채권 체결) 고정폭 전문 → bond.trade JSON 종목구독 fan-out.
 func (srv *Server) IngestBA(b []byte) (string, int, int, error) {
-	bt, err := futpkg.DecodeBACheg(b)
+	bt, err := wire.DecodeBACheg(b)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -157,7 +157,7 @@ func (srv *Server) IngestBA(b []byte) (string, int, int, error) {
 
 // IngestBB — BB(채권 호가) 고정폭 전문 → bond.book JSON 종목구독 fan-out.
 func (srv *Server) IngestBB(b []byte) (string, int, int, error) {
-	bb, err := futpkg.DecodeBBHoga(b)
+	bb, err := wire.DecodeBBHoga(b)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -166,7 +166,7 @@ func (srv *Server) IngestBB(b []byte) (string, int, int, error) {
 
 // IngestA006F — A006F(파생 종목정보 마스터) → fut.master JSON 종목구독 fan-out.
 func (srv *Server) IngestA006F(b []byte) (string, int, int, error) {
-	m, err := futpkg.DecodeA006F(b)
+	m, err := wire.DecodeA006F(b)
 	if err != nil {
 		return "", 0, 0, err
 	}

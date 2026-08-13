@@ -5,7 +5,7 @@
 // fut.* JSON 만 받는다. 구독 안 한(all 모드) 클라는 전체 수신.
 //
 // wire/codec 은 pkg/futures (KA→JSON) 가 담당 — Hub 는 []byte(JSON)를 code 로 라우팅.
-package futures
+package krx
 
 import (
 	"errors"
@@ -14,7 +14,7 @@ import (
 )
 
 // ErrSendQueueFull — subscriber 송신 큐 포화 (slow consumer).
-var ErrSendQueueFull = errors.New("futures: send queue full")
+var ErrSendQueueFull = errors.New("krx: send queue full")
 
 // Subscriber 는 단일 ws 클라이언트의 fan-out 큐 + 종목 필터.
 // filter == nil 이면 "all 모드"(구독 전 or 전체구독). 아니면 그 종목만 매칭.
@@ -100,7 +100,7 @@ func (s *Subscriber) send(p []byte) error {
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
-		return errors.New("futures: subscriber closed")
+		return errors.New("krx: subscriber closed")
 	}
 	s.mu.RUnlock()
 	select {

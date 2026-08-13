@@ -1,4 +1,4 @@
-package futures
+package krx
 
 import (
 	"context"
@@ -28,7 +28,7 @@ func (srv *Server) Start(ctx context.Context, cfg Config) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		srv.logger.Info("mci-edge-futures listen", slog.String("addr", cfg.ListenAddr),
+		srv.logger.Info("mci-edge-krx listen", slog.String("addr", cfg.ListenAddr),
 			slog.Bool("demo", cfg.Demo))
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err

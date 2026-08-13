@@ -1,4 +1,4 @@
-package futures
+package krx
 
 import (
 	"fmt"
@@ -42,11 +42,11 @@ type FutMaster struct {
 // DecodeA006F 는 A006F 원 마스터 전문(≥1318B) → FutMaster (핵심 필드).
 func DecodeA006F(b []byte) (*FutMaster, error) {
 	if len(b) < SZMaster {
-		return nil, fmt.Errorf("futures: A006F 길이 미달 (%d < %d)", len(b), SZMaster)
+		return nil, fmt.Errorf("krx: A006F 길이 미달 (%d < %d)", len(b), SZMaster)
 	}
 	// 앞 5바이트 TR코드 확인 (datc[2]+infc[3] = "A006F").
 	if tr := fstr(b, 0, 5); tr != "A006F" {
-		return nil, fmt.Errorf("futures: A006F 아님 (tr=%q)", tr)
+		return nil, fmt.Errorf("krx: A006F 아님 (tr=%q)", tr)
 	}
 	return &FutMaster{
 		Kind:          "fut.master",

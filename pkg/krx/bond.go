@@ -1,4 +1,4 @@
-package futures
+package krx
 
 import "fmt"
 
@@ -39,10 +39,10 @@ type BondTrade struct {
 // DecodeBACheg 는 BA(채권 체결, ≥230B) → BondTrade.
 func DecodeBACheg(b []byte) (*BondTrade, error) {
 	if len(b) < SZBACheg {
-		return nil, fmt.Errorf("futures: BA 길이 미달 (%d < %d)", len(b), SZBACheg)
+		return nil, fmt.Errorf("krx: BA 길이 미달 (%d < %d)", len(b), SZBACheg)
 	}
 	if t := fstr(b, 0, 2); t != "BA" {
-		return nil, fmt.Errorf("futures: BA 아님 (type=%q)", t)
+		return nil, fmt.Errorf("krx: BA 아님 (type=%q)", t)
 	}
 	return &BondTrade{
 		Kind:   "bond.trade",
@@ -94,10 +94,10 @@ const bondEntrySz = 40
 // DecodeBBHoga 는 BB(채권 호가, ≥540B) → BondBook.
 func DecodeBBHoga(b []byte) (*BondBook, error) {
 	if len(b) < SZBBHoga {
-		return nil, fmt.Errorf("futures: BB 길이 미달 (%d < %d)", len(b), SZBBHoga)
+		return nil, fmt.Errorf("krx: BB 길이 미달 (%d < %d)", len(b), SZBBHoga)
 	}
 	if t := fstr(b, 0, 2); t != "BB" {
-		return nil, fmt.Errorf("futures: BB 아님 (type=%q)", t)
+		return nil, fmt.Errorf("krx: BB 아님 (type=%q)", t)
 	}
 	bb := &BondBook{
 		Kind:   "bond.book",

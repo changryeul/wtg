@@ -18,11 +18,11 @@ Wants=network-online.target wtg-etcd.service
 Type=oneshot
 User=winway
 Group=winway
-WorkingDirectory=/home/winway/nh-fxallone-server/wtg
-EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
-ExecStart=/home/winway/nh-fxallone-server/wtg/bin/fx-sync \
+WorkingDirectory=/home/winway/common/wtg
+EnvironmentFile=/home/winway/common/wtg/wtg.env
+ExecStart=/home/winway/common/wtg/bin/fx-sync \
     --source=file \
-    --source-dir=/home/winway/nh-fxallone-server/wtg/etc/db-mirror \
+    --source-dir=/home/winway/common/wtg/etc/db-mirror \
     --etcd=127.0.0.1:2379 \
     --table=user_profile,customer_margin,hq_margin,site_margin
 

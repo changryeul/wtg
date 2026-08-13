@@ -16,10 +16,10 @@
 ## 전환 절차
 
 ```bash
-cd /home/winway/nh-fxallone-server/wtg/deploy/ec2
+cd /home/winway/common/wtg/deploy/ec2
 
 # 1. env 에 허브 주소 추가 (wtg.env)
-echo 'WTG_TICK_HUB=127.0.0.1:50060' | sudo tee -a /home/winway/nh-fxallone-server/wtg/wtg.env
+echo 'WTG_TICK_HUB=127.0.0.1:50060' | sudo tee -a /home/winway/common/wtg/wtg.env
 
 # 2. forwarder 를 hub 모드로 교체
 sudo systemctl stop wtg-quote-forwarder

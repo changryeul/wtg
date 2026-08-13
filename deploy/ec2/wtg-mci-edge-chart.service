@@ -11,12 +11,12 @@ StartLimitIntervalSec=0
 Type=simple
 User=winway
 Group=winway
-WorkingDirectory=/home/winway/nh-fxallone-server/wtg
-EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
-ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-chart \
+WorkingDirectory=/home/winway/common/wtg
+EnvironmentFile=/home/winway/common/wtg/wtg.env
+ExecStart=/home/winway/common/wtg/bin/mci-edge-chart \
     --listen=:8087 \
     --upstream=http://127.0.0.1:8086 \
-    --jwt-pub=/home/winway/nh-fxallone-server/wtg/etc/jwt-public.pem
+    --jwt-pub=/home/winway/common/wtg/etc/jwt-public.pem
 
 Restart=on-failure
 RestartSec=10

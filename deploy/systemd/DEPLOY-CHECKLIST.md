@@ -121,7 +121,7 @@ TimescaleDB 필요. DB 미구축이면 skip (시세/매매는 chart 없이 동�
 
 ```bash
 # 사전: TimescaleDB 에 quote_bars hypertable (etc/sql/quote_bars.sql) + WTG_DSN 설정.
-psql "$WTG_DSN" -f /home/winway/nh-fxallone-server/wtg/etc/sql/quote_bars.sql
+psql "$WTG_DSN" -f /home/winway/common/wtg/etc/sql/quote_bars.sql
 
 sudo systemctl enable --now wtg-mci-chart      # :8086 (REST + 라이브 봉)
 sleep 3

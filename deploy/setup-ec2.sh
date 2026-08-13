@@ -14,7 +14,7 @@
 #
 # 이 스크립트가 하는 일:
 #   1. etcd native 바이너리 설치 (/usr/local/bin — systemd 로 실행)
-#   2. /home/winway/nh-fxallone-server/wtg/ 디렉토리 + 권한 세팅
+#   2. /home/winway/common/wtg/ 디렉토리 + 권한 세팅
 #   3. broker 상태 확인
 #   4. firewalld 샘플 안내 (주석)
 #
@@ -25,7 +25,7 @@
 set -euo pipefail
 
 ETCD_VER=v3.5.21
-WTG_HOME=/home/winway/nh-fxallone-server/wtg
+WTG_HOME=/home/winway/common/wtg
 
 BLUE='\033[1;34m'
 GREEN='\033[1;32m'

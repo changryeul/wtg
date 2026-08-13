@@ -10,9 +10,9 @@ StartLimitIntervalSec=0
 Type=simple
 User=winway
 Group=winway
-WorkingDirectory=/home/winway/nh-fxallone-server/wtg
-EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
-ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-edge-push \
+WorkingDirectory=/home/winway/common/wtg
+EnvironmentFile=/home/winway/common/wtg/wtg.env
+ExecStart=/home/winway/common/wtg/bin/mci-edge-push \
     --dev \
     --listen=:8084 \
     --upstream=127.0.0.1:50052 \

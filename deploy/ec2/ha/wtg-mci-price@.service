@@ -18,15 +18,15 @@ StartLimitIntervalSec=0
 Type=simple
 User=winway
 Group=winway
-WorkingDirectory=/home/winway/nh-fxallone-server/wtg
-EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+WorkingDirectory=/home/winway/common/wtg
+EnvironmentFile=/home/winway/common/wtg/wtg.env
 # %i 로 포트 분리 — HTTP 808%i / gRPC 5005%i. (2자리 인스턴스는 유닛 복제 권장)
-ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-price \
+ExecStart=/home/winway/common/wtg/bin/mci-price \
     --no-broker \
     --listen=:808%i \
     --grpc=:5005%i \
     --tick-source=${WTG_TICK_HUB} \
-    --symbols=/home/winway/nh-fxallone-server/wtg/etc/symbols.json \
+    --symbols=/home/winway/common/wtg/etc/symbols.json \
     --etcd=http://127.0.0.1:2379 \
     --warmup=2 --warmup-max=30
 

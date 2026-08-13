@@ -12,14 +12,14 @@ FEP(가상 시세 송신) ──멀티캐스트 227.10.20.10 : 60641-3(파생)/6
 ```
 
 - 대상 호스트: EC2 `ip-10-0-1-106` (rocky SSH / winway 앱 유저).
-- 바이너리: `/home/winway/nh-fxallone-server/wtg/bin/{mci-edge-krx,krx-tester}` (deploy 반영).
+- 바이너리: `/home/winway/common/wtg/bin/{mci-edge-krx,krx-tester}` (deploy 반영).
 - 시각 주의: 관측 자체는 아무 때나 가능(FEP 가 가상 송신 중이면). 실 KRX 회선은 무관.
 
 ## 0. 사전 상태 확인 (기동돼 있는가)
 
 ```bash
 # SSH: ssh fxec2  (rocky)
-WTG=/home/winway/nh-fxallone-server/wtg
+WTG=/home/winway/common/wtg
 
 # (a) mci-edge-krx 프로세스 (비-systemd, winway 백그라운드)
 pgrep -af './bin/mci-edge-krx'

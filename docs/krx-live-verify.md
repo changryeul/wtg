@@ -31,7 +31,7 @@ C 오라클↔Go)로 이미 보장된다. 본 문서는 **소켓 수신 → 파�
 ## 1. 빌드 (EC2)
 
 ```bash
-cd /home/winway/nh-fxallone-server/wtg   # 소스 미러 (project_nh_source_mirror)
+cd /home/winway/common/wtg   # 소스 미러 (project_nh_source_mirror)
 make build                                # build/bin/mci-edge-krx 포함
 go build -o build/bin/krx-tester ./cmd/krx-tester/
 go build -o build/bin/krx-verify ./cmd/krx-verify/

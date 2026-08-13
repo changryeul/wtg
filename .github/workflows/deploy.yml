@@ -3,7 +3,7 @@
 # 흐름:
 #   master push → test → build (linux/amd64 static binary, ubuntu-latest)
 #              → artifact 전달 → deploy (self-hosted runner on EC2)
-#              → /home/winway/nh-fxallone-server/wtg 설치 + systemctl restart
+#              → /home/winway/common/wtg 설치 + systemctl restart
 #
 # 왜 native:
 #   - EC2 에는 docker 를 쓰지 않는다 (운영 결정). Go 는 cgo 없는 static
@@ -39,7 +39,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  WTG_HOME: /home/winway/nh-fxallone-server/wtg
+  WTG_HOME: /home/winway/common/wtg
   DEPLOY_USER: winway
 
 jobs:

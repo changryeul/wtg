@@ -9,7 +9,7 @@
 # 사용: krx-fep-reconcile.py <WTG_HOME> [group:port]
 import json, os, subprocess, sys, time
 
-WTG = sys.argv[1] if len(sys.argv) > 1 else "/home/winway/nh-fxallone-server/wtg"
+WTG = sys.argv[1] if len(sys.argv) > 1 else "/home/winway/common/wtg"
 DEST = sys.argv[2] if len(sys.argv) > 2 else "227.10.20.10:60642"
 SCN = f"{WTG}/etc/krx-fep-scenario.json"
 KV = f"{WTG}/bin/krx-verify"

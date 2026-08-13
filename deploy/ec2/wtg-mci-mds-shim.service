@@ -12,11 +12,11 @@ StartLimitIntervalSec=0
 Type=simple
 User=winway
 Group=winway
-WorkingDirectory=/home/winway/nh-fxallone-server/wtg
-EnvironmentFile=/home/winway/nh-fxallone-server/wtg/wtg.env
+WorkingDirectory=/home/winway/common/wtg
+EnvironmentFile=/home/winway/common/wtg/wtg.env
 # 로그 위치 통일: trn AP 로그와 동일한 win/log (--log-dir)
 ExecStartPre=/usr/bin/install -d -o winway -g winway /home/winway/nh-fxallone-server/win/log
-ExecStart=/home/winway/nh-fxallone-server/wtg/bin/mci-mds-shim \
+ExecStart=/home/winway/common/wtg/bin/mci-mds-shim \
     --broker-host=${BROKER_HOST} \
     --broker-port=${BROKER_PORT} \
     --etcd=127.0.0.1:2379 \

@@ -10,11 +10,11 @@
 # watcher 가 live 반영하므로 서비스 재시작 불필요. 재실행 안전 (idempotent put).
 #
 # 사용 (EC2 rocky):
-#   sudo bash /home/winway/nh-fxallone-server/wtg/src/deploy/seed-catalog.sh
+#   sudo bash /home/winway/common/wtg/src/deploy/seed-catalog.sh
 
 set -euo pipefail
 
-WTG_HOME=${WTG_HOME:-/home/winway/nh-fxallone-server/wtg}
+WTG_HOME=${WTG_HOME:-/home/winway/common/wtg}
 ETCDCTL=${ETCDCTL:-/usr/local/bin/etcdctl}
 EP=${ETCD_ENDPOINTS:-http://127.0.0.1:2379}
 

@@ -26,6 +26,7 @@ type Server struct {
 	upgrader websocket.Upgrader
 	connSeq  atomic.Uint64
 	mstats   McastStats
+	masters  *MasterCache // 마스터(A006F/A001B) 캐시 — 체결 등락 enrichment 용
 }
 
 // NewServer — Hub + 로거.
@@ -37,6 +38,7 @@ func NewServer(logger *slog.Logger) *Server {
 		hub:      NewHub(),
 		logger:   logger,
 		upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
+		masters:  NewMasterCache(),
 	}
 }
 
@@ -171,21 +173,25 @@ func (srv *Server) IngestBB(b []byte) (string, int, int, error) {
 	return srv.fanout(bb.Code, bb)
 }
 
-// IngestA006F — A006F(파생 종목정보 마스터) → fut.master JSON 종목구독 fan-out.
+// IngestA006F — A006F(파생 종목정보 마스터) → 캐시 저장 + fut.master fan-out.
+// 전일종가(PrevClose)를 캐시해 후속 A306F 체결의 등락 계산에 쓴다.
 func (srv *Server) IngestA006F(b []byte) (string, int, int, error) {
 	m, err := wire.DecodeA006F(b)
 	if err != nil {
 		return "", 0, 0, err
 	}
+	srv.masters.PutFut(m)
 	return srv.fanout(m.Code, m)
 }
 
-// IngestA306F — (트랙2) 원 파생 체결 A306F → fut.trade fan-out.
+// IngestA306F — (트랙2) 원 파생 체결 A306F → 마스터 join enrichment → fut.trade fan-out.
+// A306F 원 TR 에는 전일종가/등락이 없어, 캐시된 마스터(A006F)로 diff/rate/prevClose/sign 을 채운다.
 func (srv *Server) IngestA306F(b []byte) (string, int, int, error) {
 	ft, err := wire.DecodeA306F(b)
 	if err != nil {
 		return "", 0, 0, err
 	}
+	enrichFutTrade(ft, srv.masters.GetFut(ft.Code))
 	return srv.fanout(ft.Code, ft)
 }
 

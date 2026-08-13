@@ -79,11 +79,45 @@ func TestE2E_SubscribeFanout(t *testing.T) {
 		t.Errorf("수신 JSON 예상밖: %s", msg)
 	}
 
-	// 미구독 종목 메시지는 큐에 없어야 (다음 read 는 타임아웃)
+	// 같은 구독 종목의 호가(KB)도 Ingest 자동판별로 fan-out 되는지 (conn 정상일 때 먼저)
+	if _, sent, _, err := srv.Ingest(buildKBfor("101V6000")); err != nil || sent != 1 {
+		t.Fatalf("호가 KB sent=%d err=%v (want 1)", sent, err)
+	}
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg2, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("호가 read: %v", err)
+	}
+	var book map[string]interface{}
+	_ = json.Unmarshal(msg2, &book)
+	if book["kind"] != "fut.book" || book["code"] != "101V6000" {
+		t.Errorf("호가 JSON 예상밖: %s", msg2)
+	}
+	if ask, ok := book["ask"].([]interface{}); !ok || len(ask) != 5 {
+		t.Errorf("호가 ask 5단 아님: %s", msg2)
+	}
+
+	// 미구독 종목이 client 큐에 없음을 마지막에 확인 (read-timeout 이 conn 을 끝내므로 맨끝).
+	// 서버측 sent=0 으로 이미 증명됐고, 여기선 client 큐가 빈 것만 재확인.
 	c.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 	if _, _, err := c.ReadMessage(); err == nil {
 		t.Error("미구독 종목이 새어나옴 — 구독 필터 실패")
 	}
+}
+
+// buildKBfor — 지정 종목의 최소 KB(호가) 전문(362B).
+func buildKBfor(code string) []byte {
+	b := make([]byte, 362)
+	for i := range b {
+		b[i] = ' '
+	}
+	copy(b[0:2], "KB")
+	copy(b[2:14], code)
+	copy(b[14:26], "090005123456")
+	// sell[0]/buy[0] 1단만 값 (prc@so+1)
+	copy(b[122+1:122+10], fmt.Sprintf("%-9.02f", 265.80))
+	copy(b[242+1:242+10], fmt.Sprintf("%-9.02f", 265.75))
+	return b
 }
 
 func subscribedHas(srv *Server, code string) bool {

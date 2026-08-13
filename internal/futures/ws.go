@@ -2,6 +2,7 @@ package futures
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
@@ -10,6 +11,11 @@ import (
 	"github.com/gorilla/websocket"
 
 	futpkg "github.com/winwaysystems/wtg/pkg/futures"
+)
+
+var (
+	errShort     = errors.New("futures: ingest 전문 2바이트 미만")
+	errUnknownTR = errors.New("futures: 미지원 TR type (KA/KB 만)")
 )
 
 // Server 는 선물시세 종목구독 ws fan-out + 전문 수신(ingest) 진입점.
@@ -95,19 +101,48 @@ func (srv *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 	srv.logger.Info("futures ws 종료", slog.String("id", id))
 }
 
-// IngestKA — KA(체결) 고정폭 전문 1건을 디코드해 JSON 으로 종목구독 fan-out.
-// 반환: (code, sent, dropped, err). Stage 0 합성/실피드 공통 진입.
+// Ingest — 전문 앞 2바이트(type)로 KA(체결)/KB(호가) 자동 판별 후 디코드·fan-out.
+// 실 피드/합성 공통 진입점. 미지원 type 은 오류.
+func (srv *Server) Ingest(b []byte) (string, int, int, error) {
+	if len(b) < 2 {
+		return "", 0, 0, errShort
+	}
+	switch string(b[0:2]) {
+	case "KA":
+		return srv.IngestKA(b)
+	case "KB":
+		return srv.IngestKB(b)
+	default:
+		return "", 0, 0, errUnknownTR
+	}
+}
+
+// IngestKA — KA(체결) 고정폭 전문 → fut.trade JSON 종목구독 fan-out.
 func (srv *Server) IngestKA(b []byte) (string, int, int, error) {
 	t, err := futpkg.DecodeKChe(b)
 	if err != nil {
 		return "", 0, 0, err
 	}
-	js, err := json.Marshal(t)
+	return srv.fanout(t.Code, t)
+}
+
+// IngestKB — KB(호가) 고정폭 전문 → fut.book JSON 종목구독 fan-out.
+func (srv *Server) IngestKB(b []byte) (string, int, int, error) {
+	fb, err := futpkg.DecodeKHoga(b)
 	if err != nil {
-		return t.Code, 0, 0, err
+		return "", 0, 0, err
 	}
-	sent, dropped := srv.hub.BroadcastBySymbol(t.Code, js)
-	return t.Code, sent, dropped, nil
+	return srv.fanout(fb.Code, fb)
+}
+
+// fanout — envelope 를 JSON 직렬화해 code 로 종목구독 fan-out.
+func (srv *Server) fanout(code string, v interface{}) (string, int, int, error) {
+	js, err := json.Marshal(v)
+	if err != nil {
+		return code, 0, 0, err
+	}
+	sent, dropped := srv.hub.BroadcastBySymbol(code, js)
+	return code, sent, dropped, nil
 }
 
 // itoa — 작은 uint64 → 문자열 (fmt 회피용 경량).

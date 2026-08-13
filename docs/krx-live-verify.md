@@ -6,7 +6,7 @@ WTG 가 KRX 원 TR 을 직접 파싱하는 트랙2(`mci-edge-krx --mcast`)를 **
 - **경로 A — 라이브 (장중)**: 실제 KRX 파생/채권 멀티캐스트를 수신해 관측.
 - **경로 B — 재생 (장외 언제나)**: 결정적 캡처를 UDP 멀티캐스트로 재생 (`scripts/krx-replay-e2e.sh`).
 
-값 정확성 자체는 정적 대사(`docs/krx-sise-design.md §11`)와 런타임 대조(`make krx-verify`,
+값 정확성 자체는 정적 대사(`docs/krx-sise-design.md §11`)와 런타임 대조(`make verify-krx`,
 C 오라클↔Go)로 이미 보장된다. 본 문서는 **소켓 수신 → 파싱 → ws fan-out 파이프라인**을
 실 배포 형태로 확인하는 절차다.
 
@@ -107,5 +107,5 @@ scripts/krx-replay-e2e.sh
 
 ## 6. 관련
 - `docs/krx-sise-design.md` — 트랙2 설계 + §11 정답지 대사
-- `make krx-verify` — C 오라클↔Go 값 런타임 대조 (파싱 정확성)
+- `make verify-krx` — C 오라클↔Go 값 런타임 대조 (파싱 정확성)
 - `cmd/krx-tester` — ws 수신 덤퍼 / `cmd/krx-verify` — gen·decode·replay

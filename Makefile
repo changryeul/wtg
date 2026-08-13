@@ -26,7 +26,7 @@ CMDS := $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard cmd/*/*.go)))))
 .PHONY: all build test test-v test-race test-integration vet fmt fmt-check tidy clean install \
         lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside \
         wtgprice wtgprice-clean test-wtgprice \
-        wtgquery wtgquery-clean test-wtgquery price-ha-verify krx-verify krx-e2e $(CMDS)
+        wtgquery wtgquery-clean test-wtgquery price-ha-verify verify-krx krx-e2e $(CMDS)
 
 all: build
 
@@ -139,7 +139,8 @@ price-ha-verify:
 # KRX 원 TR 파서 런타임 대조 — C 오라클(실제 sise 구조체 캐스팅) ↔ WTG Go 디코더.
 # 결정적 캡처를 생성해 양측 CSV 를 diff (오프셋/파싱을 C 레이아웃 기준 검증).
 # sise .h + cc 필요 (없으면 skip). 인자로 헤더 경로 지정 가능. docs/krx-sise-design.md §11.7.
-krx-verify:
+# 이름이 cmd/krx-verify 바이너리와 겹치지 않도록 target 은 verify-krx.
+verify-krx:
 	./scripts/krx-verify.sh $(SISE_INC)
 
 # KRX 트랙2 실 바이너리 e2e (장외 재생) — gen→replay(UDP mcast)→mci-edge-krx

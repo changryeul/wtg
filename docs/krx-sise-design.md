@@ -183,9 +183,9 @@ else { diff = ePrc - yPrc; rate = diff/yPrc*100; sign = rate>0?'+':rate<0?'-':' 
 - 대사 테스트: `internal/krx/enrich_test.go`(`TestEnrichGroundTruth` 6 케이스 —
   상승/하락/보합/기준가대체/체결가0/둘다0).
 
-### 11.3 직전대비 대사 (`set_fcheg_diff` ↔ `prevTradeDiff`)
+### 11.3 직전대비 대사 (`set_fcheg_diff` ↔ `PriceDiff`)
 직전대비(직전가 pPrc 대비 등락)는 A306F TR 내부값(cprc,pprc)만으로 계산 →
-**decode-time**(`pkg/krx.DecodeA306F` 안 `prevTradeDiff`). 마스터 불필요.
+**decode-time**(`pkg/krx.DecodeA306F` 안 `PriceDiff`). 마스터 불필요.
 ```
 if(cPrc<=0 || pPrc<=0 || cPrc==pPrc) { cDif=0; cRat=0; sign=' '; }
 else { cDif=cPrc-pPrc; cRat=cDif/pPrc*100; sign=cRat>0?'+':cRat<0?'-':' '; }
@@ -219,7 +219,7 @@ push 빌더(bpush.h) + 내부 시세 struct(bcheg.h)를 모델로 이관:
 - 호가(B606F/B601K): 등락 계산 없음(호가는 대비 미산정) → 대사 불필요.
 - 색상코드(COLORD/COLORL): web 이 부호로 자체 렌더 → 미이관.
 
-### 11.7 런타임 대조 — C 오라클 ↔ Go 디코더 (`make krx-verify`)
+### 11.7 런타임 대조 — C 오라클 ↔ Go 디코더 (`make verify-krx`)
 정적(오프셋/수식) 대사에 더해, **실제 sise 구조체 레이아웃 기준**으로 값을 런타임
 대조하는 자동 게이트. C 피드가 raw TR 핸들러를 전부 갖고 있지 않아도(A301K/B601K),
 헤더의 struct(`A306F_T` 등, 순수 char[])는 그 자체가 오프셋 정답지다.

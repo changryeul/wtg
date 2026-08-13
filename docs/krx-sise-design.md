@@ -218,5 +218,18 @@ push 빌더(bpush.h) + 내부 시세 struct(bcheg.h)를 모델로 이관:
 ### 11.6 남은 미이관
 - 호가(B606F/B601K): 등락 계산 없음(호가는 대비 미산정) → 대사 불필요.
 - 색상코드(COLORD/COLORL): web 이 부호로 자체 렌더 → 미이관.
-- 실 캡처 런타임 대조: 정적(오프셋/수식) 대사는 완료. `.dat`/pcap 을 C·Go 양쪽에
-  흘려 값 최종 대조는 별도 게이트 (docs/mds-replacement-plan Stage 0 quote-replay 유사).
+
+### 11.7 런타임 대조 — C 오라클 ↔ Go 디코더 (`make krx-verify`)
+정적(오프셋/수식) 대사에 더해, **실제 sise 구조체 레이아웃 기준**으로 값을 런타임
+대조하는 자동 게이트. C 피드가 raw TR 핸들러를 전부 갖고 있지 않아도(A301K/B601K),
+헤더의 struct(`A306F_T` 등, 순수 char[])는 그 자체가 오프셋 정답지다.
+- `cside/krxverify/oracle.c` — 원 TR 바이트를 **실제 sise 구조체로 캐스팅**해
+  `l_s2d`(=trim+atof) 동형으로 각 필드 파싱 → 정규 CSV.
+- `cmd/krx-verify` — `gen`(결정적 length-prefixed 캡처 생성) / `decode`(같은 파일을
+  `pkg/krx` 로 디코드 → 동일 CSV).
+- `scripts/krx-verify.sh` — gen → C 오라클 CSV → Go CSV → `diff`. 값이 어긋나면
+  오프셋/파싱이 C 구조체와 불일치한 것 (컴파일러가 struct 오프셋을 계산하므로
+  손으로 센 Go 오프셋 드리프트를 자동 검출).
+- 대상 7종: A306F/A301K/B606F/B601K/H306F/A006F/A001B (가격/수량/수익률/문자/승수 등).
+- sise `.h`(무의존)+`cc` 필요 → 없으면 skip(그린). `make ci` 미포함(외부 헤더 의존).
+- **결과: 7 레코드 전 필드 일치** — Go 오프셋/파싱이 C 구조체 레이아웃과 동치 확인.

@@ -26,7 +26,7 @@ CMDS := $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard cmd/*/*.go)))))
 .PHONY: all build test test-v test-race test-integration vet fmt fmt-check tidy clean install \
         lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside \
         wtgprice wtgprice-clean test-wtgprice \
-        wtgquery wtgquery-clean test-wtgquery price-ha-verify $(CMDS)
+        wtgquery wtgquery-clean test-wtgquery price-ha-verify krx-verify $(CMDS)
 
 all: build
 
@@ -135,6 +135,12 @@ lint: fmt-check vet staticcheck
 # make ci 에는 미포함 — 4-프로세스 e2e (부팅·타이밍 의존) 라 릴리즈/수동 검증용.
 price-ha-verify:
 	./scripts/price-ha-verify.sh
+
+# KRX 원 TR 파서 런타임 대조 — C 오라클(실제 sise 구조체 캐스팅) ↔ WTG Go 디코더.
+# 결정적 캡처를 생성해 양측 CSV 를 diff (오프셋/파싱을 C 레이아웃 기준 검증).
+# sise .h + cc 필요 (없으면 skip). 인자로 헤더 경로 지정 가능. docs/krx-sise-design.md §11.7.
+krx-verify:
+	./scripts/krx-verify.sh $(SISE_INC)
 
 # CI 가 수행하는 전체 검증을 로컬에서 한 번에.
 # commit/PR 전에 `make ci` 로 사전 검증 권장.

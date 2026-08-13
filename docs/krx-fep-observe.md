@@ -78,6 +78,46 @@ $WTG/bin/krx-tester --url ws://127.0.0.1:8085/v1/subscribe \
   (FEP 가 장 초 마스터를 먼저 송신해야 함). 정산가(`settle`)는 H306F 수신 후.
 - `fut.book` 에 `ask[5]/bid[5]` 5단이 오면 호가 파싱 OK.
 
+## 2b. "client 로 전달됐는지" 확인 (정식 화면 없이)
+
+정식 web 화면 전이라도, mci-edge-krx 의 외부 ws(`/v1/subscribe`)에 붙는 무엇이든
+"client" 다. 아래 중 하나로 전달을 확인한다.
+
+### 방법 1 — krx-tester (헤드리스 client, 권장)
+`krx-tester` 자체가 ws client 다. 여기 envelope 이 찍히면 **MCI 수신→client 전달**이
+증명된 것 (실제 fan-out 경로를 그대로 탐).
+```bash
+$WTG/bin/krx-tester --url ws://127.0.0.1:8085/v1/subscribe --symbols 101V6000 --json
+```
+
+### 방법 2 — 브라우저 임시 화면 (눈으로)
+`docs/krx-ws-test-client.html` (단일 파일, 외부 의존 0). ws 접근 가능한 PC 에서 열어
+URL(`ws://<host>:8085/v1/subscribe`)·종목 입력 → Connect → 실시간 표로 last/전일대비/
+직전대비/호가/정산 표시. 정식 프론트 전 확인용 + 프론트 개발 참고.
+
+내 노트북에서 EC2(사설망)를 볼 때는 SSH 포트포워드:
+```bash
+ssh -L 8085:127.0.0.1:8085 fxec2      # 터널 유지
+# 그 상태로 krx-ws-test-client.html 을 브라우저로 열고 URL=ws://127.0.0.1:8085/v1/subscribe
+```
+
+### 방법 3 — websocat 한 줄 (CLI 대안)
+```bash
+# 접속 후 구독 메시지 전송, 이후 수신 덤프
+( echo '{"type":"subscribe","symbols":["101V6000"]}'; sleep 30 ) \
+  | websocat ws://127.0.0.1:8085/v1/subscribe
+```
+
+### 방법 4 — 서버측 카운터 corroboration (내용 없이 전달여부만)
+클라 없이도 "붙었는지 / fan-out 됐는지" 를 서버에서 확인:
+```bash
+curl -s http://127.0.0.1:8085/healthz          # → ok conns=N  (연결된 client 수)
+tail -f $WTG/mci-edge-krx.out | grep "mcast stats"   # fanout 증가 = 구독자에게 송신됨
+```
+- `conns` 가 client 접속 시 증가 → 접속 확인.
+- `fanout` 이 시세 유입 중 증가 → 구독자에게 전달 확인 (구독자 0 이면 증가해도 실 전송 0).
+- 즉 **conns≥1 + fanout 증가**면 "받아서 client 로 전달" 성립.
+
 ## 3. 이중 축 대사 (FEP 축 ↔ MCI 축)
 
 같은 종목·시각의 값을 두 축에서 비교 (C 피드 = 정답지):

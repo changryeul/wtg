@@ -1,0 +1,112 @@
+<!doctype html>
+<!--
+  KRX 시세 ws 임시 확인 클라이언트 (단일 파일, 외부 의존 0).
+  정식 web 화면 전 "MCI 가 받아서 client 로 전달했는지" 눈으로 확인용.
+  브라우저로 이 파일을 열고(ws 접근 가능한 곳에서) URL/종목 입력 → Connect.
+  mci-edge-krx 의 /v1/subscribe 에 붙어 fut.trade/fut.book/bond.* 를 실시간 표로.
+-->
+<meta charset="utf-8">
+<title>KRX ws test client</title>
+<style>
+  body { font: 13px/1.5 -apple-system, sans-serif; margin: 16px; }
+  input { font: inherit; padding: 4px 6px; }
+  #url { width: 380px; } #syms { width: 320px; }
+  button { font: inherit; padding: 4px 12px; cursor: pointer; }
+  #stat { margin: 8px 0; font-weight: bold; }
+  table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 3px 8px; text-align: right; }
+  th { background: #f2f2f2; }
+  td.code { text-align: left; font-family: monospace; }
+  .up { color: #c00; } .dn { color: #06c; } .flat { color: #666; }
+  #log { margin-top: 12px; height: 160px; overflow: auto; background: #111; color: #0f0;
+         font-family: monospace; font-size: 11px; padding: 8px; white-space: pre-wrap; }
+</style>
+
+<h3>KRX 시세 ws 확인 클라이언트</h3>
+<div>
+  ws URL: <input id="url" value="ws://127.0.0.1:8085/v1/subscribe">
+  종목(콤마): <input id="syms" value="101V6000,105V3000,201S3000,167V3000,KR103501GA31">
+  <button id="btn">Connect</button>
+</div>
+<div id="stat">disconnected</div>
+
+<table id="tbl">
+  <thead><tr>
+    <th class="code">code</th><th>kind</th><th>last</th><th>전일대비</th><th>등락률%</th>
+    <th>직전대비</th><th>ask0</th><th>bid0</th><th>settle</th><th>updates</th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+<div id="log"></div>
+
+<script>
+let ws = null, rx = 0;
+const rows = {};                          // code → <tr>
+const tbody = document.querySelector('#tbl tbody');
+const stat = document.getElementById('stat');
+const logEl = document.getElementById('log');
+
+function log(m) {
+  logEl.textContent += m + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function cls(v) { return v > 0 ? 'up' : v < 0 ? 'dn' : 'flat'; }
+function num(v, d = 2) { return (v == null) ? '' : Number(v).toFixed(d); }
+
+function row(code) {
+  if (rows[code]) return rows[code];
+  const tr = document.createElement('tr');
+  for (let i = 0; i < 10; i++) tr.appendChild(document.createElement('td'));
+  tr.cells[0].className = 'code';
+  tr.cells[0].textContent = code;
+  tbody.appendChild(tr);
+  rows[code] = tr; tr._n = 0;
+  return tr;
+}
+
+function apply(d) {
+  const tr = row(d.code);
+  tr._n++;
+  tr.cells[9].textContent = tr._n;
+  if (d.kind === 'fut.trade' || d.kind === 'bond.trade') {
+    tr.cells[1].textContent = d.kind.split('.')[0];
+    tr.cells[2].textContent = num(d.last);
+    // 채권 전일대비는 yDiff/ySign, 선물은 diff/sign
+    const isBond = d.kind === 'bond.trade';
+    const yd = isBond ? d.yDiff : d.diff;
+    const yr = isBond ? d.yRate : d.rate;
+    tr.cells[3].textContent = num(yd); tr.cells[3].className = cls(yd);
+    tr.cells[4].textContent = num(yr, 4);
+    tr.cells[5].textContent = num(d.cdiff); tr.cells[5].className = cls(d.cdiff);
+    if (d.settle) tr.cells[8].textContent = num(d.settle);
+  } else if (d.kind === 'fut.book' || d.kind === 'bond.book') {
+    const a = d.ask && d.ask[0], b = d.bid && d.bid[0];
+    if (a) tr.cells[6].textContent = num(a.prc) + '×' + a.vol;
+    if (b) tr.cells[7].textContent = num(b.prc) + '×' + b.vol;
+  }
+}
+
+function toggle() {
+  if (ws) { ws.close(); return; }
+  const url = document.getElementById('url').value.trim();
+  const syms = document.getElementById('syms').value.split(',').map(s => s.trim()).filter(Boolean);
+  ws = new WebSocket(url);
+  document.getElementById('btn').textContent = 'Disconnect';
+  ws.onopen = () => {
+    stat.textContent = 'connected → subscribe ' + syms.join(',');
+    ws.send(JSON.stringify({ type: 'subscribe', symbols: syms }));
+    log('OPEN, subscribed: ' + syms.join(','));
+  };
+  ws.onmessage = (e) => {
+    rx++;
+    try { apply(JSON.parse(e.data)); stat.textContent = 'connected — 수신 ' + rx + '건'; }
+    catch (err) { log('parse err: ' + e.data); }
+  };
+  ws.onclose = () => {
+    stat.textContent = 'disconnected (수신 ' + rx + '건)';
+    document.getElementById('btn').textContent = 'Connect'; ws = null; log('CLOSE');
+  };
+  ws.onerror = () => log('WS ERROR (URL/포트/네트워크 확인)');
+}
+document.getElementById('btn').addEventListener('click', toggle);
+</script>

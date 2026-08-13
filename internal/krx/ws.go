@@ -110,6 +110,10 @@ func (srv *Server) Ingest(b []byte) (string, int, int, error) {
 	// 마스터(원 KRX TR)는 앞 5바이트 TR코드로 먼저 판별 (KA/KB 등 push 2B type 보다 우선).
 	if len(b) >= 5 {
 		switch string(b[0:5]) {
+		case "A306F": // (트랙2) 파생 체결 원 TR
+			return srv.IngestA306F(b)
+		case "B606F": // (트랙2) 파생 호가 원 TR
+			return srv.IngestB606F(b)
 		case "A006F": // 파생 종목정보 마스터
 			return srv.IngestA006F(b)
 		case "A001B": // 채권 종목정보 마스터
@@ -173,6 +177,24 @@ func (srv *Server) IngestA006F(b []byte) (string, int, int, error) {
 		return "", 0, 0, err
 	}
 	return srv.fanout(m.Code, m)
+}
+
+// IngestA306F — (트랙2) 원 파생 체결 A306F → fut.trade fan-out.
+func (srv *Server) IngestA306F(b []byte) (string, int, int, error) {
+	ft, err := wire.DecodeA306F(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return srv.fanout(ft.Code, ft)
+}
+
+// IngestB606F — (트랙2) 원 파생 호가 B606F → fut.book fan-out.
+func (srv *Server) IngestB606F(b []byte) (string, int, int, error) {
+	fb, err := wire.DecodeB606F(b)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return srv.fanout(fb.Code, fb)
 }
 
 // IngestA001B — A001B(채권 종목정보 마스터) → bond.master JSON 종목구독 fan-out.

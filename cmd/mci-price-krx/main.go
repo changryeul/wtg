@@ -26,7 +26,8 @@ func main() {
 	group := flag.String("mcast-group", "227.10.20.10", "KRX 멀티캐스트 그룹 IP")
 	ports := flag.String("mcast-ports", "60641,60642,60643,60631,60632", "포트 (콤마)")
 	iface := flag.String("mcast-iface", "", "수신 인터페이스 (비면 기본)")
-	shmPath := flag.String("shm", krxshm.ShmPath, "MFSISE_T SHM 경로")
+	shmPath := flag.String("shm", krxshm.ShmPath, "파생 MFSISE_T SHM 경로")
+	shmBond := flag.String("shm-bond", krxshm.BondShmPath, "채권 MBSISE_T SHM 경로")
 	rcvbuf := flag.Int("rcvbuf", 32*1024*1024, "소켓 수신버퍼 바이트")
 	statsIv := flag.Duration("stats", 30*time.Second, "stats 로그 주기")
 	logLevel := flag.String("log-level", "info", "debug/info/warn/error")
@@ -38,13 +39,20 @@ func main() {
 
 	m, err := krxshm.Open(*shmPath)
 	if err != nil {
-		log.Error("SHM open 실패", "error", err)
+		log.Error("파생 SHM open 실패", "error", err)
 		os.Exit(1)
 	}
 	defer m.Close()
-	log.Info("SHM 적재 준비", "path", *shmPath, "size", krxshm.ShmSize, "maxItem", krxshm.MaxItem)
+	bm, err := krxshm.OpenBond(*shmBond)
+	if err != nil {
+		log.Error("채권 SHM open 실패", "error", err)
+		os.Exit(1)
+	}
+	defer bm.Close()
+	log.Info("SHM 적재 준비", "fut", *shmPath, "bond", *shmBond,
+		"futSize", krxshm.ShmSize, "bondSize", krxshm.BondShmSize)
 
-	hub := pricekrx.New(m.Writer)
+	hub := pricekrx.New(m.Writer, bm.BondWriter)
 	var st stats
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,9 +98,10 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				mn, qn := hub.Stats()
+				fm, fq, bm, bq := hub.Stats()
 				log.Info("stats", "packets", st.packets.Load(), "applied", st.applied.Load(),
-					"unknown", st.unknown.Load(), "masters", mn, "quotes", qn)
+					"unknown", st.unknown.Load(),
+					"futMasters", fm, "futQuotes", fq, "bondMasters", bm, "bondQuotes", bq)
 			}
 		}
 	}()

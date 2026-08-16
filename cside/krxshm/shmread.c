@@ -40,5 +40,8 @@ int main(int argc, char **argv) {
 	FSISE_T *s = &r->fsise;
 	printf("code=%.12s short=%.9s ePrc=%.2f bPrc=%.2f yPrc=%.2f diff=%.2f sPrc=%.2f rate=%.4f sign=[%c]\n",
 	       r->futCd, r->shrtCd, s->ePrc, s->bPrc, s->yPrc, s->diff, s->sPrc, (double)s->rate, s->sign ? s->sign : ' ');
+	FHOGA_T *fh = &r->fhoga;
+	printf("  hoga: stVol=%lu btVol=%lu exPrc=%.2f ask0=%.2f/%lu bid0=%.2f/%lu\n",
+	       fh->stVol, fh->btVol, fh->exPrc, fh->shoga[0].prc, fh->shoga[0].vol, fh->bhoga[0].prc, fh->bhoga[0].vol);
 	return 0;
 }

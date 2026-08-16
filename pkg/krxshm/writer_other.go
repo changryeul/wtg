@@ -4,15 +4,19 @@ package krxshm
 
 import "errors"
 
-// Mapped 스텁 — mci-price-krx SHM 적재는 linux 전용 (mmap /dev/shm). mac 개발/비-linux
-// 빌드가 깨지지 않도록 no-op 스텁만 둔다.
+// 비-linux 스텁 — SHM 적재는 linux 전용 (mmap /dev/shm). mac 개발/비-linux 빌드용.
 type Mapped struct{ *Writer }
 
-// Open — 비-linux 에서는 미지원.
 func Open(path string) (*Mapped, error) {
 	return nil, errors.New("krxshm: SHM 적재는 linux 전용 (mci-price-krx 는 EC2 에서 구동)")
 }
-
-// Sync / Close — 스텁.
 func (m *Mapped) Sync() error  { return nil }
 func (m *Mapped) Close() error { return nil }
+
+type BondMapped struct{ *BondWriter }
+
+func OpenBond(path string) (*BondMapped, error) {
+	return nil, errors.New("krxshm: 채권 SHM 적재는 linux 전용")
+}
+func (m *BondMapped) Sync() error  { return nil }
+func (m *BondMapped) Close() error { return nil }

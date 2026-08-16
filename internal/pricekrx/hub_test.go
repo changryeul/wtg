@@ -48,7 +48,7 @@ func TestHubIngestSHM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(w)
+	h := New(w, nil)
 
 	if _, ok, err := h.Ingest(mkA006F("101V6000", 265.00, 265.50)); err != nil || !ok {
 		t.Fatalf("A006F ingest ok=%v err=%v", ok, err)
@@ -56,7 +56,7 @@ func TestHubIngestSHM(t *testing.T) {
 	if _, ok, err := h.Ingest(mkA306F("101V6000", 265.75)); err != nil || !ok {
 		t.Fatalf("A306F ingest ok=%v err=%v", ok, err)
 	}
-	mn, qn := h.Stats()
+	mn, qn, _, _ := h.Stats()
 	if mn != 1 || qn != 1 {
 		t.Errorf("stats masters=%d quotes=%d want 1/1", mn, qn)
 	}

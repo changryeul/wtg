@@ -37,5 +37,23 @@ check yPrc    "$(echo "$OUT" | grep -oE 'yPrc@[0-9]+' | grep -oE '[0-9]+')"
 check diff    "$(echo "$OUT" | grep -oE 'diff@[0-9]+' | grep -oE '[0-9]+')"
 check sPrc    "$(echo "$OUT" | grep -oE 'sPrc@[0-9]+' | grep -oE '[0-9]+')"
 check rate    "$(echo "$OUT" | grep -oE 'rate@[0-9]+' | grep -oE '[0-9]+')"
-check sign    "$(echo "$OUT" | grep -oE 'sign@[0-9]+' | grep -oE '[0-9]+')"
-[ "$fail" = 0 ] && echo "[OK] pkg/krxshm 상수 ↔ 실제 MFSISE_T 레이아웃 일치" || { echo "[FAIL] 불일치 — layout.go 재확정 필요"; exit 1; }
+check sign    "$(echo "$OUT" | grep 'FSISE_T:' | grep -oE 'sign@[0-9]+' | grep -oE '[0-9]+')"
+# --- FHOGA_T (파생 호가) + 채권 SHM(mbsise) ---
+fld(){ echo "$OUT" | grep "$1" | grep -oE "$2@[0-9]+" | grep -oE '[0-9]+' | head -1; } # line, field
+declare -A EXP2=()
+EXP2[fhoga]=2272; EXP2[bondSize]=69843536; EXP2[KBOND]=139408; EXP2[bond]=128
+EXP2[bsise]=592; EXP2[bhoga]=784; EXP2[b_ePrc]=32; EXP2[b_eYld]=64; EXP2[b_yPrc]=96; EXP2[b_diff]=112; EXP2[b_rate]=120; EXP2[b_sign]=124
+c2(){ local k="$1" a="$2"; if [ "$a" != "${EXP2[$k]}" ]; then echo "  ✗ $k: oracle=$a go=${EXP2[$k]}"; fail=1; else echo "  ✓ $k=$a"; fi; }
+c2 fhoga    "$(fld 'KBFUT_T:' fhoga)"
+c2 bondSize "$(echo "$OUT" | grep -oE 'MBSISE_SZ\(total\)=[0-9]+' | grep -oE '[0-9]+')"
+c2 KBOND    "$(echo "$OUT" | grep -oE 'KBOND_T=[0-9]+' | grep -oE '[0-9]+' | head -1)"
+c2 bond     "$(fld 'MBSISE_T:' bond)"
+c2 bsise    "$(fld 'KBOND_T:' bsise)"
+c2 bhoga    "$(fld 'KBOND_T:' bhoga)"
+c2 b_ePrc   "$(fld 'BSISE_T:' ePrc)"
+c2 b_eYld   "$(fld 'BSISE_T:' eYld)"
+c2 b_yPrc   "$(fld 'BSISE_T:' yPrc)"
+c2 b_diff   "$(fld 'BSISE_T:' diff)"
+c2 b_rate   "$(fld 'BSISE_T:' rate)"
+c2 b_sign   "$(fld 'BSISE_T:' sign)"
+[ "$fail" = 0 ] && echo "[OK] pkg/krxshm 상수 ↔ 실제 MFSISE_T/MBSISE_T 레이아웃 일치" || { echo "[FAIL] 불일치 — layout 재확정 필요"; exit 1; }

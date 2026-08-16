@@ -51,5 +51,20 @@ const (
 	fsHalt = 105 // 거래정지 char
 )
 
+// FHOGA_T (파생 호가) — KBFUT_T 기준 fhoga@offFhoga, 내부 오프셋 (전부 8B 필드, linux).
+const (
+	offFhoga = 2272 // KBFUT_T.fhoga
+	fhStVol  = 16   // 매도총잔량 ulong
+	fhBtVol  = 24   // 매수총잔량
+	fhSaCnt  = 32   // 매도유효건수
+	fhBaCnt  = 40   // 매수유효건수
+	fhExPrc  = 48   // 예상체결가 double
+	fhExVol  = 56   // 예상체결수량 ulong
+	fhShoga  = 64   // shoga[5] 시작
+	fhBhoga  = 184  // bhoga[5] 시작
+	fhUStr   = 24   // FHOGA_U 크기 (prc@0 vol@8 cnt@16)
+	NHoga    = 5    // N_FHOGA
+)
+
 // entryOff — 슬롯 i(0-based)의 KBFUT_T 시작 바이트 오프셋.
 func entryOff(i int) int { return offKbfut + i*kbfutStride }

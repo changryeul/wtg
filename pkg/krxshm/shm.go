@@ -86,6 +86,51 @@ func (w *Writer) Update(q Quote) error {
 	return nil
 }
 
+// Level — 호가 한 단계 (가격/잔량/건수).
+type Level struct {
+	Prc      float64
+	Vol, Cnt uint64
+}
+
+// Book — 파생 호가(5단) FHOGA_T 적재값.
+type Book struct {
+	Code                           string
+	AskTot, BidTot, AskCnt, BidCnt uint64
+	ExpPrc                         float64
+	ExpVol                         uint64
+	Ask, Bid                       []Level
+}
+
+// UpdateBook 은 배치된 종목의 FHOGA_T 를 in-place 갱신.
+func (w *Writer) UpdateBook(b Book) error {
+	i, ok := w.slot[b.Code]
+	if !ok {
+		return fmt.Errorf("krxshm: 미배치 종목 %q (호가)", b.Code)
+	}
+	h := entryOff(i) + offFhoga
+	binary.LittleEndian.PutUint64(w.buf[h+fhStVol:], b.AskTot)
+	binary.LittleEndian.PutUint64(w.buf[h+fhBtVol:], b.BidTot)
+	binary.LittleEndian.PutUint64(w.buf[h+fhSaCnt:], b.AskCnt)
+	binary.LittleEndian.PutUint64(w.buf[h+fhBaCnt:], b.BidCnt)
+	w.putF64(h+fhExPrc, b.ExpPrc)
+	binary.LittleEndian.PutUint64(w.buf[h+fhExVol:], b.ExpVol)
+	for j := 0; j < NHoga; j++ {
+		if j < len(b.Ask) {
+			o := h + fhShoga + j*fhUStr
+			w.putF64(o, b.Ask[j].Prc)
+			binary.LittleEndian.PutUint64(w.buf[o+8:], b.Ask[j].Vol)
+			binary.LittleEndian.PutUint64(w.buf[o+16:], b.Ask[j].Cnt)
+		}
+		if j < len(b.Bid) {
+			o := h + fhBhoga + j*fhUStr
+			w.putF64(o, b.Bid[j].Prc)
+			binary.LittleEndian.PutUint64(w.buf[o+8:], b.Bid[j].Vol)
+			binary.LittleEndian.PutUint64(w.buf[o+16:], b.Bid[j].Cnt)
+		}
+	}
+	return nil
+}
+
 // Has — 종목이 배치돼 있는지.
 func (w *Writer) Has(code string) bool { _, ok := w.slot[code]; return ok }
 

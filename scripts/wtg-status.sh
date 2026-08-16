@@ -4,7 +4,7 @@
 #   ./scripts/wtg-status.sh           # 1회 스냅샷
 #   watch -tcn 2 ./scripts/wtg-status.sh   # 2초 주기 갱신
 set -u
-NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix-ord mci-edge-fix-md mci-edge-tcp mci-push mci-edge-push mci-chart mci-edge-krx quote-forwarder prometheus wtg-dev-tickloop load-gen)
+NAMES=(mci-admin mci-api mci-price mci-edge-price mci-edge-api mci-edge-fix-ord mci-edge-fix-md mci-edge-tcp mci-push mci-edge-push mci-chart mci-edge-krx mci-price-krx quote-forwarder prometheus wtg-dev-tickloop load-gen)
 # 마지막 stack-up 의 기동 대상 목록 — 없으면 (직접 기동 등) 전부 대상으로 간주.
 SVCFILE="logs/.stack-services"
 is_target() {

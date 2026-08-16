@@ -1,0 +1,37 @@
+# WTG mci-price-krx — KRX 파생/채권 시세 내부 허브 (트랙2, C sise 피드 흡수).
+# KRX 멀티캐스트(원 TR) 수신 → 파싱 → /dev/shm/mfsise(파생)·/dev/shm/mbsise(채권) 적재.
+# yuanta trn/mon AP 는 기존 libmfsise/libmbsise(l_mfread)로 무수정 read.
+# broker 무의존 (mcast→SHM). etcd/broker 처럼 상주.
+[Unit]
+Description=WTG mci-price-krx — KRX 파생/채권 시세 SHM 허브 (sise 흡수)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=winway
+Group=winway
+WorkingDirectory=/home/winway/common/wtg
+EnvironmentFile=/home/winway/common/wtg/wtg.env
+# 기본 group/ports = 227.10.20.10 / 60641-3(파생)·60631-2(채권), SHM = /dev/shm/mfsise·mbsise.
+# 실 KRX 회선 미도달 환경이면 --mcast-iface 로 수신 iface 지정.
+ExecStart=/home/winway/common/wtg/bin/mci-price-krx \
+    --mcast-group=227.10.20.10 \
+    --mcast-ports=60641,60642,60643,60631,60632 \
+    --shm=/dev/shm/mfsise \
+    --shm-bond=/dev/shm/mbsise \
+    --listen=:8088 \
+    --stats=30s
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wtg-mci-price-krx
+
+[Install]
+WantedBy=multi-user.target

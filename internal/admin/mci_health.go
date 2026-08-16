@@ -64,6 +64,9 @@ func defaultMciTargets() []MciTarget {
 		{Name: "mci-price", URL: "http://127.0.0.1:8082/v1/price-stats", Tier: "internal", Upstream: "broker", Access: "gRPC :50051 / HTTP :8082"},
 		{Name: "mci-push", URL: "http://127.0.0.1:8081/v1/ping", Tier: "internal", Upstream: "broker", Access: "WS :8081 / gRPC :50052"},
 		{Name: "quote-forwarder", URL: "http://127.0.0.1:9091/metrics", Tier: "internal", Upstream: "mci-price", Access: "UDP :30044-45"},
+		// KRX 파생/채권 시세 SHM 허브 (트랙2, sise 흡수). mcast 직수신 → /dev/shm/mfsise·mbsise
+		// 적재 (yuanta trn/mon 이 libmfsise/libmbsise 로 read). 내부 소스라 upstream 공란.
+		{Name: "mci-price-krx", URL: "http://127.0.0.1:8088/healthz", Tier: "internal", Access: "UDP mcast → SHM / HTTP :8088"},
 		// DMZ — 외부 채널 종단. External=true → SG 인바운드 개방 대상 (해당 대역만).
 		{Name: "mci-edge-api", URL: "https://127.0.0.1:8090/v1/ping", Tier: "dmz", Upstream: "mci-api", Access: "HTTPS :8090", External: true},
 		{Name: "mci-edge-tcp", URL: "http://127.0.0.1:5022/healthz", Tier: "dmz", Upstream: "mci-api", Access: "raw TCP :5021", External: true},

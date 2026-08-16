@@ -8,8 +8,10 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -28,6 +30,7 @@ func main() {
 	iface := flag.String("mcast-iface", "", "수신 인터페이스 (비면 기본)")
 	shmPath := flag.String("shm", krxshm.ShmPath, "파생 MFSISE_T SHM 경로")
 	shmBond := flag.String("shm-bond", krxshm.BondShmPath, "채권 MBSISE_T SHM 경로")
+	listen := flag.String("listen", ":8088", "HTTP health/stats listen (비면 비활성)")
 	rcvbuf := flag.Int("rcvbuf", 32*1024*1024, "소켓 수신버퍼 바이트")
 	statsIv := flag.Duration("stats", 30*time.Second, "stats 로그 주기")
 	logLevel := flag.String("log-level", "info", "debug/info/warn/error")
@@ -89,6 +92,30 @@ func main() {
 		go readLoop(ctx, conn, hub, &st, log)
 	}
 	log.Info("KRX 멀티캐스트 수신 시작", "group", *group, "ports", *ports, "iface", *iface)
+
+	if *listen != "" {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			fm, fq, bm, bq := hub.Stats()
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, "ok packets=%d applied=%d futMasters=%d futQuotes=%d bondMasters=%d bondQuotes=%d\n",
+				st.packets.Load(), st.applied.Load(), fm, fq, bm, bq)
+		})
+		mux.HandleFunc("/stats", func(w http.ResponseWriter, _ *http.Request) {
+			fm, fq, bm, bq := hub.Stats()
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"packets":%d,"applied":%d,"unknown":%d,"futMasters":%d,"futQuotes":%d,"bondMasters":%d,"bondQuotes":%d}`+"\n",
+				st.packets.Load(), st.applied.Load(), st.unknown.Load(), fm, fq, bm, bq)
+		})
+		hs := &http.Server{Addr: *listen, Handler: mux}
+		go func() {
+			if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("http listen", "error", err)
+			}
+		}()
+		go func() { <-ctx.Done(); _ = hs.Close() }()
+		log.Info("health/stats HTTP", "listen", *listen)
+	}
 
 	go func() {
 		t := time.NewTicker(*statsIv)

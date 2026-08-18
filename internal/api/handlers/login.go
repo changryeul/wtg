@@ -29,7 +29,11 @@ import (
 type LoginRequest struct {
 	Exchange   string `json:"exchange,omitempty"`
 	RoutingKey string `json:"routing_key,omitempty"`
-	Channel    string `json:"channel,omitempty"` // 세션 메타. 빈 값이면 "WEB".
+	// Alias — 검증형 로그인 서비스 (예 yuanta "T1204S01"). 지정 + LoginValidate
+	// 활성이면 그 서비스로 id/pw 검증 후 WTG 세션 발급 (loginViaValidate).
+	// 미지정이면 설정된 모드(chain/legacy). NH=W·yuanta=T 로 안 겹쳐 alias 로 회사 분기.
+	Alias   string `json:"alias,omitempty"`
+	Channel string `json:"channel,omitempty"` // 세션 메타. 빈 값이면 "WEB".
 	// Deprecated: Site/Tier 는 서버가 UserProfileResolver 로 결정. 클라이언트 입력 무시.
 	Site string          `json:"site,omitempty"`
 	Tier string          `json:"tier,omitempty"`
@@ -103,6 +107,13 @@ func Login(deps *Deps) http.HandlerFunc {
 		}
 		if channel == "" {
 			channel = "WEB"
+		}
+
+		// 검증형 로그인 — 요청이 로그인 서비스 alias 를 지정하면 (예 yuanta T1204S01).
+		// 엔진이 쿠키 없이 성공여부만 반환 → WTG 자체 세션 발급. chain/legacy 보다 우선.
+		if req.Alias != "" && deps.LoginValidate != nil {
+			loginViaValidate(deps, w, r, req, channel)
+			return
 		}
 
 		// chain 모드 — 엔진 인증 사슬 (W1101S02→W1130A02) 오케스트레이션.

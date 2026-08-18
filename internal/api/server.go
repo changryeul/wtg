@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -351,13 +352,35 @@ func (s *Server) Start(ctx context.Context) error {
 	var svcReg *svcio.Registry
 	if s.cfg.SvcIncDir != "" {
 		svcReg = svcio.NewRegistry()
+		// 레거시 단일 공통헤더 — 형제 comhdr 를 못 찾는 dir 용 fallback "COMHDR".
 		if s.cfg.SvcCommonHeaderFile != "" {
 			if err := svcReg.LoadHeaderFile(s.cfg.SvcCommonHeaderFile, s.logger); err != nil {
 				s.logger.Warn("svcio 공통 헤더 로드 실패",
 					slog.String("path", s.cfg.SvcCommonHeaderFile), slog.Any("err", err))
 			}
+			svcReg.SetDirHeaderDefault("win/src/inc/trn", "COMHDR")
 		}
-		svcReg.SetDirHeaderDefault("win/src/inc/trn", "COMHDR")
+		// 회사별 COMHDR — 각 inc-dir 의 형제 comhdr(.../inc/com/comhdr.h)를 회사
+		// 네임스페이스(COMHDR_<FIRM>)로 로드하고 그 dir 의 default 헤더로 연결한다.
+		// NH·yuanta 는 COMHDR 레이아웃이 달라, 서비스별 올바른 헤더로 전문을 조립해야 함.
+		for _, dir := range strings.Split(s.cfg.SvcIncDir, ",") {
+			dir = strings.TrimSpace(dir)
+			firm := svcio.FirmToken(dir)
+			if dir == "" || firm == "" {
+				continue
+			}
+			comhdr := filepath.Join(filepath.Dir(dir), "com", "comhdr.h")
+			suffix := "_" + strings.ToUpper(firm)
+			if err := svcReg.LoadHeaderFileAs(comhdr, suffix, s.logger); err != nil {
+				s.logger.Warn("svcio 회사별 공통 헤더 로드 실패",
+					slog.String("comhdr", comhdr), slog.Any("err", err))
+				continue
+			}
+			svcReg.SetDirHeaderDefault(dir, "COMHDR"+suffix)
+			s.logger.Info("svcio 회사별 COMHDR 연결",
+				slog.String("dir", dir), slog.String("header", "COMHDR"+suffix),
+				slog.String("comhdr", comhdr))
+		}
 		if loaded, failed, err := svcReg.LoadDirs(s.cfg.SvcIncDir, s.logger); err != nil {
 			s.logger.Warn("svcio 헤더 인덱싱 실패", slog.Any("err", err))
 		} else {
@@ -392,6 +415,12 @@ func (s *Server) Start(ctx context.Context) error {
 			slog.String("cert", s.cfg.LoginCertAlias),
 			slog.String("session", s.cfg.LoginSessionAlias),
 			slog.Bool("skip_cert", s.cfg.LoginSkipCert))
+	}
+	// 검증형 로그인 — 요청이 로그인 서비스 alias(예 yuanta T1204S01) 지정 시 활성.
+	// chain 과 요청 단위로 공존 (alias 있으면 validate, 없으면 chain/legacy).
+	if s.cfg.LoginValidate {
+		deps.LoginValidate = &handlers.LoginValidateConfig{}
+		s.logger.Info("로그인 validate 모드 활성 — alias 지정 요청은 검증형(쿠키 없음) 로그인")
 	}
 	// Idempotency-Key 처리 — Redis (다중 인스턴스 공유) 또는 Memory (단일).
 	if s.cfg.IdempotencyEnabled {

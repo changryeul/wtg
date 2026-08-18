@@ -78,6 +78,19 @@ func (r *Registry) RegisterHeader(name string, fields []Field) {
 // struct 를 named header 로 등록. 한 파일에 여러 헤더 (COMHDR / BROADCAST_H /
 // CHGHDR 등) 있을 수 있다.
 func (r *Registry) LoadHeaderFile(path string, logger *slog.Logger) error {
+	return r.loadHeaderFile(path, "", logger)
+}
+
+// LoadHeaderFileAs — LoadHeaderFile 과 동일하되 등록 이름에 suffix 를 붙인다.
+// 같은 typedef 이름(예 "COMHDR")을 회사별로 다른 레이아웃으로 등록할 때 사용:
+// nh → "COMHDR_NH", yuanta → "COMHDR_YUANTA". dirHeaderDefault 로 dir 별 연결.
+func (r *Registry) LoadHeaderFileAs(path, suffix string, logger *slog.Logger) error {
+	return r.loadHeaderFile(path, suffix, logger)
+}
+
+// loadHeaderFile — LoadHeaderFile / LoadHeaderFileAs 공용 구현. suffix 가 비면
+// typedef 이름 그대로, 아니면 이름 뒤에 suffix 를 붙여 등록.
+func (r *Registry) loadHeaderFile(path, suffix string, logger *slog.Logger) error {
 	if path == "" {
 		return nil
 	}
@@ -115,11 +128,37 @@ func (r *Registry) LoadHeaderFile(path string, logger *slog.Logger) error {
 				slog.String("name", b.name), slog.Any("err", ferr))
 			continue
 		}
-		r.headers[b.name] = fields
+		r.headers[b.name+suffix] = fields
 	}
 	logger.Info("svcio: 공통 헤더 등록",
-		slog.String("path", path), slog.Int("count", len(blocks)))
+		slog.String("path", path), slog.String("suffix", suffix), slog.Int("count", len(blocks)))
 	return nil
+}
+
+// FirmToken — svc inc-dir 경로에서 "win" 바로 앞 디렉터리(회사 토큰)를 뽑는다.
+// .../projects/nh/win/src/inc/trn → "nh", .../projects/yuanta/win/src/inc/trn → "yuanta".
+// 회사 구분이 없으면(경로에 "win" 없음) "". 회사별 COMHDR 네임스페이싱에 사용.
+func FirmToken(dir string) string {
+	parts := strings.Split(filepath.Clean(dir), string(filepath.Separator))
+	for i, p := range parts {
+		if p == "win" && i > 0 {
+			return parts[i-1]
+		}
+	}
+	return ""
+}
+
+// defaultHeaderFor — sourcePath 에 매칭되는 dirHeaderDefault 중 *가장 긴* prefix 의
+// 헤더 이름 반환. 회사별 구체 경로(.../yuanta/win/src/inc/trn)가 일반 경로
+// (win/src/inc/trn)보다 우선한다. 매칭 없으면 "". 호출자가 r.mu 를 잡고 있어야 함.
+func (r *Registry) defaultHeaderFor(sourcePath string) string {
+	best, bestLen := "", -1
+	for prefix, name := range r.dirHeaderDefaults {
+		if len(prefix) > bestLen && strings.Contains(sourcePath, prefix) {
+			best, bestLen = name, len(prefix)
+		}
+	}
+	return best
 }
 
 // HeaderFields — name 으로 등록된 공통 헤더의 fields 반환. 미등록이면 nil.
@@ -221,14 +260,9 @@ func (r *Registry) LoadDir(dir string, logger *slog.Logger) (int, int, error) {
 			failed++
 			continue
 		}
-		// HeaderType — spec 자신이 명시 안 했으면 디렉터리 default 적용.
+		// HeaderType — spec 자신이 명시 안 했으면 디렉터리 default 적용 (최장 prefix 우선).
 		if spec.HeaderType == "" {
-			for prefix, name := range r.dirHeaderDefaults {
-				if strings.Contains(spec.SourcePath, prefix) {
-					spec.HeaderType = name
-					break
-				}
-			}
+			spec.HeaderType = r.defaultHeaderFor(spec.SourcePath)
 		}
 		// HeaderFields inline — 등록된 헤더면 fields 채움 (UI 에서 한 번에 보임).
 		if spec.HeaderType != "" {
@@ -399,12 +433,7 @@ func (r *Registry) ReloadFile(path string) (*SvcSpec, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if spec.HeaderType == "" {
-		for prefix, name := range r.dirHeaderDefaults {
-			if strings.Contains(spec.SourcePath, prefix) {
-				spec.HeaderType = name
-				break
-			}
-		}
+		spec.HeaderType = r.defaultHeaderFor(spec.SourcePath)
 	}
 	if spec.HeaderType != "" {
 		if fields, ok := r.headers[spec.HeaderType]; ok {

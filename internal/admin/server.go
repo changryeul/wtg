@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -391,6 +392,23 @@ func (s *Server) Start(ctx context.Context) error {
 	//    dev (`svc-headers`) 는 헤더 없음. svc 별 override 는 spec 의
 	//    `@wtg-header: NAME` 주석으로.
 	s.svcio.SetDirHeaderDefault("win/src/inc/trn", "COMHDR")
+	// 2-b. 회사별 COMHDR — 각 inc-dir 형제 comhdr(.../inc/com/comhdr.h)를 회사
+	//      네임스페이스(COMHDR_<FIRM>)로 로드 + dir default 연결 (NH·yuanta 레이아웃 상이).
+	for _, dir := range strings.Split(s.cfg.SvcIncDir, ",") {
+		dir = strings.TrimSpace(dir)
+		firm := svcio.FirmToken(dir)
+		if dir == "" || firm == "" {
+			continue
+		}
+		comhdr := filepath.Join(filepath.Dir(dir), "com", "comhdr.h")
+		suffix := "_" + strings.ToUpper(firm)
+		if err := s.svcio.LoadHeaderFileAs(comhdr, suffix, s.logger); err != nil {
+			s.logger.Warn("svcio 회사별 공통 헤더 로드 실패",
+				slog.String("comhdr", comhdr), slog.Any("err", err))
+			continue
+		}
+		s.svcio.SetDirHeaderDefault(dir, "COMHDR"+suffix)
+	}
 	// 3. svc 헤더 디렉터리 일괄 인덱싱.
 	if s.cfg.SvcIncDir != "" {
 		if _, _, err := s.svcio.LoadDirs(s.cfg.SvcIncDir, s.logger); err != nil {

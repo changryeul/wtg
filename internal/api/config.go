@@ -75,6 +75,11 @@ type Config struct {
 	// 인증서 검증 미적용 개발/과도기 모드 — 운영에서는 false.
 	LoginSkipCert bool
 
+	// LoginValidate — 검증형 로그인 활성 (yuanta T1204S01 류). 로그인 요청이
+	// alias 를 지정하면 그 서비스로 id/pw 검증 후 WTG 세션 발급. SvcIncDir 필수.
+	// chain(NH) 과 요청 단위로 공존 — alias 있으면 validate, 없으면 chain/legacy.
+	LoginValidate bool
+
 	// 로그 레벨 ("debug" / "info" / "warn" / "error"). 기본 "info".
 	LogLevel string
 
@@ -331,6 +336,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.LoginSessionAlias, "login-session-alias", cfg.LoginSessionAlias, "chain ③ 세션개설 alias (기본 W1130A02)")
 	fs.StringVar(&cfg.LoginLogoutAlias, "login-logout-alias", cfg.LoginLogoutAlias, "chain 로그아웃 반납 alias (기본 W1130A03)")
 	fs.BoolVar(&cfg.LoginSkipCert, "login-skip-cert", cfg.LoginSkipCert, "chain 모드에서 ① 인증서 인증(W1101S02) 건너뛰고 data.lgnId 로 세션만 개설 (인증서 미적용 과도기 — 운영 금지)")
+	fs.BoolVar(&cfg.LoginValidate, "login-validate", cfg.LoginValidate, "검증형 로그인 활성 — 로그인 요청이 alias(예 yuanta T1204S01) 지정 시 그 서비스로 id/pw 검증 후 세션 발급. --svc-inc-dir 필수")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "로그 레벨 debug/info/warn/error")
 	fs.StringVar(&cfg.OtelEndpoint, "otel-endpoint", cfg.OtelEndpoint, "OTel OTLP gRPC endpoint (예: otel-collector:4317). 비면 비활성")
 	fs.BoolVar(&cfg.OtelInsecure, "otel-insecure", cfg.OtelInsecure, "OTel gRPC TLS 없음 (dev)")
@@ -385,6 +391,9 @@ func LoadConfig(args []string) (Config, error) {
 	}
 	if cfg.LoginSkipCert && cfg.LoginMode != "chain" {
 		return cfg, fmt.Errorf("--login-skip-cert 는 --login-mode=chain 에서만 유효")
+	}
+	if cfg.LoginValidate && cfg.SvcIncDir == "" {
+		return cfg, fmt.Errorf("--login-validate 는 --svc-inc-dir 필수 (검증 서비스 전문 조립이 svc I/O 명세 의존)")
 	}
 	return cfg, nil
 }

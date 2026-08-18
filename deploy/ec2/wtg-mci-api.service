@@ -34,10 +34,11 @@ ExecStart=/home/winway/common/wtg/bin/mci-api \
     --etcd=http://127.0.0.1:2379 \
     --user-profiles-prefix=wtg/auth/user-profiles/ \
     --jwt-key=/home/winway/common/wtg/etc/jwt-private.pem \
-    --svc-common-header=/home/winway/nh-fxallone-server/win/src/inc/com/comhdr.h \
-    --svc-inc-dir=/home/winway/nh-fxallone-server/win/src/inc/trn \
+    --svc-common-header=/home/winway/projects/nh/win/src/inc/com/comhdr.h \
+    --svc-inc-dir=/home/winway/projects/nh/win/src/inc/trn,/home/winway/projects/yuanta/win/src/inc/trn \
     --login-mode=chain \
-    --login-skip-cert
+    --login-skip-cert \
+    --login-validate
 
 Restart=on-failure
 RestartSec=10

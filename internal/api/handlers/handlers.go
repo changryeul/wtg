@@ -95,6 +95,11 @@ type Deps struct {
 	// (단일 LOGON + cookie_t). 채워지면 /v1/login 이 W1101S02 → W1130A02
 	// 사슬을 오케스트레이션한다. SvcIO 필수 (부팅 시 검증 — config.go).
 	LoginChain *LoginChainConfig
+
+	// LoginValidate — 검증형 로그인 (yuanta T1204S01 류) 활성 설정. nil 이면
+	// 비활성 (req.Alias 무시). 채워지면 로그인 요청이 alias 를 지정할 때
+	// 그 서비스로 id/pw 검증 후 WTG 세션 발급 (loginViaValidate). SvcIO 필수.
+	LoginValidate *LoginValidateConfig
 }
 
 // writeJSON 은 표준 JSON 응답 헬퍼. 에러 발생 시 access log 가 캡처하므로

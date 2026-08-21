@@ -239,7 +239,7 @@ func Transaction(deps *Deps) http.HandlerFunc {
 		// raw 모드는 클라이언트가 전문을 직접 조립하므로 적용하지 않는다.
 		var wireSpec *svcio.SvcSpec
 		if !rawMode {
-			wireBody, spec, wireErr := wireBuildBody(deps.SvcIO, frame.Rkey, p.Usid, env.Header, env.Data)
+			wireBody, spec, wireErr := wireBuildBody(deps.SvcIO, frame.Rkey, p.Usid, p.Channel, env.Header, env.Data)
 			if wireErr != nil {
 				recordAlias(true)
 				writeError(w, http.StatusBadRequest, "wire_marshal", wireErr.Error())

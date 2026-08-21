@@ -80,7 +80,7 @@ func Logout(deps *Deps) http.HandlerFunc {
 		if deps.LoginChain != nil && p.SessionID != "" {
 			if sess, err := deps.Sessions.Get(r.Context(), p.SessionID); err == nil && sess.LgnIdntCon != "" {
 				_, err := callChainStep(r.Context(), deps, "logout",
-					deps.LoginChain.logoutAlias(), sess.Usid,
+					deps.LoginChain.logoutAlias(), sess.Usid, sess.Channel,
 					map[string]interface{}{"loip": clientIPOf(r)},
 					map[string]interface{}{
 						"prGb":       "1",

@@ -58,7 +58,7 @@ func TestWireBuildBody(t *testing.T) {
 	reg := newTestSvcIO(t)
 
 	// object + 명세 존재 → 고정폭 조립 (usid 서버 강제).
-	body, spec, err := wireBuildBody(reg, "W9999T01", "tester01",
+	body, spec, err := wireBuildBody(reg, "W9999T01", "tester01", "",
 		map[string]interface{}{"usid": "hacker", "ltyp": "KR"},
 		json.RawMessage(`{"prGb":"1"}`))
 	if err != nil || spec == nil {
@@ -78,15 +78,71 @@ func TestWireBuildBody(t *testing.T) {
 	}
 
 	// 문자열 data → passthrough (nil 반환).
-	b2, s2, err := wireBuildBody(reg, "W9999T01", "tester01", nil, json.RawMessage(`"RAWSTRING"`))
+	b2, s2, err := wireBuildBody(reg, "W9999T01", "tester01", "", nil, json.RawMessage(`"RAWSTRING"`))
 	if err != nil || b2 != nil || s2 != nil {
 		t.Errorf("문자열은 passthrough 여야 함: %v %v %v", b2, s2, err)
 	}
 
 	// 명세 없는 rkey → passthrough.
-	b3, s3, err := wireBuildBody(reg, "NOSPEC", "tester01", nil, json.RawMessage(`{"a":1}`))
+	b3, s3, err := wireBuildBody(reg, "NOSPEC", "tester01", "", nil, json.RawMessage(`{"a":1}`))
 	if err != nil || b3 != nil || s3 != nil {
 		t.Errorf("명세 없으면 passthrough: %v %v %v", b3, s3, err)
+	}
+}
+
+func TestCtypForChannel(t *testing.T) {
+	cases := map[string]string{
+		"EMP": "E", "emp": "E", " EMP ": "E",
+		"HTS": "1", "MTS": "2", "WTS": "3", "SPI": "S",
+		"WEB": "A", "API": "A", "": "A", "unknown": "A",
+	}
+	for in, want := range cases {
+		if got := ctypForChannel(in); got != want {
+			t.Errorf("ctypForChannel(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+// COMHDR 에 ctyp 필드가 있을 때: 세션 채널로 서버가 확립하고 클라 header 로는 못 바꾼다.
+func TestWireBuildBodyCtypServerEstablished(t *testing.T) {
+	reg := svcio.NewRegistry()
+	reg.RegisterHeader("COMHDR", []svcio.Field{
+		{Name: "trxc", CType: "char", Size: 16},
+		{Name: "usid", CType: "char", Size: 16},
+		{Name: "ctyp", CType: "char", Size: 1},
+	})
+	dir := t.TempDir()
+	hdr := `typedef struct {	// Input
+	char	prGb			 [   1];  // 작업구분
+} T4304A01_I;
+
+typedef struct {	// Output
+	char 	result			[ 10];  // 결과
+} T4304A01_O;
+`
+	if err := os.WriteFile(filepath.Join(dir, "T4304A01.h"), []byte(hdr), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg.SetDirHeaderDefault(dir, "COMHDR")
+	if _, _, err := reg.LoadDir(dir, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// EMP 채널 → ctyp='E'; 클라가 header.ctyp='A' 로 위조 시도해도 무시.
+	body, spec, err := wireBuildBody(reg, "T4304A01", "emp01", "EMP",
+		map[string]interface{}{"ctyp": "A"}, json.RawMessage(`{"prGb":"1"}`))
+	if err != nil || spec == nil {
+		t.Fatalf("err=%v spec=%v", err, spec)
+	}
+	// COMHDR: trxc[16] usid[16] ctyp[1] → ctyp offset 32.
+	if body[32] != 'E' {
+		t.Errorf("ctyp=%q want 'E' (세션 채널 EMP 강제, 클라 위조 무시)", body[32])
+	}
+
+	// WEB 채널 → ctyp='A'.
+	body2, _, _ := wireBuildBody(reg, "T4304A01", "web01", "WEB", nil, json.RawMessage(`{"prGb":"1"}`))
+	if body2[32] != 'A' {
+		t.Errorf("ctyp=%q want 'A' (WEB)", body2[32])
 	}
 }
 
@@ -113,7 +169,7 @@ func TestWireParseReply(t *testing.T) {
 func TestWireBuildBodyIrec(t *testing.T) {
 	reg := newTestSvcIO(t)
 	// 웹은 서버 struct[] 필드명(LST)을 모르고 표준 키 _irec 배열로 보낸다 → LST 에 매핑.
-	body, spec, err := wireBuildBody(reg, "W9998A01", "tester01", nil,
+	body, spec, err := wireBuildBody(reg, "W9998A01", "tester01", "", nil,
 		json.RawMessage(`{"cnt":"2","_irec":[{"code":"USD","amt":"100"},{"code":"KRW","amt":"200"}]}`))
 	if err != nil || spec == nil {
 		t.Fatalf("err=%v spec=%v", err, spec)

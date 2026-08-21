@@ -151,7 +151,7 @@ func TestRunLoginChainSuccess(t *testing.T) {
 	})
 	deps := chainDeps(caller, reg)
 
-	res, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7")
+	res, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestRunLoginChainCertRejected(t *testing.T) {
 	})
 	deps := chainDeps(caller, reg)
 
-	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "BADSIGN"}, "10.0.0.7")
+	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "BADSIGN"}, "10.0.0.7", "")
 	var stepErr *chainStepError
 	if !errors.As(err, &stepErr) {
 		t.Fatalf("chainStepError 아님: %v", err)
@@ -226,7 +226,7 @@ func TestRunLoginChainSessionRejected(t *testing.T) {
 	})
 	deps := chainDeps(caller, reg)
 
-	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7")
+	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7", "")
 	var stepErr *chainStepError
 	if !errors.As(err, &stepErr) {
 		t.Fatalf("chainStepError 아님: %v", err)
@@ -243,7 +243,7 @@ func TestRunLoginChainNoSpec(t *testing.T) {
 		return nil, nil
 	}}, svcio.NewRegistry())
 
-	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7")
+	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "SIGNMSG"}, "10.0.0.7", "")
 	if err == nil || !strings.Contains(err.Error(), "명세") {
 		t.Errorf("명세 미등록 에러여야 함: %v", err)
 	}
@@ -441,7 +441,7 @@ func TestRunLoginChainCertBusinessRejected(t *testing.T) {
 	})
 	deps := chainDeps(caller, reg)
 
-	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "BADSIGN"}, "10.0.0.7")
+	_, err := runLoginChain(context.Background(), deps, chainLoginData{SignMsg: "BADSIGN"}, "10.0.0.7", "")
 	var stepErr *chainStepError
 	if !errors.As(err, &stepErr) {
 		t.Fatalf("chainStepError 아님: %v", err)
@@ -472,7 +472,7 @@ func TestRunLoginChainSkipCert(t *testing.T) {
 	deps.LoginChain.SkipCert = true
 
 	res, err := runLoginChain(context.Background(), deps,
-		chainLoginData{LgnId: "testuser1", CifNo: "005374848"}, "10.0.0.7")
+		chainLoginData{LgnId: "testuser1", CifNo: "005374848"}, "10.0.0.7", "")
 	if err != nil {
 		t.Fatal(err)
 	}

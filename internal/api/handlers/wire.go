@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/winwaysystems/wtg/pkg/svcio"
 )
@@ -19,25 +20,48 @@ import (
 //   - data 가 JSON object
 //   - routing_key(=transaction code) 의 명세가 registry 에 존재
 //
-// COMHDR 값 규칙: trxc=routing_key, usid=인증 주체 (서버 강제 — 클라이언트
-// header 로 덮어쓸 수 없음), 나머지는 기본값 위에 클라이언트 header 를 overlay.
+// COMHDR 값 규칙: trxc=routing_key, usid=인증 주체·ctyp=접속매체구분 (둘 다
+// 서버 강제 — 클라이언트 header 로 덮어쓸 수 없음), 나머지는 기본값 위에
+// 클라이언트 header 를 overlay. ctyp 는 로그인 시 세션 채널로 확립된다.
 
-// wireHeaderDefaults 는 COMHDR 기본값을 만든다.
-func wireHeaderDefaults(rkey, usid string) map[string]interface{} {
+// ctypForChannel 는 세션 채널을 COMHDR 접속매체구분(ctyp)으로 매핑한다.
+// 매체구분은 로그인 시 세션 채널로 서버가 확립하며 요청 header 로는 못 바꾼다.
+// (예: 선물주문 T4304A01 은 EMP 채널 전용 → ctyp='E' 필요.)
+//
+//	WEB/API → 'A'   EMP(직원) → 'E'   HTS → '1'   MTS → '2'   WTS → '3'   SPI → 'S'
+func ctypForChannel(channel string) string {
+	switch strings.ToUpper(strings.TrimSpace(channel)) {
+	case "EMP":
+		return "E"
+	case "HTS":
+		return "1"
+	case "MTS":
+		return "2"
+	case "WTS":
+		return "3"
+	case "SPI":
+		return "S"
+	default: // WEB / API / 빈값
+		return "A"
+	}
+}
+
+// wireHeaderDefaults 는 COMHDR 기본값을 만든다. ctyp 는 세션 채널로 결정.
+func wireHeaderDefaults(rkey, usid, channel string) map[string]interface{} {
 	return map[string]interface{}{
 		"trxc": rkey,
 		"usid": usid,
-		"ctyp": "A",  // API
-		"cont": "H",  // 고객
-		"rtyp": "M",  // 메시지 그대로 출력
-		"ltyp": "KR", // 한국어
+		"ctyp": ctypForChannel(channel), // 접속매체구분 — 세션 채널로 확립
+		"cont": "H",                     // 고객
+		"rtyp": "M",                     // 메시지 그대로 출력
+		"ltyp": "KR",                    // 한국어
 	}
 }
 
 // wireBuildBody 는 명세 기반 요청 body 를 조립한다.
 // 적용 대상이 아니면 (nil, nil, nil) — 호출자는 기존 경로를 유지한다.
 // enforceUsid 가 비어있지 않으면 header 의 usid/trxc 를 서버 값으로 강제한다.
-func wireBuildBody(reg *svcio.Registry, rkey, enforceUsid string,
+func wireBuildBody(reg *svcio.Registry, rkey, enforceUsid, channel string,
 	clientHeader map[string]interface{}, data json.RawMessage) ([]byte, *svcio.SvcSpec, error) {
 	if reg == nil || rkey == "" || len(data) == 0 {
 		return nil, nil, nil
@@ -57,13 +81,16 @@ func wireBuildBody(reg *svcio.Registry, rkey, enforceUsid string,
 			usid = v
 		}
 	}
-	hdr := wireHeaderDefaults(rkey, usid)
+	hdr := wireHeaderDefaults(rkey, usid, channel)
 	for k, v := range clientHeader {
 		if k == "usid" && enforceUsid != "" {
 			continue // 인증 주체 강제 — 위조 방지
 		}
 		if k == "trxc" {
 			continue // 항상 routing_key
+		}
+		if k == "ctyp" {
+			continue // 접속매체구분은 세션 채널로 서버 확립 — 요청 header 로 위조 불가
 		}
 		hdr[k] = v
 	}

@@ -99,7 +99,7 @@ func resolveChainRoute(deps *Deps, alias string) (exchange, rkey string) {
 
 // callChainStep 은 사슬 한 단계를 svcio 조립 → Call → 파싱까지 수행한다.
 // step 은 chainStepError 표시용 ("cert" / "session" / "logout").
-func callChainStep(ctx context.Context, deps *Deps, step, alias, enforceUsid string,
+func callChainStep(ctx context.Context, deps *Deps, step, alias, enforceUsid, channel string,
 	header map[string]interface{}, input map[string]interface{},
 ) (out map[string]interface{}, err error) {
 	data, err := json.Marshal(input)
@@ -107,7 +107,8 @@ func callChainStep(ctx context.Context, deps *Deps, step, alias, enforceUsid str
 		return nil, fmt.Errorf("chain %s 입력 marshal: %w", step, err)
 	}
 	// 명세 lookup 은 항상 alias(=transaction code) 기준 — trxc 도 alias 로 박힘.
-	body, spec, err := wireBuildBody(deps.SvcIO, alias, enforceUsid, header, data)
+	// channel 로 COMHDR ctyp(접속매체구분) 확립.
+	body, spec, err := wireBuildBody(deps.SvcIO, alias, enforceUsid, channel, header, data)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +161,7 @@ func callChainStep(ctx context.Context, deps *Deps, step, alias, enforceUsid str
 // docs/engine-auth-login-mapping.md §6.2).
 //
 // SkipCert 모드면 ① 을 건너뛰고 in.LgnId/in.CifNo 를 신원으로 사용한다.
-func runLoginChain(ctx context.Context, deps *Deps, in chainLoginData, clientIP string) (*chainResult, error) {
+func runLoginChain(ctx context.Context, deps *Deps, in chainLoginData, clientIP, channel string) (*chainResult, error) {
 	cfg := deps.LoginChain
 
 	var res *chainResult
@@ -169,7 +170,7 @@ func runLoginChain(ctx context.Context, deps *Deps, in chainLoginData, clientIP 
 		res = &chainResult{LgnID: in.LgnId, CifNo: in.CifNo}
 	} else {
 		// ① 인증서 인증.
-		out1, err := callChainStep(ctx, deps, "cert", cfg.certAlias(), "",
+		out1, err := callChainStep(ctx, deps, "cert", cfg.certAlias(), "", channel,
 			map[string]interface{}{"loip": clientIP},
 			map[string]interface{}{"prGb": "1", "signMsg": in.SignMsg})
 		if err != nil {
@@ -191,7 +192,7 @@ func runLoginChain(ctx context.Context, deps *Deps, in chainLoginData, clientIP 
 	// COMHDR maca / input fxUserNm 은 엔진 로그인내역(CSC015L)의 NOT NULL 컬럼.
 	// web 게이트웨이는 클라이언트 MAC 을 알 수 없으므로 "WEB" placeholder,
 	// 표시명은 아직 미확보라 lgnId 로 채운다 (엔진은 CSC004M 에 실명 보유).
-	out3, err := callChainStep(ctx, deps, "session", cfg.sessionAlias(), res.LgnID,
+	out3, err := callChainStep(ctx, deps, "session", cfg.sessionAlias(), res.LgnID, channel,
 		map[string]interface{}{"loip": clientIP, "maca": "WEB"},
 		map[string]interface{}{"prGb": "1", "fxUserNo": res.LgnID, "fxUserNm": res.LgnID, "lgnId": res.LgnID})
 	if err != nil {
@@ -249,7 +250,7 @@ func loginViaChain(deps *Deps, w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	res, err := runLoginChain(r.Context(), deps, in, clientIPOf(r))
+	res, err := runLoginChain(r.Context(), deps, in, clientIPOf(r), channel)
 	if err != nil {
 		var stepErr *chainStepError
 		if errors.As(err, &stepErr) {

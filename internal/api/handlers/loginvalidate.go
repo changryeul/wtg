@@ -85,7 +85,7 @@ func loginViaValidate(deps *Deps, w http.ResponseWriter, r *http.Request,
 	}
 
 	// alias 서비스 호출 — 조립/라우팅/파싱/COMHDR eflg 체크는 chain 과 공유.
-	out, err := callChainStep(r.Context(), deps, "validate", req.Alias, usid, req.Header, input)
+	out, err := callChainStep(r.Context(), deps, "validate", req.Alias, usid, channel, req.Header, input)
 	if err != nil {
 		var stepErr *chainStepError
 		if errors.As(err, &stepErr) {

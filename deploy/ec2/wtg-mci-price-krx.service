@@ -22,6 +22,7 @@ ExecStart=/home/winway/common/wtg/bin/mci-price-krx \
     --shm=/dev/shm/mfsise \
     --shm-bond=/dev/shm/mbsise \
     --listen=:8088 \
+    --grpc-listen=:50053 \
     --stats=30s
 
 Restart=on-failure

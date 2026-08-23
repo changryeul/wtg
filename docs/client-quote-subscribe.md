@@ -20,7 +20,7 @@ envelope / 인증은 `internal/edge/price` 구현 기준이다.
 |---|---|---|---|
 | `:8083` | `mci-edge-price` | best (기본) / **v2(`?ev=2`)** | 신규 web client, **FX+KRX 통합 구독** |
 | `:8089` | `mci-edge-price-legacy` (`--envelope-format=legacy`) | legacy(entries) | 기존 HTS/EMP (파서 무변경) |
-| `:8085` | `mci-edge-krx` (레거시) | KRX flat(`kind`) | 통합 전 KRX 전용 — **`:8083` v2 로 이관 예정** |
+| ~~`:8085`~~ | ~~`mci-edge-krx`~~ | — | **은퇴** — KRX 는 `:8083`(mci-edge-price) 로 이관 완료 |
 
 > **통합(신규)**: `:8083` 에 `?ev=2` 로 접속하면 **FX+KRX 를 한 소켓**으로 받는다
 > (§3-(C)). 기존 방식은 그대로 유지 — opt-in.
@@ -111,9 +111,10 @@ Profile 라우팅 + 마진 적용된 합성(BEST) 시세.
   이 필드 없음. 클라는 `type`/`asset_class` 로만 분기 — 특수 처리 불필요.
 - **`ts_unix_nano`**: KRX 의 `HHMMSS` 문자열도 서버가 KST 기준 절대 unix nano 로 정규화.
 - **시스템 프레임**(`subscribed`/`error`/`stale`/`fresh`)은 최상위 `type` 그대로.
-- **KRX 이동 주의**: 기존 KRX WS(`mci-edge-krx :8085`, 무인증)는 통합 시 **`:8083`(JWT 필수)**
-  로 이관된다. 서버측 활성화(`mci-price-krx --grpc-listen`, `mci-edge-price --krx-upstream
-  --instruments-file`) 후 사용 가능. 상세 설계 `docs/unified-quote-edge-design.md`.
+- **KRX 이동 (완료)**: 레거시 KRX WS(`mci-edge-krx :8085`, 무인증)는 **은퇴**했다. KRX 는
+  이제 통합 엣지 **`:8083`(JWT 필수)** 로 나간다 — `mci-price-krx --grpc-listen=:50053` →
+  `mci-edge-price --krx-upstream=127.0.0.1:50053 --instruments-file=…`. 상세 설계
+  `docs/unified-quote-edge-design.md`.
 
 ## 4. 프로토콜 규칙
 

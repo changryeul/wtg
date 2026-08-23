@@ -264,8 +264,15 @@ KRX 엣지 (`internal/krx/`):
 - **결과: 클라 소켓 하나(`mci-edge-price` 8083)로 FX+KRX 혼합 구독.** 목표 달성.
   기존 FX 클라 무영향(카탈로그/KRX 상류 미설정 시 기존 동작), 롤백=플래그 제거.
 
-**남은 정리(선택)**: 기존 `mci-edge-krx`(독립 WS)는 통합 엣지로 대체 가능 —
-전환 완료 후 은퇴. FX↔KRX codec 병합은 여전히 비목표.
+- ✅ **`mci-edge-krx` 은퇴** — standalone DMZ WS 엣지(:8085)는 통합 엣지로 대체됨.
+  배포 unit 배선: `mci-price-krx --grpc-listen=:50053`, `mci-edge-price
+  --krx-upstream=127.0.0.1:50053 --instruments-file=…/etc/instruments.json`.
+  `cmd/mci-edge-krx` 삭제, admin control 페이지(`mci_health.go`)·`wtg-status.sh`·
+  Makefile `krx-e2e` 에서 제거. **KRX 디코드/enrich 엔진 `internal/krx` 는 유지** —
+  mci-price-krx 가 gRPC fan-out 으로 공유(삭제 불가). EC2 잔존 바이너리
+  `$WTG_HOME/bin/mci-edge-krx` 는 배포가 자동 삭제 안 하므로 1회 수동 `rm` 권장.
+
+FX↔KRX codec 병합은 여전히 비목표.
 
 ## 11. 리스크 & 롤백
 

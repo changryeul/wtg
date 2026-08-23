@@ -202,13 +202,13 @@
         <tbody>
           <tr><td><code>:8083</code></td><td>mci-edge-price</td><td>best(기본) / <b>v2 (<code>?ev=2</code>)</b></td><td>신규 web client, <b>FX+KRX 통합 구독</b></td></tr>
           <tr><td><code>:8089</code></td><td>mci-edge-price-legacy</td><td>legacy (entries)</td><td>기존 HTS/EMP — 파서 무변경</td></tr>
-          <tr><td><code>:8085</code></td><td>mci-edge-krx <span class="mono">(레거시)</span></td><td>KRX flat (<code>kind</code>)</td><td>통합 전 KRX 전용 — <b>:8083 v2로 이관 예정</b></td></tr>
+          <tr><td><code style="text-decoration:line-through">:8085</code></td><td><span class="mono" style="text-decoration:line-through">mci-edge-krx</span></td><td>—</td><td><b>은퇴</b> — KRX는 <code>:8083</code>으로 이관 완료</td></tr>
         </tbody>
       </table>
     </div>
     <div class="callout">
       <div class="bar"></div>
-      <div class="body"><b>KRX가 이사합니다.</b> 기존 KRX 시세는 <code>:8085</code>에서 <b>무인증</b>으로 나갔지만, 통합 후에는 <code>:8083</code>에서 <b>JWT 필수</b>입니다. 선물/옵션/채권 구독 코드는 포트·인증을 함께 바꿔야 합니다.</div>
+      <div class="body"><b>KRX가 이사했습니다.</b> 레거시 <code>:8085</code>(mci-edge-krx, 무인증)는 <b>은퇴</b>했고, KRX 시세는 이제 <code>:8083</code>에서 <b>JWT 필수</b>로 나갑니다. 선물/옵션/채권 구독 코드는 포트·인증을 함께 바꿔야 합니다.</div>
     </div>
   </section>
 
@@ -342,15 +342,15 @@ ws://HOST:8083/v1/subscribe?x_wtg_user=alice01&amp;ev=2</code></pre>
     <div class="cols">
       <div>
         <h3>서버측 활성화 (운영)</h3>
-        <p class="note">통합 KRX 경로는 플래그 opt-in입니다(현재 기본 off). 켜기 전엔 KRX는 <code>:8085</code>에서만 나가고, FX v2는 <code>:8083</code>에서 지금도 됩니다.</p>
+        <p class="note">통합 KRX 경로는 배포 systemd unit 에 배선돼 있습니다(mci-edge-krx 은퇴 대체). 레거시 <code>:8085</code>는 더 이상 없습니다.</p>
         <figure class="code">
           <figcaption><span class="lbl">flags</span><button class="copy" type="button">복사</button></figcaption>
           <pre><code><span class="c"># 내부 KRX 생산자</span>
-mci-price-krx --grpc-listen :50052
+mci-price-krx --grpc-listen :50053
 
 <span class="c"># 통합 엣지</span>
 mci-edge-price \
-  --krx-upstream 127.0.0.1:50052 \
+  --krx-upstream 127.0.0.1:50053 \
   --instruments-file instruments.json</code></pre>
         </figure>
       </div>

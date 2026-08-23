@@ -1,8 +1,10 @@
-# WTG mci-edge-price — 사용자 ws fan-out. flag 는 이전 docker-compose.prod.yml 과 동일.
+# WTG mci-edge-price — 사용자 ws fan-out (통합 시세 엣지: FX + KRX).
+# KRX 는 mci-price-krx 의 KrxPriceService(gRPC :50053) 를 fan-in 해 :8083 한 소켓으로
+# 중계 (mci-edge-krx 은퇴 대체). docs/unified-quote-edge-design.md.
 [Unit]
-Description=WTG mci-edge-price — 사용자 ws fan-out (quote/customer stream)
-After=network-online.target wtg-mci-price.service
-Wants=network-online.target wtg-mci-price.service
+Description=WTG mci-edge-price — 통합 시세 ws fan-out (FX quote/customer + KRX fan-in)
+After=network-online.target wtg-mci-price.service wtg-mci-price-krx.service
+Wants=network-online.target wtg-mci-price.service wtg-mci-price-krx.service
 # broker/etcd 늦게 떠도 자동 복구되도록 start limit 해제 (무한 재시도)
 StartLimitIntervalSec=0
 
@@ -17,6 +19,8 @@ ExecStart=/home/winway/common/wtg/bin/mci-edge-price \
     --upstream=127.0.0.1:50051 \
     --quote-stream \
     --customer-stream \
+    --krx-upstream=127.0.0.1:50053 \
+    --instruments-file=/home/winway/common/wtg/etc/instruments.json \
     --jwt-pub=/home/winway/common/wtg/etc/jwt-public.pem
 
 Restart=on-failure

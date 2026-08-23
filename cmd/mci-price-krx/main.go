@@ -34,7 +34,7 @@ func main() {
 	shmPath := flag.String("shm", krxshm.ShmPath, "파생 MFSISE_T SHM 경로")
 	shmBond := flag.String("shm-bond", krxshm.BondShmPath, "채권 MBSISE_T SHM 경로")
 	listen := flag.String("listen", ":8088", "HTTP health/stats listen (비면 비활성)")
-	grpcListen := flag.String("grpc-listen", "", "KRX 이벤트 gRPC(KrxPriceService) listen (예 :50052, 비면 비활성) — 통합 엣지 fan-in 상류")
+	grpcListen := flag.String("grpc-listen", "", "KRX 이벤트 gRPC(KrxPriceService) listen (예 :50053, 비면 비활성) — 통합 엣지 fan-in 상류")
 	rcvbuf := flag.Int("rcvbuf", 32*1024*1024, "소켓 수신버퍼 바이트")
 	statsIv := flag.Duration("stats", 30*time.Second, "stats 로그 주기")
 	logLevel := flag.String("log-level", "info", "debug/info/warn/error")

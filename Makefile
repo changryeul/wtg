@@ -26,7 +26,7 @@ CMDS := $(notdir $(patsubst %/,%,$(sort $(dir $(wildcard cmd/*/*.go)))))
 .PHONY: all build test test-v test-race test-integration vet fmt fmt-check tidy clean install \
         lint staticcheck vulncheck ci coverage ckey-echo proto cside cside-clean test-cside \
         wtgprice wtgprice-clean test-wtgprice \
-        wtgquery wtgquery-clean test-wtgquery price-ha-verify verify-krx krx-e2e krxshm-verify $(CMDS)
+        wtgquery wtgquery-clean test-wtgquery price-ha-verify verify-krx krxshm-verify $(CMDS)
 
 all: build
 
@@ -142,11 +142,6 @@ price-ha-verify:
 # 이름이 cmd/krx-verify 바이너리와 겹치지 않도록 target 은 verify-krx.
 verify-krx:
 	./scripts/krx-verify.sh $(SISE_INC)
-
-# KRX 트랙2 실 바이너리 e2e (장외 재생) — gen→replay(UDP mcast)→mci-edge-krx
-# --mcast→parse→ws→krx-tester. 라이브(장중) 검증은 docs/krx-live-verify.md 경로 A.
-krx-e2e:
-	./scripts/krx-replay-e2e.sh
 
 # pkg/krxshm 레이아웃 상수 ↔ 실제 MFSISE_T SHM 구조체 byte-exact 검증 (mci-price-krx
 # 의 sise 흡수 기반). long double 플랫폼 의존이라 linux/x86_64(EC2)에서만 유효(그 외 skip).

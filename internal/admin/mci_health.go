@@ -65,18 +65,18 @@ func defaultMciTargets() []MciTarget {
 		{Name: "mci-push", URL: "http://127.0.0.1:8081/v1/ping", Tier: "internal", Upstream: "broker", Access: "WS :8081 / gRPC :50052"},
 		{Name: "quote-forwarder", URL: "http://127.0.0.1:9091/metrics", Tier: "internal", Upstream: "mci-price", Access: "UDP :30044-45"},
 		// KRX 파생/채권 시세 SHM 허브 (트랙2, sise 흡수). mcast 직수신 → /dev/shm/mfsise·mbsise
-		// 적재 (yuanta trn/mon 이 libmfsise/libmbsise 로 read). 내부 소스라 upstream 공란.
-		{Name: "mci-price-krx", URL: "http://127.0.0.1:8088/healthz", Tier: "internal", Access: "UDP mcast → SHM / HTTP :8088"},
+		// 적재 (yuanta trn/mon 이 libmfsise/libmbsise 로 read) + KrxPriceService gRPC(:50053)
+		// 로 통합 엣지(mci-edge-price)에 KRX 이벤트 fan-out. 내부 소스라 upstream 공란.
+		{Name: "mci-price-krx", URL: "http://127.0.0.1:8088/healthz", Tier: "internal", Access: "UDP mcast → SHM / gRPC :50053 / HTTP :8088"},
 		// DMZ — 외부 채널 종단. External=true → SG 인바운드 개방 대상 (해당 대역만).
 		{Name: "mci-edge-api", URL: "https://127.0.0.1:8090/v1/ping", Tier: "dmz", Upstream: "mci-api", Access: "HTTPS :8090", External: true},
 		{Name: "mci-edge-tcp", URL: "http://127.0.0.1:5022/healthz", Tier: "dmz", Upstream: "mci-api", Access: "raw TCP :5021", External: true},
 		{Name: "mci-edge-fix-ord", URL: "http://127.0.0.1:5002/stats", Tier: "dmz", Upstream: "mci-api", Access: "FIX :5001", External: true},
-		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics", Tier: "dmz", Upstream: "mci-price", Access: "WS :8083", External: true},
+		// 통합 시세 엣지 — FX quote + KRX(mci-price-krx gRPC fan-in) 를 :8083 한 소켓으로.
+		// (레거시 standalone mci-edge-krx :8085 은퇴 — docs/unified-quote-edge-design.md.)
+		{Name: "mci-edge-price", URL: "http://127.0.0.1:8083/metrics", Tier: "dmz", Upstream: "mci-price, mci-price-krx", Access: "WS :8083 (FX+KRX)", External: true},
 		{Name: "mci-edge-fix-md", URL: "http://127.0.0.1:5012/stats", Tier: "dmz", Upstream: "mci-price", Access: "FIX :5011", External: true},
 		{Name: "mci-edge-push", URL: "http://127.0.0.1:8084/v1/ping", Tier: "dmz", Upstream: "mci-push", Access: "WS :8084", External: true},
-		// KRX 선물/옵션/채권 시세 gateway (트랙2). KRX 멀티캐스트 직수신(mcast) →
-		// 종목구독 web ws fan-out. 내부 upstream 없이 자체 수신이라 Upstream 공란.
-		{Name: "mci-edge-krx", URL: "http://127.0.0.1:8085/healthz", Tier: "dmz", Access: "WS :8085 / UDP mcast", External: true},
 	}
 }
 

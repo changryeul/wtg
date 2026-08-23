@@ -18,8 +18,12 @@ envelope / 인증은 `internal/edge/price` 구현 기준이다.
 
 | 포트 | 인스턴스 | envelope | 대상 |
 |---|---|---|---|
-| `:8083` | `mci-edge-price` | best (기본) | 신규 web client |
+| `:8083` | `mci-edge-price` | best (기본) / **v2(`?ev=2`)** | 신규 web client, **FX+KRX 통합 구독** |
 | `:8089` | `mci-edge-price-legacy` (`--envelope-format=legacy`) | legacy(entries) | 기존 HTS/EMP (파서 무변경) |
+| `:8085` | `mci-edge-krx` (레거시) | KRX flat(`kind`) | 통합 전 KRX 전용 — **`:8083` v2 로 이관 예정** |
+
+> **통합(신규)**: `:8083` 에 `?ev=2` 로 접속하면 **FX+KRX 를 한 소켓**으로 받는다
+> (§3-(C)). 기존 방식은 그대로 유지 — opt-in.
 
 ## 2. 인증 — 먼저 JWT 를 받는다
 
@@ -77,7 +81,45 @@ Profile 라우팅 + 마진 적용된 합성(BEST) 시세.
 
 > 핵심: legacy 를 쓰면 transport(mymq TCP → ws)만 교체하고 **파서 코드는 그대로**.
 
+### (C) v2 폴리모픽 envelope — FX+KRX 통합 (신규, `?ev=2` opt-in)
+
+한 소켓(`:8083`)으로 **FX + KRX(선물/옵션/채권)를 섞어** 구독·수신한다. 접속 URL 에
+`?ev=2` 를 붙이면 아래 통합 형식으로 온다(생략 시 (A)/(B) legacy 그대로 — **기존 클라
+무영향**). 안정 헤더 + 자산별 `data` 구조라 **`type` 하나로 분기**해 `data` 만 파싱하면 된다.
+
+```json
+// FX 마진 quote
+{ "ev":2, "type":"fx.quote", "asset_class":"FX", "symbol":"USD/KRW",
+  "ts_unix_nano":1720900000000000000,
+  "data":{ "bid":1385.20,"ask":1385.60,"raw_bid":1385.30,"raw_ask":1385.50,
+           "tenor":"SPOT","chan":"WEB","site":"BRANCH","tier":"VIP","v":42,
+           "quote_id":"q-abc123","valid_until_unix_nano":1720900002000000000 } }
+
+// KRX 선물 호가 (N단)
+{ "ev":2, "type":"krx.fut.book", "asset_class":"FUTURE", "symbol":"101V6000",
+  "ts_unix_nano":1720900000000000000,
+  "data":{ "kind":"fut.book","code":"101V6000","time":"090005123456",
+           "ask":[{"prc":405.10,"vol":30,"cnt":3}],
+           "bid":[{"prc":405.05,"vol":40,"cnt":4}],
+           "expPrc":405.08,"expVol":500 } }
+```
+
+`type` 값: `fx.quote` / `krx.fut.trade` / `krx.fut.book` / `krx.fut.settle` /
+`krx.fut.master` / `krx.bond.trade` / `krx.bond.book` / `krx.bond.master`.
+
+- **마진 유무 = `data` 필드 유무**: FX 는 `bid/ask`(마진)+`raw_bid/raw_ask`(원본), 증권은
+  이 필드 없음. 클라는 `type`/`asset_class` 로만 분기 — 특수 처리 불필요.
+- **`ts_unix_nano`**: KRX 의 `HHMMSS` 문자열도 서버가 KST 기준 절대 unix nano 로 정규화.
+- **시스템 프레임**(`subscribed`/`error`/`stale`/`fresh`)은 최상위 `type` 그대로.
+- **KRX 이동 주의**: 기존 KRX WS(`mci-edge-krx :8085`, 무인증)는 통합 시 **`:8083`(JWT 필수)**
+  로 이관된다. 서버측 활성화(`mci-price-krx --grpc-listen`, `mci-edge-price --krx-upstream
+  --instruments-file`) 후 사용 가능. 상세 설계 `docs/unified-quote-edge-design.md`.
+
 ## 4. 프로토콜 규칙
+
+> **v2(`?ev=2`) 구독 키는 `symbols` 로 통일** (FX 의 `pairs` 도 alias 로 계속 수용).
+> 자산 섞어 한 번에: `{"type":"subscribe","symbols":["USD/KRW","101V6000"]}`.
+
 
 - **방향**: 서버→클라이언트 단방향 시세 push. 클라이언트→서버는 control 메시지만.
 - **필터**: 연결 직후 아무것도 안 보내면 **전체(all) 수신**. 아래로 한정/해제한다.

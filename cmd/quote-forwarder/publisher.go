@@ -127,12 +127,18 @@ func newGRPCPublisher(ctx context.Context, logger *slog.Logger, addr string) (*g
 		addr: addr, logger: logger,
 		parentCtx: pctx, parentCancel: pcancel,
 	}
+	// 초기 연결 실패는 치명적 아님 — 롤링 재기동 중 mci-price(50051)가 아직 안
+	// 떴을 수 있다. Failed 상태로 두면 supervisor 가 backoff(1s~30s) 재연결한다.
+	// 프로세스는 즉시 떠서(systemd Type=simple → active) crash-loop 및 배포
+	// health check false-negative 를 회피 — 그 사이 publish 는 drop-count 되고
+	// 스트림 복구 후 정상화. (runtime 끊김도 동일 supervisor 경로.)
 	if err := p.openStream(); err != nil {
-		pcancel()
-		_ = conn.Close()
-		return nil, fmt.Errorf("PublishTick stream open: %w", err)
+		p.status.Store(statusFailed)
+		logger.Warn("grpc publisher 초기 연결 실패 — supervisor 재시도로 진행",
+			slog.String("addr", addr), slog.Any("error", err))
+	} else {
+		logger.Info("grpc publisher 연결 OK", slog.String("addr", addr))
 	}
-	logger.Info("grpc publisher 연결 OK", slog.String("addr", addr))
 	go p.supervisor()
 	return p, nil
 }

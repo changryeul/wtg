@@ -52,6 +52,18 @@ func TestE2E_SubscribeFanout(t *testing.T) {
 	// 구독이 서버에 반영될 시간
 	waitFor(t, func() bool { return srv.Hub().Count() == 1 && subscribedHas(srv, "101V6000") })
 
+	// subscribe echo 프레임 소비 (FX 엣지와 동일 — {"type":"subscribed","symbols":[...]})
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, echo, err := c.ReadMessage(); err != nil {
+		t.Fatalf("echo read: %v", err)
+	} else {
+		var e map[string]interface{}
+		_ = json.Unmarshal(echo, &e)
+		if e["type"] != "subscribed" {
+			t.Fatalf("subscribe echo 예상밖: %s", echo)
+		}
+	}
+
 	// 미구독 종목 주입 → 수신 없어야
 	if _, sent, _, err := srv.IngestA306F(buildA306Ffor("105V3000", 100.00)); err != nil || sent != 0 {
 		t.Fatalf("미구독 105V3000 sent=%d err=%v (want 0)", sent, err)

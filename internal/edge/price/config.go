@@ -33,6 +33,20 @@ type Config struct {
 	// Internal mci-price 의 gRPC endpoint (DMZ → Internal).
 	UpstreamGRPC string
 
+	// KrxUpstreamGRPC — Internal mci-price-krx 의 KrxPriceService gRPC endpoint.
+	// 채워지면 KRX 시세를 fan-in 해 폴리모픽 v2 로 중계 (통합 소켓). 빈값=비활성.
+	// docs/unified-quote-edge-design.md §5.
+	KrxUpstreamGRPC string
+
+	// InstrumentsFile — 통합 심볼 카탈로그(asset_class/market/upstream) 정적 JSON
+	// 경로. symbol→상류 라우팅 + KRX 심볼 구독 허용의 근거. 빈값이면 카탈로그 비활성
+	// (FX 전용 기존 동작 유지). etcd 우선(InstrumentsEtcdPrefix) → 파일 fallback.
+	InstrumentsFile string
+
+	// InstrumentsEtcdPrefix — 카탈로그 etcd prefix (default wtg/catalog/instruments/).
+	// EtcdEndpoints 설정 시에만 유효. 빈값이면 파일 모드만.
+	InstrumentsEtcdPrefix string
+
 	// 이 edge 인스턴스 식별자 (PriceService.Subscribe 에 보내는 subscriber_id).
 	SubscriberID string
 
@@ -220,6 +234,12 @@ func LoadConfig(args []string) (Config, error) {
 	if v := os.Getenv("WTG_EPRICE_SUBSCRIBER"); v != "" {
 		cfg.SubscriberID = v
 	}
+	if v := os.Getenv("WTG_EPRICE_KRX_UPSTREAM"); v != "" {
+		cfg.KrxUpstreamGRPC = v
+	}
+	if v := os.Getenv("WTG_EPRICE_INSTRUMENTS_FILE"); v != "" {
+		cfg.InstrumentsFile = v
+	}
 	if v := os.Getenv("WTG_EPRICE_DEV"); v == "1" || v == "true" {
 		cfg.DevMode = true
 	}
@@ -286,6 +306,9 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&adminCidrStr, "admin-allow-cidrs", adminCidrStr, "Phase 4b admin endpoint 접근 허용 CIDR (콤마 구분, 비면 모두 거부)")
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP/WS listen 주소")
 	fs.StringVar(&cfg.UpstreamGRPC, "upstream", cfg.UpstreamGRPC, "Internal mci-price gRPC endpoint")
+	fs.StringVar(&cfg.KrxUpstreamGRPC, "krx-upstream", cfg.KrxUpstreamGRPC, "Internal mci-price-krx KrxPriceService gRPC endpoint (비면 KRX fan-in 비활성)")
+	fs.StringVar(&cfg.InstrumentsFile, "instruments-file", cfg.InstrumentsFile, "통합 심볼 카탈로그 정적 JSON 경로 (asset_class/market/upstream)")
+	fs.StringVar(&cfg.InstrumentsEtcdPrefix, "instruments-etcd-prefix", cfg.InstrumentsEtcdPrefix, "카탈로그 etcd prefix (default wtg/catalog/instruments/, etcd 설정 시)")
 	fs.StringVar(&cfg.SubscriberID, "subscriber-id", cfg.SubscriberID, "edge 인스턴스 식별자")
 	fs.BoolVar(&cfg.DevMode, "dev", cfg.DevMode, "개발 모드 — JWT 검증 우회")
 	fs.StringVar(&cfg.JWTPubFile, "jwt-pub", cfg.JWTPubFile, "RS256 JWT 검증용 RSA public key PEM (mci-api --jwt-key 의 공개키)")

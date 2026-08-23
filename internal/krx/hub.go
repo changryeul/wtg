@@ -20,22 +20,34 @@ var ErrSendQueueFull = errors.New("krx: send queue full")
 // filter == nil 이면 "all 모드"(구독 전 or 전체구독). 아니면 그 종목만 매칭.
 type Subscriber struct {
 	id     string
+	ev     int // envelope version — 연결 시 ?ev= 로 결정. 0/1=legacy(flat kind), 2=폴리모픽 v2.
 	sendQ  chan []byte
 	mu     sync.RWMutex
 	filter map[string]struct{} // nil = all
 	closed bool
 }
 
-// NewSubscriber — id + 송신 큐 깊이.
-func NewSubscriber(id string, queueDepth int) *Subscriber {
+// NewSubscriber — id + 송신 큐 깊이 + envelope 버전(ev; 0/1=legacy, 2=v2).
+func NewSubscriber(id string, queueDepth, ev int) *Subscriber {
 	if queueDepth <= 0 {
 		queueDepth = 256
 	}
-	return &Subscriber{id: id, sendQ: make(chan []byte, queueDepth)}
+	return &Subscriber{id: id, ev: ev, sendQ: make(chan []byte, queueDepth)}
 }
 
 // ID 반환.
 func (s *Subscriber) ID() string { return s.id }
+
+// EV — 협상된 envelope 버전 (immutable).
+func (s *Subscriber) EV() int { return s.ev }
+
+// sendVersioned — ev 에 따라 legacy(v1)/v2 페이로드 선택. v2 nil 이면 v1 폴백.
+func (s *Subscriber) sendVersioned(v1, v2 []byte) error {
+	if s.ev >= 2 && v2 != nil {
+		return s.send(v2)
+	}
+	return s.send(v1)
+}
 
 // Out 은 송신 큐 (writer goroutine 이 ws 로 flush).
 func (s *Subscriber) Out() <-chan []byte { return s.sendQ }
@@ -163,6 +175,29 @@ func (h *Hub) BroadcastBySymbol(code string, p []byte) (sent, dropped int) {
 
 	for _, s := range snapshot {
 		if err := s.send(p); err != nil {
+			dropped++
+			continue
+		}
+		sent++
+	}
+	return sent, dropped
+}
+
+// BroadcastBySymbolV — BroadcastBySymbol 의 envelope-version 인지 변형.
+// 발신측이 legacy(v1)·v2 를 각 1회 만들어 넘기면, 매칭 subscriber 별로 자기
+// ev 에 맞는 페이로드를 골라 보낸다 (fan-out 당 인코딩 2회, 구독자 수 무관).
+func (h *Hub) BroadcastBySymbolV(code string, v1, v2 []byte) (sent, dropped int) {
+	h.mu.RLock()
+	snapshot := make([]*Subscriber, 0, len(h.subs))
+	for _, s := range h.subs {
+		if s.Matches(code) {
+			snapshot = append(snapshot, s)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, s := range snapshot {
+		if err := s.sendVersioned(v1, v2); err != nil {
 			dropped++
 			continue
 		}

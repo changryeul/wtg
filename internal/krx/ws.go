@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -22,12 +23,17 @@ var (
 // 배포 컴포넌트(mci-edge-krx)가 이걸 임베드한다. Stage 0 는 합성 ingest.
 type Server struct {
 	hub      *Hub
+	grpcHub  *GRPCHub // nil 이면 gRPC fan-out 비활성 (WS 전용). SetGRPCHub 로 활성.
 	logger   *slog.Logger
 	upgrader websocket.Upgrader
 	connSeq  atomic.Uint64
 	mstats   McastStats
 	masters  *MasterCache // 마스터(A006F/A001B) 캐시 — 체결 등락 enrichment 용
 }
+
+// SetGRPCHub — KRX 이벤트 gRPC fan-out 활성화 (통합 엣지 fan-in 상류). fanout()
+// 이 WS 와 함께 이 hub 로도 이벤트를 흘린다. mci-price-krx 가 배선.
+func (srv *Server) SetGRPCHub(h *GRPCHub) { srv.grpcHub = h }
 
 // NewServer — Hub + 로거.
 func NewServer(logger *slog.Logger) *Server {
@@ -49,21 +55,77 @@ func (srv *Server) Hub() *Hub { return srv.hub }
 //
 //	{"type":"subscribe","symbols":["101V6000"]}
 //	{"type":"unsubscribe","symbols":["101V6000"]}
+//
+// 구독 키는 `symbols`(v2 통일) 이 표준이며, `pairs`(FX legacy alias)도 수용해
+// 두 트랙이 동일 control 프로토콜을 말하게 한다. docs/unified-quote-edge-design.md §4.
 type control struct {
 	Type    string   `json:"type"`
 	Symbols []string `json:"symbols"`
+	Pairs   []string `json:"pairs"`
+}
+
+// items — symbols + pairs 합집합(중복 제거, 순서 유지).
+func (c *control) items() []string {
+	if len(c.Pairs) == 0 {
+		return c.Symbols
+	}
+	if len(c.Symbols) == 0 {
+		return c.Pairs
+	}
+	seen := make(map[string]struct{}, len(c.Symbols)+len(c.Pairs))
+	out := make([]string, 0, len(c.Symbols)+len(c.Pairs))
+	for _, v := range append(append([]string{}, c.Symbols...), c.Pairs...) {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+// sendControlEcho — 현재 구독 셋 상태 echo. symbols(통일)+pairs(alias) 둘 다.
+func (srv *Server) sendControlEcho(sub *Subscriber) {
+	items := sub.Subscribed()
+	payload, err := json.Marshal(map[string]any{
+		"type":    "subscribed",
+		"symbols": items,
+		"pairs":   items,
+	})
+	if err != nil {
+		return
+	}
+	_ = sub.send(payload)
+}
+
+// sendControlError — 잘못된 control 알림. ws 는 끊지 않음.
+func (srv *Server) sendControlError(sub *Subscriber, code, msg string) {
+	payload, err := json.Marshal(map[string]any{
+		"type":    "error",
+		"code":    code,
+		"message": msg,
+	})
+	if err != nil {
+		return
+	}
+	_ = sub.send(payload)
 }
 
 // ServeWS — GET /v1/subscribe. ws 업그레이드 후 subscriber 등록, reader(구독제어)
 // + writer(fan-out flush) 펌프 가동.
 func (srv *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
+	// envelope 버전 네고 — ?ev=2 지정 시 폴리모픽 v2, 미지정=legacy(0).
+	ev := 0
+	if v, err := strconv.Atoi(r.URL.Query().Get("ev")); err == nil && v >= 0 {
+		ev = v
+	}
 	ws, err := srv.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		srv.logger.Warn("ws upgrade 실패", slog.Any("error", err))
 		return
 	}
 	id := "fut-" + itoa(srv.connSeq.Add(1))
-	sub := NewSubscriber(id, 512)
+	sub := NewSubscriber(id, 512, ev)
 	srv.hub.Add(sub)
 	srv.logger.Info("futures ws 연결", slog.String("id", id), slog.Int("conns", srv.hub.Count()))
 
@@ -87,13 +149,18 @@ func (srv *Server) ServeWS(w http.ResponseWriter, r *http.Request) {
 		}
 		var c control
 		if json.Unmarshal(msg, &c) != nil {
+			srv.sendControlError(sub, "bad_request", "JSON parse 실패")
 			continue
 		}
 		switch c.Type {
 		case "subscribe":
-			sub.Subscribe(c.Symbols)
+			sub.Subscribe(c.items())
+			srv.sendControlEcho(sub)
 		case "unsubscribe":
-			sub.Unsubscribe(c.Symbols)
+			sub.Unsubscribe(c.items())
+			srv.sendControlEcho(sub)
+		default:
+			srv.sendControlError(sub, "unknown_type", "지원하지 않는 type: "+c.Type)
 		}
 	}
 
@@ -205,12 +272,20 @@ func (srv *Server) IngestB601K(b []byte) (string, int, int, error) {
 }
 
 // fanout — envelope 를 JSON 직렬화해 code 로 종목구독 fan-out.
+// legacy(flat kind) 와 v2(폴리모픽) 를 각 1회 만들어 subscriber 별 ev 로 선택 송신.
 func (srv *Server) fanout(code string, v interface{}) (string, int, int, error) {
 	js, err := json.Marshal(v)
 	if err != nil {
 		return code, 0, 0, err
 	}
-	sent, dropped := srv.hub.BroadcastBySymbol(code, js)
+	v2, _ := buildKrxV2(code, js) // 실패 시 v2=nil → v1 폴백
+	sent, dropped := srv.hub.BroadcastBySymbolV(code, js, v2)
+	// gRPC fan-out (통합 엣지 상류) — 활성 시 동일 이벤트를 gRPC 구독자에게도.
+	if srv.grpcHub != nil {
+		if ev := krxEventFrom(code, js); ev != nil {
+			srv.grpcHub.broadcast(code, ev)
+		}
+	}
 	return code, sent, dropped, nil
 }
 

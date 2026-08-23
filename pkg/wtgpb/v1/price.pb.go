@@ -1205,6 +1205,137 @@ func (x *CustomerQuoteSubscribeRequest) GetCustomerIds() []string {
 	return nil
 }
 
+// KrxSubscribeRequest — SubscribeKrx 옵션.
+type KrxSubscribeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SubscriberId  string                 `protobuf:"bytes,1,opt,name=subscriber_id,json=subscriberId,proto3" json:"subscriber_id,omitempty"` // edge instance 식별
+	Symbols       []string               `protobuf:"bytes,2,rep,name=symbols,proto3" json:"symbols,omitempty"`                               // 종목코드 필터, 빈값 = 전체
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KrxSubscribeRequest) Reset() {
+	*x = KrxSubscribeRequest{}
+	mi := &file_wtg_v1_price_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KrxSubscribeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KrxSubscribeRequest) ProtoMessage() {}
+
+func (x *KrxSubscribeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KrxSubscribeRequest.ProtoReflect.Descriptor instead.
+func (*KrxSubscribeRequest) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *KrxSubscribeRequest) GetSubscriberId() string {
+	if x != nil {
+		return x.SubscriberId
+	}
+	return ""
+}
+
+func (x *KrxSubscribeRequest) GetSymbols() []string {
+	if x != nil {
+		return x.Symbols
+	}
+	return nil
+}
+
+// KrxEvent — KRX 시세 1건. 통합 v2 envelope 헤더(type/asset_class/symbol/
+// ts_unix_nano) + payload(원 KRX struct JSON, 엣지가 data 로 실음).
+type KrxEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`                                  // krx.<kind> — 예: krx.fut.book / krx.bond.trade
+	AssetClass    string                 `protobuf:"bytes,2,opt,name=asset_class,json=assetClass,proto3" json:"asset_class,omitempty"`    // FUTURE|BOND|OPTION
+	Symbol        string                 `protobuf:"bytes,3,opt,name=symbol,proto3" json:"symbol,omitempty"`                              // 종목코드 (예: 101V6000)
+	TsUnixNano    int64                  `protobuf:"varint,4,opt,name=ts_unix_nano,json=tsUnixNano,proto3" json:"ts_unix_nano,omitempty"` // KRX HHMMSS → KST 절대시각
+	Payload       []byte                 `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`                            // 원 struct JSON (fut.trade/fut.book/... 무손실)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KrxEvent) Reset() {
+	*x = KrxEvent{}
+	mi := &file_wtg_v1_price_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KrxEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KrxEvent) ProtoMessage() {}
+
+func (x *KrxEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_wtg_v1_price_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KrxEvent.ProtoReflect.Descriptor instead.
+func (*KrxEvent) Descriptor() ([]byte, []int) {
+	return file_wtg_v1_price_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *KrxEvent) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *KrxEvent) GetAssetClass() string {
+	if x != nil {
+		return x.AssetClass
+	}
+	return ""
+}
+
+func (x *KrxEvent) GetSymbol() string {
+	if x != nil {
+		return x.Symbol
+	}
+	return ""
+}
+
+func (x *KrxEvent) GetTsUnixNano() int64 {
+	if x != nil {
+		return x.TsUnixNano
+	}
+	return 0
+}
+
+func (x *KrxEvent) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
 var File_wtg_v1_price_proto protoreflect.FileDescriptor
 
 const file_wtg_v1_price_proto_rawDesc = "" +
@@ -1311,7 +1442,18 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\x05error\x18\x03 \x01(\tR\x05error\"g\n" +
 	"\x1dCustomerQuoteSubscribeRequest\x12#\n" +
 	"\rsubscriber_id\x18\x01 \x01(\tR\fsubscriberId\x12!\n" +
-	"\fcustomer_ids\x18\x02 \x03(\tR\vcustomerIds2\xe9\x03\n" +
+	"\fcustomer_ids\x18\x02 \x03(\tR\vcustomerIds\"T\n" +
+	"\x13KrxSubscribeRequest\x12#\n" +
+	"\rsubscriber_id\x18\x01 \x01(\tR\fsubscriberId\x12\x18\n" +
+	"\asymbols\x18\x02 \x03(\tR\asymbols\"\x93\x01\n" +
+	"\bKrxEvent\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12\x1f\n" +
+	"\vasset_class\x18\x02 \x01(\tR\n" +
+	"assetClass\x12\x16\n" +
+	"\x06symbol\x18\x03 \x01(\tR\x06symbol\x12 \n" +
+	"\fts_unix_nano\x18\x04 \x01(\x03R\n" +
+	"tsUnixNano\x12\x18\n" +
+	"\apayload\x18\x05 \x01(\fR\apayload2\xe9\x03\n" +
 	"\fPriceService\x125\n" +
 	"\tSubscribe\x12\x18.wtg.v1.SubscribeRequest\x1a\f.wtg.v1.Tick0\x01\x12H\n" +
 	"\x0eSubscribeQuote\x12\x1d.wtg.v1.QuoteSubscribeRequest\x1a\x15.wtg.v1.CustomerQuote0\x01\x12:\n" +
@@ -1321,7 +1463,9 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\vPublishTick\x12\f.wtg.v1.Tick\x1a\x12.wtg.v1.PublishAck(\x010\x01\x12B\n" +
 	"\rSubscribeAlgo\x12\x1c.wtg.v1.AlgoSubscribeRequest\x1a\x11.wtg.v1.AlgoQuote0\x012T\n" +
 	"\x11TickIngestService\x12?\n" +
-	"\x0eSubscribeTicks\x12\x1d.wtg.v1.SubscribeTicksRequest\x1a\f.wtg.v1.Tick0\x01B3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
+	"\x0eSubscribeTicks\x12\x1d.wtg.v1.SubscribeTicksRequest\x1a\f.wtg.v1.Tick0\x012R\n" +
+	"\x0fKrxPriceService\x12?\n" +
+	"\fSubscribeKrx\x12\x1b.wtg.v1.KrxSubscribeRequest\x1a\x10.wtg.v1.KrxEvent0\x01B3Z1github.com/winwaysystems/wtg/pkg/wtgpb/v1;wtgpbv1b\x06proto3"
 
 var (
 	file_wtg_v1_price_proto_rawDescOnce sync.Once
@@ -1336,7 +1480,7 @@ func file_wtg_v1_price_proto_rawDescGZIP() []byte {
 }
 
 var file_wtg_v1_price_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_wtg_v1_price_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_wtg_v1_price_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_wtg_v1_price_proto_goTypes = []any{
 	(CustomerRegistration_Op)(0),          // 0: wtg.v1.CustomerRegistration.Op
 	(*SubscribeTicksRequest)(nil),         // 1: wtg.v1.SubscribeTicksRequest
@@ -1352,6 +1496,8 @@ var file_wtg_v1_price_proto_goTypes = []any{
 	(*CustomerRegistration)(nil),          // 11: wtg.v1.CustomerRegistration
 	(*CustomerAck)(nil),                   // 12: wtg.v1.CustomerAck
 	(*CustomerQuoteSubscribeRequest)(nil), // 13: wtg.v1.CustomerQuoteSubscribeRequest
+	(*KrxSubscribeRequest)(nil),           // 14: wtg.v1.KrxSubscribeRequest
+	(*KrxEvent)(nil),                      // 15: wtg.v1.KrxEvent
 }
 var file_wtg_v1_price_proto_depIdxs = []int32{
 	0,  // 0: wtg.v1.CustomerRegistration.op:type_name -> wtg.v1.CustomerRegistration.Op
@@ -1363,16 +1509,18 @@ var file_wtg_v1_price_proto_depIdxs = []int32{
 	6,  // 6: wtg.v1.PriceService.PublishTick:input_type -> wtg.v1.Tick
 	2,  // 7: wtg.v1.PriceService.SubscribeAlgo:input_type -> wtg.v1.AlgoSubscribeRequest
 	1,  // 8: wtg.v1.TickIngestService.SubscribeTicks:input_type -> wtg.v1.SubscribeTicksRequest
-	6,  // 9: wtg.v1.PriceService.Subscribe:output_type -> wtg.v1.Tick
-	10, // 10: wtg.v1.PriceService.SubscribeQuote:output_type -> wtg.v1.CustomerQuote
-	9,  // 11: wtg.v1.PriceService.SubscribeBar:output_type -> wtg.v1.Bar
-	12, // 12: wtg.v1.PriceService.RegisterCustomer:output_type -> wtg.v1.CustomerAck
-	10, // 13: wtg.v1.PriceService.SubscribeCustomerQuote:output_type -> wtg.v1.CustomerQuote
-	4,  // 14: wtg.v1.PriceService.PublishTick:output_type -> wtg.v1.PublishAck
-	3,  // 15: wtg.v1.PriceService.SubscribeAlgo:output_type -> wtg.v1.AlgoQuote
-	6,  // 16: wtg.v1.TickIngestService.SubscribeTicks:output_type -> wtg.v1.Tick
-	9,  // [9:17] is the sub-list for method output_type
-	1,  // [1:9] is the sub-list for method input_type
+	14, // 9: wtg.v1.KrxPriceService.SubscribeKrx:input_type -> wtg.v1.KrxSubscribeRequest
+	6,  // 10: wtg.v1.PriceService.Subscribe:output_type -> wtg.v1.Tick
+	10, // 11: wtg.v1.PriceService.SubscribeQuote:output_type -> wtg.v1.CustomerQuote
+	9,  // 12: wtg.v1.PriceService.SubscribeBar:output_type -> wtg.v1.Bar
+	12, // 13: wtg.v1.PriceService.RegisterCustomer:output_type -> wtg.v1.CustomerAck
+	10, // 14: wtg.v1.PriceService.SubscribeCustomerQuote:output_type -> wtg.v1.CustomerQuote
+	4,  // 15: wtg.v1.PriceService.PublishTick:output_type -> wtg.v1.PublishAck
+	3,  // 16: wtg.v1.PriceService.SubscribeAlgo:output_type -> wtg.v1.AlgoQuote
+	6,  // 17: wtg.v1.TickIngestService.SubscribeTicks:output_type -> wtg.v1.Tick
+	15, // 18: wtg.v1.KrxPriceService.SubscribeKrx:output_type -> wtg.v1.KrxEvent
+	10, // [10:19] is the sub-list for method output_type
+	1,  // [1:10] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
 	1,  // [1:1] is the sub-list for extension extendee
 	0,  // [0:1] is the sub-list for field type_name
@@ -1389,9 +1537,9 @@ func file_wtg_v1_price_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_wtg_v1_price_proto_rawDesc), len(file_wtg_v1_price_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
-			NumServices:   2,
+			NumServices:   3,
 		},
 		GoTypes:           file_wtg_v1_price_proto_goTypes,
 		DependencyIndexes: file_wtg_v1_price_proto_depIdxs,

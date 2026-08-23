@@ -316,3 +316,28 @@ message CustomerQuoteSubscribeRequest {
   // 명시적 customer 필터. 비어있으면 본 subscriber_id 로 등록한 customer 들.
   repeated string customer_ids = 2;
 }
+
+// KrxPriceService 는 mci-price-krx (Internal) 가 노출하는 KRX 시세 gRPC 서비스.
+// 통합 시세 엣지(edge-price)가 fan-in 해 폴리모픽 v2 envelope 로 클라에 중계한다
+// (FX 의 PriceService.SubscribeQuote 와 대칭). docs/unified-quote-edge-design.md §5·§7.
+service KrxPriceService {
+  // 종목(symbols) 필터 구독. 빈 목록이면 전체. 서버는 디코드·enrich 된 KRX
+  // 이벤트(체결/호가/정산/마스터)를 stream 으로 push.
+  rpc SubscribeKrx(KrxSubscribeRequest) returns (stream KrxEvent);
+}
+
+// KrxSubscribeRequest — SubscribeKrx 옵션.
+message KrxSubscribeRequest {
+  string subscriber_id = 1;      // edge instance 식별
+  repeated string symbols = 2;   // 종목코드 필터, 빈값 = 전체
+}
+
+// KrxEvent — KRX 시세 1건. 통합 v2 envelope 헤더(type/asset_class/symbol/
+// ts_unix_nano) + payload(원 KRX struct JSON, 엣지가 data 로 실음).
+message KrxEvent {
+  string type = 1;           // krx.<kind> — 예: krx.fut.book / krx.bond.trade
+  string asset_class = 2;    // FUTURE|BOND|OPTION
+  string symbol = 3;         // 종목코드 (예: 101V6000)
+  int64 ts_unix_nano = 4;    // KRX HHMMSS → KST 절대시각
+  bytes payload = 5;         // 원 struct JSON (fut.trade/fut.book/... 무손실)
+}

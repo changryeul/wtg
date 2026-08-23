@@ -132,6 +132,7 @@ type Subscriber struct {
 	id         uint64
 	profileKey string // 예: "WEB.BRANCH.VIP"; 빈값 = profile 매칭 quote 미수신
 	customerID string // Phase 4c. 빈값 = customer-specific quote 미수신.
+	ev         int    // envelope version — 연결 시 ?ev= 로 결정 (immutable). 0/1=legacy, 2=폴리모픽 v2.
 	conn       *websocket.Conn
 	send       chan []byte
 	closed     atomic.Bool
@@ -150,6 +151,20 @@ type Subscriber struct {
 
 // ProfileKey 는 Subscriber 가 매칭될 quote profile key (immutable).
 func (s *Subscriber) ProfileKey() string { return s.profileKey }
+
+// EnvelopeVersion — 이 연결이 협상한 envelope 스키마 버전 (immutable).
+// 0/1 = legacy flat, 2 = 폴리모픽 v2. docs/unified-quote-edge-design.md §3-4.
+func (s *Subscriber) EnvelopeVersion() int { return s.ev }
+
+// SendVersioned — ev 에 따라 legacy(v1) / v2 페이로드를 선택 송신한다.
+// 발신측이 두 인코딩을 한 번씩만 만들어 넘기면(fan-out 당 1회) 이 함수가
+// subscriber 별로 고른다. v2 인자가 nil 이면 legacy 로 폴백.
+func (s *Subscriber) SendVersioned(v1, v2 []byte) error {
+	if s.ev >= 2 && v2 != nil {
+		return s.Send(v2)
+	}
+	return s.Send(v1)
+}
 
 // CustomerID — Phase 4c. customer-specific quote 매칭에 사용 (immutable).
 func (s *Subscriber) CustomerID() string { return s.customerID }
@@ -247,6 +262,8 @@ type SubscriberOptions struct {
 	// CustomerID — Phase 4c. customer-specific quote 매칭. 빈값이면
 	// customer-quote 미수신 (Profile-only quote 만).
 	CustomerID string
+	// EnvelopeVersion — 연결이 협상한 envelope 스키마 버전 (?ev=). 0/1=legacy, 2=v2.
+	EnvelopeVersion int
 }
 
 // NewSubscriber 는 Subscriber 를 구성한다 (read/write goroutine 은 caller 가 가동).
@@ -261,6 +278,7 @@ func NewSubscriber(ws *websocket.Conn, opts SubscriberOptions) *Subscriber {
 		id:         subIDSeq.Add(1),
 		profileKey: opts.ProfileKey,
 		customerID: opts.CustomerID,
+		ev:         opts.EnvelopeVersion,
 		conn:       ws,
 		send:       make(chan []byte, opts.SendQueueSize),
 		closeC:     make(chan struct{}),
@@ -468,6 +486,116 @@ func (r *Registry) SendByProfile(profileKey, pair string, p []byte) (sent, dropp
 	return sent, dropped
 }
 
+// BroadcastBySymbolV 는 symbol(=pair 필터) 매칭 subscriber 에게 version-aware
+// 송신한다 (profile 무관). KRX 등 마진 없는 자산의 종목 fan-out 용 — 통합 엣지가
+// 상류에서 받은 KRX 이벤트를 그 종목 구독자에게만 보낸다. slow consumer 격리.
+func (r *Registry) BroadcastBySymbolV(symbol string, v1, v2 []byte) (sent, dropped int) {
+	if symbol == "" {
+		return 0, 0
+	}
+	r.mu.RLock()
+	snapshot := make([]*Subscriber, 0, len(r.subs))
+	for _, s := range r.subs {
+		if s.MatchesPair(symbol) {
+			snapshot = append(snapshot, s)
+		}
+	}
+	r.mu.RUnlock()
+
+	for _, s := range snapshot {
+		err := s.SendVersioned(v1, v2)
+		if err == nil {
+			sent++
+			continue
+		}
+		dropped++
+		if errors.Is(err, ErrSendQueueFull) {
+			r.logger.Warn("slow symbol consumer 격리",
+				slog.Uint64("sub_id", s.id), slog.String("symbol", symbol))
+			s.Close()
+		}
+	}
+	r.totalSent.Add(uint64(sent))
+	r.totalDrop.Add(uint64(dropped))
+	return sent, dropped
+}
+
+// SendByProfileV 는 SendByProfile 의 envelope-version 인지 변형이다.
+// 발신측이 legacy(v1)·v2 두 인코딩을 각 1회 만들어 넘기면, 매칭 subscriber
+// 별로 자기 ev 에 맞는 페이로드를 골라 보낸다. fan-out 당 인코딩은 2회로 고정
+// (subscriber 수와 무관). docs/unified-quote-edge-design.md §5.
+func (r *Registry) SendByProfileV(profileKey, pair string, v1, v2 []byte) (sent, dropped int) {
+	if profileKey == "" {
+		return 0, 0
+	}
+	r.mu.RLock()
+	snapshot := make([]*Subscriber, 0, len(r.subs))
+	for _, s := range r.subs {
+		if s.profileKey != profileKey {
+			continue
+		}
+		if pair != "" && !s.MatchesPair(pair) {
+			continue
+		}
+		snapshot = append(snapshot, s)
+	}
+	r.mu.RUnlock()
+
+	for _, s := range snapshot {
+		err := s.SendVersioned(v1, v2)
+		if err == nil {
+			sent++
+			continue
+		}
+		dropped++
+		if errors.Is(err, ErrSendQueueFull) {
+			r.logger.Warn("slow quote consumer 격리",
+				slog.Uint64("sub_id", s.id), slog.String("profile", profileKey))
+			s.Close()
+		}
+	}
+	r.totalSent.Add(uint64(sent))
+	r.totalDrop.Add(uint64(dropped))
+	return sent, dropped
+}
+
+// SendByCustomerIDV 는 SendByCustomerID 의 envelope-version 인지 변형.
+func (r *Registry) SendByCustomerIDV(customerID, pair string, v1, v2 []byte) (sent, dropped int) {
+	if customerID == "" {
+		return 0, 0
+	}
+	r.mu.RLock()
+	snapshot := make([]*Subscriber, 0)
+	for _, s := range r.subs {
+		if s.customerID != customerID {
+			continue
+		}
+		if pair != "" && !s.MatchesPair(pair) {
+			continue
+		}
+		snapshot = append(snapshot, s)
+	}
+	r.mu.RUnlock()
+
+	for _, s := range snapshot {
+		err := s.SendVersioned(v1, v2)
+		if err == nil {
+			sent++
+			continue
+		}
+		dropped++
+		if errors.Is(err, ErrSendQueueFull) {
+			r.logger.Warn("slow customer-quote consumer 격리",
+				slog.Uint64("sub_id", s.id),
+				slog.String("customer_id", customerID))
+			s.Close()
+		}
+	}
+	r.totalSent.Add(uint64(sent))
+	r.totalDrop.Add(uint64(dropped))
+	return sent, dropped
+}
+
 // SendByCustomerID — Phase 4c. customer-tag 된 quote 를 customerID 매칭
 // subscriber 에게만 송신.
 //
@@ -543,6 +671,7 @@ type SubscriberInfo struct {
 	ID         uint64   `json:"id"`
 	ProfileKey string   `json:"profile_key"` // 빈값 = quote 미구독 (raw tick only)
 	CustomerID string   `json:"customer_id"` // 빈값 = customer-quote 미구독
+	EnvVersion int      `json:"ev"`          // 협상된 envelope 버전 (0/1=legacy, 2=v2)
 	RemoteAddr string   `json:"remote_addr"` // ws upgrade 시점의 원격 IP:port
 	QueueDepth int      `json:"queue_depth"` // send chan 의 len
 	QueueCap   int      `json:"queue_cap"`   // send chan 의 cap
@@ -562,6 +691,7 @@ func (s *Subscriber) SnapshotInfo() SubscriberInfo {
 		ID:         s.id,
 		ProfileKey: s.profileKey,
 		CustomerID: s.customerID,
+		EnvVersion: s.ev,
 		RemoteAddr: addr,
 		QueueDepth: len(s.send),
 		QueueCap:   cap(s.send),

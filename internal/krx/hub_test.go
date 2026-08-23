@@ -17,8 +17,8 @@ func drain(s *Subscriber) []string {
 // 종목 구독 필터 — 구독한 종목만 받고 미구독은 안 받는다 (구독형 핵심).
 func TestHub_SymbolSubscription(t *testing.T) {
 	h := NewHub()
-	a := NewSubscriber("a", 16) // 101V6000 만 구독
-	b := NewSubscriber("b", 16) // all 모드 (구독 안 함)
+	a := NewSubscriber("a", 16, 0) // 101V6000 만 구독
+	b := NewSubscriber("b", 16, 0) // all 모드 (구독 안 함)
 	a.Subscribe([]string{"101V6000"})
 	h.Add(a)
 	h.Add(b)
@@ -43,7 +43,7 @@ func TestHub_SymbolSubscription(t *testing.T) {
 
 // subscribe → unsubscribe → all 모드 복귀.
 func TestSubscriber_SubUnsub(t *testing.T) {
-	s := NewSubscriber("s", 8)
+	s := NewSubscriber("s", 8, 0)
 	if !s.Matches("X") {
 		t.Error("초기 all 모드여야 함")
 	}
@@ -60,8 +60,8 @@ func TestSubscriber_SubUnsub(t *testing.T) {
 // slow consumer 격리 — 큐 포화 subscriber 는 drop, 나머지는 정상.
 func TestHub_SlowConsumerIsolation(t *testing.T) {
 	h := NewHub()
-	slow := NewSubscriber("slow", 1) // 큐 1
-	fast := NewSubscriber("fast", 64)
+	slow := NewSubscriber("slow", 1, 0) // 큐 1
+	fast := NewSubscriber("fast", 64, 0)
 	h.Add(slow)
 	h.Add(fast)
 

@@ -1,0 +1,9 @@
+[
+  {"symbol": "USD/KRW", "asset_class": "FX", "market": "OTC", "upstream": "fx", "active": true},
+  {"symbol": "EUR/USD", "asset_class": "FX", "market": "OTC", "upstream": "fx", "active": true},
+  {"symbol": "USD/JPY", "asset_class": "FX", "market": "OTC", "upstream": "fx", "active": true},
+  {"symbol": "101V6000", "asset_class": "FUTURE", "market": "KRX", "upstream": "krx", "active": true},
+  {"symbol": "105V3000", "asset_class": "FUTURE", "market": "KRX", "upstream": "krx", "active": true},
+  {"symbol": "201S3000", "asset_class": "OPTION", "market": "KRX", "upstream": "krx", "active": true},
+  {"symbol": "KR1035020310", "asset_class": "BOND", "market": "KRX", "upstream": "krx", "active": true}
+]

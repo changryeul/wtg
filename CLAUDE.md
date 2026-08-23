@@ -322,6 +322,7 @@ WTG 코드에 **거래 한도/통화쌍 활성/거래시간/slippage 같은 비�
 - `docs/operations/demo-scenario.md` — 시현/데모 60분 풀 코스 + 청중별 단축/확장
 
 ### 개발자 / 아키텍처 가이드
+- `docs/unified-quote-edge-design.md` — 범용 MCI 확장: 통합 시세 엣지 설계 (폴리모픽 envelope v2 + `ev` 버전 네고 + 구독 `symbols` 통일 + Instrument 카탈로그 asset_class/market/upstream + symbol 라우팅). "엣지 통합, 파이프라인 분리, 마진=자산군별 단계". Phase 1(정규화)→Phase 2(단일소켓 fan-in), FX↔KRX codec 병합은 비목표
 - `docs/directory-structure.md` — cmd/pkg/internal/etc 등 디렉토리 카탈로그 + 설정 파일 스키마 + "어디서 무엇을 찾아야 하나"
 - `docs/simplification-guide.md` — Part B (자르기 카탈로그) + Part D (운영 UX 덮기) + 4주 로드맵
 - `docs/svc-spec-template.md` — 서비스 명세 템플릿 (I/O `.h` + 구현 `.pc` + 사용 DB + 로직 4단). `.pc` 에서 테이블/커서/트랜잭션 추출 명령 + W3500S01 작성 예시 + `.h` 파서 규칙 부록

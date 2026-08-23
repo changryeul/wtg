@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
+	"github.com/winwaysystems/wtg/pkg/instrument"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/netutil"
 	"github.com/winwaysystems/wtg/pkg/policy"
@@ -58,6 +60,14 @@ type Server struct {
 	// MemoryPairValidator 가 기본 구현. operator seed (config) + passive
 	// learning (consumeQuoteOnce 가 도착 quote.Pair 추가) 결합.
 	pairValidator PairValidator
+
+	// catalog — 통합 Instrument 카탈로그 (symbol→상류/자산분류). nil 이면 비활성
+	// (FX 전용 기존 동작). 채워지면 KRX 등 비-FX 심볼 구독 허용 + 라우팅 근거.
+	catalog        *instrument.Catalog
+	catalogWatcher *instrument.EtcdCatalogWatcher
+	catalogEtcdCli *clientv3.Client
+	krxUpstream    *grpc.ClientConn
+	totalKrxRecv   atomic.Uint64
 
 	// customerPairs — 고객별 ws 구독 허용 pair allowlist. nil 이면 글로벌
 	// 정책만 (backward compat). etcd watch 로 mci-admin 의 변경 즉시 반영.
@@ -180,6 +190,18 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	// Phase 4 stale scanner — liveness 가 nil 이면 함수 자체가 early return.
 	go s.runStaleScanner(streamCtx)
+
+	// Phase 2 — 통합 Instrument 카탈로그 로드 (etcd 우선 → 파일). 실패해도
+	// FX 경로는 계속 (카탈로그 비활성 = FX 전용 기존 동작).
+	if err := s.startCatalog(ctx); err != nil {
+		s.logger.Warn("Instrument 카탈로그 로드 실패 — 카탈로그 비활성", slog.Any("error", err))
+	}
+	// Phase 2 — KRX 상류 fan-in (통합 소켓). 빈값이면 비활성.
+	if s.cfg.KrxUpstreamGRPC != "" {
+		if err := s.startKrxUpstream(streamCtx); err != nil {
+			s.logger.Warn("KRX 상류 연결 실패 — KRX fan-in 비활성", slog.Any("error", err))
+		}
+	}
 
 	if err := s.startRateLimitWatcher(ctx); err != nil {
 		s.logger.Warn("ratelimit etcd watcher 시작 실패 — 정적 룰", slog.Any("error", err))
@@ -364,7 +386,7 @@ func (s *Server) consumeCustomerQuoteOnce(ctx context.Context, client wtgpb.Pric
 		if err != nil {
 			return err
 		}
-		payload, err := encodeCustomerQuoteJSON(cq)
+		v1, v2, err := encodeQuoteVariants(cq)
 		if err != nil {
 			s.logger.Warn("customerQuote JSON 직렬화 실패 (customer)", slog.Any("error", err))
 			continue
@@ -379,7 +401,7 @@ func (s *Server) consumeCustomerQuoteOnce(ctx context.Context, client wtgpb.Pric
 				s.sendFreshNotification(cq.GetPair())
 			}
 		}
-		s.registry.SendByCustomerID(cq.GetCustomerId(), cq.GetPair(), payload)
+		s.registry.SendByCustomerIDV(cq.GetCustomerId(), cq.GetPair(), v1, v2)
 	}
 }
 
@@ -406,7 +428,7 @@ func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceService
 		if err != nil {
 			return err
 		}
-		payload, err := encodeCustomerQuoteJSON(cq)
+		v1, v2, err := encodeQuoteVariants(cq)
 		if err != nil {
 			s.logger.Warn("customerQuote JSON 직렬화 실패", slog.Any("error", err))
 			continue
@@ -425,7 +447,7 @@ func (s *Server) consumeQuoteOnce(ctx context.Context, client wtgpb.PriceService
 				s.sendFreshNotification(cq.GetPair())
 			}
 		}
-		s.registry.SendByProfile(profKey, cq.GetPair(), payload)
+		s.registry.SendByProfileV(profKey, cq.GetPair(), v1, v2)
 	}
 }
 
@@ -467,6 +489,67 @@ func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		CustomerID:         cq.GetCustomerId(),
 	}
 	return json.Marshal(out)
+}
+
+// encodeCustomerQuoteV2 는 proto CustomerQuote → 폴리모픽 v2 envelope.
+// 안정 헤더(ev/type/asset_class/symbol/ts_unix_nano) + 자산별 data.
+// FX 는 마진 적용가(bid/ask) + 원시값(raw_bid/raw_ask)을 data 에 싣는다 —
+// 마진 유무는 판별자(type=fx.quote)로 표현. docs/unified-quote-edge-design.md §3.
+func encodeCustomerQuoteV2(cq *wtgpb.CustomerQuote) ([]byte, error) {
+	type fxQuoteData struct {
+		Bid                float64 `json:"bid"`
+		Ask                float64 `json:"ask"`
+		RawBid             float64 `json:"raw_bid,omitempty"`
+		RawAsk             float64 `json:"raw_ask,omitempty"`
+		Tenor              string  `json:"tenor"`
+		Channel            string  `json:"chan"`
+		Site               string  `json:"site"`
+		Tier               string  `json:"tier"`
+		TableVersion       int64   `json:"v"` // PricingTable.Version (envelope ev 와 별개)
+		QuoteID            string  `json:"quote_id,omitempty"`
+		ValidUntilUnixNano int64   `json:"valid_until_unix_nano,omitempty"`
+		CustomerID         string  `json:"customer_id,omitempty"`
+	}
+	out := struct {
+		EV         int         `json:"ev"`
+		Type       string      `json:"type"`
+		AssetClass string      `json:"asset_class"`
+		Symbol     string      `json:"symbol"`
+		TSUnixNano int64       `json:"ts_unix_nano"`
+		Data       fxQuoteData `json:"data"`
+	}{
+		EV:         2,
+		Type:       "fx.quote",
+		AssetClass: "FX",
+		Symbol:     cq.GetPair(),
+		TSUnixNano: cq.GetTsUnixNano(),
+		Data: fxQuoteData{
+			Bid:                cq.GetBid(),
+			Ask:                cq.GetAsk(),
+			RawBid:             cq.GetRawBid(),
+			RawAsk:             cq.GetRawAsk(),
+			Tenor:              cq.GetTenor(),
+			Channel:            cq.GetChannel(),
+			Site:               cq.GetSite(),
+			Tier:               cq.GetTier(),
+			TableVersion:       cq.GetTableVersion(),
+			QuoteID:            cq.GetQuoteId(),
+			ValidUntilUnixNano: cq.GetValidUntilUnixNano(),
+			CustomerID:         cq.GetCustomerId(),
+		},
+	}
+	return json.Marshal(out)
+}
+
+// encodeQuoteVariants 는 fan-out 당 legacy(v1)·v2 인코딩을 한 번씩 만든다.
+// v2 실패는 치명적 아님 — nil 반환 시 SendVersioned 가 v1 로 폴백.
+func encodeQuoteVariants(cq *wtgpb.CustomerQuote) (v1, v2 []byte, err error) {
+	v1, err = encodeCustomerQuoteJSON(cq)
+	if err != nil {
+		return nil, nil, err
+	}
+	v2, _ = encodeCustomerQuoteV2(cq) // 실패 시 v2=nil → v1 폴백
+	return v1, v2, nil
 }
 
 // consumeOnce 는 단일 Subscribe stream 의 lifecycle.
@@ -691,6 +774,19 @@ func (s *Server) BuildHandler() http.Handler {
 	mux.HandleFunc("GET /v1/backpressure", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, SnapshotBackpressureStats())
 	})
+	// Phase 2 — 통합 카탈로그 + KRX fan-in 진단.
+	mux.HandleFunc("GET /v1/catalog", func(w http.ResponseWriter, r *http.Request) {
+		out := map[string]any{
+			"enabled":        s.catalog != nil,
+			"krx_upstream":   s.cfg.KrxUpstreamGRPC,
+			"krx_recv_total": s.totalKrxRecv.Load(),
+		}
+		if s.catalog != nil {
+			out["count"] = s.catalog.Size()
+			out["instruments"] = s.catalog.All()
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	// DevMode 한정 pprof — burst PoC 진단용. 운영 비활성.
@@ -843,16 +939,24 @@ func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc
 			}
 		}
 
+		// envelope 버전 네고 — ?ev=2 지정 시 폴리모픽 v2, 미지정/파싱실패는
+		// legacy(0) 유지. 기존 클라 무영향. docs/unified-quote-edge-design.md §3-4.
+		ev := 0
+		if v, err := strconv.Atoi(r.URL.Query().Get("ev")); err == nil && v >= 0 {
+			ev = v
+		}
+
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			s.logger.Warn("ws upgrade 실패", slog.Any("error", err))
 			return
 		}
 		sub := NewSubscriber(ws, SubscriberOptions{
-			SendQueueSize: s.cfg.SendQueueSize,
-			Logger:        s.logger,
-			ProfileKey:    profileKey,
-			CustomerID:    customerID,
+			SendQueueSize:   s.cfg.SendQueueSize,
+			Logger:          s.logger,
+			ProfileKey:      profileKey,
+			CustomerID:      customerID,
+			EnvelopeVersion: ev,
 			OnClose: func(sb *Subscriber) {
 				s.registry.Remove(sb)
 				// Phase 4c — ws disconnect 시 customer 등록 해제.
@@ -936,9 +1040,33 @@ func (s *Server) readLoop(sub *Subscriber) {
 }
 
 // controlRequest — ws 클라이언트가 보내는 control message 모양.
+//
+// 구독 키는 `symbols`(v2 통일) 이 표준이며, `pairs`(FX legacy)는 deprecated
+// alias 로 계속 수용한다. 둘 다 오면 합집합. docs/unified-quote-edge-design.md §4.
 type controlRequest struct {
-	Type  string   `json:"type"`
-	Pairs []string `json:"pairs"`
+	Type    string   `json:"type"`
+	Symbols []string `json:"symbols"`
+	Pairs   []string `json:"pairs"`
+}
+
+// items — symbols + pairs 합집합 (순서 유지, 중복 제거). 통합 심볼 키.
+func (c *controlRequest) items() []string {
+	if len(c.Pairs) == 0 {
+		return c.Symbols
+	}
+	if len(c.Symbols) == 0 {
+		return c.Pairs
+	}
+	seen := make(map[string]struct{}, len(c.Symbols)+len(c.Pairs))
+	out := make([]string, 0, len(c.Symbols)+len(c.Pairs))
+	for _, v := range append(append([]string{}, c.Symbols...), c.Pairs...) {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 // handleControlMessage — 단일 control message 파싱 + 처리 + echo.
@@ -948,9 +1076,10 @@ func (s *Server) handleControlMessage(sub *Subscriber, data []byte) {
 		s.sendControlError(sub, "bad_request", "JSON parse 실패: "+err.Error())
 		return
 	}
+	items := req.items()
 	switch req.Type {
 	case "subscribe":
-		accepted, rejected := s.gateSubscribe(sub, req.Pairs)
+		accepted, rejected := s.gateSubscribe(sub, items)
 		sub.SubscribePairs(accepted)
 		if len(rejected) > 0 {
 			s.totalRejectedPairs.Add(uint64(len(rejected)))
@@ -958,7 +1087,7 @@ func (s *Server) handleControlMessage(sub *Subscriber, data []byte) {
 			// echo 도 함께 — 클라이언트가 현재 활성 set 확인할 수 있게.
 		}
 	case "unsubscribe":
-		sub.UnsubscribePairs(req.Pairs)
+		sub.UnsubscribePairs(items)
 	default:
 		s.sendControlError(sub, "unknown_type", "지원하지 않는 type: "+req.Type)
 		return
@@ -993,6 +1122,15 @@ func (s *Server) gateSubscribe(sub *Subscriber, pairs []string) (accepted, rejec
 		if p == "" {
 			rejected = append(rejected, p)
 			continue
+		}
+		// 통합 카탈로그 수용 경로 — 카탈로그에 active 로 등록된 심볼(예: KRX 종목)은
+		// FX pairValidator 무관하게 허용. 카탈로그 miss 는 아래 FX 경로로 fall-through
+		// (카탈로그 nil 이면 기존 동작 그대로).
+		if s.catalog != nil {
+			if _, ok := s.catalog.Route(p); ok {
+				accepted = append(accepted, p)
+				continue
+			}
 		}
 		// 글로벌 정책 — 우선.
 		if s.pairValidator != nil && !s.pairValidator.IsAllowed(p) {
@@ -1087,12 +1225,14 @@ func (s *Server) runStaleScanner(ctx context.Context) {
 	}
 }
 
-// sendControlEcho — 현재 필터 셋 상태 echo. Pairs=nil 이면 all 모드.
+// sendControlEcho — 현재 필터 셋 상태 echo. nil 이면 all 모드.
+// `symbols`(v2 통일 키) + `pairs`(legacy alias) 둘 다 실어 하위호환 유지.
 func (s *Server) sendControlEcho(sub *Subscriber) {
-	pairs := sub.SubscribedPairs()
+	items := sub.SubscribedPairs()
 	payload, err := json.Marshal(map[string]any{
-		"type":  "subscribed",
-		"pairs": pairs, // nil → JSON null (의도)
+		"type":    "subscribed",
+		"symbols": items, // v2 통일 키
+		"pairs":   items, // legacy alias — nil → JSON null (의도)
 	})
 	if err != nil {
 		return
@@ -1146,6 +1286,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.upstream != nil {
 		if err := s.upstream.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	if s.catalogWatcher != nil {
+		_ = s.catalogWatcher.Close()
+	}
+	if s.catalogEtcdCli != nil {
+		_ = s.catalogEtcdCli.Close()
+	}
+	if s.krxUpstream != nil {
+		if err := s.krxUpstream.Close(); err != nil && first == nil {
 			first = err
 		}
 	}

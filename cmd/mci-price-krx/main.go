@@ -20,8 +20,11 @@ import (
 	"syscall"
 	"time"
 
+	krx "github.com/winwaysystems/wtg/internal/krx"
 	"github.com/winwaysystems/wtg/internal/pricekrx"
 	"github.com/winwaysystems/wtg/pkg/krxshm"
+	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -31,6 +34,7 @@ func main() {
 	shmPath := flag.String("shm", krxshm.ShmPath, "파생 MFSISE_T SHM 경로")
 	shmBond := flag.String("shm-bond", krxshm.BondShmPath, "채권 MBSISE_T SHM 경로")
 	listen := flag.String("listen", ":8088", "HTTP health/stats listen (비면 비활성)")
+	grpcListen := flag.String("grpc-listen", "", "KRX 이벤트 gRPC(KrxPriceService) listen (예 :50052, 비면 비활성) — 통합 엣지 fan-in 상류")
 	rcvbuf := flag.Int("rcvbuf", 32*1024*1024, "소켓 수신버퍼 바이트")
 	statsIv := flag.Duration("stats", 30*time.Second, "stats 로그 주기")
 	logLevel := flag.String("log-level", "info", "debug/info/warn/error")
@@ -58,10 +62,36 @@ func main() {
 	hub := pricekrx.New(m.Writer, bm.BondWriter)
 	var st stats
 
+	// KRX 이벤트 gRPC 생산자 (통합 엣지 fan-in 상류) — --grpc-listen 지정 시.
+	// SHM 경로와 독립: 동일 원 TR 을 krx.Server 가 디코드·enrich 해 gRPC 로 fan-out.
+	var evSrv *krx.Server
+	var gs *grpc.Server
+	if *grpcListen != "" {
+		evSrv = krx.NewServer(log)
+		gh := krx.NewGRPCHub()
+		evSrv.SetGRPCHub(gh)
+		lis, err := net.Listen("tcp", *grpcListen)
+		if err != nil {
+			log.Error("gRPC listen 실패", "addr", *grpcListen, "error", err)
+			os.Exit(1)
+		}
+		gs = grpc.NewServer()
+		wtgpb.RegisterKrxPriceServiceServer(gs, krx.NewGRPCServer(gh, log))
+		go func() {
+			if err := gs.Serve(lis); err != nil {
+				log.Error("gRPC serve", "error", err)
+			}
+		}()
+		log.Info("KRX 이벤트 gRPC 시작", "listen", *grpcListen)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() { <-sig; cancel() }()
+	if gs != nil {
+		go func() { <-ctx.Done(); gs.GracefulStop() }()
+	}
 
 	var ifi *net.Interface
 	if *iface != "" {
@@ -89,7 +119,7 @@ func main() {
 		if *rcvbuf > 0 {
 			_ = conn.SetReadBuffer(*rcvbuf)
 		}
-		go readLoop(ctx, conn, hub, &st, log)
+		go readLoop(ctx, conn, hub, evSrv, &st, log)
 	}
 	log.Info("KRX 멀티캐스트 수신 시작", "group", *group, "ports", *ports, "iface", *iface)
 
@@ -140,7 +170,7 @@ func main() {
 
 type stats struct{ packets, applied, unknown atomic.Uint64 }
 
-func readLoop(ctx context.Context, conn *net.UDPConn, hub *pricekrx.Hub, st *stats, log *slog.Logger) {
+func readLoop(ctx context.Context, conn *net.UDPConn, hub *pricekrx.Hub, evSrv *krx.Server, st *stats, log *slog.Logger) {
 	defer conn.Close()
 	buf := make([]byte, 65536)
 	for {
@@ -160,6 +190,10 @@ func readLoop(ctx context.Context, conn *net.UDPConn, hub *pricekrx.Hub, st *sta
 		st.packets.Add(1)
 		pkt := make([]byte, n)
 		copy(pkt, buf[:n])
+		// KRX 이벤트 gRPC fan-out (활성 시) — SHM 과 독립적으로 동일 패킷 디코드·enrich.
+		if evSrv != nil {
+			_, _, _, _ = evSrv.Ingest(pkt)
+		}
 		_, applied, e := hub.Ingest(pkt)
 		if e != nil || !applied {
 			st.unknown.Add(1)

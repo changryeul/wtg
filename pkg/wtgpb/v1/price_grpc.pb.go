@@ -584,3 +584,120 @@ var TickIngestService_ServiceDesc = grpc.ServiceDesc{
 	},
 	Metadata: "wtg/v1/price.proto",
 }
+
+const (
+	KrxPriceService_SubscribeKrx_FullMethodName = "/wtg.v1.KrxPriceService/SubscribeKrx"
+)
+
+// KrxPriceServiceClient is the client API for KrxPriceService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// KrxPriceService 는 mci-price-krx (Internal) 가 노출하는 KRX 시세 gRPC 서비스.
+// 통합 시세 엣지(edge-price)가 fan-in 해 폴리모픽 v2 envelope 로 클라에 중계한다
+// (FX 의 PriceService.SubscribeQuote 와 대칭). docs/unified-quote-edge-design.md §5·§7.
+type KrxPriceServiceClient interface {
+	// 종목(symbols) 필터 구독. 빈 목록이면 전체. 서버는 디코드·enrich 된 KRX
+	// 이벤트(체결/호가/정산/마스터)를 stream 으로 push.
+	SubscribeKrx(ctx context.Context, in *KrxSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[KrxEvent], error)
+}
+
+type krxPriceServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewKrxPriceServiceClient(cc grpc.ClientConnInterface) KrxPriceServiceClient {
+	return &krxPriceServiceClient{cc}
+}
+
+func (c *krxPriceServiceClient) SubscribeKrx(ctx context.Context, in *KrxSubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[KrxEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &KrxPriceService_ServiceDesc.Streams[0], KrxPriceService_SubscribeKrx_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[KrxSubscribeRequest, KrxEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KrxPriceService_SubscribeKrxClient = grpc.ServerStreamingClient[KrxEvent]
+
+// KrxPriceServiceServer is the server API for KrxPriceService service.
+// All implementations must embed UnimplementedKrxPriceServiceServer
+// for forward compatibility.
+//
+// KrxPriceService 는 mci-price-krx (Internal) 가 노출하는 KRX 시세 gRPC 서비스.
+// 통합 시세 엣지(edge-price)가 fan-in 해 폴리모픽 v2 envelope 로 클라에 중계한다
+// (FX 의 PriceService.SubscribeQuote 와 대칭). docs/unified-quote-edge-design.md §5·§7.
+type KrxPriceServiceServer interface {
+	// 종목(symbols) 필터 구독. 빈 목록이면 전체. 서버는 디코드·enrich 된 KRX
+	// 이벤트(체결/호가/정산/마스터)를 stream 으로 push.
+	SubscribeKrx(*KrxSubscribeRequest, grpc.ServerStreamingServer[KrxEvent]) error
+	mustEmbedUnimplementedKrxPriceServiceServer()
+}
+
+// UnimplementedKrxPriceServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedKrxPriceServiceServer struct{}
+
+func (UnimplementedKrxPriceServiceServer) SubscribeKrx(*KrxSubscribeRequest, grpc.ServerStreamingServer[KrxEvent]) error {
+	return status.Error(codes.Unimplemented, "method SubscribeKrx not implemented")
+}
+func (UnimplementedKrxPriceServiceServer) mustEmbedUnimplementedKrxPriceServiceServer() {}
+func (UnimplementedKrxPriceServiceServer) testEmbeddedByValue()                         {}
+
+// UnsafeKrxPriceServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to KrxPriceServiceServer will
+// result in compilation errors.
+type UnsafeKrxPriceServiceServer interface {
+	mustEmbedUnimplementedKrxPriceServiceServer()
+}
+
+func RegisterKrxPriceServiceServer(s grpc.ServiceRegistrar, srv KrxPriceServiceServer) {
+	// If the following call panics, it indicates UnimplementedKrxPriceServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&KrxPriceService_ServiceDesc, srv)
+}
+
+func _KrxPriceService_SubscribeKrx_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(KrxSubscribeRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(KrxPriceServiceServer).SubscribeKrx(m, &grpc.GenericServerStream[KrxSubscribeRequest, KrxEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KrxPriceService_SubscribeKrxServer = grpc.ServerStreamingServer[KrxEvent]
+
+// KrxPriceService_ServiceDesc is the grpc.ServiceDesc for KrxPriceService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var KrxPriceService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "wtg.v1.KrxPriceService",
+	HandlerType: (*KrxPriceServiceServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "SubscribeKrx",
+			Handler:       _KrxPriceService_SubscribeKrx_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "wtg/v1/price.proto",
+}

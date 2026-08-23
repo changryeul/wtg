@@ -295,21 +295,11 @@
             검색<span class="ml-auto text-[10px] font-mono text-slate-600">⌘K</span></button>
         </div>
 
-        <!-- MCI 관리채널 — 프로세스/게이트웨이/연결/관측 -->
-        <div class="nav-group" data-group="mci">
-          <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
-            MCI 관리채널 <span class="nav-chev ml-auto transition-transform">▾</span></button>
-          <div class="nav-group-body space-y-0.5 mb-3">
-            <button data-page="mci"        class="nav-btn nav-item">MCI 프로세스</button>
-            <button data-page="tcpgw"      class="nav-btn nav-item" title="mci-edge-tcp — 레거시 cs (HTS/EMP) raw TCP 전문 gateway 연결 현황">TCP 게이트웨이</button>
-            <button data-page="wsmon"      class="nav-btn nav-item">WS 모니터</button>
-            <button data-page="connections" class="nav-btn nav-item">연결 (ws)</button>
-            <button data-page="subscribers" class="nav-btn nav-item">구독자 (gRPC)</button>
-            <a href="/fix-gateways.html" class="nav-item" title="mci-edge-fix-ord (주문) + mci-edge-fix-md (시세) 실시간 stats">FIX 상태 (실시간)</a>
-            <a href="/fix-counterparties.html" class="nav-item" title="카운터파티 등록/편집 + drop copy">FIX 카운터파티</a>
-            <button data-page="monitoring" class="nav-btn nav-item">운영 모니터링</button>
-            <button data-page="fwdstats"   class="nav-btn nav-item">forwarder 통계</button>
-          </div>
+        <!-- MCI 관리채널 — 프로세스 그리드. TCP게이트웨이/WS모니터/연결/구독자/FIX/
+             forwarder 통계 등 프로세스-종속 정보는 그리드에서 프로세스 선택 시 상세
+             드로어로 노출 (좌측 평면 나열 제거). -->
+        <div class="space-y-0.5 mb-3">
+          <button data-page="mci" class="nav-btn nav-item">MCI 관리채널</button>
         </div>
 
         <!-- 운영 & 정책 — 매일 운영 룰 + 사후 감사/통계 + 도구 -->
@@ -317,6 +307,7 @@
           <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
             운영 &amp; 정책 <span class="nav-chev ml-auto transition-transform">▾</span></button>
           <div class="nav-group-body space-y-0.5 mb-3">
+            <button data-page="monitoring"   class="nav-btn nav-item">운영 모니터링</button>
             <button data-page="routes"       class="nav-btn nav-item">라우팅 룰</button>
             <button data-page="policy"       class="nav-btn nav-item">정책 엔진</button>
             <button data-page="ratelimit"    class="nav-btn nav-item">Rate Limit 정책</button>
@@ -430,8 +421,32 @@
       <!-- Toast container -->
       <div id="toasts" class="fixed top-4 right-4 z-30 space-y-2 w-80"></div>
 
+      <!-- MCI 프로세스 상세 드로어 (그리드에서 프로세스 선택 시) -->
+      <div id="mci-drawer-scrim" class="fixed inset-0 bg-black/40 z-40 hidden" data-mci-close></div>
+      <aside id="mci-drawer" class="fixed top-0 right-0 h-full w-[420px] max-w-[92vw] z-50 translate-x-full transition-transform duration-200 flex flex-col bg-ink-900 border-l border-ink-700 shadow-2xl">
+        <div class="flex items-center justify-between px-4 h-14 border-b border-ink-700 shrink-0">
+          <div class="flex items-center gap-2 min-w-0">
+            <span id="mci-dr-dot" class="w-2 h-2 rounded-full bg-slate-500 shrink-0"></span>
+            <h3 id="mci-dr-name" class="font-semibold truncate">—</h3>
+          </div>
+          <button data-mci-close class="text-slate-400 hover:text-slate-200 text-lg leading-none px-2">✕</button>
+        </div>
+        <div id="mci-dr-body" class="flex-1 overflow-y-auto p-4 space-y-4 text-sm"></div>
+      </aside>
+
+      <!-- 하단 상태바 — 액션 결과(성공/에러)를 누적 표시. 토스트는 사라지지만
+           여기엔 최신 메시지가 남아 놓치지 않는다. '이력'으로 최근 목록. -->
+      <div id="statusbar" class="fixed bottom-0 left-64 right-0 z-40 h-8 flex items-center gap-2 px-4 text-xs border-t border-ink-700 bg-ink-900/95 backdrop-blur">
+        <span id="sb-dot" class="w-2 h-2 rounded-full bg-slate-600 shrink-0"></span>
+        <span id="sb-msg" class="truncate text-slate-400">준비됨</span>
+        <span id="sb-time" class="ml-auto font-mono text-[10px] text-slate-600"></span>
+        <button id="sb-hist-btn" class="text-[10px] text-slate-500 hover:text-slate-300 border border-ink-700 rounded px-1.5 py-0.5" title="최근 이력">이력</button>
+        <button id="sb-clear" class="text-[10px] text-slate-600 hover:text-slate-400" title="지우기">지우기</button>
+      </div>
+      <div id="sb-hist" class="fixed bottom-9 right-4 z-40 w-96 max-h-72 overflow-y-auto hidden bg-ink-900 border border-ink-700 rounded-lg shadow-xl text-xs p-1"></div>
+
       <!-- Pages -->
-      <section class="p-6 space-y-6">
+      <section class="p-6 pb-12 space-y-6">
         <!-- Dashboard -->
         <div id="page-dashboard" class="page space-y-6">
           <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -3548,6 +3563,39 @@ function toast(msg, kind = "ok") {
   close.onclick = () => el.remove();
   wrap.appendChild(el);
   setTimeout(() => el.remove(), 4500);
+  statusLog(msg, kind); // 하단 상태바에 누적 (토스트는 사라져도 여기 남음)
+}
+
+// ───────── 하단 상태바 (액션 결과 누적) ─────────
+const statusHist = [];
+function sbColor(kind) {
+  return kind === "ok" ? "bg-good" : kind === "warn" ? "bg-warn" : kind === "info" ? "bg-accent-500" : "bg-bad";
+}
+function statusLog(msg, kind = "ok") {
+  const ts = new Date().toTimeString().slice(0, 8);
+  statusHist.push({ ts, msg, kind });
+  if (statusHist.length > 80) statusHist.shift();
+  const dot = $("#sb-dot"), m = $("#sb-msg"), t = $("#sb-time");
+  if (dot) dot.className = "w-2 h-2 rounded-full shrink-0 " + sbColor(kind);
+  if (m) { m.textContent = msg; m.className = "truncate " + (kind === "err" ? "text-bad" : kind === "warn" ? "text-warn" : "text-slate-300"); }
+  if (t) t.textContent = ts;
+  renderStatusHist();
+}
+function renderStatusHist() {
+  const box = $("#sb-hist");
+  if (!box || box.classList.contains("hidden")) return;
+  box.replaceChildren();
+  if (!statusHist.length) { box.appendChild(h("div", { class: "px-2 py-2 text-slate-600", text: "이력 없음" })); return; }
+  [...statusHist].reverse().forEach(e => box.appendChild(
+    h("div", { class: "flex items-start gap-2 px-2 py-1 border-b border-ink-800/60" },
+      h("span", { class: "w-1.5 h-1.5 mt-1.5 rounded-full shrink-0 " + sbColor(e.kind) }),
+      h("span", { class: "font-mono text-[10px] text-slate-600 shrink-0", text: e.ts }),
+      h("span", { class: "flex-1 break-all " + (e.kind === "err" ? "text-bad" : "text-slate-300"), text: e.msg }))));
+}
+function initStatusBar() {
+  const hb = $("#sb-hist-btn"), box = $("#sb-hist"), clr = $("#sb-clear");
+  if (hb) hb.onclick = () => { box.classList.toggle("hidden"); renderStatusHist(); };
+  if (clr) clr.onclick = () => { statusHist.length = 0; statusLog("이력 지움", "info"); };
 }
 
 // ───────── Auth ─────────
@@ -3722,6 +3770,13 @@ function buildNavIndex() {
     cmdk.items.push({ label: a.textContent.trim().replace("↗","").trim(), href: a.getAttribute("href"),
                       group: a.closest(".nav-group")?.querySelector(".nav-group-hd")?.textContent.replace("▾","").trim() || "" });
   });
+  // 좌측 메뉴에서 뺀 MCI 프로세스-종속 화면도 ⌘K 로 찾을 수 있게 보강 (드로어 경로).
+  const seen = new Set(cmdk.items.map(x => x.page).filter(Boolean));
+  Object.values(MCI_DETAIL).forEach(m => (m.views || []).forEach(([t, l]) => {
+    if (t.startsWith("/") || t.startsWith("http") || seen.has(t)) return;
+    seen.add(t);
+    cmdk.items.push({ label: l, page: t, group: "MCI 관리채널" });
+  }));
 }
 
 function openCmdk() {
@@ -4107,6 +4162,89 @@ async function pollDashboard() {
 // DMZ(edge) → Internal(mci) → Infra 를 트래픽 방향대로 배치하고, 각 서비스의
 // upstream 관계를 SVG 연결선으로 그린다 (양 끝 up 이면 초록, 아니면 회색).
 let mciTopoLast = null;
+let mciHealthLast = null; // 최근 mci-health 응답 캐시 (드로어가 재조회 없이 읽음)
+
+// ───────── MCI 프로세스 상세 드로어 ─────────
+// process → 관련 뷰 / 변경 가능 설정. target 이 "/" 또는 "http" 로 시작하면 외부
+// 링크(새 탭), 아니면 data-page(goPage). 좌측 메뉴에서 뺀 프로세스-종속 화면을 여기로.
+const MCI_DETAIL = {
+  "mci-edge-tcp":     { views: [["tcpgw", "TCP 게이트웨이"]] },
+  "mci-edge-price":   { views: [["connections", "연결 (ws)"], ["wsmon", "WS 모니터"], ["backpressure", "Backpressure 이력"]], config: [["ratelimit", "Rate Limit 정책"]] },
+  "mci-price":        { views: [["subscribers", "구독자 (gRPC)"], ["pricestats", "시세 통계"], ["algo", "Algo Stream"], ["swaplock", "FX swap 잠금"], ["backpressure", "Backpressure 이력"]], config: [["pricing", "마진 테이블"], ["pair-master", "통화쌍 마스터"], ["profiles", "프로파일"], ["swap", "선물환 스왑"]] },
+  "quote-forwarder":  { views: [["fwdstats", "forwarder 통계"]] },
+  "mci-edge-fix-ord": { views: [["/fix-gateways.html", "FIX 상태"], ["/fix-counterparties.html", "FIX 카운터파티"]] },
+  "mci-edge-fix-md":  { views: [["/fix-gateways.html", "FIX 상태"]] },
+  "mci-api":          { views: [["recenttx", "매매 감사"], ["aliasstats", "매매 통계"]], config: [["routes", "라우팅 룰"], ["ratelimit", "Rate Limit 정책"], ["svcio", "서비스 명세"]] },
+  "mci-edge-api":     { config: [["ratelimit", "Rate Limit 정책"]] },
+  "mci-edge-push":    { views: [["wsmon", "WS 모니터"]] },
+};
+let mciDrawerCur = null;
+
+function openMciDetail(name) {
+  const d = mciHealthLast; if (!d) return;
+  const s = (d.services || []).find(x => x.name === name);
+  if (!s) return;
+  mciDrawerCur = name;
+  $("#mci-dr-name").textContent = s.name;
+  $("#mci-dr-dot").className = "w-2 h-2 rounded-full shrink-0 " + (s.up ? "bg-good" : "bg-bad");
+  const body = $("#mci-dr-body");
+  body.replaceChildren();
+  const sect = (title) => h("div", { class: "text-[10px] uppercase tracking-widest text-slate-500 pt-2 pb-1" }, title);
+  const kv = (k, v) => h("div", { class: "flex justify-between gap-3 py-1 border-b border-ink-800/60" },
+    h("span", { class: "text-slate-500 text-xs", text: k }),
+    h("span", { class: "font-mono text-xs text-slate-300 text-right break-all", text: v }));
+
+  body.appendChild(sect("런타임"));
+  body.appendChild(kv("상태", (s.sysd_state || (s.up ? "up" : "down")) + (s.sysd_sub ? " / " + s.sysd_sub : "")));
+  body.appendChild(kv("가동", fmtUptime(s.uptime_sec)));
+  body.appendChild(kv("PID", s.pid ? String(s.pid) : "—"));
+  body.appendChild(kv("메모리", s.mem_mb ? s.mem_mb + "MB" : "—"));
+  body.appendChild(kv("포트 · 접속", s.access || "—"));
+  if (s.upstream) body.appendChild(kv("upstream", s.upstream));
+  if (s.latency_ms != null) body.appendChild(kv("health", s.url + " (" + s.latency_ms + "ms)"));
+
+  if (s.controllable) {
+    body.appendChild(sect("제어"));
+    const row = mciControlRow(s.name); row.className = "flex gap-2";
+    body.appendChild(row);
+  }
+  if (s.flags && s.flags.length) {
+    body.appendChild(sect("실행 설정 (읽기전용)"));
+    body.appendChild(h("pre", { class: "text-[11px] font-mono text-slate-400 whitespace-pre-wrap bg-ink-800/50 rounded p-2", text: s.flags.join("\n") }));
+  }
+
+  const map = MCI_DETAIL[name] || {};
+  const linkBtn = (target, label) => {
+    const b = h("button", { class: "w-full text-left px-3 py-2 rounded-lg bg-ink-800/60 hover:bg-ink-700 text-sm flex items-center" },
+      h("span", { text: label }), h("span", { class: "ml-auto text-slate-600 text-xs", text: "›" }));
+    b.onclick = () => {
+      closeMciDrawer();
+      if (target.startsWith("/") || target.startsWith("http")) window.open(target, "_blank", "noopener");
+      else goPage(target);
+    };
+    return b;
+  };
+  if (map.views && map.views.length) {
+    body.appendChild(sect("관련 정보"));
+    map.views.forEach(([t, l]) => body.appendChild(linkBtn(t, l)));
+  }
+  if (map.config && map.config.length) {
+    body.appendChild(sect("변경 가능 설정"));
+    map.config.forEach(([t, l]) => body.appendChild(linkBtn(t, l)));
+  }
+  if (!(map.views && map.views.length) && !(map.config && map.config.length)) {
+    body.appendChild(h("div", { class: "text-xs text-slate-600 pt-2", text: "이 프로세스에 연결된 하위 화면이 없습니다." }));
+  }
+
+  $("#mci-drawer").classList.remove("translate-x-full");
+  $("#mci-drawer-scrim").classList.remove("hidden");
+}
+function closeMciDrawer() {
+  $("#mci-drawer").classList.add("translate-x-full");
+  $("#mci-drawer-scrim").classList.add("hidden");
+  mciDrawerCur = null;
+}
+
 // mciControlRow — 서비스 카드의 기동/재기동/종료 버튼 행 (control 활성 시만 렌더).
 function mciControlRow(name) {
   const btn = (label, action, cls, confirmMsg) => {
@@ -4155,6 +4293,7 @@ async function refreshMciHealth() {
     if ($("#mci-health-summary")) $("#mci-health-summary").textContent = "조회 실패";
     return;
   }
+  mciHealthLast = d; // 드로어가 재조회 없이 읽는 캐시
   if ($("#mci-health-summary")) {
     $("#mci-health-summary").textContent = `${d.up}/${d.total} up` + (d.control_enabled ? " · 제어 가능" : "");
     $("#mci-health-summary").className = "text-xs font-mono " + (d.up === d.total ? "text-good" : "text-bad");
@@ -4177,10 +4316,12 @@ async function refreshMciHealth() {
     for (const s of rows) {
       const dot = h("span", { class: "inline-block w-2 h-2 rounded-full align-middle " + (s.up ? "bg-good" : "bg-bad") });
       const stateTxt = s.sysd_state ? (s.sysd_state + (s.sysd_sub && s.sysd_sub !== "running" ? "/" + s.sysd_sub : "")) : (s.up ? "up" : "down");
-      const nameCell = h("td", { class: "px-3 py-2" },
-        h("div", { class: "flex items-center gap-2" },
-          h("span", { class: "font-medium text-sm", text: s.name }),
-          s.external ? h("span", { class: "text-[9px] font-mono px-1 rounded bg-warn/15 text-warn", text: "EXT" }) : null));
+      // 서비스명 클릭 → 상세 드로어 (관련 뷰 + 변경가능 설정 + 실행설정).
+      const nameBtn = h("button", { class: "flex items-center gap-2 hover:text-accent-300 text-left", dataset: { mciOpen: s.name }, title: "상세 · 관련 화면 / 설정 열기" },
+        h("span", { class: "font-medium text-sm", text: s.name }),
+        s.external ? h("span", { class: "text-[9px] font-mono px-1 rounded bg-warn/15 text-warn", text: "EXT" }) : null,
+        h("span", { class: "text-slate-600 text-xs", text: "›" }));
+      const nameCell = h("td", { class: "px-3 py-2" }, nameBtn);
       const ctlCell = h("td", { class: "px-3 py-2 text-right" });
       if (s.controllable) {
         const row = mciControlRow(s.name);
@@ -4205,6 +4346,8 @@ async function refreshMciHealth() {
 
   const table = h("table", { class: "w-full text-sm border-collapse" }, h("thead", {}, head), tbody);
   grid.replaceChildren(table);
+  // 드로어가 열려 있으면 최신 런타임으로 갱신 (라이브).
+  if (mciDrawerCur) openMciDetail(mciDrawerCur);
 }
 
 // drawMciTopoLines — 각 노드 upstream 관계를 SVG 선으로. 노드 DOM 위치 기반이라
@@ -11931,6 +12074,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 네비
   document.body.addEventListener("click", (e) => {
+    const dr = e.target.closest("[data-mci-open]");
+    if (dr) { openMciDetail(dr.dataset.mciOpen); return; }
+    const dc = e.target.closest("[data-mci-close]");
+    if (dc) { closeMciDrawer(); return; }
     const gh = e.target.closest(".nav-group-hd");
     if (gh) { toggleNavGroup(gh.closest(".nav-group")); return; }
     const t = e.target.closest("[data-page]");
@@ -11938,7 +12085,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const c = e.target.closest("[data-close]");
     if (c) { document.getElementById(c.dataset.close).classList.add("hidden"); }
   });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMciDrawer(); });
   initNavGroups();
+  initStatusBar();
   initCmdk();
   $("#logout-btn").onclick = logout;
 

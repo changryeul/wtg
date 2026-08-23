@@ -62,6 +62,9 @@ type MciHealthEntry struct {
 	PID       int    `json:"pid,omitempty"`
 	MemMB     int    `json:"mem_mb,omitempty"`
 	UptimeSec int64  `json:"uptime_sec,omitempty"` // MainPID 기준 경과초 (0=미상)
+	// Flags — ExecStart 의 실행 플래그 ("어떤 설정으로 돌고 있는지", 읽기전용).
+	// 바이너리 경로 제외한 --flag 목록. systemctl show 부재 시 nil.
+	Flags []string `json:"flags,omitempty"`
 }
 
 // defaultMciTargets — 단일 호스트 배치 (dev EC2) 기준 진단 endpoint 카탈로그.
@@ -172,12 +175,37 @@ func checkMciTargets(ctx context.Context, targets []MciTarget) []MciHealthEntry 
 	return out
 }
 
+// parseExecStartFlags — systemctl show 의 ExecStart 값에서 실행 플래그(--x)만 추출.
+// 값 형식: "{ path=/... ; argv[]=/full/bin --a=b --c ; ignore_errors=no ; ... }".
+// argv[] 의 첫 토큰(바이너리)은 버리고 --flag 만 반환. 파싱 실패 시 nil.
+func parseExecStartFlags(v string) []string {
+	i := strings.Index(v, "argv[]=")
+	if i < 0 {
+		return nil
+	}
+	rest := v[i+len("argv[]="):]
+	if j := strings.Index(rest, " ; "); j >= 0 {
+		rest = rest[:j]
+	}
+	toks := strings.Fields(rest)
+	out := make([]string, 0, len(toks))
+	for _, t := range toks {
+		if strings.HasPrefix(t, "-") { // --flag / -f (바이너리 경로·기타 인자 제외)
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // fillSystemdRuntime — `systemctl show wtg-<name>` 로 런타임 정보를 채운다.
 // unprivileged (sudo 불필요). systemctl 부재/유닛 없음 시 조용히 skip (dev/mac).
 func fillSystemdRuntime(ctx context.Context, e *MciHealthEntry) {
 	unit := "wtg-" + e.Name + ".service"
 	cmd := exec.CommandContext(ctx, "systemctl", "show", unit,
-		"-p", "ActiveState", "-p", "SubState", "-p", "MainPID", "-p", "MemoryCurrent")
+		"-p", "ActiveState", "-p", "SubState", "-p", "MainPID", "-p", "MemoryCurrent", "-p", "ExecStart")
 	out, err := cmd.Output()
 	if err != nil {
 		return // systemctl 없음(mac) 또는 유닛 미존재 — 공란 유지.
@@ -200,6 +228,8 @@ func fillSystemdRuntime(ctx context.Context, e *MciHealthEntry) {
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 				e.MemMB = int(n / (1024 * 1024))
 			}
+		case "ExecStart":
+			e.Flags = parseExecStartFlags(v)
 		}
 	}
 	// uptime — MainPID 의 etimes(초). systemd 타임스탬프 파싱 회피.

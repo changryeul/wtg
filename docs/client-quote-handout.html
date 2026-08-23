@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WTG 통합 시세 구독 — 클라이언트 연동</title>
+<style>
+  :root {
+    --bg: #F7F9FA;
+    --panel: #FFFFFF;
+    --panel-2: #EFF3F5;
+    --ink: #0F1720;
+    --muted: #57646E;
+    --line: #E1E7EC;
+    --fx: #0B6E78;          /* FX = teal */
+    --krx: #5148C0;         /* KRX = indigo */
+    --good: #1C8B57;
+    --warn: #B26A00;
+    --code-bg: #0E1620;
+    --code-ink: #D4E0EA;
+    --code-key: #59C7D2;
+    --code-dim: #6E8291;
+    --radius: 12px;
+    --measure: 62rem;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0B1014; --panel: #121A21; --panel-2: #16212A; --ink: #E7EEF3;
+      --muted: #93A2AD; --line: #223039;
+      --fx: #2CB6C3; --krx: #8E8BF2; --good: #43C387; --warn: #E0A24A;
+      --code-bg: #0A1117; --code-ink: #CFDDE7;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #F7F9FA; --panel: #FFFFFF; --panel-2: #EFF3F5; --ink: #0F1720;
+    --muted: #57646E; --line: #E1E7EC; --fx: #0B6E78; --krx: #5148C0;
+    --good: #1C8B57; --warn: #B26A00; --code-bg: #0E1620; --code-ink: #D4E0EA;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0B1014; --panel: #121A21; --panel-2: #16212A; --ink: #E7EEF3;
+    --muted: #93A2AD; --line: #223039; --fx: #2CB6C3; --krx: #8E8BF2;
+    --good: #43C387; --warn: #E0A24A; --code-bg: #0A1117; --code-ink: #CFDDE7;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--font); line-height: 1.6;
+    font-size: 16px; letter-spacing: -0.003em;
+  }
+  .wrap { max-width: var(--measure); margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2.5rem); }
+
+  header {
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--panel), var(--bg));
+  }
+  .head-inner { padding: clamp(2rem, 5vw, 3.4rem) 0 1.8rem; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: .5rem;
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--fx);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: .3rem .7rem; margin-bottom: 1.1rem;
+  }
+  .kicker .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fx); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fx) 20%, transparent); }
+  h1 { font-size: clamp(1.7rem, 4.4vw, 2.6rem); line-height: 1.1; margin: 0 0 .6rem; font-weight: 680; text-wrap: balance; letter-spacing: -0.02em; }
+  .lede { font-size: clamp(1rem, 2vw, 1.15rem); color: var(--muted); max-width: 46rem; margin: 0; text-wrap: pretty; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1.4rem; }
+  .tag { font-family: var(--mono); font-size: .78rem; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: .28rem .6rem; }
+  .tag b { color: var(--ink); font-weight: 600; }
+
+  main { padding: 2.6rem 0 4rem; }
+  section { margin-top: 3rem; }
+  section:first-child { margin-top: 2rem; }
+
+  .eyebrow {
+    display: flex; align-items: baseline; gap: .7rem;
+    font-family: var(--mono); font-size: .74rem; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--muted); margin: 0 0 1rem;
+  }
+  .eyebrow .n { color: var(--fx); font-weight: 600; }
+  h2 { font-size: 1.4rem; margin: .1rem 0 .8rem; font-weight: 640; letter-spacing: -0.01em; }
+  h3 { font-size: 1.02rem; margin: 1.6rem 0 .6rem; font-weight: 620; }
+  p { margin: .6rem 0; color: var(--ink); }
+  p.note { color: var(--muted); font-size: .95rem; }
+  a { color: var(--fx); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  .quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .quick .step { background: var(--panel); padding: 1.2rem 1.2rem 1.3rem; }
+  .quick .sn { font-family: var(--mono); font-size: .72rem; letter-spacing: .1em; color: var(--fx); text-transform: uppercase; }
+  .quick .st { font-weight: 620; margin: .3rem 0 .5rem; font-size: 1.02rem; }
+  .quick code { font-family: var(--mono); font-size: .82rem; color: var(--ink); word-break: break-all; }
+  .quick .muted { color: var(--muted); font-size: .88rem; }
+  @media (max-width: 720px) { .quick { grid-template-columns: 1fr; } }
+
+  figure.code { margin: 1rem 0; border-radius: 10px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--code-bg) 60%, var(--line)); background: var(--code-bg); }
+  figure.code figcaption {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: .5rem .85rem; border-bottom: 1px solid rgba(255,255,255,.07);
+    font-family: var(--mono); font-size: .74rem; letter-spacing: .04em; color: var(--code-dim);
+  }
+  figure.code figcaption .lbl { color: #9FB2BF; }
+  .copy {
+    font-family: var(--mono); font-size: .72rem; color: var(--code-ink);
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    border-radius: 6px; padding: .2rem .55rem; cursor: pointer; transition: background .15s ease;
+  }
+  .copy:hover { background: rgba(255,255,255,.14); }
+  .copy:focus-visible { outline: 2px solid var(--code-key); outline-offset: 2px; }
+  .copy.ok { color: var(--good); border-color: var(--good); }
+  pre { margin: 0; padding: 1rem .95rem; overflow-x: auto; }
+  pre code { font-family: var(--mono); font-size: .82rem; line-height: 1.65; color: var(--code-ink); white-space: pre; }
+  pre .k { color: var(--code-key); }
+  pre .c { color: var(--code-dim); font-style: italic; }
+  pre .s { color: #C7D89A; }
+
+  .twrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; padding: .7rem .85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--panel-2); }
+  tr:last-child td { border-bottom: 0; }
+  td code, th code { font-family: var(--mono); font-size: .84rem; }
+  .mono { font-family: var(--mono); font-size: .84rem; }
+  tbody tr:hover td { background: color-mix(in srgb, var(--fx) 5%, transparent); }
+
+  .pill { display: inline-block; font-family: var(--mono); font-size: .72rem; padding: .12rem .45rem; border-radius: 5px; font-weight: 600; }
+  .pill.fx { color: var(--fx); background: color-mix(in srgb, var(--fx) 13%, transparent); }
+  .pill.krx { color: var(--krx); background: color-mix(in srgb, var(--krx) 15%, transparent); }
+
+  .callout { display: flex; gap: .9rem; padding: 1rem 1.1rem; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); margin: 1.1rem 0; }
+  .callout .bar { width: 3px; border-radius: 3px; background: var(--warn); flex: none; }
+  .callout.good .bar { background: var(--good); }
+  .callout .body { font-size: .93rem; }
+  .callout .body b { font-weight: 640; }
+
+  ol.check { list-style: none; counter-reset: c; padding: 0; margin: 1rem 0; display: grid; gap: .6rem; }
+  ol.check li { counter-increment: c; display: grid; grid-template-columns: 1.7rem 1fr; gap: .7rem; align-items: baseline; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+  ol.check li::before { content: counter(c); font-family: var(--mono); font-size: .8rem; font-weight: 600; color: var(--fx); border: 1px solid var(--line); border-radius: 6px; text-align: center; line-height: 1.55; }
+  ol.check code { font-family: var(--mono); font-size: .84rem; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+
+  footer { border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; padding: 1.6rem 0 2.4rem; }
+  footer .mono { color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap head-inner">
+    <span class="kicker"><span class="dot"></span> Winway Trading Gateway · 시세 연동</span>
+    <h1>한 소켓으로 FX와 KRX 시세를 구독한다</h1>
+    <p class="lede">클라이언트가 <b>단일 WebSocket</b>으로 외환·선물·옵션·채권 시세를 함께 구독하고 받는 방법. v2 폴리모픽 envelope는 <b>opt-in</b>이라, 기존 연동은 그대로 두고 준비되면 전환하면 됩니다.</p>
+    <div class="meta-row">
+      <span class="tag">엔드포인트 <b>mci-edge-price :8083</b></span>
+      <span class="tag">경로 <b>/v1/subscribe</b></span>
+      <span class="tag">인증 <b>JWT</b></span>
+      <span class="tag">활성화 <b>?ev=2</b></span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section>
+    <div class="eyebrow"><span class="n">시작</span> 3줄이면 붙는다</div>
+    <div class="quick">
+      <div class="step">
+        <div class="sn">01 · 접속</div>
+        <div class="st">인증 붙여 연결</div>
+        <div class="muted">JWT를 쿼리로, <code>ev=2</code>로 통합 형식 요청.</div>
+        <p style="margin:.6rem 0 0"><code>wss://HOST:8083/v1/subscribe?access_token=JWT&amp;ev=2</code></p>
+      </div>
+      <div class="step">
+        <div class="sn">02 · 구독</div>
+        <div class="st">자산 섞어 요청</div>
+        <div class="muted">키는 <code>symbols</code> 하나. FX·KRX 함께.</div>
+        <p style="margin:.6rem 0 0"><code>{"type":"subscribe","symbols":["USD/KRW","101V6000"]}</code></p>
+      </div>
+      <div class="step">
+        <div class="sn">03 · 수신</div>
+        <div class="st">type로 분기</div>
+        <div class="muted"><code>type</code>·<code>asset_class</code> 보고 <code>data</code>만 파싱.</div>
+        <p style="margin:.6rem 0 0"><code>{"ev":2,"type":"fx.quote",…,"data":{…}}</code></p>
+      </div>
+    </div>
+    <p class="note">아래는 그대로 붙여 쓸 수 있는 정확한 계약입니다. <code>HOST</code>·외부 포트는 DMZ/ingress·TLS 매핑에 따라 운영과 확인하세요.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow"><span class="n">포트</span> 어디로 붙나</div>
+    <h2>엔드포인트</h2>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>포트</th><th>인스턴스</th><th>형식</th><th>대상</th></tr></thead>
+        <tbody>
+          <tr><td><code>:8083</code></td><td>mci-edge-price</td><td>best(기본) / <b>v2 (<code>?ev=2</code>)</b></td><td>신규 web client, <b>FX+KRX 통합 구독</b></td></tr>
+          <tr><td><code>:8089</code></td><td>mci-edge-price-legacy</td><td>legacy (entries)</td><td>기존 HTS/EMP — 파서 무변경</td></tr>
+          <tr><td><code>:8085</code></td><td>mci-edge-krx <span class="mono">(레거시)</span></td><td>KRX flat (<code>kind</code>)</td><td>통합 전 KRX 전용 — <b>:8083 v2로 이관 예정</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <div class="bar"></div>
+      <div class="body"><b>KRX가 이사합니다.</b> 기존 KRX 시세는 <code>:8085</code>에서 <b>무인증</b>으로 나갔지만, 통합 후에는 <code>:8083</code>에서 <b>JWT 필수</b>입니다. 선물/옵션/채권 구독 코드는 포트·인증을 함께 바꿔야 합니다.</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow"><span class="n">인증</span> 먼저 JWT</div>
+    <h2>접속 &amp; 인증</h2>
+    <p>WebSocket은 브라우저에서 커스텀 헤더를 못 넣으므로 <b>토큰을 쿼리로</b> 전달합니다. <code>ev=2</code>를 붙이면 통합 형식, 생략하면 기존 형식(무영향).</p>
+    <figure class="code">
+      <figcaption><span class="lbl">connect</span><button class="copy" type="button">복사</button></figcaption>
+      <pre><code><span class="c"># 운영</span>
+wss://HOST:8083/v1/subscribe?access_token=&lt;JWT&gt;&amp;ev=2
+
+<span class="c"># 개발(DevMode) — JWT 없이 사용자만</span>
+ws://HOST:8083/v1/subscribe?x_wtg_user=alice01&amp;ev=2</code></pre>
+    </figure>
+    <p class="note">JWT는 로그인(<code>edge-api :8090 POST /v1/login</code>)으로 발급받습니다. 로그인 시 Site/Tier→Profile이 토큰에 박혀, 클라이언트는 <b>자기 Profile의 마진 적용 시세만</b> 받습니다(위변조 불가).</p>
+  </section>
+
+  <section>
+    <div class="eyebrow"><span class="n">구독</span> symbols 하나로</div>
+    <h2>구독 제어</h2>
+    <p>연결 직후 아무것도 안 보내면 전체 수신. 아래로 종목을 한정/해제합니다. <b>키는 <code>symbols</code>로 통일</b>(FX의 <code>pairs</code>도 alias로 계속 수용) — 자산을 섞어 한 번에 보낼 수 있습니다.</p>
+    <figure class="code">
+      <figcaption><span class="lbl">client → server</span><button class="copy" type="button">복사</button></figcaption>
+      <pre><code>{<span class="k">"type"</span>:<span class="s">"subscribe"</span>,   <span class="k">"symbols"</span>:[<span class="s">"USD/KRW"</span>,<span class="s">"101V6000"</span>,<span class="s">"KR1035020310"</span>]}
+{<span class="k">"type"</span>:<span class="s">"unsubscribe"</span>, <span class="k">"symbols"</span>:[<span class="s">"101V6000"</span>]}</code></pre>
+    </figure>
+    <p>서버는 처리 후 현재 셋을 echo합니다:</p>
+    <figure class="code">
+      <figcaption><span class="lbl">server → client</span><button class="copy" type="button">복사</button></figcaption>
+      <pre><code>{<span class="k">"type"</span>:<span class="s">"subscribed"</span>, <span class="k">"symbols"</span>:[…], <span class="k">"pairs"</span>:[…]}   <span class="c">// null = 전체 모드</span>
+{<span class="k">"type"</span>:<span class="s">"error"</span>, <span class="k">"code"</span>:<span class="s">"bad_request"</span>, <span class="k">"message"</span>:<span class="s">"…"</span>}   <span class="c">// 연결은 유지</span></code></pre>
+    </figure>
+  </section>
+
+  <section>
+    <div class="eyebrow"><span class="n">수신</span> v2 폴리모픽 envelope</div>
+    <h2>메시지 받기</h2>
+    <p>안정 헤더 6필드 + 자산별 <code>data</code>. 클라이언트는 <code>type</code>(또는 <code>asset_class</code>) 하나로 분기해 <code>data</code>만 파싱하면 됩니다 — 자산군마다 렌더가 다른 건 원래 그렇습니다.</p>
+    <div class="cols">
+      <figure class="code">
+        <figcaption><span class="lbl">FX 마진 quote</span><button class="copy" type="button">복사</button></figcaption>
+        <pre><code>{
+  <span class="k">"ev"</span>: 2,
+  <span class="k">"type"</span>: <span class="s">"fx.quote"</span>,
+  <span class="k">"asset_class"</span>: <span class="s">"FX"</span>,
+  <span class="k">"symbol"</span>: <span class="s">"USD/KRW"</span>,
+  <span class="k">"ts_unix_nano"</span>: 1720900000000000000,
+  <span class="k">"data"</span>: {
+    <span class="k">"bid"</span>: 1385.20, <span class="k">"ask"</span>: 1385.60,
+    <span class="k">"raw_bid"</span>: 1385.30, <span class="k">"raw_ask"</span>: 1385.50,
+    <span class="k">"tenor"</span>: <span class="s">"SPOT"</span>,
+    <span class="k">"chan"</span>: <span class="s">"WEB"</span>, <span class="k">"site"</span>: <span class="s">"BRANCH"</span>, <span class="k">"tier"</span>: <span class="s">"VIP"</span>,
+    <span class="k">"v"</span>: 42
+  }
+}</code></pre>
+      </figure>
+      <figure class="code">
+        <figcaption><span class="lbl">KRX 선물 호가</span><button class="copy" type="button">복사</button></figcaption>
+        <pre><code>{
+  <span class="k">"ev"</span>: 2,
+  <span class="k">"type"</span>: <span class="s">"krx.fut.book"</span>,
+  <span class="k">"asset_class"</span>: <span class="s">"FUTURE"</span>,
+  <span class="k">"symbol"</span>: <span class="s">"101V6000"</span>,
+  <span class="k">"ts_unix_nano"</span>: 1720900000000000000,
+  <span class="k">"data"</span>: {
+    <span class="k">"kind"</span>: <span class="s">"fut.book"</span>, <span class="k">"code"</span>: <span class="s">"101V6000"</span>,
+    <span class="k">"ask"</span>: [{<span class="k">"prc"</span>:405.10,<span class="k">"vol"</span>:30,<span class="k">"cnt"</span>:3}],
+    <span class="k">"bid"</span>: [{<span class="k">"prc"</span>:405.05,<span class="k">"vol"</span>:40,<span class="k">"cnt"</span>:4}],
+    <span class="k">"expPrc"</span>: 405.08, <span class="k">"expVol"</span>: 500
+  }
+}</code></pre>
+      </figure>
+    </div>
+
+    <h3><code>type</code> 판별자</h3>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>type</th><th>asset_class</th><th>내용</th></tr></thead>
+        <tbody>
+          <tr><td><code>fx.quote</code></td><td><span class="pill fx">FX</span></td><td>마진 적용 quote (bid/ask + raw)</td></tr>
+          <tr><td><code>krx.fut.trade</code></td><td><span class="pill krx">FUTURE</span></td><td>선물 체결 (등락·정산 enrich)</td></tr>
+          <tr><td><code>krx.fut.book</code></td><td><span class="pill krx">FUTURE</span></td><td>선물 호가 N단 배열</td></tr>
+          <tr><td><code>krx.fut.settle</code></td><td><span class="pill krx">FUTURE</span></td><td>선물 정산가</td></tr>
+          <tr><td><code>krx.fut.master</code></td><td><span class="pill krx">FUTURE</span></td><td>선물 종목 마스터</td></tr>
+          <tr><td><code>krx.bond.trade</code></td><td><span class="pill krx">BOND</span></td><td>채권 체결 (수익률)</td></tr>
+          <tr><td><code>krx.bond.book</code></td><td><span class="pill krx">BOND</span></td><td>채권 우선호가</td></tr>
+          <tr><td><code>krx.bond.master</code></td><td><span class="pill krx">BOND</span></td><td>채권 종목 마스터</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout good">
+      <div class="bar"></div>
+      <div class="body"><b>마진 유무 = data 필드 유무.</b> FX는 <code>bid/ask</code>(마진)+<code>raw_bid/raw_ask</code>(원본)를 싣고, 증권엔 이 필드가 없습니다. 클라이언트는 <code>type</code>으로만 분기하면 되고 마진을 특별 처리할 필요가 없습니다. <code>ts_unix_nano</code>는 KRX의 <code>HHMMSS</code>도 서버가 KST 절대시각으로 정규화해 통일합니다.</div>
+    </div>
+    <p class="note">시스템 프레임(<code>subscribed</code> / <code>error</code> / <code>stale</code> / <code>fresh</code>)은 최상위 <code>type</code>만 있고 <code>data</code>가 없거나 최소입니다 — quote가 아닌 <code>type</code>은 제어 메시지로 처리하세요.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow"><span class="n">호환</span> 안 바꿔도 됩니다</div>
+    <h2>기존 방식 (ev 생략)</h2>
+    <p><code>ev</code>를 빼면 지금까지의 평면 형식 그대로 옵니다. 전환은 준비된 화면부터 점진적으로.</p>
+    <div class="cols">
+      <figure class="code">
+        <figcaption><span class="lbl">FX legacy</span><button class="copy" type="button">복사</button></figcaption>
+        <pre><code>{<span class="k">"type"</span>:<span class="s">"quote"</span>, <span class="k">"pair"</span>:<span class="s">"USD/KRW"</span>,
+ <span class="k">"bid"</span>:1385.20, <span class="k">"ask"</span>:1385.60, …}</code></pre>
+      </figure>
+      <figure class="code">
+        <figcaption><span class="lbl">KRX legacy</span><button class="copy" type="button">복사</button></figcaption>
+        <pre><code>{<span class="k">"kind"</span>:<span class="s">"fut.book"</span>, <span class="k">"code"</span>:<span class="s">"101V6000"</span>,
+ <span class="k">"ask"</span>:[…], <span class="k">"bid"</span>:[…], …}</code></pre>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow"><span class="n">전환</span> 체크리스트</div>
+    <h2>클라이언트 마이그레이션</h2>
+    <ol class="check">
+      <li>KRX 구독을 <code>:8085</code> → <code>:8083</code>으로 옮기고 <b>JWT를 부착</b>한다.</li>
+      <li>WS URL에 <code>?ev=2</code>를 추가하고, 구독 키를 <code>pairs</code> → <code>symbols</code>로 바꾼다.</li>
+      <li>수신부를 <code>type</code> switch → <code>data</code> 파싱 구조로 정리한다(자산군별 렌더 분기는 그대로).</li>
+      <li>FX와 KRX를 <b>WebSocket 하나</b>로 합쳐 연결 수를 줄인다.</li>
+      <li>끊김 대비 자동 재연결 + 재구독을 넣는다(구독 상태는 클라이언트 책임).</li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="eyebrow"><span class="n">참고</span> 운영 · 진단</div>
+    <div class="cols">
+      <div>
+        <h3>서버측 활성화 (운영)</h3>
+        <p class="note">통합 KRX 경로는 플래그 opt-in입니다(현재 기본 off). 켜기 전엔 KRX는 <code>:8085</code>에서만 나가고, FX v2는 <code>:8083</code>에서 지금도 됩니다.</p>
+        <figure class="code">
+          <figcaption><span class="lbl">flags</span><button class="copy" type="button">복사</button></figcaption>
+          <pre><code><span class="c"># 내부 KRX 생산자</span>
+mci-price-krx --grpc-listen :50052
+
+<span class="c"># 통합 엣지</span>
+mci-edge-price \
+  --krx-upstream 127.0.0.1:50052 \
+  --instruments-file instruments.json</code></pre>
+        </figure>
+      </div>
+      <div>
+        <h3>진단</h3>
+        <p class="note">통합 카탈로그·KRX 수신 상태 확인:</p>
+        <figure class="code">
+          <figcaption><span class="lbl">GET</span><button class="copy" type="button">복사</button></figcaption>
+          <pre><code>GET :8083/v1/catalog
+<span class="c"># { enabled, count, krx_upstream,</span>
+<span class="c">#   krx_recv_total, instruments[] }</span></code></pre>
+        </figure>
+        <p class="note">연결/구독 진단: <code>GET :8083/v1/connections</code> · <code>/v1/subscribers</code>.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="wrap">
+  <p>Winway Trading Gateway · 통합 시세 엣지 (mci-edge-price). 상세 설계 <span class="mono">docs/unified-quote-edge-design.md</span> · 구현 기준 <span class="mono">internal/edge/price</span>. 값·필드는 배포 버전 기준으로 확정하세요.</p>
+</footer>
+
+<script>
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var pre = btn.closest("figure").querySelector("pre");
+      var text = pre ? pre.innerText : "";
+      navigator.clipboard.writeText(text).then(function () {
+        var old = btn.textContent;
+        btn.textContent = "복사됨"; btn.classList.add("ok");
+        setTimeout(function () { btn.textContent = old; btn.classList.remove("ok"); }, 1400);
+      }).catch(function () { btn.textContent = "실패"; });
+    });
+  });
+</script>
+
+</body>
+</html>

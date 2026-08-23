@@ -289,113 +289,99 @@
 
         <!-- 대시보드 — 그룹 없이 항상 노출 -->
         <div class="space-y-0.5 mb-3">
-          <button data-page="dashboard" class="nav-btn nav-item"><span class="nav-ico">📊</span>대시보드</button>
+          <button data-page="dashboard" class="nav-btn nav-item">대시보드</button>
           <div id="nav-recent" class="space-y-0.5"></div>
           <button id="cmdk-open" class="nav-item w-full text-slate-500 hover:text-slate-300" title="커맨드 팔레트 (⌘K / Ctrl+K)">
-            <span class="nav-ico">⌨️</span>검색<span class="ml-auto text-[10px] font-mono text-slate-600">⌘K</span></button>
+            검색<span class="ml-auto text-[10px] font-mono text-slate-600">⌘K</span></button>
         </div>
 
-        <!-- 운영 — 매일 보는 정책/게이트 -->
+        <!-- MCI 관리채널 — 프로세스/게이트웨이/연결/관측 -->
+        <div class="nav-group" data-group="mci">
+          <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
+            MCI 관리채널 <span class="nav-chev ml-auto transition-transform">▾</span></button>
+          <div class="nav-group-body space-y-0.5 mb-3">
+            <button data-page="mci"        class="nav-btn nav-item">MCI 프로세스</button>
+            <button data-page="tcpgw"      class="nav-btn nav-item" title="mci-edge-tcp — 레거시 cs (HTS/EMP) raw TCP 전문 gateway 연결 현황">TCP 게이트웨이</button>
+            <button data-page="wsmon"      class="nav-btn nav-item">WS 모니터</button>
+            <button data-page="connections" class="nav-btn nav-item">연결 (ws)</button>
+            <button data-page="subscribers" class="nav-btn nav-item">구독자 (gRPC)</button>
+            <a href="/fix-gateways.html" class="nav-item" title="mci-edge-fix-ord (주문) + mci-edge-fix-md (시세) 실시간 stats">FIX 상태 (실시간)</a>
+            <a href="/fix-counterparties.html" class="nav-item" title="카운터파티 등록/편집 + drop copy">FIX 카운터파티</a>
+            <button data-page="monitoring" class="nav-btn nav-item">운영 모니터링</button>
+            <button data-page="fwdstats"   class="nav-btn nav-item">forwarder 통계</button>
+          </div>
+        </div>
+
+        <!-- 운영 & 정책 — 매일 운영 룰 + 사후 감사/통계 + 도구 -->
         <div class="nav-group" data-group="ops">
           <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
-            🛡 운영 <span class="nav-chev ml-auto transition-transform">▾</span></button>
+            운영 &amp; 정책 <span class="nav-chev ml-auto transition-transform">▾</span></button>
           <div class="nav-group-body space-y-0.5 mb-3">
-            <button data-page="routes"    class="nav-btn nav-item"><span class="nav-ico">🔀</span>라우팅 룰</button>
-            <button data-page="policy"    class="nav-btn nav-item"><span class="nav-ico">🛡</span>정책 엔진</button>
-            <button data-page="ratelimit" class="nav-btn nav-item"><span class="nav-ico">🚦</span>Rate Limit 정책</button>
-            <button data-page="backpressure" class="nav-btn nav-item"><span class="nav-ico">⚠️</span>Backpressure 이력</button>
+            <button data-page="routes"       class="nav-btn nav-item">라우팅 룰</button>
+            <button data-page="policy"       class="nav-btn nav-item">정책 엔진</button>
+            <button data-page="ratelimit"    class="nav-btn nav-item">Rate Limit 정책</button>
+            <button data-page="backpressure" class="nav-btn nav-item">Backpressure 이력</button>
+            <button data-page="audit"        class="nav-btn nav-item">감사 로그</button>
+            <button data-page="recenttx"     class="nav-btn nav-item">매매 감사 (최근 N건)</button>
+            <button data-page="aliasstats"   class="nav-btn nav-item">매매 통계 (alias × tier)</button>
+            <button data-page="customer-search" class="nav-btn nav-item">Customer 검색</button>
+            <button data-page="quoteid-engines" class="nav-btn nav-item">QuoteID 엔진</button>
+            <button data-page="quoteid-lookup"  class="nav-btn nav-item">QuoteID 조회</button>
+            <button data-page="quoteid-stats"   class="nav-btn nav-item">Validate 통계</button>
+            <button data-page="algo"         class="nav-btn nav-item">Algo Stream</button>
+            <button data-page="swaplock"     class="nav-btn nav-item">FX swap 잠금 통계</button>
+            <button data-page="svcio"        class="nav-btn nav-item">서비스 명세</button>
+            <button data-page="tester"       class="nav-btn nav-item">API 테스터</button>
+            <button data-page="broker"       class="nav-btn nav-item">브로커 명령</button>
+            <button data-page="tools"        class="nav-btn nav-item">운영 도구 (외부 링크)</button>
           </div>
         </div>
 
-        <!-- 시세 설정 — 마스터 데이터 (etcd hot reload) -->
-        <div class="nav-group" data-group="master">
+        <!-- 상품채널 → 외환상품 → 시세 / 마진 / 프로파일 (3단) -->
+        <div class="nav-group" data-group="product">
           <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
-            🪙 시세 설정 <span class="nav-chev ml-auto transition-transform">▾</span></button>
-          <div class="nav-group-body space-y-0.5 mb-3">
-            <button data-page="currency"    class="nav-btn nav-item"><span class="nav-ico">🪙</span>통화 마스터</button>
-            <button data-page="pair-master" class="nav-btn nav-item"><span class="nav-ico">🔗</span>통화쌍 마스터</button>
-            <button data-page="swap"        class="nav-btn nav-item"><span class="nav-ico">📅</span>선물환 스왑</button>
-            <a href="/swap-points.html" target="_blank" class="nav-btn nav-item" style="text-decoration:none"><span class="nav-ico">💱</span>스왑포인트(수신·조정)</a>
-            <button data-page="holidays"    class="nav-btn nav-item"><span class="nav-ico">📆</span>휴일 캘린더</button>
-            <button data-page="profiles"    class="nav-btn nav-item"><span class="nav-ico">🧩</span>프로파일</button>
-            <button data-page="users"       class="nav-btn nav-item"><span class="nav-ico">👥</span>사용자 프로파일</button>
-          </div>
-        </div>
+            상품채널 <span class="nav-chev ml-auto transition-transform">▾</span></button>
+          <div class="nav-group-body mb-3">
+            <div class="ml-2 pl-2 border-l border-ink-700 space-y-3">
+              <div class="text-[11px] text-slate-400 pt-1">외환상품</div>
 
-        <!-- 마진 — 마진 5종 한곳 -->
-        <div class="nav-group" data-group="margin">
-          <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
-            💰 마진 <span class="nav-chev ml-auto transition-transform">▾</span></button>
-          <div class="nav-group-body space-y-0.5 mb-3">
-            <button data-page="pricing"       class="nav-btn nav-item"><span class="nav-ico">💰</span>마진 테이블</button>
-            <button data-page="margin-policy" class="nav-btn nav-item"><span class="nav-ico">📜</span>마진 정책 명세</button>
-            <button data-page="margin-calc"   class="nav-btn nav-item"><span class="nav-ico">🔬</span>마진 계산기 (5-Layer)</button>
-            <button data-page="margin"        class="nav-btn nav-item"><span class="nav-ico">🧮</span>마진 재계산</button>
-            <button data-page="margin-wizard" class="nav-btn nav-item"><span class="nav-ico">🪄</span>마진 변경 미리보기</button>
-          </div>
-        </div>
+              <div class="space-y-0.5">
+                <div class="text-[10px] uppercase tracking-widest text-slate-600 pl-1">시세</div>
+                <button data-page="currency"    class="nav-btn nav-item">통화 마스터</button>
+                <button data-page="pair-master" class="nav-btn nav-item">통화쌍 마스터</button>
+                <button data-page="swap"        class="nav-btn nav-item">선물환 스왑</button>
+                <a href="/swap-points.html" target="_blank" class="nav-btn nav-item" style="text-decoration:none">스왑포인트 (수신·조정)</a>
+                <button data-page="holidays"    class="nav-btn nav-item">휴일 캘린더</button>
+                <button data-page="quote"       class="nav-btn nav-item">시세 (라이브 ws)</button>
+                <button data-page="pricestats"  class="nav-btn nav-item">시세 통계 (mci-price)</button>
+                <button data-page="chartstats"  class="nav-btn nav-item">차트 통계 (mci-chart)</button>
+                <a href="#" rel="noopener" class="nav-item" title="mci-chart 직접 접속"
+                   onclick="event.preventDefault();window.open(chartLinkURL('http://localhost:8086/'),'_blank','noopener');">차트 (mci-chart)<span class="ml-auto text-[10px] text-slate-600">↗</span></a>
+                <a href="#" rel="noopener" class="nav-item" title="mci-edge-chart — DMZ proxy 경유"
+                   onclick="event.preventDefault();window.open(chartLinkURL('http://localhost:8087/'),'_blank','noopener');">차트 (edge-chart)<span class="ml-auto text-[10px] text-slate-600">↗</span></a>
+              </div>
 
-        <!-- 게이트웨이/연결 — 외부 채널 종단 + 연결 현황 -->
-        <div class="nav-group" data-group="gateway">
-          <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
-            🔌 게이트웨이/연결 <span class="nav-chev ml-auto transition-transform">▾</span></button>
-          <div class="nav-group-body space-y-0.5 mb-3">
-            <a href="/fix-gateways.html" class="nav-item" title="mci-edge-fix-ord (주문) + mci-edge-fix-md (시세) 실시간 stats 통합 대시보드">
-              <span class="nav-ico">🛰</span>FIX 상태 (실시간)</a>
-            <a href="/fix-counterparties.html" class="nav-item" title="카운터파티 등록/편집 + fix-tester CLI + ExecutionReport drop copy">
-              <span class="nav-ico">👤</span>FIX 카운터파티</a>
-            <button data-page="tcpgw"  class="nav-btn nav-item" title="mci-edge-tcp — 레거시 cs (HTS/EMP) raw TCP 전문 gateway 연결 현황"><span class="nav-ico">🔌</span>TCP 게이트웨이</button>
-            <button data-page="wsmon"  class="nav-btn nav-item"><span class="nav-ico">📡</span>WS 모니터</button>
-            <button data-page="connections" class="nav-btn nav-item"><span class="nav-ico">🔗</span>연결 (ws)</button>
-            <button data-page="subscribers" class="nav-btn nav-item"><span class="nav-ico">🧲</span>구독자 (gRPC)</button>
-          </div>
-        </div>
+              <div class="space-y-0.5">
+                <div class="text-[10px] uppercase tracking-widest text-slate-600 pl-1">마진</div>
+                <button data-page="pricing"       class="nav-btn nav-item">마진 테이블</button>
+                <button data-page="margin-policy" class="nav-btn nav-item">마진 정책 명세</button>
+                <button data-page="margin-calc"   class="nav-btn nav-item">마진 계산기 (5-Layer)</button>
+                <button data-page="margin"        class="nav-btn nav-item">마진 재계산</button>
+                <button data-page="margin-wizard" class="nav-btn nav-item">마진 변경 미리보기</button>
+              </div>
 
-        <!-- 통계 — 관측 + 사후 감사 -->
-        <div class="nav-group" data-group="stats">
-          <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
-            📈 통계 <span class="nav-chev ml-auto transition-transform">▾</span></button>
-          <div class="nav-group-body space-y-0.5 mb-3">
-            <button data-page="monitoring" class="nav-btn nav-item"><span class="nav-ico">🖥</span>운영 모니터링</button>
-            <button data-page="recenttx"   class="nav-btn nav-item"><span class="nav-ico">🧾</span>매매 감사 (최근 N건)</button>
-            <button data-page="audit"      class="nav-btn nav-item"><span class="nav-ico">📜</span>감사 로그</button>
-            <button data-page="pricestats" class="nav-btn nav-item"><span class="nav-ico">💹</span>시세 통계 (mci-price)</button>
-            <button data-page="aliasstats" class="nav-btn nav-item"><span class="nav-ico">📊</span>매매 통계 (alias × tier)</button>
-            <button data-page="chartstats" class="nav-btn nav-item"><span class="nav-ico">📉</span>차트 통계 (mci-chart)</button>
-            <button data-page="fwdstats" class="nav-btn nav-item"><span class="nav-ico">📡</span>forwarder 통계</button>
-            <button data-page="quoteid-engines" class="nav-btn nav-item"><span class="nav-ico">🔑</span>QuoteID 엔진</button>
-            <button data-page="quoteid-lookup"  class="nav-btn nav-item"><span class="nav-ico">🔍</span>QuoteID 조회</button>
-            <button data-page="quoteid-stats"   class="nav-btn nav-item"><span class="nav-ico">✅</span>Validate 통계</button>
-            <button data-page="swaplock"    class="nav-btn nav-item"><span class="nav-ico">🔁</span>FX swap 잠금 통계</button>
-            <button data-page="algo"        class="nav-btn nav-item"><span class="nav-ico">🤖</span>Algo Stream</button>
-            <button data-page="customer-search" class="nav-btn nav-item"><span class="nav-ico">🧑‍💼</span>Customer 검색</button>
-          </div>
-        </div>
-
-        <!-- 개발 도구 — 검증/호출/외부 링크 -->
-        <div class="nav-group" data-group="dev">
-          <button class="nav-group-hd w-full flex items-center px-2 pt-1 pb-1 text-[10px] uppercase tracking-widest text-slate-500 hover:text-slate-300">
-            🔧 개발 도구 <span class="nav-chev ml-auto transition-transform">▾</span></button>
-          <div class="nav-group-body space-y-0.5 mb-3">
-            <button data-page="svcio"  class="nav-btn nav-item"><span class="nav-ico">📋</span>서비스 명세</button>
-            <button data-page="tester" class="nav-btn nav-item"><span class="nav-ico">🧪</span>API 테스터</button>
-            <button data-page="broker" class="nav-btn nav-item"><span class="nav-ico">🖧</span>브로커 명령</button>
-            <button data-page="quote"  class="nav-btn nav-item"><span class="nav-ico">💱</span>시세 (라이브 ws)</button>
-            <a href="#" target="_blank" rel="noopener" class="nav-item" title="mci-chart — TradingView lightweight-charts UI (사내망 직접 접속)"
-               onclick="event.preventDefault();window.open(chartLinkURL('http://localhost:8086/'),'_blank','noopener');">
-              <span class="nav-ico">📈</span>차트 (mci-chart)
-              <span class="ml-auto text-[10px] text-slate-600">↗</span></a>
-            <a href="#" target="_blank" rel="noopener" class="nav-item" title="mci-edge-chart — DMZ proxy 경유 (인증 / IP allowlist 적용)"
-               onclick="event.preventDefault();window.open(chartLinkURL('http://localhost:8087/'),'_blank','noopener');">
-              <span class="nav-ico">🗺</span>차트 (edge-chart)
-              <span class="ml-auto text-[10px] text-slate-600">↗</span></a>
-            <button data-page="tools" class="nav-btn nav-item"><span class="nav-ico">🧰</span>운영 도구 (외부 링크)</button>
+              <div class="space-y-0.5">
+                <div class="text-[10px] uppercase tracking-widest text-slate-600 pl-1">프로파일 / 고객</div>
+                <button data-page="profiles" class="nav-btn nav-item">프로파일</button>
+                <button data-page="users"    class="nav-btn nav-item">사용자 프로파일</button>
+              </div>
+            </div>
           </div>
         </div>
 
         <!-- 도움말 — 항상 노출 -->
         <div class="space-y-0.5 mb-2">
-          <button data-page="guide" class="nav-btn nav-item"><span class="nav-ico">📖</span>운영 가이드</button>
+          <button data-page="guide" class="nav-btn nav-item">운영 가이드</button>
         </div>
       </nav>
 
@@ -509,26 +495,25 @@
             </div>
           </div>
 
-          <div class="border-gradient rounded-2xl p-5">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="font-semibold">MCI 프로세스 상태 · 연결 토폴로지</h3>
-              <span id="mci-health-summary" class="text-xs font-mono text-slate-500">—</span>
+        </div>
+
+        <!-- MCI 관리채널 — 프로세스 그리드 (상태·리소스·포트·제어) -->
+        <div id="page-mci" class="page hidden space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 class="font-semibold">MCI 프로세스</h3>
+              <p class="text-xs text-slate-500">각 프로세스가 어떤 상태·리소스·포트로 돌고 있는지. 제어 활성 시 우측에서 기동/재기동/종료.</p>
             </div>
-            <!-- 3열 티어 (DMZ → Internal → Infra) + SVG 연결선 오버레이.
-                 트래픽 방향 (외부→내부) 대로 왼쪽→오른쪽 배치. -->
-            <div id="mci-topo" class="relative">
-              <svg id="mci-topo-svg" class="absolute inset-0 w-full h-full pointer-events-none" style="z-index:0"></svg>
-              <div class="relative grid grid-cols-3 gap-6" style="z-index:1">
-                <div><div class="text-[10px] uppercase tracking-widest text-slate-500 mb-2 text-center">DMZ · edge</div><div id="topo-dmz" class="space-y-2"></div></div>
-                <div><div class="text-[10px] uppercase tracking-widest text-slate-500 mb-2 text-center">Internal · mci</div><div id="topo-internal" class="space-y-2"></div></div>
-                <div><div class="text-[10px] uppercase tracking-widest text-slate-500 mb-2 text-center">Infra</div><div id="topo-infra" class="space-y-2"></div></div>
-              </div>
-            </div>
-            <div class="mt-3 text-[10px] text-slate-500 flex items-center gap-3">
-              <span class="text-warn">🌐 외부 노출 (SG 인바운드 개방 대상 — 해당 대역만)</span>
-              <span>· 각 노드에 접속 프로토콜/포트 표시</span>
-            </div>
-            <div id="mci-health-grid" class="hidden"></div>
+            <span id="mci-health-summary" class="text-xs font-mono text-slate-500">—</span>
+          </div>
+          <div class="border-gradient rounded-2xl overflow-hidden">
+            <div id="mci-grid" class="overflow-x-auto"></div>
+          </div>
+          <div class="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span><span class="inline-block w-2 h-2 rounded-full bg-good align-middle"></span> up</span>
+            <span><span class="inline-block w-2 h-2 rounded-full bg-bad align-middle"></span> down</span>
+            <span>· <span class="text-warn">EXT</span> = 외부 노출(SG 개방 대상)</span>
+            <span>· 상태/PID/메모리/가동시간은 systemd 기준</span>
           </div>
         </div>
 
@@ -3648,6 +3633,7 @@ function goPage(name) {
                    "margin-policy": "마진 정책 명세",
                    monitoring: "운영 모니터링",
                    audit: "감사 로그", guide: "운영 가이드", tools: "운영 도구 (외부 링크)",
+                   mci: "MCI 프로세스",
                    swaplock: "FX swap 잠금 통계" };
   $("#page-title").textContent = titles[name] || "—";
   if (name !== "dashboard") stopDashboardPoller();
@@ -3704,6 +3690,19 @@ function goPage(name) {
   if (name === "algo") initAlgo();
   if (name !== "tcpgw") stopTcpGwPoller();
   if (name === "tcpgw") initTcpGw();
+  if (name !== "mci") stopMciPoller();
+  if (name === "mci") initMci();
+}
+
+// MCI 프로세스 그리드 poller — 진입 시 즉시 1회 + 5초 주기, 이탈 시 정지.
+let mciPoller = null;
+function initMci() {
+  refreshMciHealth();
+  if (mciPoller) clearInterval(mciPoller);
+  mciPoller = setInterval(refreshMciHealth, 5000);
+}
+function stopMciPoller() {
+  if (mciPoller) { clearInterval(mciPoller); mciPoller = null; }
 }
 
 // ───────── Cmd+K 커맨드 팔레트 + 최근 방문 ─────────
@@ -3820,7 +3819,7 @@ function initCmdk() {
 
 // ───────── nav 그룹 접기/펼치기 ─────────
 // 상태는 localStorage(wtg_nav_groups) — {groupId: true(펼침)}. 기본: ops 만 펼침.
-const LS_NAV_GROUPS = "wtg_nav_groups";
+const LS_NAV_GROUPS = "wtg_nav_groups_v2";
 
 function navGroupState() {
   try { return JSON.parse(localStorage.getItem(LS_NAV_GROUPS) || "") || {}; }
@@ -3837,7 +3836,7 @@ function applyNavGroup(g, open) {
 function initNavGroups() {
   const st = localStorage.getItem(LS_NAV_GROUPS)
     ? navGroupState()
-    : { ops: true }; // 최초 방문 기본값 — 운영만 펼침
+    : { mci: true, ops: true, product: true }; // 최초 방문 기본값 — 3개 대분류 모두 펼침
   $$("#nav .nav-group").forEach(g => applyNavGroup(g, !!st[g.dataset.group]));
 }
 
@@ -4101,10 +4100,8 @@ async function pollDashboard() {
   const cur = ok ? list.filter(x => x.active).length : (dash.full.routes.at(-1) ?? 0);
   pushFull(lbl, cur, ms, brokerUp ? 1 : 0);
 
-  // MCI 프로세스 상태 — 4초마다 (폴링 2회에 1번, 서비스 fan-out 부하 절감).
-  dash.healthTick = (dash.healthTick || 0) + 1;
-  if (dash.healthTick % 2 === 1) refreshMciHealth();
 }
+// MCI 프로세스 그리드는 별도 페이지(#page-mci)에서 자체 poller 로 갱신 (goPage mci).
 
 // refreshMciHealth — /v1/admin/mci-health 를 3열 티어 토폴로지로 렌더.
 // DMZ(edge) → Internal(mci) → Infra 를 트래픽 방향대로 배치하고, 각 서비스의
@@ -4139,64 +4136,75 @@ function mciControlRow(name) {
     btn("종료", "stop", "bg-bad/15 text-bad hover:bg-bad/25", "종료할까요? (서비스 중단)"));
 }
 
+// fmtUptime — 초 → 사람이 읽는 가동시간.
+function fmtUptime(sec) {
+  if (!sec || sec <= 0) return "—";
+  if (sec < 60) return sec + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h " + Math.floor((sec % 3600) / 60) + "m";
+  return Math.floor(sec / 86400) + "d " + Math.floor((sec % 86400) / 3600) + "h";
+}
+
 async function refreshMciHealth() {
-  const topo = $("#mci-topo");
-  if (!topo) return;
+  const grid = $("#mci-grid");
+  if (!grid) return;
   let d;
   try {
     d = await api("/v1/admin/mci-health");
   } catch (e) {
-    $("#mci-health-summary").textContent = "조회 실패";
+    if ($("#mci-health-summary")) $("#mci-health-summary").textContent = "조회 실패";
     return;
   }
-  mciTopoLast = d;
-  $("#mci-health-summary").textContent = `${d.up}/${d.total} up`;
-  $("#mci-health-summary").className = "text-xs font-mono " +
-    (d.up === d.total ? "text-good" : "text-bad");
-
-  const byName = {};
-  const cols = { dmz: [], internal: [], infra: [] };
-  for (const s of d.services || []) {
-    byName[s.name] = s;
-    (cols[s.tier] || cols.internal).push(s);
-  }
-  // broker 는 HTTP health 없음 (TCP) — infra 에 참조 노드로 표시, 상태는 상단 KPI 연동.
-  if (!byName["broker"]) {
-    const brk = { name: "broker", tier: "infra", _ref: true };
-    byName["broker"] = brk; cols.infra.push(brk);
+  if ($("#mci-health-summary")) {
+    $("#mci-health-summary").textContent = `${d.up}/${d.total} up` + (d.control_enabled ? " · 제어 가능" : "");
+    $("#mci-health-summary").className = "text-xs font-mono " + (d.up === d.total ? "text-good" : "text-bad");
   }
 
-  const node = (s) => {
-    const known = s.up !== undefined;
-    const dotCls = s._ref ? "bg-slate-500" : (s.up ? "bg-good" : "bg-bad");
-    const el = h("div", {
-      // External(SG 개방 대상) 은 좌측 강조 테두리로 구분.
-      class: "mci-node flex flex-col gap-0.5 px-2.5 py-2 rounded-lg bg-ink-800/60 border " +
-             (s.external ? "border-l-2 border-l-warn border-transparent" : "border-transparent"),
-      dataset: { node: s.name },
-      title: s._ref ? "broker (TCP) — 상단 broker 카드 참조"
-                    : (s.url + (s.error ? " — " + s.error : "")
-                       + (s.external ? "  · 외부 노출 (SG 개방 대상)" : "")),
-    },
-      h("div", { class: "flex items-center gap-2" },
-        h("span", { class: "w-2 h-2 rounded-full shrink-0 " + dotCls }),
-        h("span", { class: "truncate text-sm", text: s.name.replace("mci-", "") }),
-        h("span", { class: "ml-auto text-[10px] font-mono " + (s._ref ? "text-slate-500" : (s.up ? "text-slate-500" : "text-bad")),
-                    text: s._ref ? "—" : (known && s.up ? s.latency_ms + "ms" : "DOWN") })),
-      // 접속 프로토콜/포트 — external 은 주황(SG 대상), 내부는 흐림.
-      s.access ? h("div", { class: "text-[10px] font-mono pl-4 " + (s.external ? "text-warn" : "text-slate-500"),
-                            text: (s.external ? "🌐 " : "") + s.access }) : null);
-    // 프로세스 제어 버튼 — control_enabled + allowlist 서비스(etcd/mci-admin 제외)만.
-    if (s.controllable) el.appendChild(mciControlRow(s.name));
-    return el;
-  };
+  const th = (t, extra) => h("th", { class: "text-left font-medium text-[10px] uppercase tracking-widest text-slate-500 px-3 py-2 " + (extra || ""), text: t });
+  const head = h("tr", { class: "border-b border-ink-700" },
+    th("서비스"), th("상태"), th("가동"), th("PID"), th("메모리"), th("포트 · 접속"), th("upstream"), th("제어", "text-right"));
 
-  for (const [tier, boxId] of [["dmz","topo-dmz"],["internal","topo-internal"],["infra","topo-infra"]]) {
-    const box = $("#" + boxId);
-    box.replaceChildren();
-    cols[tier].forEach(s => box.appendChild(node(s)));
+  const tbody = h("tbody", {});
+  const tiers = [["dmz", "DMZ · edge"], ["internal", "Internal · mci"], ["infra", "Infra"]];
+  const byTier = { dmz: [], internal: [], infra: [] };
+  for (const s of d.services || []) (byTier[s.tier] || byTier.internal).push(s);
+
+  for (const [tier, label] of tiers) {
+    const rows = byTier[tier];
+    if (!rows || !rows.length) continue;
+    tbody.appendChild(h("tr", {},
+      h("td", { colspan: "8", class: "px-3 pt-4 pb-1 text-[10px] uppercase tracking-widest text-slate-500" }, label)));
+    for (const s of rows) {
+      const dot = h("span", { class: "inline-block w-2 h-2 rounded-full align-middle " + (s.up ? "bg-good" : "bg-bad") });
+      const stateTxt = s.sysd_state ? (s.sysd_state + (s.sysd_sub && s.sysd_sub !== "running" ? "/" + s.sysd_sub : "")) : (s.up ? "up" : "down");
+      const nameCell = h("td", { class: "px-3 py-2" },
+        h("div", { class: "flex items-center gap-2" },
+          h("span", { class: "font-medium text-sm", text: s.name }),
+          s.external ? h("span", { class: "text-[9px] font-mono px-1 rounded bg-warn/15 text-warn", text: "EXT" }) : null));
+      const ctlCell = h("td", { class: "px-3 py-2 text-right" });
+      if (s.controllable) {
+        const row = mciControlRow(s.name);
+        row.className = "flex gap-1 justify-end";
+        ctlCell.appendChild(row);
+      } else {
+        ctlCell.appendChild(h("span", { class: "text-[10px] text-slate-600", text: "—" }));
+      }
+      tbody.appendChild(h("tr", { class: "border-b border-ink-800/60 hover:bg-ink-800/40" },
+        nameCell,
+        h("td", { class: "px-3 py-2 whitespace-nowrap" }, dot,
+          h("span", { class: "ml-2 text-xs " + (s.up ? "text-slate-300" : "text-bad"), text: stateTxt }),
+          (s.up && s.latency_ms != null) ? h("span", { class: "ml-2 text-[10px] font-mono text-slate-600", text: s.latency_ms + "ms" }) : null),
+        h("td", { class: "px-3 py-2 text-xs font-mono text-slate-400 whitespace-nowrap", text: fmtUptime(s.uptime_sec) }),
+        h("td", { class: "px-3 py-2 text-xs font-mono text-slate-400", text: s.pid ? String(s.pid) : "—" }),
+        h("td", { class: "px-3 py-2 text-xs font-mono text-slate-400 whitespace-nowrap", text: s.mem_mb ? s.mem_mb + "MB" : "—" }),
+        h("td", { class: "px-3 py-2 text-xs font-mono " + (s.external ? "text-warn" : "text-slate-400"), text: s.access || "—" }),
+        h("td", { class: "px-3 py-2 text-xs text-slate-500", text: s.upstream || "—" }),
+        ctlCell));
+    }
   }
-  drawMciTopoLines();
+
+  const table = h("table", { class: "w-full text-sm border-collapse" }, h("thead", {}, head), tbody);
+  grid.replaceChildren(table);
 }
 
 // drawMciTopoLines — 각 노드 upstream 관계를 SVG 선으로. 노드 DOM 위치 기반이라

@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"net/http"
+	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +55,13 @@ type MciHealthEntry struct {
 	// Controllable — MCI 패널에서 start/stop/restart 가능한 서비스인지 (control
 	// allowlist 등록 + 기능 활성 시 true). etcd/mci-admin 은 항상 false.
 	Controllable bool `json:"controllable,omitempty"`
+	// ─── systemd 런타임 ("어떤 정보로 돌고 있는지") — 그리드 표시용 ───
+	// systemctl show 로 수집 (unprivileged). systemctl 부재(mac/dev) 시 공란.
+	SysdState string `json:"sysd_state,omitempty"` // active|inactive|failed|activating
+	SysdSub   string `json:"sysd_sub,omitempty"`   // running|dead|...
+	PID       int    `json:"pid,omitempty"`
+	MemMB     int    `json:"mem_mb,omitempty"`
+	UptimeSec int64  `json:"uptime_sec,omitempty"` // MainPID 기준 경과초 (0=미상)
 }
 
 // defaultMciTargets — 단일 호스트 배치 (dev EC2) 기준 진단 endpoint 카탈로그.
@@ -154,12 +163,53 @@ func checkMciTargets(ctx context.Context, targets []MciTarget) []MciHealthEntry 
 			if !e.Up {
 				e.Error = resp.Status
 			}
+			fillSystemdRuntime(cctx, &e)
 			out[i] = e
 		}(i, t)
 	}
 	wg.Wait()
 	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
 	return out
+}
+
+// fillSystemdRuntime — `systemctl show wtg-<name>` 로 런타임 정보를 채운다.
+// unprivileged (sudo 불필요). systemctl 부재/유닛 없음 시 조용히 skip (dev/mac).
+func fillSystemdRuntime(ctx context.Context, e *MciHealthEntry) {
+	unit := "wtg-" + e.Name + ".service"
+	cmd := exec.CommandContext(ctx, "systemctl", "show", unit,
+		"-p", "ActiveState", "-p", "SubState", "-p", "MainPID", "-p", "MemoryCurrent")
+	out, err := cmd.Output()
+	if err != nil {
+		return // systemctl 없음(mac) 또는 유닛 미존재 — 공란 유지.
+	}
+	var pid int64
+	for _, ln := range strings.Split(string(out), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(ln), "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "ActiveState":
+			e.SysdState = v
+		case "SubState":
+			e.SysdSub = v
+		case "MainPID":
+			pid, _ = strconv.ParseInt(v, 10, 64)
+			e.PID = int(pid)
+		case "MemoryCurrent":
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				e.MemMB = int(n / (1024 * 1024))
+			}
+		}
+	}
+	// uptime — MainPID 의 etimes(초). systemd 타임스탬프 파싱 회피.
+	if pid > 0 {
+		if b, err := exec.CommandContext(ctx, "ps", "-o", "etimes=", "-p", strconv.FormatInt(pid, 10)).Output(); err == nil {
+			if s, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
+				e.UptimeSec = s
+			}
+		}
+	}
 }
 
 // MciHealth — GET /v1/admin/mci-health 핸들러.

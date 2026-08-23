@@ -1,0 +1,46 @@
+# WTG mci-admin 프로세스 제어 — winway 가 MCI 패널에서 특정 wtg-* 유닛을
+# start/stop/restart 할 수 있도록 정확히 열거한 NOPASSWD 화이트리스트.
+#
+# 설치: /etc/sudoers.d/wtg-admin (mode 0440, root:root). `visudo -c` 검증 필수.
+# 원칙:
+#   - 와일드카드(systemctl *) 절대 금지 — 전 시스템 장악 위험.
+#   - etcd(SoT)·mci-admin(self) 은 의도적으로 제외 (내리면 전체/콘솔 붕괴).
+#   - unit×action 을 코드 allowlist(internal/admin/mci_control.go)와 1:1 동기화.
+#   - systemctl 절대경로 /usr/bin/systemctl (sudo secure_path 해석 일치).
+
+Cmnd_Alias WTG_CTL = \
+    /usr/bin/systemctl start   wtg-mci-api.service,          \
+    /usr/bin/systemctl stop    wtg-mci-api.service,          \
+    /usr/bin/systemctl restart wtg-mci-api.service,          \
+    /usr/bin/systemctl start   wtg-mci-price.service,        \
+    /usr/bin/systemctl stop    wtg-mci-price.service,        \
+    /usr/bin/systemctl restart wtg-mci-price.service,        \
+    /usr/bin/systemctl start   wtg-mci-price-krx.service,    \
+    /usr/bin/systemctl stop    wtg-mci-price-krx.service,    \
+    /usr/bin/systemctl restart wtg-mci-price-krx.service,    \
+    /usr/bin/systemctl start   wtg-mci-push.service,         \
+    /usr/bin/systemctl stop    wtg-mci-push.service,         \
+    /usr/bin/systemctl restart wtg-mci-push.service,         \
+    /usr/bin/systemctl start   wtg-quote-forwarder.service,  \
+    /usr/bin/systemctl stop    wtg-quote-forwarder.service,  \
+    /usr/bin/systemctl restart wtg-quote-forwarder.service,  \
+    /usr/bin/systemctl start   wtg-mci-edge-api.service,     \
+    /usr/bin/systemctl stop    wtg-mci-edge-api.service,     \
+    /usr/bin/systemctl restart wtg-mci-edge-api.service,     \
+    /usr/bin/systemctl start   wtg-mci-edge-tcp.service,     \
+    /usr/bin/systemctl stop    wtg-mci-edge-tcp.service,     \
+    /usr/bin/systemctl restart wtg-mci-edge-tcp.service,     \
+    /usr/bin/systemctl start   wtg-mci-edge-fix-ord.service, \
+    /usr/bin/systemctl stop    wtg-mci-edge-fix-ord.service, \
+    /usr/bin/systemctl restart wtg-mci-edge-fix-ord.service, \
+    /usr/bin/systemctl start   wtg-mci-edge-fix-md.service,  \
+    /usr/bin/systemctl stop    wtg-mci-edge-fix-md.service,  \
+    /usr/bin/systemctl restart wtg-mci-edge-fix-md.service,  \
+    /usr/bin/systemctl start   wtg-mci-edge-price.service,   \
+    /usr/bin/systemctl stop    wtg-mci-edge-price.service,   \
+    /usr/bin/systemctl restart wtg-mci-edge-price.service,   \
+    /usr/bin/systemctl start   wtg-mci-edge-push.service,    \
+    /usr/bin/systemctl stop    wtg-mci-edge-push.service,    \
+    /usr/bin/systemctl restart wtg-mci-edge-push.service
+
+winway ALL=(root) NOPASSWD: WTG_CTL

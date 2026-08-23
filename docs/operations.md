@@ -188,6 +188,24 @@ error_rate_pct, last_call_unix}`. UserProfileResolver 비활성 (degraded) 의
 | `-trust-edge`                                   | `WTG_ADMIN_TRUST_EDGE`                 | `X-WTG-SID` 신뢰 (사내망 mTLS 환경에서만)                        |
 | `-dev`, `-no-broker`                            | `WTG_ADMIN_DEV`, `_NO_BROKER`          | DevMode + broker 미연결 (UI 시각 검증)                        |
 | `-dev-routes-file`, `-dev-routes-policy`        | `WTG_ADMIN_DEV_ROUTES_*`               | DevMode 시드 JSON + `additive`/`sync`                    |
+| `-enable-process-control`                       | —                                      | MCI 패널에서 프로세스 start/stop/restart 허용. **기본 off** — sudoers+AllowCIDRs 선행 |
+
+#### MCI 프로세스 제어 (start/stop/restart)
+
+MCI 상태 패널의 각 서비스 카드에서 **기동/재기동/종료** 버튼으로 systemd 서비스를
+제어한다 (`POST /v1/admin/mci/{name}/{action}` → `sudo systemctl <action> wtg-<unit>`).
+
+- **활성화**: `--enable-process-control` (기본 off) + **scoped sudoers** 선행. 배포가
+  `deploy/ec2/wtg-admin.sudoers` → `/etc/sudoers.d/wtg-admin` (visudo 검증 후) 설치.
+  sudoers 는 `winway` 에게 **열거된 unit × {start,stop,restart}** 만 NOPASSWD 허용
+  (와일드카드 금지).
+- **제어 대상**: `internal/admin/mci_control.go` 의 코드 allowlist (mci-api/price/
+  price-krx/push/quote-forwarder/edge-* 11종). **etcd(SoT)·mci-admin(self) 은 항상 제외**
+  — 패널에 버튼이 뜨지 않는다.
+- **"설정반영"** = 재기동. WTG 설정 대부분은 etcd hot-reload(자동 반영)이고, flag/env/
+  파일 설정만 restart 로 반영된다.
+- **감사**: 모든 액션이 audit ring 에 `MCI_START`/`MCI_STOP`/`MCI_RESTART`(+`_FAIL`)로
+  기록된다 (usid/rid/unit). 접근은 `AllowCIDRs` 로 IP 제한 필수.
 
 ### 1.3. mci-push — Internal WS fan-out (`:8081`)
 

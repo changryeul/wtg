@@ -4110,6 +4110,35 @@ async function pollDashboard() {
 // DMZ(edge) → Internal(mci) → Infra 를 트래픽 방향대로 배치하고, 각 서비스의
 // upstream 관계를 SVG 연결선으로 그린다 (양 끝 up 이면 초록, 아니면 회색).
 let mciTopoLast = null;
+// mciControlRow — 서비스 카드의 기동/재기동/종료 버튼 행 (control 활성 시만 렌더).
+function mciControlRow(name) {
+  const btn = (label, action, cls, confirmMsg) => {
+    const b = h("button", {
+      class: "px-1.5 py-0.5 rounded text-[10px] font-mono border border-transparent " + cls,
+      text: label,
+    });
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      if (confirmMsg && !window.confirm(name + " — " + confirmMsg)) return;
+      b.disabled = true;
+      try {
+        const r = await api("/v1/admin/mci/" + encodeURIComponent(name) + "/" + action, { method: "POST" });
+        toast(name + " " + label + " 완료" + (r.unit ? " (" + r.unit + ")" : ""));
+      } catch (e) {
+        toast(name + " " + label + " 실패: " + e.message, "err");
+      } finally {
+        b.disabled = false;
+        setTimeout(refreshMciHealth, 800); // 상태 반영 후 갱신
+      }
+    };
+    return b;
+  };
+  return h("div", { class: "flex gap-1 pl-4 pt-1" },
+    btn("기동", "start", "bg-good/15 text-good hover:bg-good/25"),
+    btn("재기동", "restart", "bg-warn/15 text-warn hover:bg-warn/25", "재기동할까요? (설정반영 — 순간 단절)"),
+    btn("종료", "stop", "bg-bad/15 text-bad hover:bg-bad/25", "종료할까요? (서비스 중단)"));
+}
+
 async function refreshMciHealth() {
   const topo = $("#mci-topo");
   if (!topo) return;
@@ -4157,6 +4186,8 @@ async function refreshMciHealth() {
       // 접속 프로토콜/포트 — external 은 주황(SG 대상), 내부는 흐림.
       s.access ? h("div", { class: "text-[10px] font-mono pl-4 " + (s.external ? "text-warn" : "text-slate-500"),
                             text: (s.external ? "🌐 " : "") + s.access }) : null);
+    // 프로세스 제어 버튼 — control_enabled + allowlist 서비스(etcd/mci-admin 제외)만.
+    if (s.controllable) el.appendChild(mciControlRow(s.name));
     return el;
   };
 

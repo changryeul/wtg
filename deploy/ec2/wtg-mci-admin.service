@@ -27,7 +27,8 @@ ExecStart=/home/winway/common/wtg/bin/mci-admin \
     --dev-routes-file=/home/winway/common/wtg/etc/wtg-routes.json \
     --svc-common-header=/home/winway/nh-fxallone-server/win/src/inc/com/comhdr.h \
     --svc-inc-dir=/home/winway/nh-fxallone-server/win/src/inc/trn \
-    --openapi-server=https://3.36.188.87:8090
+    --openapi-server=https://3.36.188.87:8090 \
+    --enable-process-control
 
 Restart=on-failure
 RestartSec=10

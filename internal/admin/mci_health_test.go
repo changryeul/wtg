@@ -16,7 +16,7 @@ func TestMciHealthMixed(t *testing.T) {
 	dead := httptest.NewServer(http.HandlerFunc(nil))
 	dead.Close() // 즉시 닫음 — connection refused 유도
 
-	h := MciHealth("api="+alive.URL+",price="+dead.URL, "")
+	h := MciHealth("api="+alive.URL+",price="+dead.URL, "", false)
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodGet, "/v1/admin/mci-health", nil))
 
@@ -55,7 +55,7 @@ func TestMciHealth5xxIsDown(t *testing.T) {
 	}))
 	defer bad.Close()
 
-	h := MciHealth("svc="+bad.URL, "")
+	h := MciHealth("svc="+bad.URL, "", false)
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodGet, "/v1/admin/mci-health", nil))
 	var body struct {
@@ -89,7 +89,7 @@ func TestMciHealthEtcdSelfReport(t *testing.T) {
 	defer etcd.Close()
 
 	// 커스텀 target 없이 (기본 목록) + etcdEndpoint 주입.
-	h := MciHealth("", etcd.URL)
+	h := MciHealth("", etcd.URL, false)
 	rr := httptest.NewRecorder()
 	h(rr, httptest.NewRequest(http.MethodGet, "/x", nil))
 	var body struct {

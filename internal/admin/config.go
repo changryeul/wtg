@@ -151,6 +151,13 @@ type Config struct {
 	// ("name=url,name=url"). 비면 단일 호스트 배치 기본 목록 (mci_health.go).
 	MciHealthTargets string
 
+	// EnableProcessControl — MCI 패널에서 프로세스 start/stop/restart 를 허용한다.
+	// 기본 off (파괴적 액션). on 이면 sudo systemctl <action> wtg-<unit> 실행 —
+	// 반드시 (a) scoped sudoers (deploy/ec2/wtg-admin.sudoers) 선행, (b) AllowCIDRs
+	// 로 접근 IP 제한. etcd(SoT)·mci-admin(self) 은 코드 allowlist 에서 항상 제외.
+	// 상세: docs/operations.md, internal/admin/mci_control.go.
+	EnableProcessControl bool
+
 	// WsmonTargets — WS 모니터 reverse-proxy 대상 재정의 ("name=baseURL,...").
 	// 비면 단일 호스트 기본 목록 (wsmon_proxy.go). 다중 호스트 배치용.
 	WsmonTargets string
@@ -449,6 +456,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.UpstreamAPIURL, "upstream-api", cfg.UpstreamAPIURL, "mci-api base URL — Tx 테스터용 reverse proxy. 예: http://127.0.0.1:8080. 비면 비활성")
 	fs.StringVar(&cfg.OpenAPIServer, "openapi-server", cfg.OpenAPIServer, "OpenAPI servers[].url — 외부 API 게이트웨이 base URL (client 전달용). 비면 요청 origin 사용")
 	fs.StringVar(&cfg.MciHealthTargets, "mci-health-targets", cfg.MciHealthTargets, "대시보드 프로세스 상태 체크 대상 (name=url 콤마 구분). 비면 단일 호스트 기본 목록")
+	fs.BoolVar(&cfg.EnableProcessControl, "enable-process-control", cfg.EnableProcessControl, "MCI 패널에서 프로세스 start/stop/restart 허용 (sudo systemctl). 기본 off — sudoers+AllowCIDRs 선행 필수")
 	fs.StringVar(&cfg.WsmonTargets, "wsmon-targets", cfg.WsmonTargets, "WS 모니터 proxy 대상 (name=baseURL 콤마 구분). 비면 단일 호스트 기본 목록")
 	fs.StringVar(&cfg.TcpGwStatsURL, "tcp-gw-stats", cfg.TcpGwStatsURL, "mci-edge-tcp stats base URL (기본 http://127.0.0.1:5022)")
 	fs.StringVar(&cfg.PriceURL, "price-url", cfg.PriceURL, "mci-price HTTP base URL — 시세 통계 proxy. 기본 http://127.0.0.1:8082")

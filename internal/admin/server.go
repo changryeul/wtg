@@ -572,7 +572,14 @@ func (s *Server) Start(ctx context.Context) error {
 		mux.HandleFunc("POST /v1/tx", TxTestProxy(s.cfg.UpstreamAPIURL, s.logger))
 	}
 	// 대시보드 "MCI 프로세스 상태" — 각 서비스 진단 endpoint 병렬 ping.
-	mux.HandleFunc("GET /v1/admin/mci-health", MciHealth(s.cfg.MciHealthTargets, s.cfg.EtcdEndpoints))
+	mux.HandleFunc("GET /v1/admin/mci-health", MciHealth(s.cfg.MciHealthTargets, s.cfg.EtcdEndpoints, s.cfg.EnableProcessControl))
+	// MCI 프로세스 제어 (start/stop/restart) — sudo systemctl. 기본 off, allowlist
+	// (etcd/mci-admin 제외) + audit. --enable-process-control + sudoers 선행.
+	mux.HandleFunc("POST /v1/admin/mci/{name}/{action}", MciControl(&MciControlDeps{
+		Logger:  s.logger,
+		Audit:   s.audit,
+		Enabled: s.cfg.EnableProcessControl,
+	}))
 	// WS 모니터 reverse-proxy — 브라우저가 서비스 포트에 직접 못 닿는 원격
 	// 운영에서도 admin 포트 하나로 ws 모니터링 (Upgrade 통과).
 	mux.HandleFunc("GET /v1/admin/wsmon/{svc}/{rest...}", WsmonProxy(s.cfg.WsmonTargets, s.logger))

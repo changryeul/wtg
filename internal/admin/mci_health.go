@@ -50,6 +50,9 @@ type MciHealthEntry struct {
 	Up        bool   `json:"up"`
 	LatencyMs int64  `json:"latency_ms"`
 	Error     string `json:"error,omitempty"`
+	// Controllable — MCI 패널에서 start/stop/restart 가능한 서비스인지 (control
+	// allowlist 등록 + 기능 활성 시 true). etcd/mci-admin 은 항상 false.
+	Controllable bool `json:"controllable,omitempty"`
 }
 
 // defaultMciTargets — 단일 호스트 배치 (dev EC2) 기준 진단 endpoint 카탈로그.
@@ -164,7 +167,7 @@ func checkMciTargets(ctx context.Context, targets []MciTarget) []MciHealthEntry 
 // 포트, 외부면 --etcd 값). 기본 목록의 etcd target URL 을 이 값으로 self-report
 // 하여, 로컬 embedded etcd (동적 포트) 도 정확히 health 체크된다. 빈값이면
 // 기본 :2379 유지 (EC2 native etcd).
-func MciHealth(targetsSpec, etcdEndpoint string) http.HandlerFunc {
+func MciHealth(targetsSpec, etcdEndpoint string, controlEnabled bool) http.HandlerFunc {
 	targets := parseMciTargets(targetsSpec)
 	if len(targets) == 0 {
 		targets = defaultMciTargets()
@@ -180,16 +183,23 @@ func MciHealth(targetsSpec, etcdEndpoint string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries := checkMciTargets(r.Context(), targets)
 		up := 0
-		for _, e := range entries {
-			if e.Up {
+		for i := range entries {
+			if entries[i].Up {
 				up++
+			}
+			// 제어 가능 표시 — 기능 활성 + allowlist 등록 서비스만 (etcd/mci-admin 제외).
+			if controlEnabled {
+				if _, ok := ControllableUnit(entries[i].Name); ok {
+					entries[i].Controllable = true
+				}
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"services": entries,
-			"up":       up,
-			"total":    len(entries),
+			"services":        entries,
+			"up":              up,
+			"total":           len(entries),
+			"control_enabled": controlEnabled,
 		})
 	}
 }

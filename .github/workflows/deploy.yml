@@ -140,6 +140,20 @@ jobs:
           shopt -u nullglob
           sudo systemctl daemon-reload
 
+          # MCI 패널 프로세스 제어용 scoped sudoers (winway → systemctl start/stop/
+          # restart 특정 wtg-* 유닛만 NOPASSWD). visudo -c 검증 통과해야 설치.
+          if [ -f deploy/ec2/wtg-admin.sudoers ]; then
+            tmp_sudo="$(mktemp)"
+            sudo cp deploy/ec2/wtg-admin.sudoers "$tmp_sudo"
+            if sudo visudo -cf "$tmp_sudo"; then
+              sudo install -m 0440 -o root -g root "$tmp_sudo" /etc/sudoers.d/wtg-admin
+              echo "sudoers 설치: /etc/sudoers.d/wtg-admin"
+            else
+              echo "::error::wtg-admin.sudoers 검증 실패 — 설치 skip"
+            fi
+            sudo rm -f "$tmp_sudo"
+          fi
+
       - name: Write env file
         env:
           FIX_PUSH_SECRET_ENV: ${{ secrets.FIX_PUSH_SECRET }}

@@ -889,7 +889,10 @@ type CustomerQuote struct {
 	// Phase 4b — customer-specific 마진이 적용된 quote 인 경우의 customer 식별자.
 	// 빈 값이면 Profile-only quote (SubscribeQuote 경로). 채워지면
 	// SubscribeCustomerQuote 경로에서 customer 별 fan-out.
-	CustomerId    string `protobuf:"bytes,14,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
+	CustomerId string `protobuf:"bytes,14,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
+	// BidSize/AskSize — top-of-book 가용수량(avail). 마진 무관 passthrough (호가에 동반).
+	BidSize       float64 `protobuf:"fixed64,15,opt,name=bid_size,json=bidSize,proto3" json:"bid_size,omitempty"`
+	AskSize       float64 `protobuf:"fixed64,16,opt,name=ask_size,json=askSize,proto3" json:"ask_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1020,6 +1023,20 @@ func (x *CustomerQuote) GetCustomerId() string {
 		return x.CustomerId
 	}
 	return ""
+}
+
+func (x *CustomerQuote) GetBidSize() float64 {
+	if x != nil {
+		return x.BidSize
+	}
+	return 0
+}
+
+func (x *CustomerQuote) GetAskSize() float64 {
+	if x != nil {
+		return x.AskSize
+	}
+	return 0
 }
 
 // CustomerRegistration — RegisterCustomer stream 의 단위 메시지. edge 가 ws
@@ -1406,7 +1423,7 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\tclose_bid\x18\v \x01(\x01R\bcloseBid\x12\x1b\n" +
 	"\tclose_ask\x18\f \x01(\x01R\bcloseAsk\x12\x1d\n" +
 	"\n" +
-	"tick_count\x18\r \x01(\x05R\ttickCount\"\x87\x03\n" +
+	"tick_count\x18\r \x01(\x05R\ttickCount\"\xbd\x03\n" +
 	"\rCustomerQuote\x12\x12\n" +
 	"\x04pair\x18\x01 \x01(\tR\x04pair\x12\x18\n" +
 	"\achannel\x18\x02 \x01(\tR\achannel\x12\x12\n" +
@@ -1424,7 +1441,9 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\bquote_id\x18\f \x01(\tR\aquoteId\x121\n" +
 	"\x15valid_until_unix_nano\x18\r \x01(\x03R\x12validUntilUnixNano\x12\x1f\n" +
 	"\vcustomer_id\x18\x0e \x01(\tR\n" +
-	"customerId\"\xc7\x01\n" +
+	"customerId\x12\x19\n" +
+	"\bbid_size\x18\x0f \x01(\x01R\abidSize\x12\x19\n" +
+	"\bask_size\x18\x10 \x01(\x01R\aaskSize\"\xc7\x01\n" +
 	"\x14CustomerRegistration\x12/\n" +
 	"\x02op\x18\x01 \x01(\x0e2\x1f.wtg.v1.CustomerRegistration.OpR\x02op\x12\x1f\n" +
 	"\vcustomer_id\x18\x02 \x01(\tR\n" +

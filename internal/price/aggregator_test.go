@@ -10,8 +10,8 @@ import (
 
 // 테스트용 decoder: body 는 사용하지 않고 fixed bid/ask 반환.
 func staticDecoder(bid, ask float64) CookerBodyDecoder {
-	return func(_ []byte) (float64, float64, bool) {
-		return bid, ask, true
+	return func(_ []byte) (float64, float64, float64, float64, bool) {
+		return bid, ask, 0, 0, true
 	}
 }
 
@@ -158,7 +158,7 @@ func TestAggregator_InactiveSymbolDropped(t *testing.T) {
 func TestAggregator_DecoderFalseDrops(t *testing.T) {
 	agg := NewAggregator(
 		newSymMap(),
-		func(_ []byte) (float64, float64, bool) { return 0, 0, false },
+		func(_ []byte) (float64, float64, float64, float64, bool) { return 0, 0, 0, 0, false },
 		nil,
 	)
 	t0 := time.Date(2026, 5, 23, 12, 34, 0, 0, time.UTC)
@@ -181,8 +181,8 @@ func TestAggregator_OHLCAccuracy(t *testing.T) {
 
 	bid, ask := 100.0, 100.1
 	var bidPtr, askPtr = &bid, &ask
-	decoder := func(_ []byte) (float64, float64, bool) {
-		return *bidPtr, *askPtr, true
+	decoder := func(_ []byte) (float64, float64, float64, float64, bool) {
+		return *bidPtr, *askPtr, 0, 0, true
 	}
 
 	agg := NewAggregator(newSymMap(), decoder, onClose)

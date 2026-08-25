@@ -31,4 +31,7 @@ type Quote struct {
 	Bid  float64
 	Ask  float64
 	TS   time.Time
+	// BidSize/AskSize — top-of-book 가용수량(avail). 마진에 영향 없이 passthrough.
+	BidSize float64
+	AskSize float64
 }

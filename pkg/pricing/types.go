@@ -87,6 +87,8 @@ type CustomerQuote struct {
 	TS           time.Time
 	RawBid       float64 // 산출 근거가 된 raw bid
 	RawAsk       float64 // 산출 근거가 된 raw ask
+	BidSize      float64 // top-of-book 가용수량(avail) — 마진 무관 passthrough
+	AskSize      float64 // top-of-book 가용수량(avail)
 	TableVersion int64   // 적용된 PricingTable.Version
 
 	// QuoteID — FIX 4.4 tag 117 호환 식별자. PricingConsumer 가 발행 직전에

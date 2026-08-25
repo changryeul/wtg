@@ -12,11 +12,11 @@ import "github.com/winwaysystems/wtg/pkg/quote"
 // 검증은 quote.DecodeJSONEnvelope 가 수행하며, 실패하면 ok=false 로 drop.
 // (bid<=0, ask<bid, sym 누락, JSON 파싱 실패, 빈 body 모두 drop)
 func JSONCookerDecoder() CookerBodyDecoder {
-	return func(body []byte) (bid, ask float64, ok bool) {
+	return func(body []byte) (bid, ask, bidSize, askSize float64, ok bool) {
 		env, err := quote.DecodeJSONEnvelope(body)
 		if err != nil {
-			return 0, 0, false
+			return 0, 0, 0, 0, false
 		}
-		return env.Bid, env.Ask, true
+		return env.Bid, env.Ask, env.BidSize, env.AskSize, true
 	}
 }

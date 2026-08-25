@@ -279,6 +279,10 @@ message CustomerQuote {
   // 빈 값이면 Profile-only quote (SubscribeQuote 경로). 채워지면
   // SubscribeCustomerQuote 경로에서 customer 별 fan-out.
   string customer_id = 14;
+
+  // BidSize/AskSize — top-of-book 가용수량(avail). 마진 무관 passthrough (호가에 동반).
+  double bid_size = 15;
+  double ask_size = 16;
 }
 
 // CustomerRegistration — RegisterCustomer stream 의 단위 메시지. edge 가 ws

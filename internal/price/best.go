@@ -101,8 +101,9 @@ type BestConsumer struct {
 }
 
 type sourceQuote struct {
-	bid, ask float64
-	ts       time.Time
+	bid, ask         float64
+	bidSize, askSize float64 // top-of-book 가용수량(avail)
+	ts               time.Time
 }
 
 // tradeVal — 최근 체결가 + 수량.
@@ -249,13 +250,13 @@ func (b *BestConsumer) OnTick(t *Tick) {
 		bySource = make(map[string]sourceQuote)
 		b.cache[t.Symbol] = bySource
 	}
-	bySource[t.Source] = sourceQuote{bid: env.Bid, ask: env.Ask, ts: time.Now()}
+	bySource[t.Source] = sourceQuote{bid: env.Bid, ask: env.Ask, bidSize: env.BidSize, askSize: env.AskSize, ts: time.Now()}
 	// 체결가 동반 시 최근값 갱신 (없으면 이전값 유지 — mds MDFOLD.fillprc 모델).
 	if env.Last > 0 {
 		b.lastTrade[t.Symbol] = tradeVal{px: env.Last, qty: env.LastQty}
 	}
 	lt := b.lastTrade[t.Symbol]
-	bestBid, bestAsk, srcCount := b.recomputeLocked(bySource)
+	bestBid, bestAsk, bestBidSize, bestAskSize, srcCount := b.recomputeLocked(bySource)
 	// dedup — emit 전 이전 값과 비교. skip 시 lastEmitted 갱신 안 함 (다음
 	// 실제 emit 시점이 정확한 delta 판정 기준).
 	skip, sameSp := b.shouldDedupLocked(t.Symbol, bestBid, bestAsk)
@@ -289,6 +290,8 @@ func (b *BestConsumer) OnTick(t *Tick) {
 		Seq:     uint64(t.SeqNum),
 		Last:    lt.px, // 최근 시장 체결가 (persist)
 		LastQty: lt.qty,
+		BidSize: bestBidSize, // best bid 를 준 source 의 avail
+		AskSize: bestAskSize, // best ask 를 준 source 의 avail
 	})
 	if err != nil {
 		b.logger.Warn("best envelope 마샬 실패", slog.String("sym", t.Symbol), slog.Any("err", err))
@@ -320,7 +323,7 @@ func (b *BestConsumer) OnTick(t *Tick) {
 // 정책으로, 최신 ts 의 feed 의 bid/ask 를 그대로 사용 (해당 feed 자체는
 // 일관된 spread 라 cross 가 없음). srcCount=1 로 표시해서 호출자가 "fallback
 // 발동" 을 구분할 수 있게 음수 값으로 negate 한다.
-func (b *BestConsumer) recomputeLocked(bySource map[string]sourceQuote) (bid, ask float64, srcCount int) {
+func (b *BestConsumer) recomputeLocked(bySource map[string]sourceQuote) (bid, ask, bidSize, askSize float64, srcCount int) {
 	now := time.Now()
 	first := true
 	var newest sourceQuote
@@ -331,13 +334,15 @@ func (b *BestConsumer) recomputeLocked(bySource map[string]sourceQuote) (bid, as
 		}
 		if first {
 			bid, ask = sq.bid, sq.ask
+			bidSize, askSize = sq.bidSize, sq.askSize
 			first = false
 		} else {
+			// best_bid=max(bid), best_ask=min(ask) — 이긴 source 의 avail 을 동반.
 			if sq.bid > bid {
-				bid = sq.bid
+				bid, bidSize = sq.bid, sq.bidSize
 			}
 			if sq.ask < ask {
-				ask = sq.ask
+				ask, askSize = sq.ask, sq.askSize
 			}
 		}
 		srcCount++
@@ -346,12 +351,13 @@ func (b *BestConsumer) recomputeLocked(bySource map[string]sourceQuote) (bid, as
 			hasNewest = true
 		}
 	}
-	// Cross 검출 → 최신 feed 의 일관된 bid/ask 로 fallback.
+	// Cross 검출 → 최신 feed 의 일관된 bid/ask (+ 그 feed 의 avail) 로 fallback.
 	if hasNewest && srcCount > 1 && bid > ask {
 		bid, ask = newest.bid, newest.ask
+		bidSize, askSize = newest.bidSize, newest.askSize
 		srcCount = -srcCount // 음수 = "crossed → fallback 발동" 마커
 	}
-	return bid, ask, srcCount
+	return bid, ask, bidSize, askSize, srcCount
 }
 
 // Stats — 디버깅용 스냅샷 (per-symbol active source count + last best).
@@ -416,7 +422,7 @@ func (b *BestConsumer) Stats() BestStats {
 	}
 	now := time.Now()
 	for sym, bySource := range b.cache {
-		bid, ask, n := b.recomputeLocked(bySource)
+		bid, ask, _, _, n := b.recomputeLocked(bySource)
 		crossed := n < 0
 		if crossed {
 			n = -n

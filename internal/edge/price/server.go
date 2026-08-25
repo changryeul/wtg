@@ -464,6 +464,8 @@ func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		Tenor              string  `json:"tenor"`
 		Bid                float64 `json:"bid"`
 		Ask                float64 `json:"ask"`
+		BidSize            float64 `json:"bid_size,omitempty"` // avail
+		AskSize            float64 `json:"ask_size,omitempty"`
 		TSUnixNano         int64   `json:"ts_unix_nano"`
 		RawBid             float64 `json:"raw_bid,omitempty"`
 		RawAsk             float64 `json:"raw_ask,omitempty"`
@@ -480,6 +482,8 @@ func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		Tenor:              cq.GetTenor(),
 		Bid:                cq.GetBid(),
 		Ask:                cq.GetAsk(),
+		BidSize:            cq.GetBidSize(),
+		AskSize:            cq.GetAskSize(),
 		TSUnixNano:         cq.GetTsUnixNano(),
 		RawBid:             cq.GetRawBid(),
 		RawAsk:             cq.GetRawAsk(),
@@ -499,6 +503,8 @@ func encodeCustomerQuoteV2(cq *wtgpb.CustomerQuote) ([]byte, error) {
 	type fxQuoteData struct {
 		Bid                float64 `json:"bid"`
 		Ask                float64 `json:"ask"`
+		BidSize            float64 `json:"bid_size,omitempty"` // avail
+		AskSize            float64 `json:"ask_size,omitempty"`
 		RawBid             float64 `json:"raw_bid,omitempty"`
 		RawAsk             float64 `json:"raw_ask,omitempty"`
 		Tenor              string  `json:"tenor"`
@@ -526,6 +532,8 @@ func encodeCustomerQuoteV2(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		Data: fxQuoteData{
 			Bid:                cq.GetBid(),
 			Ask:                cq.GetAsk(),
+			BidSize:            cq.GetBidSize(),
+			AskSize:            cq.GetAskSize(),
 			RawBid:             cq.GetRawBid(),
 			RawAsk:             cq.GetRawAsk(),
 			Tenor:              cq.GetTenor(),

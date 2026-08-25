@@ -42,6 +42,41 @@ func buildRaw(sym, source string, bid, ask float64) *Tick {
 	}
 }
 
+// buildRawWithSize — bid/ask + top-of-book avail(size) 동반 raw Tick.
+func buildRawWithSize(sym, source string, bid, ask, bidSize, askSize float64) *Tick {
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: sym, Bid: bid, Ask: ask, Src: source, TS: time.Now().UTC(),
+		BidSize: bidSize, AskSize: askSize,
+	})
+	return &Tick{Symbol: sym, Source: source, Body: body, Received: time.Now()}
+}
+
+// best_bid 를 준 source 의 bidSize, best_ask 를 준 source 의 askSize 가 함께 실려야 한다.
+func TestBestConsumer_CarriesWinningAvail(t *testing.T) {
+	c := &collector{}
+	bc := NewBestConsumer(BestOptions{}, c)
+	// SMB: bid 1380.00 (avail 1M), ask 1380.08 (avail 1.5M)
+	// KMB: bid 1380.05 (avail 2M), ask 1380.20 (avail 3M)
+	// best bid = 1380.05 (KMB, 2M), best ask = 1380.08 (SMB, 1.5M)
+	bc.OnTick(buildRawWithSize("USDKRW", "SMB", 1380.00, 1380.08, 1_000_000, 1_500_000))
+	bc.OnTick(buildRawWithSize("USDKRW", "KMB", 1380.05, 1380.20, 2_000_000, 3_000_000))
+
+	ticks := c.snapshot()
+	if len(ticks) == 0 {
+		t.Fatal("best emit 없음")
+	}
+	env := decodeBest(t, ticks[len(ticks)-1])
+	if env.Bid != 1380.05 || env.Ask != 1380.08 {
+		t.Fatalf("best bid/ask=%v/%v want 1380.05/1380.08", env.Bid, env.Ask)
+	}
+	if env.BidSize != 2_000_000 {
+		t.Errorf("BidSize=%v want 2000000 (KMB 가 best bid)", env.BidSize)
+	}
+	if env.AskSize != 1_500_000 {
+		t.Errorf("AskSize=%v want 1500000 (SMB 가 best ask)", env.AskSize)
+	}
+}
+
 // buildRawWithLast — bid/ask + 체결가(last) 동반 raw Tick.
 func buildRawWithLast(sym, source string, bid, ask, last, lastQty float64) *Tick {
 	body, _ := json.Marshal(quote.JSONEnvelope{

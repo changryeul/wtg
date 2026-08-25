@@ -22,9 +22,13 @@ func build35W(feed, sym string, bid, ask float64) []byte {
 
 func TestFastExtractV1_Snapshot(t *testing.T) {
 	buf := build35W("SMB", "USDKRW", 1380.4500, 1380.5500)
-	sym, bid, ask, _, _, ok := fastExtractV1(buf)
+	sym, bid, ask, _, _, bidSize, askSize, ok := fastExtractV1(buf)
 	if !ok || sym != "USDKRW" || bid != 1380.45 || ask != 1380.55 {
 		t.Errorf("got sym=%q bid=%v ask=%v ok=%v", sym, bid, ask, ok)
+	}
+	// avail — bid(269=0) 271=1000000, ask(269=1) 271=1500000.
+	if bidSize != 1000000 || askSize != 1500000 {
+		t.Errorf("avail 추출 실패: bidSize=%v askSize=%v (want 1000000/1500000)", bidSize, askSize)
 	}
 }
 
@@ -45,9 +49,13 @@ func build35WithTrade(sym string, bid, ask, last, lastQty float64) []byte {
 // 체결가(269=2) 가 bid/ask 와 함께 오면 last/lastQty 로 추출된다 (mds fillprc 대응).
 func TestFastExtractV1_Trade(t *testing.T) {
 	buf := build35WithTrade("USDKRW", 1380.45, 1380.55, 1380.50, 500000)
-	sym, bid, ask, last, lastQty, ok := fastExtractV1(buf)
+	sym, bid, ask, last, lastQty, bidSize, askSize, ok := fastExtractV1(buf)
 	if !ok || sym != "USDKRW" || bid != 1380.45 || ask != 1380.55 {
 		t.Fatalf("bid/ask 추출 실패: sym=%q bid=%v ask=%v ok=%v", sym, bid, ask, ok)
+	}
+	// 체결 entry 의 271 은 lastQty 로, bid/ask entry 의 271 은 avail 로 분리.
+	if bidSize != 1000000 || askSize != 1500000 {
+		t.Errorf("avail=%v/%v want 1000000/1500000", bidSize, askSize)
 	}
 	if last != 1380.50 {
 		t.Errorf("last=%v, want 1380.50", last)
@@ -60,7 +68,7 @@ func TestFastExtractV1_Trade(t *testing.T) {
 // 체결가 없는 일반 snapshot 은 last=0 (trade entry 부재).
 func TestFastExtractV1_NoTrade(t *testing.T) {
 	buf := build35W("SMB", "USDKRW", 1380.45, 1380.55)
-	_, _, _, last, lastQty, ok := fastExtractV1(buf)
+	_, _, _, last, lastQty, _, _, ok := fastExtractV1(buf)
 	if !ok || last != 0 || lastQty != 0 {
 		t.Errorf("trade 없는데 last=%v lastQty=%v ok=%v", last, lastQty, ok)
 	}
@@ -84,7 +92,7 @@ func TestFastExtractV1_MatchesParseQuoteExtractV1(t *testing.T) {
 		oldSym, oldBid, oldAsk, oldOk := extractV1(richEnv)
 
 		// fast path
-		newSym, newBid, newAsk, _, _, newOk := fastExtractV1(buf)
+		newSym, newBid, newAsk, _, _, _, _, newOk := fastExtractV1(buf)
 
 		if oldOk != newOk || oldSym != newSym || oldBid != newBid || oldAsk != newAsk {
 			t.Errorf("불일치 (%s/%s): old=(%q,%v,%v,%v) new=(%q,%v,%v,%v)",
@@ -101,7 +109,7 @@ func TestFastExtractV1_OneSideOnly(t *testing.T) {
 		"268=1", "279=0", "269=0", "270=1380.45", "271=1000000",
 		"10=000", "",
 	}, "\x01"))
-	if _, _, _, _, _, ok := fastExtractV1(buf); ok {
+	if _, _, _, _, _, _, _, ok := fastExtractV1(buf); ok {
 		t.Errorf("bid 만인데 ok=true")
 	}
 }
@@ -114,23 +122,23 @@ func TestFastExtractV1_MissingSym(t *testing.T) {
 		"269=1", "270=1.1", "271=200",
 		"10=000", "",
 	}, "\x01"))
-	if _, _, _, _, _, ok := fastExtractV1(buf); ok {
+	if _, _, _, _, _, _, _, ok := fastExtractV1(buf); ok {
 		t.Errorf("sym 없는데 ok=true")
 	}
 }
 
 func TestFastExtractV1_CrossedAskLessThanBid(t *testing.T) {
 	buf := build35W("SMB", "USDKRW", 1380.55, 1380.45) // crossed
-	if _, _, _, _, _, ok := fastExtractV1(buf); ok {
+	if _, _, _, _, _, _, _, ok := fastExtractV1(buf); ok {
 		t.Errorf("ask<bid 인데 ok=true")
 	}
 }
 
 func TestFastExtractV1_Garbage(t *testing.T) {
-	if _, _, _, _, _, ok := fastExtractV1(nil); ok {
+	if _, _, _, _, _, _, _, ok := fastExtractV1(nil); ok {
 		t.Errorf("nil 에 ok=true")
 	}
-	if _, _, _, _, _, ok := fastExtractV1([]byte("garbage")); ok {
+	if _, _, _, _, _, _, _, ok := fastExtractV1([]byte("garbage")); ok {
 		t.Errorf("garbage 에 ok=true")
 	}
 }
@@ -150,6 +158,6 @@ func BenchmarkParseQuoteExtractV1(b *testing.B) {
 func BenchmarkFastExtractV1(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _, _, _, _, _ = fastExtractV1(benchBuf)
+		_, _, _, _, _, _, _, _ = fastExtractV1(benchBuf)
 	}
 }

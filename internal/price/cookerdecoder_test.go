@@ -11,7 +11,7 @@ import (
 func TestJSONCookerDecoder_ValidEnvelope(t *testing.T) {
 	dec := JSONCookerDecoder()
 	body := []byte(`{"sym":"USDKRW","bid":1399.5,"ask":1399.6,"ts":"2026-05-23T00:00:00Z"}`)
-	bid, ask, ok := dec(body)
+	bid, ask, _, _, ok := dec(body)
 	if !ok {
 		t.Fatal("정상 envelope 인데 ok=false")
 	}
@@ -34,7 +34,7 @@ func TestJSONCookerDecoder_DropsMalformed(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, ok := dec(tc.body); ok {
+			if _, _, _, _, ok := dec(tc.body); ok {
 				t.Error("ok=true (drop 되어야 함)")
 			}
 		})

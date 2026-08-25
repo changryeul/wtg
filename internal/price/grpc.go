@@ -830,6 +830,8 @@ func customerQuoteToProto(profile session.Profile, cq pricing.CustomerQuote) *wt
 		TsUnixNano:   cq.TS.UnixNano(),
 		RawBid:       cq.RawBid,
 		RawAsk:       cq.RawAsk,
+		BidSize:      cq.BidSize, // avail passthrough
+		AskSize:      cq.AskSize,
 		TableVersion: cq.TableVersion,
 		QuoteId:      cq.QuoteID,
 	}

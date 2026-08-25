@@ -17,7 +17,7 @@ import (
 // 합의 전까지는 nil 을 주입하거나 test stub 으로 대체.
 //
 // ok=false 면 해당 tick 은 drop (집계 대상에서 제외).
-type CookerBodyDecoder func(body []byte) (bid, ask float64, ok bool)
+type CookerBodyDecoder func(body []byte) (bid, ask, bidSize, askSize float64, ok bool)
 
 // BarCloseHandler 는 봉이 닫힐 때 호출되는 콜백.
 //
@@ -82,7 +82,7 @@ func (a *Aggregator) OnTick(t *Tick) {
 	if !found || !active {
 		return
 	}
-	bid, ask, ok := a.decoder(t.Body)
+	bid, ask, _, _, ok := a.decoder(t.Body) // 봉 집계는 size 불필요
 	if !ok {
 		return
 	}

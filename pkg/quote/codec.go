@@ -29,6 +29,11 @@ type JSONEnvelope struct {
 	Last float64 `json:"last,omitempty"`
 	// LastQty 는 체결 수량 (FIX 271 MDEntrySize). USD/KRW·CNH/KRW 는 항상 0.
 	LastQty float64 `json:"last_qty,omitempty"`
+	// BidSize/AskSize 는 top-of-book 가용수량(avail) — FIX 271(MDEntrySize)의 bid(269=0)/
+	// ask(269=1) entry 값. LP 별 시세는 "얼마까지 거래 가능한가" 를 함께 실어야 하므로
+	// 호가에 동반. 0 이면 미제공(생략). BestConsumer 가 best 호가의 size 를 함께 보존.
+	BidSize float64 `json:"bid_size,omitempty"`
+	AskSize float64 `json:"ask_size,omitempty"`
 }
 
 // 디코딩 에러.

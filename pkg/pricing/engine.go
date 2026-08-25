@@ -105,6 +105,8 @@ func (t *PricingTable) ApplyForCustomer(raw Quote, profile session.Profile, teno
 		TS:           raw.TS,
 		RawBid:       raw.Bid,
 		RawAsk:       raw.Ask,
+		BidSize:      raw.BidSize, // avail — 마진 무관 passthrough
+		AskSize:      raw.AskSize,
 		TableVersion: t.Version,
 	}
 }
@@ -179,6 +181,8 @@ func (t *PricingTable) ApplyForValueDate(raw Quote, profile session.Profile,
 		TS:           raw.TS,
 		RawBid:       raw.Bid,
 		RawAsk:       raw.Ask,
+		BidSize:      raw.BidSize, // avail passthrough
+		AskSize:      raw.AskSize,
 		TableVersion: t.Version,
 	}, interp, nil
 }

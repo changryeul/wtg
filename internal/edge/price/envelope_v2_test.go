@@ -18,6 +18,8 @@ func TestEncodeCustomerQuoteV2(t *testing.T) {
 		Tenor:        "SPOT",
 		Bid:          1330.20,
 		Ask:          1330.80,
+		BidSize:      1000000,
+		AskSize:      1500000,
 		RawBid:       1330.40,
 		RawAsk:       1330.60,
 		TsUnixNano:   1699999999000,
@@ -36,6 +38,8 @@ func TestEncodeCustomerQuoteV2(t *testing.T) {
 		Data       struct {
 			Bid          float64 `json:"bid"`
 			Ask          float64 `json:"ask"`
+			BidSize      float64 `json:"bid_size"`
+			AskSize      float64 `json:"ask_size"`
 			RawBid       float64 `json:"raw_bid"`
 			Tenor        string  `json:"tenor"`
 			Channel      string  `json:"chan"`
@@ -53,6 +57,9 @@ func TestEncodeCustomerQuoteV2(t *testing.T) {
 	}
 	if env.Data.Bid != 1330.20 || env.Data.Ask != 1330.80 || env.Data.RawBid != 1330.40 {
 		t.Errorf("data 마진가/원시값 오류: %+v", env.Data)
+	}
+	if env.Data.BidSize != 1000000 || env.Data.AskSize != 1500000 {
+		t.Errorf("avail 미노출: bid_size=%v ask_size=%v", env.Data.BidSize, env.Data.AskSize)
 	}
 	if env.Data.Tenor != "SPOT" || env.Data.Channel != "WEB" || env.Data.TableVersion != 42 {
 		t.Errorf("data profile/가격표버전 오류: %+v", env.Data)

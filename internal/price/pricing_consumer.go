@@ -259,12 +259,12 @@ func (c *PricingConsumer) processTick(t *Tick) {
 		c.ticksDropped.Add(1)
 		return
 	}
-	bid, ask, ok := c.decoder(t.Body)
+	bid, ask, bidSize, askSize, ok := c.decoder(t.Body)
 	if !ok {
 		c.ticksDropped.Add(1)
 		return
 	}
-	raw := quote.Quote{Pair: pair, Bid: bid, Ask: ask, TS: t.Received}
+	raw := quote.Quote{Pair: pair, Bid: bid, Ask: ask, TS: t.Received, BidSize: bidSize, AskSize: askSize}
 
 	tbl := c.store.Load()
 	for _, prof := range c.profiles.ActiveProfiles() {

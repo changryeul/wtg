@@ -134,6 +134,14 @@ type Config struct {
 	// 비어있으면 SymbolMap 이 empty — Aggregator 가 모든 tick 을 drop (의도된 안전한 default).
 	SymbolsFile string
 
+	// ─── FX multicast 수신부 (OMS LP별 재송출 시세 직수신) ───────────────
+	// config 베이스 — LP 목록/group/port 는 LP 카탈로그(파일/etcd)로 구동. 하드코딩 금지.
+	// etcd 우선(EtcdEndpoints + LPEtcdPrefix), 없으면 LPFile. 둘 다 비면 FX mcast 비활성.
+	LPFile        string // etc/lp.json
+	LPEtcdPrefix  string // 기본 "wtg/catalog/lp/"
+	FXMcastIface  string // 수신 인터페이스명 (비면 시스템 기본)
+	FXMcastRcvBuf int    // 소켓 수신버퍼 바이트 (0=OS 기본)
+
 	// Archiver 옵션 — 0 이면 ArchiverOptions defaults.
 	ArchiverQueueSize     int
 	ArchiverFlushInterval time.Duration
@@ -331,6 +339,7 @@ func DefaultConfig() Config {
 		ChartDSN:                "",
 		ChartPoolMaxConns:       5,
 		SymbolsFile:             "",
+		LPEtcdPrefix:            "wtg/catalog/lp/",
 		ArchiverQueueSize:       10000,
 		ArchiverFlushInterval:   time.Second,
 		ArchiverBatchMax:        500,
@@ -556,6 +565,10 @@ func LoadConfig(args []string) (Config, error) {
 	fs := flag.NewFlagSet("mci-price", flag.ContinueOnError)
 	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP 모니터링 listen 주소")
 	fs.StringVar(&cfg.GRPCAddr, "grpc", cfg.GRPCAddr, "gRPC PriceService listen 주소 (비어있으면 비활성)")
+	fs.StringVar(&cfg.LPFile, "lp-file", cfg.LPFile, "FX LP 카탈로그 JSON (config 베이스 FX multicast 수신). 비면 etcd 또는 비활성")
+	fs.StringVar(&cfg.LPEtcdPrefix, "lp-etcd-prefix", cfg.LPEtcdPrefix, "FX LP 카탈로그 etcd prefix (기본 wtg/catalog/lp/, EtcdEndpoints 설정 시)")
+	fs.StringVar(&cfg.FXMcastIface, "fx-mcast-iface", cfg.FXMcastIface, "FX multicast 수신 인터페이스명 (비면 시스템 기본)")
+	fs.IntVar(&cfg.FXMcastRcvBuf, "fx-mcast-rcvbuf", cfg.FXMcastRcvBuf, "FX multicast 소켓 수신버퍼 바이트 (0=OS 기본)")
 	fs.BoolVar(&cfg.QuotePublishBroker, "quote-publish-broker", cfg.QuotePublishBroker, "customer quote 를 broker 로도 publish (legacy). false 면 gRPC SubscribeQuote 만 사용 — broker 부하 분리")
 	fs.IntVar(&cfg.GRPCBufSize, "grpc-buf", cfg.GRPCBufSize, "gRPC 구독자별 큐 크기")
 	fs.StringVar(&cfg.BrokerHost, "broker-host", cfg.BrokerHost, "mymqd 호스트")

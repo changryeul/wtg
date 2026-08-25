@@ -120,6 +120,7 @@ broker subscribe path skip, HTTP/gRPC 만으로 단독 부팅. PoC / 회귀 / �
 | 검증 | `mci-test` | — | — | Phase 1 ckey echo 검증 CLI |
 | 검증 | `load-gen` | — | — | UDP 시세 부하 생성기 (`scripts/load-test.sh` 의 low/mid/high 시나리오). delivery/drop/sub_drops 측정 |
 | 검증 | `mock-lp` | — | — | **시나리오형 mock LP** — LP(SMB/KMB/EBS/CMB)별 **결정적** 호가/체결(FIX 269=2)을 UDP 35=W 로 송신. per-source→BestConsumer→cross→AlgoQuote(last/mid/source) 경로를 값까지 결정적 e2e 검증 (load-gen 은 랜덤 부하, mock-lp 는 시나리오 검증). `--scenario`/`--once`/`--interval`. **e2e 자동 대사: `scripts/mock-lp-verify.sh`** (broker/etcd 없이 최소 스택 부팅 → BEST/per-source 기대값 assert) |
+| 검증 | `mock-fxlp` | — | — | **LP별 multicast 재송출 mock** — OMS 의 LP별 group 재송출을 대역. `etc/lp.json`(lpcatalog) 을 읽어 active LP 각각의 group:port 로 결정적 FIX 35=W(top-of-book + 271 avail) 송신 → mci-price `FXMcastReceiver` 8-source 수신 → best-of-N 정합 e2e (`--lp-file`/`--symbols`/`--once`/`--interval`). `docs/order-architecture.md` §5b |
 | 검증 | `algo-tester` | — | — | `SubscribeAlgo` smoke — AlgoQuote(bid/ask/mid/last/source) 덤프. `--sources`(per-source) / `--json`(스크립트 파싱) / `--from-seq`(backfill) |
 | 검증 | `fix-tester` / `fix-md-tester` | — | — | mci-edge-fix / mci-edge-md smoke test CLI (quickfix initiator — Logon + 주문/MDR 1건) |
 | 검증 | `oms-stub` | — | — | 주문 e2e 용 OMS 체결응답 스텁 — 결정적 ExecutionReport(accept/partial/fill/reject)를 WTG 인바운드 push(mci-push `/v1/internal/push` → 화면 ws, 옵션 mci-edge-fix-ord exec-report → FIX 35=8)로 주입. broker AP 응답 대체(pkg/mymq 클라전용). `docs/order-architecture.md` §5b |
@@ -155,6 +156,8 @@ pkg/                     # 공유 라이브러리 (단방향 DAG, 도메인 laye
   otelinit/              # OpenTelemetry tracer/meter 초기화 (서비스 공통)
   svcio/                 # 매매 svc I/O 헤더 (win/src/inc/trn/WnnnnSnn.h) 파서 + Registry
                          # — JSON ↔ 고정폭 전문 자동 조립 (/v1/tx·/v1/login) + admin UI 메타
+  fixmd/                 # FIX 35=W top-of-book 파서 (ParseSnapshot, avail=271) — forwarder + mci-price FX mcast 공유
+  lpcatalog/             # FX LP 카탈로그 (LP→분류/group/port/active, atomic snapshot) — etc/lp.json + etcd wtg/catalog/lp/
   push/                  # HTTP push 클라이언트측 — Client + MultiClient + consistent hash ring
   metrics/ netutil/ ratelimit/ tlsutil/
   wtgpb/                 # gRPC 생성 코드 (admin↔mci-api, edge↔internal, chart↔price)
@@ -165,6 +168,7 @@ cmd/                     # 서비스 entrypoint
   quote-forwarder
   load-gen               # 부하 생성기 (scripts/load-test.sh 가 wrap)
   mock-lp                # 시나리오형 mock LP — LP별 결정적 호가/체결 UDP FIX 송신 (경로 e2e 검증)
+  mock-fxlp              # LP별 multicast 재송출 mock — lpcatalog(etc/lp.json) 기반 FIX 35=W(avail) 송신 (§5a 수신부 e2e)
   dev-bar-faker          # gRPC PriceService.SubscribeBar mock (chart 단독 테스트)
   quote-diff             # 두 ws source envelope 자동 비교 (legacy/best dual run)
   quote-replay           # mds .trc 실 캡처 재생기 (mds/WTG 동시 UDP 송신 — 전환 게이트)

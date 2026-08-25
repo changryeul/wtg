@@ -39,6 +39,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/winwaysystems/wtg/internal/forwarder/tickhub"
+	"github.com/winwaysystems/wtg/pkg/fixmd"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/mymq"
 	"github.com/winwaysystems/wtg/pkg/otelinit"
@@ -665,85 +666,11 @@ func feedLoop(ctx context.Context, logger *slog.Logger, pub Publisher, conn *net
 // 한계: 270 만 single string conversion (ParseFloat 가 string 요구). 그 외
 // alloc 없음. ParseFloat 의 alloc 비용 (작음) 이 진짜 hot path 면 별도
 // byte 기반 parser 필요 — 일단 보수적.
+// fastExtractV1 — 공유 파서 pkg/fixmd 의 thin wrapper (hot-path). mci-price 의 FX
+// multicast 수신부와 동일 파싱을 공유한다.
 func fastExtractV1(buf []byte) (sym string, bid, ask, last, lastQty, bidSize, askSize float64, ok bool) {
-	var entryType byte
-	start := 0
-	for i := 0; i <= len(buf); i++ {
-		if i < len(buf) && buf[i] != fixSOH {
-			continue
-		}
-		field := buf[start:i]
-		start = i + 1
-		eq := bytesIndexByte(field, '=')
-		if eq < 1 {
-			continue
-		}
-		tag := field[:eq]
-		val := field[eq+1:]
-		switch {
-		case len(tag) == 2 && tag[0] == '5' && tag[1] == '5':
-			if sym == "" {
-				sym = string(val)
-			}
-		case len(tag) == 3 && tag[0] == '2' && tag[1] == '6' && tag[2] == '9':
-			if len(val) >= 1 {
-				entryType = val[0]
-			}
-		case len(tag) == 3 && tag[0] == '2' && tag[1] == '7' && tag[2] == '0':
-			f, err := strconv.ParseFloat(string(val), 64)
-			if err != nil {
-				continue
-			}
-			switch entryType {
-			case '0':
-				if bid == 0 {
-					bid = f
-				}
-			case '1':
-				if ask == 0 {
-					ask = f
-				}
-			case '2': // Trade — 시장 체결가 (mds fillprc 대응)
-				if last == 0 {
-					last = f
-				}
-			}
-		case len(tag) == 3 && tag[0] == '2' && tag[1] == '7' && tag[2] == '1':
-			// MDEntrySize — entryType 별로 avail(size)/체결수량 분기.
-			f, err := strconv.ParseFloat(string(val), 64)
-			if err != nil {
-				continue
-			}
-			switch entryType {
-			case '0': // bid 가용수량(avail)
-				if bidSize == 0 {
-					bidSize = f
-				}
-			case '1': // ask 가용수량(avail)
-				if askSize == 0 {
-					askSize = f
-				}
-			case '2': // Trade 체결수량
-				if lastQty == 0 {
-					lastQty = f
-				}
-			}
-		}
-	}
-	if sym != "" && bid > 0 && ask >= bid {
-		ok = true
-	}
-	return
-}
-
-// bytesIndexByte — bytes.IndexByte 의 inline wrapper. 컴파일러가 inline 함.
-func bytesIndexByte(b []byte, c byte) int {
-	for i := 0; i < len(b); i++ {
-		if b[i] == c {
-			return i
-		}
-	}
-	return -1
+	s, ok := fixmd.ParseSnapshot(buf)
+	return s.Sym, s.Bid, s.Ask, s.Last, s.LastQty, s.BidSize, s.AskSize, ok
 }
 
 // extractV1 은 rich quoteEnvelope 에서 mci-price 가 기대하는 v1 평면 envelope

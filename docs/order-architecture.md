@@ -165,8 +165,32 @@ FIX 4.4 `MarketDataSnapshotFullRefresh(35=W)`: `269=0`(bid)/`1`(ask) 각 `270`(p
 - edge envelope / 화면: avail 노출
 - (quote-id 검증(`pkg/quoteid`)은 optional — 현재 미적용)
 
-## 5b. 주문 e2e 테스트 (스텁)
-OMS/wfg-rs/그들 mock_lp 준비 전, WTG 두 leg 를 검증하는 도구:
+### 구현 상태 (2026-08 — WTG 측 완료, OMS 재송출 대기)
+- **파서 공유**: `pkg/fixmd.ParseSnapshot` — quote-forwarder(UDP) 와 mci-price FX mcast
+  수신부가 공유하는 35=W top-of-book 파서(avail 포함). quote-forwarder 의 `fastExtractV1`
+  은 이 파서의 thin wrapper 로 이관.
+- **LP 카탈로그**: `pkg/lpcatalog` (LP→분류/group/port/active, atomic snapshot). config =
+  `etc/lp.json`(파일) + etcd `wtg/catalog/lp/`(hot-reload). **하드코딩 없음**.
+- **수신부**: `internal/price.FXMcastReceiver` — `lpcatalog.ActiveFeeds()` 의 각 group 을
+  join → `group→LP(Source)` 태깅 → `fixmd` 파싱 → v1 envelope(avail 포함) →
+  `Server.IngestEnvelopes` → 기존 BestConsumer(per-source)/Pricing/Aggregator 그대로.
+  mci-price 플래그: `--lp-file` / `--lp-etcd-prefix` / `--fx-mcast-iface` / `--fx-mcast-rcvbuf`.
+- **avail 종단**: `bid_size`/`ask_size` 를 ingest→BestConsumer(승자 source 의 size)→margin
+  (`CustomerQuote`)→proto(15/16)→edge v1/v2 envelope 까지 관통 (단위테스트 통과).
+- **e2e 검증됨**: `cmd/mock-fxlp`(§5b) 로 8 LP group 송신 → mci-price 8-source 수신 →
+  best-of-N(best_bid=max source bid / best_ask=min source ask) 정합, `rejected=0`.
+  OMS 의 LP별 재송출이 라이브되면 mock-fxlp 를 실 OMS 로 교체(수신부/카탈로그 무변경).
+
+## 5b. 시세/주문 e2e 테스트 (스텁)
+**시세 수신 leg** (§5a 목표구조 검증):
+- **`cmd/mock-fxlp`** — OMS 의 LP별 multicast 재송출을 대역. `etc/lp.json`(lpcatalog)을
+  읽어 **active LP 각각의 group:port** 로 결정적 FIX 35=W(top-of-book + 271 avail)를 송신.
+  LP 코드별 오프셋으로 per-source/cross/best-of-N 을 값까지 결정적으로 관측. **하드코딩 없음**
+  (전적으로 config). `--lp-file` / `--symbols` / `--interval` / `--once` / `--iface`.
+  검증: mock-fxlp → mci-price(`--no-broker --lp-file etc/lp.json`) → `/v1/best-stats` 에서
+  8-source + best 정합 확인.
+
+**주문 leg** — OMS/wfg-rs/그들 mock_lp 준비 전, WTG 두 leg 를 검증하는 도구:
 - **진입 leg**: 각 프로토콜(web `/v1/tx` · FIX `fix-tester` · TCP `tcp-tester`)로 주문 →
   WTG 정규화+publish. 등록된 alias 로 broker 도달(수신자 없으면 `errn 1002` = "WTG 는
   제대로 보냄"의 증거).

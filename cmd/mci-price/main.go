@@ -43,6 +43,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/winwaysystems/wtg/internal/price"
+	"github.com/winwaysystems/wtg/pkg/lpcatalog"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/otelinit"
 	"github.com/winwaysystems/wtg/pkg/pricing"
@@ -507,6 +508,40 @@ func main() {
 		sub := price.NewTickSubscriber(srv, addr, tickSubID, logger)
 		go sub.Run(ctx)
 		logger.Info("TickSubscriber 기동 (gRPC-only HA fan-in)", slog.String("tick_source", addr))
+	}
+
+	// 5b) FX multicast 수신부 (OMS LP별 재송출 시세 직수신) — config 베이스.
+	//     etcd 우선(LPEtcdPrefix) → 파일(LPFile). LP 카탈로그 active feed 있으면 join.
+	if cfg.LPFile != "" || (etcdCli != nil && cfg.LPEtcdPrefix != "") {
+		lpCat := lpcatalog.NewCatalog()
+		if etcdCli != nil && cfg.LPEtcdPrefix != "" {
+			w, lerr := lpcatalog.NewEtcdWatcher(ctx, lpcatalog.EtcdWatcherOptions{
+				Client: etcdCli, Prefix: cfg.LPEtcdPrefix, C: lpCat, Logger: logger,
+			})
+			if lerr != nil {
+				logger.Error("LP 카탈로그 etcd watcher 실패", slog.Any("error", lerr))
+			} else {
+				defer w.Close()
+			}
+		} else if cfg.LPFile != "" {
+			items, lerr := lpcatalog.LoadFile(cfg.LPFile)
+			if lerr != nil {
+				logger.Error("LP 카탈로그 파일 로드 실패", slog.Any("error", lerr))
+			} else {
+				lpCat.Replace(items)
+				logger.Info("LP 카탈로그 파일 로드", slog.String("file", cfg.LPFile), slog.Int("count", lpCat.Size()))
+			}
+		}
+		if lpCat.Size() > 0 {
+			rcv, rerr := price.NewFXMcastReceiver(srv, lpCat, cfg.FXMcastIface, cfg.FXMcastRcvBuf, logger)
+			if rerr != nil {
+				logger.Error("FX mcast 수신부 생성 실패", slog.Any("error", rerr))
+			} else if serr := rcv.Start(ctx); serr != nil {
+				logger.Error("FX mcast 수신부 시작 실패", slog.Any("error", serr))
+			} else {
+				logger.Info("FX multicast 수신부 활성 (LP별 group 직수신)")
+			}
+		}
 	}
 
 	// 6) Server 시작 (블로킹).

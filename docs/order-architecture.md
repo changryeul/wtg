@@ -131,7 +131,7 @@ WTG 는 `group→LP` 매핑만 하면 되고 downstream(Src 기반)은 그대로
 증권사 입장 LP 3분류 (고객이 어떤 LP 고를지 모름 → WTG 는 전 LP group 수용):
 | 분류 | LP | multicast port |
 |------|-----|----------------|
-| 중계사(ECN) | SBM | 31001 |
+| 중계사(ECN) | SMB | 31001 |
 | 중계사 | KMB | 31002 |
 | 중계사 | EBS | 31003 |
 | 중계사 | CMB | 31004 |
@@ -142,7 +142,7 @@ WTG 는 `group→LP` 매핑만 하면 되고 downstream(Src 기반)은 그대로
 
 - multicast group `227.10.30.10`, **port-per-LP** (현행 quote-forwarder 의 "포트-per-feed"
   모델 계승 — WTG 는 `port→LP(Source)` 매핑만). **포트는 임시 배정, 추후 변경 가능.**
-- yuanta 실사용 = SHB/NHB/JPM. (참고: 기존 mock/load-gen 은 `SMB` 표기 — `SBM` 로 통일할지 확인)
+- yuanta 실사용 = SHB/NHB/JPM. (LP 코드 `SMB` — 기존 mock/load-gen 과 일치)
 - WTG: LP 카탈로그(LP→분류/port)를 etcd/파일로 두고 mci-price FX mcast 수신부가 join.
 
 ### wire = FIX (거래소 바이너리 아님)

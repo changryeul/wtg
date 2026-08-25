@@ -920,10 +920,14 @@ func checkBackpressure(logger *slog.Logger, queueLen, queueCap int, subID uint64
 	}
 	now := time.Now()
 	key := kind + ":" + strconv.FormatUint(subID, 10)
-	actual, loaded := backpressureGate.LoadOrStore(key, &atomic.Int64{})
+	// gate 값을 now 로 미리 채운 뒤 publish — LoadOrStore 가 zero-value(0)를 심으면
+	// 승자가 now 를 store 하기 전 틈에 다른 goroutine 이 0(=아주 오래 전)을 읽고
+	// CAS 로 두 번째 WARN 을 내는 경쟁이 생긴다 (flaky). 초기값=now 로 그 틈 제거.
+	fresh := &atomic.Int64{}
+	fresh.Store(now.UnixNano())
+	actual, loaded := backpressureGate.LoadOrStore(key, fresh)
 	p := actual.(*atomic.Int64)
 	if !loaded {
-		p.Store(now.UnixNano())
 		logger.Warn("backpressure 감지 — 큐 80% 도달",
 			slog.Uint64("sub_id", subID),
 			slog.String("srv_id", srvID),

@@ -5,10 +5,14 @@
 > 체결을 화면에 통보한다. **실행·라우팅·매칭·LP 는 WTG 밖** (broker 라우팅 서비스 /
 > OMS(FEP) / wfg-rs / LP).
 >
-> **혼동 금지 2가지**:
+> **혼동 금지 3가지**:
 > - **WTG = MCI** — 프로토콜 수용/정규화 계층. 라우터도 실행기도 LP 도 아니다.
 > - **`dq` ≠ MyMQ(msgq)** — dq 는 OMS 가 쓰는 **별도의 안정 큐 라이브러리**(broker↔OMS,
 >   OMS↔daemon 구간). WTG 경계는 **MyMQ(broker)** 까지이고 **WTG 는 dq 를 건드리지 않는다**.
+> - **WTG↔OMS 직접 연결은 "멀티캐스트 시세 수신" 하나뿐.** 주문(하향)·체결(상향)은
+>   **전부 broker(MyMQ) 경유** — WTG 는 OMS 에 직접 주문을 붙지 않는다. OMS 는 실물로
+>   존재하므로 **주문용 스텁 불필요**(WTG 는 broker 에 publish 만, 실 OMS 가 broker 에서 수신).
+>   시세 멀티캐스트만 WTG(mci-price/-krx)가 OMS 발 mcast 를 직접 join.
 >
 > 확정 경위: 사용자 의도 확인 (2026-08). WTG 는 LP(뒷단)가 아니다 — `wtg-fix`(mci-edge-fix-ord)
 > 조차 "고객 FIX API 주문의 진입 통로"이지 LP 가 아니다. 어제의 "wfg-rs→WTG FIX GW 카나리"는
@@ -95,6 +99,38 @@
 - **`dq` = OMS 의 별도 안정 큐 라이브러리** (msgq/MyMQ 아님). 지금까지 OMS 가 **체결·주문
   후처리·응답을 안정적으로 수신**하는 데 썼고, **OMS 로 주문 송신에도 쓸 예정**. 즉
   broker↔OMS · OMS↔daemon 구간의 신뢰 전송 계층. **WTG 무관** (WTG 경계 = MyMQ broker).
+
+## 5a. 시세 수신 목표구조 (확정: OMS 단일수신 + LP별 multicast 재송출)
+
+차익거래로 **OMS 도 시세가 필요** → WTG(quote-forwarder)+OMS 이중 원수신을 없애기 위해
+**OMS 를 단일 원 시세 수신자**로 둔다(FEP 는 이미 LP별 마켓데이터 proc 보유). OMS 가
+**LP 별로 별도 multicast group 으로 재송출**하고, WTG(mci-price)는 그 group 들을 **직수신**
+한다(KRX 의 `mci-price-krx` 멀티캐스트 직수신 패턴과 대칭). → FX/KRX 시세 수신이 대칭이 됨.
+
+```
+LP venues(SMB/KMB/EBS/CMB) → OMS(C) [원 수신 + arb 사용]
+   │ LP별 multicast group 재송출  (WTG↔OMS 유일 직접 링크 = 시세 mcast)
+   ├ SMB group ─┐
+   ├ KMB group ─┼─▶ mci-price(FX mcast 수신부, 신규) ─ group→Source(LP) 매핑
+   ├ EBS group ─┤     → BestConsumer per (Symbol, LP) → PricingConsumer(마진) → Aggregator(봉)
+   └ CMB group ─┘     → mci-edge-price → LP별 화면
+```
+
+**역할 분담**
+- **OMS (C, 그들)**: 원 LP 시세 수신(이미 함) + arb 사용 + **LP별 group 재송출**(신규 — FEP 가
+  이미 소켓/멀티캐스트 다루므로 소품). Go quote-forwarder 로직을 C 로 포팅하는 게 아님.
+- **WTG (Go)**: **mci-price 에 FX multicast 수신부 신규**(mci-price-krx 재사용), `group→LP` 매핑
+  으로 `Source` 채움. **BestConsumer(per-source)·마진·봉·edge·화면은 무변경**.
+- **quote-forwarder**: 실전 시세 경로에서 **빠짐 → test rig 전용**(load-gen 짝, 파이프 회귀 구동).
+
+**현행 LP 구분과의 연속성**: quote-forwarder 는 LP 를 **feed(포트-per-LP)** 로 구분해
+`Src=feed label` 을 찍었다. 목표구조는 그 "포트-per-LP" 를 **"group-per-LP"** 로 옮긴 것 —
+WTG 는 `group→LP` 매핑만 하면 되고 downstream(Src 기반)은 그대로.
+
+**확정 필요 (구현 전)**
+1. **LP ↔ multicast group/port 배정** (SMB/KMB/EBS/CMB = 각 group:port)
+2. **wire 포맷** — FIX 35=W? 바이너리 struct(KRX APSISE 류)?
+3. **symbol 표기** — quote 검증/BestConsumer 인식 표기와 일치
 
 ## 5b. 주문 e2e 테스트 (스텁)
 OMS/wfg-rs/그들 mock_lp 준비 전, WTG 두 leg 를 검증하는 도구:

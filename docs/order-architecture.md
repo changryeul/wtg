@@ -127,10 +127,35 @@ LP venues(SMB/KMB/EBS/CMB) → OMS(C) [원 수신 + arb 사용]
 `Src=feed label` 을 찍었다. 목표구조는 그 "포트-per-LP" 를 **"group-per-LP"** 로 옮긴 것 —
 WTG 는 `group→LP` 매핑만 하면 되고 downstream(Src 기반)은 그대로.
 
-**확정 필요 (구현 전)**
-1. **LP ↔ multicast group/port 배정** (SMB/KMB/EBS/CMB = 각 group:port)
-2. **wire 포맷** — FIX 35=W? 바이너리 struct(KRX APSISE 류)?
-3. **symbol 표기** — quote 검증/BestConsumer 인식 표기와 일치
+### LP 분류 · multicast port 배정 (확정)
+증권사 입장 LP 3분류 (고객이 어떤 LP 고를지 모름 → WTG 는 전 LP group 수용):
+| 분류 | LP | multicast port |
+|------|-----|----------------|
+| 중계사(ECN) | SBM | 31001 |
+| 중계사 | KMB | 31002 |
+| 중계사 | EBS | 31003 |
+| 중계사 | CMB | 31004 |
+| 은행 | SHB | 31005 |
+| 은행 | NHB | 31006 |
+| 외국중계사 | JPM | 31007 |
+| 외국중계사 | DUH | 31008 |
+
+- multicast group `227.10.30.10`, **port-per-LP** (현행 quote-forwarder 의 "포트-per-feed"
+  모델 계승 — WTG 는 `port→LP(Source)` 매핑만). **포트는 임시 배정, 추후 변경 가능.**
+- yuanta 실사용 = SHB/NHB/JPM. (참고: 기존 mock/load-gen 은 `SMB` 표기 — `SBM` 로 통일할지 확인)
+- WTG: LP 카탈로그(LP→분류/port)를 etcd/파일로 두고 mci-price FX mcast 수신부가 join.
+
+### wire = FIX (거래소 바이너리 아님)
+FIX 4.4 `MarketDataSnapshotFullRefresh(35=W)`: `269=0`(bid)/`1`(ask) 각 `270`(px) + `271`(size).
+→ 기존 quote-forwarder 의 FIX 35=W 파서 재사용 (KRX 바이너리 파서와 별개).
+
+### quote 내용 = bid/ask + **avail(가용수량) 필수**
+"avail 까지 받아야" → 호가에 **가용 수량(FIX 271, MDEntrySize)** 동반. **WTG quote 모델 확장 필요**:
+- `pkg/quote.JSONEnvelope` 에 `bid_size`/`ask_size`(avail) 추가
+- mci-price FX mcast 수신부: `271` → size 파싱
+- `BestConsumer`: best 산정 시 해당 호가의 avail 동반 (best bid/ask 의 size 유지)
+- edge envelope / 화면: avail 노출
+- (quote-id 검증(`pkg/quoteid`)은 optional — 현재 미적용)
 
 ## 5b. 주문 e2e 테스트 (스텁)
 OMS/wfg-rs/그들 mock_lp 준비 전, WTG 두 leg 를 검증하는 도구:

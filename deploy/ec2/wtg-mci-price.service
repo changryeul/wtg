@@ -21,6 +21,7 @@ ExecStart=/home/winway/common/wtg/bin/mci-price \
     --pricing=/home/winway/common/wtg/etc/pricing.json \
     --profiles=/home/winway/common/wtg/etc/profiles.json \
     --etcd=http://127.0.0.1:2379 \
+    --lp-etcd-prefix=wtg/catalog/lp/ \
     --enable-swap-lock \
     --dedup-same-price \
     --dedup-tick-size-multiplier=1.0 \

@@ -36,6 +36,25 @@ PYEOF
   echo "  put $k"
 done
 
+echo "==> FX LP 카탈로그 (wtg/catalog/lp/<code>) ← etc/lp.json"
+# mci-price FX multicast 수신부가 watch 하는 키. LP 1건당 1키.
+# 주의: mcast group join 은 mci-price **부팅 시 snapshot** 기준(FIX counterparty 와
+# 동일) — 최초 시드 후에는 mci-price 재시작이 필요하다(신규 group join). 이후 active
+# 토글/가격은 watch 로 즉시 반영.
+if [ -f "$WTG_HOME/etc/lp.json" ]; then
+  python3 - "$WTG_HOME" <<'PYEOF' | while IFS=$'\t' read -r k v; do
+import json, sys
+home = sys.argv[1]
+for lp in json.load(open(f"{home}/etc/lp.json")):
+    print(f"wtg/catalog/lp/{lp['code']}", json.dumps(lp, ensure_ascii=False), sep="\t")
+PYEOF
+    "$ETCDCTL" --endpoints="$EP" put "$k" "$v" >/dev/null
+    echo "  put $k"
+  done
+else
+  echo "  (etc/lp.json 없음 — skip)"
+fi
+
 echo "==> 라우팅 alias (transaction alias → exchange/routing_key)"
 "$ETCDCTL" --endpoints="$EP" put wtg/routes/W1101T01 \
   '{"alias":"W1101T01","exchange":"dom","routing_key":"W1101T01","active":true,"comment":"공인인증 테스트 트랜잭션 (dev)"}' >/dev/null

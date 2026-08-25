@@ -127,23 +127,31 @@ LP venues(SMB/KMB/EBS/CMB) → OMS(C) [원 수신 + arb 사용]
 `Src=feed label` 을 찍었다. 목표구조는 그 "포트-per-LP" 를 **"group-per-LP"** 로 옮긴 것 —
 WTG 는 `group→LP` 매핑만 하면 되고 downstream(Src 기반)은 그대로.
 
-### LP 분류 · multicast port 배정 (확정)
-증권사 입장 LP 3분류 (고객이 어떤 LP 고를지 모름 → WTG 는 전 LP group 수용):
-| 분류 | LP | multicast port |
-|------|-----|----------------|
-| 중계사(ECN) | SMB | 31001 |
-| 중계사 | KMB | 31002 |
-| 중계사 | EBS | 31003 |
-| 중계사 | CMB | 31004 |
-| 은행 | SHB | 31005 |
-| 은행 | NHB | 31006 |
-| 외국중계사 | JPM | 31007 |
-| 외국중계사 | DUH | 31008 |
+### LP 분류 · multicast group 배정 (config 베이스 — group-per-LP)
+> **구현 원칙: config 베이스.** LP 목록/분류/group/port 는 **코드 하드코딩 금지** —
+> **LP 카탈로그 config**(파일 `etc/lp.json` + etcd `wtg/catalog/lp/`, hot-reload)로 구동.
+> mci-price FX mcast 수신부는 이 config 를 읽어 join·`group→LP` 매핑. 아래 표는 **초기 시드**.
 
-- multicast group `227.10.30.10`, **port-per-LP** (현행 quote-forwarder 의 "포트-per-feed"
-  모델 계승 — WTG 는 `port→LP(Source)` 매핑만). **포트는 임시 배정, 추후 변경 가능.**
+증권사 입장 LP 3분류 (고객이 어떤 LP 고를지 모름 → WTG 는 전 LP group 수용).
+**"LP별 group" = LP별 multicast 그룹 IP + 단일 공통 포트** (FEP 의 3xxxx 포트 대역과
+겹치지 않게 포트 번호를 하나로 고정 — 멀티캐스트는 그룹 IP 로 LP 를 구분):
+
+| 분류 | LP | multicast group | port |
+|------|-----|-----------------|------|
+| 중계사(ECN) | SMB | 227.10.40.11 | 45010 |
+| 중계사 | KMB | 227.10.40.12 | 45010 |
+| 중계사 | EBS | 227.10.40.13 | 45010 |
+| 중계사 | CMB | 227.10.40.14 | 45010 |
+| 은행 | SHB | 227.10.40.21 | 45010 |
+| 은행 | NHB | 227.10.40.22 | 45010 |
+| 외국중계사 | JPM | 227.10.40.31 | 45010 |
+| 외국중계사 | DUH | 227.10.40.32 | 45010 |
+
+- WTG(mci-price)는 각 LP 의 **그룹 IP 를 join**(port 45010) → `group→LP(Source)` 매핑.
+  KRX(mci-price-krx, 227.10.20.10)와 대역 분리(.40). **임시 배정, 추후 변경 가능** —
+  FEP 실 포트맵과 겹치지 않는지 확인 필요(포트는 45010 하나로 3xxxx 회피).
 - yuanta 실사용 = SHB/NHB/JPM. (LP 코드 `SMB` — 기존 mock/load-gen 과 일치)
-- WTG: LP 카탈로그(LP→분류/port)를 etcd/파일로 두고 mci-price FX mcast 수신부가 join.
+- WTG: LP 카탈로그(LP→분류/group)를 etcd/파일로 두고 mci-price FX mcast 수신부가 join.
 
 ### wire = FIX (거래소 바이너리 아님)
 FIX 4.4 `MarketDataSnapshotFullRefresh(35=W)`: `269=0`(bid)/`1`(ask) 각 `270`(px) + `271`(size).

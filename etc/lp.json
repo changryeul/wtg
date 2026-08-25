@@ -1,0 +1,10 @@
+[
+  {"code": "SMB", "category": "broker",  "group": "227.10.40.11", "port": 45010, "active": true},
+  {"code": "KMB", "category": "broker",  "group": "227.10.40.12", "port": 45010, "active": true},
+  {"code": "EBS", "category": "broker",  "group": "227.10.40.13", "port": 45010, "active": true},
+  {"code": "CMB", "category": "broker",  "group": "227.10.40.14", "port": 45010, "active": true},
+  {"code": "SHB", "category": "bank",    "group": "227.10.40.21", "port": 45010, "active": true},
+  {"code": "NHB", "category": "bank",    "group": "227.10.40.22", "port": 45010, "active": true},
+  {"code": "JPM", "category": "foreign", "group": "227.10.40.31", "port": 45010, "active": true},
+  {"code": "DUH", "category": "foreign", "group": "227.10.40.32", "port": 45010, "active": true}
+]

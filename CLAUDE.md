@@ -122,6 +122,7 @@ broker subscribe path skip, HTTP/gRPC 만으로 단독 부팅. PoC / 회귀 / �
 | 검증 | `mock-lp` | — | — | **시나리오형 mock LP** — LP(SMB/KMB/EBS/CMB)별 **결정적** 호가/체결(FIX 269=2)을 UDP 35=W 로 송신. per-source→BestConsumer→cross→AlgoQuote(last/mid/source) 경로를 값까지 결정적 e2e 검증 (load-gen 은 랜덤 부하, mock-lp 는 시나리오 검증). `--scenario`/`--once`/`--interval`. **e2e 자동 대사: `scripts/mock-lp-verify.sh`** (broker/etcd 없이 최소 스택 부팅 → BEST/per-source 기대값 assert) |
 | 검증 | `algo-tester` | — | — | `SubscribeAlgo` smoke — AlgoQuote(bid/ask/mid/last/source) 덤프. `--sources`(per-source) / `--json`(스크립트 파싱) / `--from-seq`(backfill) |
 | 검증 | `fix-tester` / `fix-md-tester` | — | — | mci-edge-fix / mci-edge-md smoke test CLI (quickfix initiator — Logon + 주문/MDR 1건) |
+| 검증 | `oms-stub` | — | — | 주문 e2e 용 OMS 체결응답 스텁 — 결정적 ExecutionReport(accept/partial/fill/reject)를 WTG 인바운드 push(mci-push `/v1/internal/push` → 화면 ws, 옵션 mci-edge-fix-ord exec-report → FIX 35=8)로 주입. broker AP 응답 대체(pkg/mymq 클라전용). `docs/order-architecture.md` §5b |
 | 검증 | `spot-load-gen` / `ws-load-gen` | — | — | `/v1/quote/spot` REST latency / ws fan-out burst PoC 부하 생성기 |
 | 검증 | `tcp-tester` | — | — | mci-edge-tcp 클라이언트 시뮬레이터 — 지속 연결 + 주기 heartbeat RTT + 전문 송수신 (`--send-file` / `--reconnect`) |
 | 검증 | `dev-bar-faker` | — | — | gRPC `PriceService.SubscribeBar` mock — mci-chart 단독 테스트용 |
@@ -322,6 +323,7 @@ WTG 코드에 **거래 한도/통화쌍 활성/거래시간/slippage 같은 비�
 - `docs/operations/demo-scenario.md` — 시현/데모 60분 풀 코스 + 청중별 단축/확장
 
 ### 개발자 / 아키텍처 가이드
+- `docs/order-architecture.md` — 주문 아키텍처 WTG 경계 정리. **WTG=앞단(진입) 전용**(웹 `/v1/tx`·고객 FIX `wtg-fix`·레거시 `edge-tcp` 3채널 → broker), 라우팅=broker 서비스, 실행/LP=OMS(FEP)/wfg-rs/mock_lp·mock_krx, 체결 통보=mci-push 마지막 hop. LP별 시세=per-source. 각 구간 되는것/채울것 + TBD(dq·체결 last-hop·LP선택자·차익·mock_lp 매핑)
 - `docs/unified-quote-edge-design.md` — 범용 MCI 확장: 통합 시세 엣지 설계 (폴리모픽 envelope v2 + `ev` 버전 네고 + 구독 `symbols` 통일 + Instrument 카탈로그 asset_class/market/upstream + symbol 라우팅). "엣지 통합, 파이프라인 분리, 마진=자산군별 단계". Phase 1(정규화)→Phase 2(단일소켓 fan-in), FX↔KRX codec 병합은 비목표
 - `docs/directory-structure.md` — cmd/pkg/internal/etc 등 디렉토리 카탈로그 + 설정 파일 스키마 + "어디서 무엇을 찾아야 하나"
 - `docs/simplification-guide.md` — Part B (자르기 카탈로그) + Part D (운영 UX 덮기) + 4주 로드맵

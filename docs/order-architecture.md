@@ -146,6 +146,12 @@ WTG 는 `group→LP` 매핑만 하면 되고 downstream(Src 기반)은 그대로
 | 은행 | NHB | 227.10.40.22 | 45010 |
 | 외국중계사 | JPM | 227.10.40.31 | 45010 |
 | 외국중계사 | DUH | 227.10.40.32 | 45010 |
+| 외국중계사(NDF) | JPN | 227.10.40.33 | 45010 |
+| 외국중계사(NDF) | DUN | 227.10.40.34 | 45010 |
+
+> **NDF LP**: `JPN`(=JPM NDF) / `DUN`(=DUH NDF) 는 NDF(차액결제선물환) 피드. category 는
+> LP 분류 그대로 `foreign`(외국중계사)이고, NDF 구분은 코드 접미(-N)로 표현. 별도 UI 그룹이
+> 필요하면 category 를 `ndf` 로 바꾸면 됨 (config 만 수정, 코드 무변경).
 
 - WTG(mci-price)는 각 LP 의 **그룹 IP 를 join**(port 45010) → `group→LP(Source)` 매핑.
   KRX(mci-price-krx, 227.10.20.10)와 대역 분리(.40). **임시 배정, 추후 변경 가능** —

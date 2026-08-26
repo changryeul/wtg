@@ -35,8 +35,11 @@ type customerRegManager struct {
 
 	// active : 현재 등록 의도된 customer set (재연결 self-heal 용).
 	// edge 가 ws disconnect 시 Unregister 도 명시 호출 → 여기서 삭제.
+	// 같은 customerID 로 여러 연결(BEST 화면 + LP별 화면)이 붙을 수 있으므로
+	// 연결 수(conns)와 원천 refcount(srcRefs)를 추적해 upstream 에 sources 의
+	// 합집합을 보낸다 — 한 연결이 닫혀도 다른 연결의 구독이 유지되도록.
 	amu    sync.Mutex
-	active map[string]string // customerID → profileKey
+	active map[string]*custRegState // customerID → 상태
 
 	// 직렬 송신 큐. 단일 RegisterCustomer stream 의 send 는 직렬화 필요 (gRPC
 	// stream 동시 Send 금지).
@@ -73,10 +76,29 @@ func newCustomerRegManager(upstream *grpc.ClientConn, subscriberID string, logge
 		logger:         logger,
 		upstream:       upstream,
 		subscriberID:   subscriberID,
-		active:         make(map[string]string),
+		active:         make(map[string]*custRegState),
 		queue:          make(chan *wtgpb.CustomerRegistration, 1024),
 		sendRatePerSec: sendRatePerSec,
 	}
+}
+
+// custRegState — 한 customerID 의 등록 상태. 연결 수 + 원천 refcount.
+type custRegState struct {
+	profileKey string
+	conns      int            // 활성 연결 수 (0 되면 UNREGISTER)
+	srcRefs    map[string]int // 원천 → 그 원천을 구독한 연결 수
+}
+
+// sourcesUnion — 현재 refcount > 0 인 원천 목록 (upstream 전송용).
+func (st *custRegState) sourcesUnion() []string {
+	if len(st.srcRefs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(st.srcRefs))
+	for src := range st.srcRefs {
+		out = append(out, src)
+	}
+	return out
 }
 
 // Start — 매니저 가동. ctx 종료까지 stream loop 유지 + 끊김 시 재연결.
@@ -88,33 +110,79 @@ func (m *customerRegManager) Start(ctx context.Context) {
 
 // Register — customer 등록 enqueue. ws connect 핸들러에서 호출.
 //
-// 호출 즉시 active set 에 추가 (재연결 self-heal 용). 실제 stream send 는
-// streamLoop 의 다음 send 사이클에서.
-func (m *customerRegManager) Register(customerID, profileKey string) {
+// 호출 즉시 active set 에 반영 (연결 수 + 원천 refcount). sources 지정 시 그
+// 원천의 per-source 마진 quote 도 수신. upstream 에는 이 customerID 의 현재
+// 원천 합집합을 REGISTER 로 보낸다 (여러 연결의 원천 통합).
+func (m *customerRegManager) Register(customerID, profileKey string, sources []string) {
 	if customerID == "" || profileKey == "" {
 		return
 	}
 	m.amu.Lock()
-	m.active[customerID] = profileKey
+	st := m.active[customerID]
+	if st == nil {
+		st = &custRegState{profileKey: profileKey, srcRefs: make(map[string]int)}
+		m.active[customerID] = st
+	}
+	st.profileKey = profileKey
+	st.conns++
+	for _, src := range sources {
+		if src != "" {
+			st.srcRefs[src]++
+		}
+	}
+	union := st.sourcesUnion()
 	m.amu.Unlock()
 	m.enqueue(&wtgpb.CustomerRegistration{
 		Op:         wtgpb.CustomerRegistration_OP_REGISTER,
 		CustomerId: customerID,
 		ProfileKey: profileKey,
+		Sources:    union,
 	})
 }
 
 // Unregister — customer 등록 해제 enqueue. ws disconnect 핸들러에서 호출.
-func (m *customerRegManager) Unregister(customerID string) {
+//
+// 이 연결의 원천 refcount 를 감소. 마지막 연결이면 UNREGISTER, 아니면 남은
+// 연결의 원천 합집합으로 REGISTER 를 다시 보낸다 (원천 축소 반영).
+func (m *customerRegManager) Unregister(customerID string, sources []string) {
 	if customerID == "" {
 		return
 	}
 	m.amu.Lock()
-	delete(m.active, customerID)
+	st := m.active[customerID]
+	if st == nil {
+		m.amu.Unlock()
+		return
+	}
+	st.conns--
+	for _, src := range sources {
+		if src == "" {
+			continue
+		}
+		if st.srcRefs[src] > 0 {
+			st.srcRefs[src]--
+			if st.srcRefs[src] == 0 {
+				delete(st.srcRefs, src)
+			}
+		}
+	}
+	if st.conns <= 0 {
+		delete(m.active, customerID)
+		m.amu.Unlock()
+		m.enqueue(&wtgpb.CustomerRegistration{
+			Op:         wtgpb.CustomerRegistration_OP_UNREGISTER,
+			CustomerId: customerID,
+		})
+		return
+	}
+	pkey, union := st.profileKey, st.sourcesUnion()
 	m.amu.Unlock()
+	// 연결 남음 — 원천 합집합 갱신(REGISTER 는 idempotent 갱신).
 	m.enqueue(&wtgpb.CustomerRegistration{
-		Op:         wtgpb.CustomerRegistration_OP_UNREGISTER,
+		Op:         wtgpb.CustomerRegistration_OP_REGISTER,
 		CustomerId: customerID,
+		ProfileKey: pkey,
+		Sources:    union,
 	})
 }
 
@@ -179,12 +247,13 @@ func (m *customerRegManager) streamOnce(ctx context.Context, client wtgpb.PriceS
 	// self-heal: 재연결 후 active set 의 모든 entry 를 다시 register 로 enqueue.
 	m.amu.Lock()
 	healCount := 0
-	for cid, pkey := range m.active {
+	for cid, st := range m.active {
 		select {
 		case m.queue <- &wtgpb.CustomerRegistration{
 			Op:         wtgpb.CustomerRegistration_OP_REGISTER,
 			CustomerId: cid,
-			ProfileKey: pkey,
+			ProfileKey: st.profileKey,
+			Sources:    st.sourcesUnion(),
 		}:
 			healCount++
 		default:

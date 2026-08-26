@@ -132,12 +132,17 @@ type Subscriber struct {
 	id         uint64
 	profileKey string // 예: "WEB.BRANCH.VIP"; 빈값 = profile 매칭 quote 미수신
 	customerID string // Phase 4c. 빈값 = customer-specific quote 미수신.
-	ev         int    // envelope version — 연결 시 ?ev= 로 결정 (immutable). 0/1=legacy, 2=폴리모픽 v2.
-	conn       *websocket.Conn
-	send       chan []byte
-	closed     atomic.Bool
-	closeC     chan struct{}
-	logger     *slog.Logger
+	// sources — 이 연결이 선택한 LP 원천(SMB/KMB/SHB…). 연결 시 ?src= 로 결정(immutable).
+	//   nil/빈 : BEST(다중시장 합성) quote 만 수신 (source="" 태그).
+	//   non-empty : 해당 원천의 per-source 마진 quote 만 수신 (source 태그 일치).
+	// FX LP별 주문화면이 자기 LP quote 만 받도록 edge 라우팅 필터. docs/order-architecture.md §5a.
+	sources map[string]struct{}
+	ev      int // envelope version — 연결 시 ?ev= 로 결정 (immutable). 0/1=legacy, 2=폴리모픽 v2.
+	conn    *websocket.Conn
+	send    chan []byte
+	closed  atomic.Bool
+	closeC  chan struct{}
+	logger  *slog.Logger
 
 	onClose func(*Subscriber)
 
@@ -168,6 +173,28 @@ func (s *Subscriber) SendVersioned(v1, v2 []byte) error {
 
 // CustomerID — Phase 4c. customer-specific quote 매칭에 사용 (immutable).
 func (s *Subscriber) CustomerID() string { return s.customerID }
+
+// Sources — 이 연결이 선택한 LP 원천 목록 (없으면 nil = BEST).
+func (s *Subscriber) Sources() []string {
+	if len(s.sources) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.sources))
+	for src := range s.sources {
+		out = append(out, src)
+	}
+	return out
+}
+
+// MatchesSource — 이 연결이 해당 source 태그의 quote 를 받을지.
+// source=="" (BEST) 는 원천 미선택 연결만, source!="" 는 그 원천을 고른 연결만.
+func (s *Subscriber) MatchesSource(source string) bool {
+	if source == "" {
+		return len(s.sources) == 0
+	}
+	_, ok := s.sources[source]
+	return ok
+}
 
 // MatchesPair — 이 subscriber 가 해당 pair 의 시세를 받기로 선언했는지.
 // pairs 가 nil (subscribe 한 적 없거나 unsubscribe 로 비워짐) 이면 모두 매칭.
@@ -262,6 +289,9 @@ type SubscriberOptions struct {
 	// CustomerID — Phase 4c. customer-specific quote 매칭. 빈값이면
 	// customer-quote 미수신 (Profile-only quote 만).
 	CustomerID string
+	// Sources — 이 연결이 선택한 LP 원천(?src=). 비면 BEST 만. 채우면 해당
+	// 원천의 per-source 마진 quote 만 수신 (FX LP별 화면).
+	Sources []string
 	// EnvelopeVersion — 연결이 협상한 envelope 스키마 버전 (?ev=). 0/1=legacy, 2=v2.
 	EnvelopeVersion int
 }
@@ -274,10 +304,20 @@ func NewSubscriber(ws *websocket.Conn, opts SubscriberOptions) *Subscriber {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	var srcSet map[string]struct{}
+	if len(opts.Sources) > 0 {
+		srcSet = make(map[string]struct{}, len(opts.Sources))
+		for _, src := range opts.Sources {
+			if src != "" {
+				srcSet[src] = struct{}{}
+			}
+		}
+	}
 	s := &Subscriber{
 		id:         subIDSeq.Add(1),
 		profileKey: opts.ProfileKey,
 		customerID: opts.CustomerID,
+		sources:    srcSet,
 		ev:         opts.EnvelopeVersion,
 		conn:       ws,
 		send:       make(chan []byte, opts.SendQueueSize),
@@ -560,7 +600,11 @@ func (r *Registry) SendByProfileV(profileKey, pair string, v1, v2 []byte) (sent,
 }
 
 // SendByCustomerIDV 는 SendByCustomerID 의 envelope-version 인지 변형.
-func (r *Registry) SendByCustomerIDV(customerID, pair string, v1, v2 []byte) (sent, dropped int) {
+//
+// source 는 quote 의 원천 태그. "" = BEST(다중시장 합성) → 원천 미선택 연결만,
+// "SMB"/"SHB" 등 = per-source 마진 quote → 그 원천을 고른 연결만 수신. 같은
+// customerID 라도 BEST 화면과 LP별 화면이 source 로 분리된다.
+func (r *Registry) SendByCustomerIDV(customerID, pair, source string, v1, v2 []byte) (sent, dropped int) {
 	if customerID == "" {
 		return 0, 0
 	}
@@ -568,6 +612,9 @@ func (r *Registry) SendByCustomerIDV(customerID, pair string, v1, v2 []byte) (se
 	snapshot := make([]*Subscriber, 0)
 	for _, s := range r.subs {
 		if s.customerID != customerID {
+			continue
+		}
+		if !s.MatchesSource(source) {
 			continue
 		}
 		if pair != "" && !s.MatchesPair(pair) {
@@ -605,7 +652,7 @@ func (r *Registry) SendByCustomerIDV(customerID, pair string, v1, v2 []byte) (se
 //
 // slow consumer 는 격리. 일반 quote (SendByProfile) 경로와 독립 — 한 subscriber
 // 가 양쪽 매칭이면 두 종류의 quote 가 별도 메시지로 동시 도착할 수 있음.
-func (r *Registry) SendByCustomerID(customerID, pair string, p []byte) (sent, dropped int) {
+func (r *Registry) SendByCustomerID(customerID, pair, source string, p []byte) (sent, dropped int) {
 	if customerID == "" {
 		return 0, 0
 	}
@@ -613,6 +660,9 @@ func (r *Registry) SendByCustomerID(customerID, pair string, p []byte) (sent, dr
 	snapshot := make([]*Subscriber, 0)
 	for _, s := range r.subs {
 		if s.customerID != customerID {
+			continue
+		}
+		if !s.MatchesSource(source) {
 			continue
 		}
 		if pair != "" && !s.MatchesPair(pair) {

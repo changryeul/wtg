@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -401,7 +402,9 @@ func (s *Server) consumeCustomerQuoteOnce(ctx context.Context, client wtgpb.Pric
 				s.sendFreshNotification(cq.GetPair())
 			}
 		}
-		s.registry.SendByCustomerIDV(cq.GetCustomerId(), cq.GetPair(), v1, v2)
+		// source 태그로 라우팅 — BEST(빈값)는 원천 미선택 연결, per-source 는 그
+		// 원천을 고른 연결만 (FX LP별 화면 분리).
+		s.registry.SendByCustomerIDV(cq.GetCustomerId(), cq.GetPair(), cq.GetSource(), v1, v2)
 	}
 }
 
@@ -473,6 +476,7 @@ func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		QuoteID            string  `json:"quote_id,omitempty"`
 		ValidUntilUnixNano int64   `json:"valid_until_unix_nano,omitempty"`
 		CustomerID         string  `json:"customer_id,omitempty"` // P4c
+		Source             string  `json:"source,omitempty"`      // per-source(LP별) quote 면 원천
 	}{
 		Type:               "quote",
 		Pair:               cq.GetPair(),
@@ -491,6 +495,7 @@ func encodeCustomerQuoteJSON(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		QuoteID:            cq.GetQuoteId(),
 		ValidUntilUnixNano: cq.GetValidUntilUnixNano(),
 		CustomerID:         cq.GetCustomerId(),
+		Source:             cq.GetSource(),
 	}
 	return json.Marshal(out)
 }
@@ -515,6 +520,7 @@ func encodeCustomerQuoteV2(cq *wtgpb.CustomerQuote) ([]byte, error) {
 		QuoteID            string  `json:"quote_id,omitempty"`
 		ValidUntilUnixNano int64   `json:"valid_until_unix_nano,omitempty"`
 		CustomerID         string  `json:"customer_id,omitempty"`
+		Source             string  `json:"source,omitempty"` // per-source(LP별) quote 면 원천
 	}
 	out := struct {
 		EV         int         `json:"ev"`
@@ -544,6 +550,7 @@ func encodeCustomerQuoteV2(cq *wtgpb.CustomerQuote) ([]byte, error) {
 			QuoteID:            cq.GetQuoteId(),
 			ValidUntilUnixNano: cq.GetValidUntilUnixNano(),
 			CustomerID:         cq.GetCustomerId(),
+			Source:             cq.GetSource(),
 		},
 	}
 	return json.Marshal(out)
@@ -947,6 +954,17 @@ func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc
 			}
 		}
 
+		// ?src=SMB[,KMB] — FX LP별 화면이 특정 LP 원천의 마진 quote 만 받도록.
+		// 지정 시 per-source 마진 quote 를, 미지정 시 BEST 만 수신 (기존 동작).
+		var sources []string
+		if raw := strings.TrimSpace(r.URL.Query().Get("src")); raw != "" {
+			for _, part := range strings.Split(raw, ",") {
+				if v := strings.TrimSpace(part); v != "" {
+					sources = append(sources, v)
+				}
+			}
+		}
+
 		// envelope 버전 네고 — ?ev=2 지정 시 폴리모픽 v2, 미지정/파싱실패는
 		// legacy(0) 유지. 기존 클라 무영향. docs/unified-quote-edge-design.md §3-4.
 		ev := 0
@@ -964,20 +982,22 @@ func (s *Server) subscribeHandler(upgrader *websocket.Upgrader) http.HandlerFunc
 			Logger:          s.logger,
 			ProfileKey:      profileKey,
 			CustomerID:      customerID,
+			Sources:         sources,
 			EnvelopeVersion: ev,
 			OnClose: func(sb *Subscriber) {
 				s.registry.Remove(sb)
-				// Phase 4c — ws disconnect 시 customer 등록 해제.
+				// Phase 4c — ws disconnect 시 customer 등록 해제 (원천 refcount 반영).
 				if sb.customerID != "" && s.customerRegMgr != nil {
-					s.customerRegMgr.Unregister(sb.customerID)
+					s.customerRegMgr.Unregister(sb.customerID, sb.Sources())
 				}
 			},
 		})
 		s.registry.Add(sub)
 
-		// Phase 4c — ws connect 시 customer 등록 (비블로킹 enqueue).
+		// Phase 4c — ws connect 시 customer 등록 (비블로킹 enqueue). sources 지정 시
+		// per-source(LP별) 마진 quote 도 함께 수신하도록 upstream 에 전달.
 		if customerID != "" && s.customerRegMgr != nil {
-			s.customerRegMgr.Register(customerID, profileKey)
+			s.customerRegMgr.Register(customerID, profileKey, sources)
 		}
 
 		go s.writeLoop(sub)

@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync/atomic"
 	"testing"
+
+	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
 
 func discardLogger() *slog.Logger {
@@ -192,5 +194,101 @@ func TestRegistrySnapshot_Populated(t *testing.T) {
 	}
 	if byID[s2.id].ProfileKey != "MOB.BRANCH.STD" || byID[s2.id].CustomerID != "" {
 		t.Errorf("s2 정보 미반영: %+v", byID[s2.id])
+	}
+}
+
+// per-source 라우팅 — 같은 customerID 라도 BEST 화면(source="") 과 LP별 화면
+// (source="SHB") 이 source 태그로 분리 수신한다.
+func TestSendByCustomerIDV_SourceRouting(t *testing.T) {
+	r := NewRegistry(discardLogger())
+
+	best := &Subscriber{ // 원천 미선택 → BEST 만
+		id: subIDSeq.Add(1), customerID: "U1", send: make(chan []byte, 4),
+		closeC: make(chan struct{}), logger: discardLogger(),
+	}
+	shb := &Subscriber{ // SHB 선택 → SHB per-source 만
+		id: subIDSeq.Add(1), customerID: "U1", sources: map[string]struct{}{"SHB": {}},
+		send: make(chan []byte, 4), closeC: make(chan struct{}), logger: discardLogger(),
+	}
+	r.Add(best)
+	r.Add(shb)
+
+	// BEST quote (source="") → best 만.
+	if sent, _ := r.SendByCustomerIDV("U1", "USD/KRW", "", []byte("BEST"), nil); sent != 1 {
+		t.Fatalf("BEST sent=%d, want 1", sent)
+	}
+	if got := string(<-best.send); got != "BEST" {
+		t.Errorf("best 수신 %q, want BEST", got)
+	}
+	select {
+	case p := <-shb.send:
+		t.Errorf("SHB 화면이 BEST quote 수신: %q", p)
+	default:
+	}
+
+	// SHB per-source quote → shb 만.
+	if sent, _ := r.SendByCustomerIDV("U1", "USD/KRW", "SHB", []byte("SHBQ"), nil); sent != 1 {
+		t.Fatalf("SHB sent=%d, want 1", sent)
+	}
+	if got := string(<-shb.send); got != "SHBQ" {
+		t.Errorf("shb 수신 %q, want SHBQ", got)
+	}
+	select {
+	case p := <-best.send:
+		t.Errorf("BEST 화면이 SHB quote 수신: %q", p)
+	default:
+	}
+
+	// 아무도 안 고른 KMB → 0.
+	if sent, _ := r.SendByCustomerIDV("U1", "USD/KRW", "KMB", []byte("KMBQ"), nil); sent != 0 {
+		t.Errorf("KMB sent=%d, want 0 (구독자 없음)", sent)
+	}
+}
+
+// customerRegManager: 같은 customerID 의 다중 연결이 원천 합집합으로 등록되고,
+// 한 연결이 닫혀도 남은 연결의 원천은 유지된다 (refcount).
+func TestCustomerRegManager_SourceUnionRefcount(t *testing.T) {
+	mgr := &customerRegManager{
+		logger: discardLogger(),
+		active: make(map[string]*custRegState),
+		queue:  make(chan *wtgpb.CustomerRegistration, 16),
+	}
+	// BEST 화면 + SHB 화면 (같은 customerID).
+	mgr.Register("U1", "WEB.HQ.VIP", nil)
+	mgr.Register("U1", "WEB.HQ.VIP", []string{"SHB"})
+
+	mgr.amu.Lock()
+	st := mgr.active["U1"]
+	if st == nil || st.conns != 2 {
+		mgr.amu.Unlock()
+		t.Fatalf("conns=%v, want 2", st)
+	}
+	if _, ok := st.srcRefs["SHB"]; !ok || st.srcRefs["SHB"] != 1 {
+		mgr.amu.Unlock()
+		t.Fatalf("srcRefs=%v, want SHB:1", st.srcRefs)
+	}
+	mgr.amu.Unlock()
+
+	// SHB 화면 닫힘 → conns=1, SHB refcount 0 → 제거. 하지만 U1 등록은 유지.
+	mgr.Unregister("U1", []string{"SHB"})
+	mgr.amu.Lock()
+	st = mgr.active["U1"]
+	if st == nil || st.conns != 1 {
+		mgr.amu.Unlock()
+		t.Fatalf("SHB 닫힌 후 conns=%v, want 1 (U1 유지)", st)
+	}
+	if len(st.srcRefs) != 0 {
+		mgr.amu.Unlock()
+		t.Fatalf("srcRefs=%v, want 비어있음", st.srcRefs)
+	}
+	mgr.amu.Unlock()
+
+	// 마지막 BEST 화면도 닫힘 → U1 완전 제거.
+	mgr.Unregister("U1", nil)
+	mgr.amu.Lock()
+	_, exists := mgr.active["U1"]
+	mgr.amu.Unlock()
+	if exists {
+		t.Error("모든 연결 닫힌 후에도 U1 등록 남음")
 	}
 }

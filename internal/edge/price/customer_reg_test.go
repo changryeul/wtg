@@ -140,8 +140,8 @@ func TestCustomerRegManager_RegisterUnregisterDelivered(t *testing.T) {
 	mgr := newCustomerRegManager(conn, "edge-1", quietLogger(), 0)
 	mgr.Start(ctx)
 
-	mgr.Register("VIP-7", "WEB.BRANCH.VIP")
-	mgr.Register("GOLD-3", "WEB.HQ.STD")
+	mgr.Register("VIP-7", "WEB.BRANCH.VIP", nil)
+	mgr.Register("GOLD-3", "WEB.HQ.STD", nil)
 
 	// upstream 도달 대기.
 	waitFor(t, time.Second, func() bool {
@@ -160,7 +160,7 @@ func TestCustomerRegManager_RegisterUnregisterDelivered(t *testing.T) {
 	}
 
 	// Unregister.
-	mgr.Unregister("VIP-7")
+	mgr.Unregister("VIP-7", nil)
 	waitFor(t, time.Second, func() bool {
 		for _, r := range mock.registrations() {
 			if r.GetOp() == wtgpb.CustomerRegistration_OP_UNREGISTER && r.GetCustomerId() == "VIP-7" {
@@ -190,7 +190,7 @@ func TestCustomerRegManager_SendRateThrottle(t *testing.T) {
 
 	// 100 customer 일제 enqueue — burst.
 	for i := 0; i < 100; i++ {
-		mgr.Register("CID-"+fmtInt(i), "WEB.BRANCH.VIP")
+		mgr.Register("CID-"+fmtInt(i), "WEB.BRANCH.VIP", nil)
 	}
 
 	// 1초 후 도달 수 확인.
@@ -239,9 +239,9 @@ func TestCustomerRegManager_EmptyArgsIgnored(t *testing.T) {
 	mgr := newCustomerRegManager(conn, "edge-1", quietLogger(), 0)
 	mgr.Start(ctx)
 
-	mgr.Register("", "WEB.BRANCH.VIP")
-	mgr.Register("X", "")
-	mgr.Unregister("")
+	mgr.Register("", "WEB.BRANCH.VIP", nil)
+	mgr.Register("X", "", nil)
+	mgr.Unregister("", nil)
 
 	time.Sleep(150 * time.Millisecond)
 
@@ -263,7 +263,7 @@ func TestRegistry_SendByCustomerID_Filtering(t *testing.T) {
 	r.Add(sub2)
 	r.Add(sub3)
 
-	sent, dropped := r.SendByCustomerID("VIP-7", "USD/KRW", []byte("payload"))
+	sent, dropped := r.SendByCustomerID("VIP-7", "USD/KRW", "", []byte("payload"))
 	if sent != 1 || dropped != 0 {
 		t.Errorf("sent=%d dropped=%d, want 1/0", sent, dropped)
 	}
@@ -278,7 +278,7 @@ func TestRegistry_SendByCustomerID_EmptyIsNoop(t *testing.T) {
 	r := NewRegistry(quietLogger())
 	sub := &Subscriber{id: 1, customerID: "X", send: make(chan []byte, 4)}
 	r.Add(sub)
-	sent, dropped := r.SendByCustomerID("", "USD/KRW", []byte("x"))
+	sent, dropped := r.SendByCustomerID("", "USD/KRW", "", []byte("x"))
 	if sent != 0 || dropped != 0 || len(sub.send) != 0 {
 		t.Errorf("empty customerID 호출이 발송됨: sent=%d dropped=%d q=%d", sent, dropped, len(sub.send))
 	}
@@ -314,7 +314,7 @@ func TestEdgePrice_E2E_CustomerStream(t *testing.T) {
 	// 1) customerRegManager 가동.
 	mgr := newCustomerRegManager(conn, "edge-e2e", quietLogger(), 0)
 	mgr.Start(ctx)
-	mgr.Register("VIP-7", "WEB.BRANCH.VIP")
+	mgr.Register("VIP-7", "WEB.BRANCH.VIP", nil)
 
 	// 2) 등록이 mci-price CustomerRegistry 에 도달.
 	waitFor(t, time.Second, func() bool {

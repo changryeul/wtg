@@ -248,7 +248,11 @@ type AlgoQuote struct {
 	// tenor — 만기. "SPT"=spot(swap 미적용), "M01"/"M03"… =forward(effective swap
 	// 적용된 값). mds fold 의 mdquot[tenor] 대응 — bid/ask 는 해당 tenor 의
 	// swap-applied 값. spot 구독(tenors 미지정)이면 "SPT".
-	Tenor         string `protobuf:"bytes,12,opt,name=tenor,proto3" json:"tenor,omitempty"`
+	Tenor string `protobuf:"bytes,12,opt,name=tenor,proto3" json:"tenor,omitempty"`
+	// bid_size/ask_size — top-of-book 가용수량(avail, FIX 271). per-source 구독 시
+	// 해당 원천(SMB/KMB…)의 호가 수량, BEST 는 승자 원천의 수량. 0=미제공.
+	BidSize       float64 `protobuf:"fixed64,13,opt,name=bid_size,json=bidSize,proto3" json:"bid_size,omitempty"`
+	AskSize       float64 `protobuf:"fixed64,14,opt,name=ask_size,json=askSize,proto3" json:"ask_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -365,6 +369,20 @@ func (x *AlgoQuote) GetTenor() string {
 		return x.Tenor
 	}
 	return ""
+}
+
+func (x *AlgoQuote) GetBidSize() float64 {
+	if x != nil {
+		return x.BidSize
+	}
+	return 0
+}
+
+func (x *AlgoQuote) GetAskSize() float64 {
+	if x != nil {
+		return x.AskSize
+	}
+	return 0
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와
@@ -1365,7 +1383,7 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\asymbols\x18\x02 \x03(\tR\asymbols\x12\x19\n" +
 	"\bfrom_seq\x18\x03 \x01(\x03R\afromSeq\x12\x18\n" +
 	"\asources\x18\x04 \x03(\tR\asources\x12\x16\n" +
-	"\x06tenors\x18\x05 \x03(\tR\x06tenors\"\xb3\x02\n" +
+	"\x06tenors\x18\x05 \x03(\tR\x06tenors\"\xe9\x02\n" +
 	"\tAlgoQuote\x12\x10\n" +
 	"\x03sym\x18\x01 \x01(\tR\x03sym\x12\x10\n" +
 	"\x03bid\x18\x02 \x01(\x01R\x03bid\x12\x10\n" +
@@ -1380,7 +1398,9 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\x03mid\x18\n" +
 	" \x01(\x01R\x03mid\x12\x16\n" +
 	"\x06source\x18\v \x01(\tR\x06source\x12\x14\n" +
-	"\x05tenor\x18\f \x01(\tR\x05tenor\"l\n" +
+	"\x05tenor\x18\f \x01(\tR\x05tenor\x12\x19\n" +
+	"\bbid_size\x18\r \x01(\x01R\abidSize\x12\x19\n" +
+	"\bask_size\x18\x0e \x01(\x01R\aaskSize\"l\n" +
 	"\n" +
 	"PublishAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\x04R\baccepted\x12\x18\n" +

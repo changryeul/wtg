@@ -176,6 +176,41 @@ func TestAlgoServer_OnTickCarriesLast(t *testing.T) {
 	}
 }
 
+// per-source AlgoQuote 가 top-of-book avail(bid_size/ask_size, FIX 271)을 원천 태그와
+// 함께 전달한다 (per-source 구독자가 원천별 가용수량을 받을 수 있게).
+func TestAlgoServer_PerSourceCarriesAvail(t *testing.T) {
+	s := NewAlgoStreamServer(nil, AlgoStreamOptions{RingSize: 8})
+	defer s.Stop()
+
+	sub := &algoSub{
+		clientID:  "mm-smb",
+		symbolSet: map[string]struct{}{"USDKRW": {}},
+		sources:   map[string]struct{}{"SMB": {}},
+		ch:        make(chan *wtgpb.AlgoQuote, 4),
+		done:      make(chan struct{}),
+	}
+	s.registerSub(sub)
+
+	body, _ := json.Marshal(quote.JSONEnvelope{
+		Sym: "USDKRW", Bid: 1380.00, Ask: 1380.10, Src: "SMB",
+		TS: time.Now().UTC(), BidSize: 3_000_000, AskSize: 2_000_000,
+	})
+	s.OnTick(&Tick{Symbol: "USDKRW", Source: "SMB", Body: body, Received: time.Now()})
+
+	select {
+	case q := <-sub.ch:
+		if q.GetSource() != "SMB" {
+			t.Errorf("source=%q, want SMB (per-source)", q.GetSource())
+		}
+		if q.GetBidSize() != 3_000_000 || q.GetAskSize() != 2_000_000 {
+			t.Errorf("per-source avail=%v/%v, want 3000000/2000000",
+				q.GetBidSize(), q.GetAskSize())
+		}
+	default:
+		t.Fatal("per-source 구독자가 SMB raw tick 을 못 받음")
+	}
+}
+
 // mockAlgoStream — SubscribeAlgo 용 최소 gRPC server stream mock.
 type mockAlgoStream struct {
 	grpc.ServerStream

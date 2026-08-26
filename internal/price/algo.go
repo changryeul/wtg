@@ -444,6 +444,8 @@ func (s *AlgoStreamServer) emitQuote(t *Tick, env quote.JSONEnvelope, tenor stri
 		Mid:            (bid + ask) / 2, // 해당 tenor 의 mid
 		Source:         t.Source,
 		Tenor:          tenor,
+		BidSize:        env.BidSize, // top-of-book avail (FIX 271)
+		AskSize:        env.AskSize,
 	}
 	if ring := s.ringFor(key); ring != nil {
 		ring.push(q)
@@ -610,6 +612,8 @@ func (s *AlgoStreamServer) SubscribeAlgo(req *wtgpb.AlgoSubscribeRequest,
 					Mid:            orig.GetMid(),
 					Source:         orig.GetSource(),
 					Tenor:          orig.GetTenor(),
+					BidSize:        orig.GetBidSize(),
+					AskSize:        orig.GetAskSize(),
 				}
 				if err := stream.Send(q); err != nil {
 					return err

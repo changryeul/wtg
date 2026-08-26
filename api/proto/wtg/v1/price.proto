@@ -163,6 +163,11 @@ message AlgoQuote {
   // 적용된 값). mds fold 의 mdquot[tenor] 대응 — bid/ask 는 해당 tenor 의
   // swap-applied 값. spot 구독(tenors 미지정)이면 "SPT".
   string tenor = 12;
+
+  // bid_size/ask_size — top-of-book 가용수량(avail, FIX 271). per-source 구독 시
+  // 해당 원천(SMB/KMB…)의 호가 수량, BEST 는 승자 원천의 수량. 0=미제공.
+  double bid_size = 13;
+  double ask_size = 14;
 }
 
 // PublishAck — PublishTick stream 의 주기 응답. server 가 받은 tick 수와

@@ -101,13 +101,13 @@ func main() {
 		lastSeq[q.GetSym()] = q.GetSeq()
 
 		if *jsonOut {
-			fmt.Printf(`{"sym":%q,"source":%q,"tenor":%q,"seq":%d,"bid":%.5f,"ask":%.5f,"mid":%.5f,"last":%.5f,"last_qty":%.0f,"backfill":%v}`+"\n",
+			fmt.Printf(`{"sym":%q,"source":%q,"tenor":%q,"seq":%d,"bid":%.5f,"ask":%.5f,"bid_size":%.0f,"ask_size":%.0f,"mid":%.5f,"last":%.5f,"last_qty":%.0f,"backfill":%v}`+"\n",
 				q.GetSym(), q.GetSource(), q.GetTenor(), q.GetSeq(), q.GetBid(), q.GetAsk(),
-				q.GetMid(), q.GetLast(), q.GetLastQty(), q.GetIsBackfill())
+				q.GetBidSize(), q.GetAskSize(), q.GetMid(), q.GetLast(), q.GetLastQty(), q.GetIsBackfill())
 		} else if recv <= 20 || recv%50 == 0 {
-			fmt.Printf("[#%06d] %s src=%s tenor=%s seq=%d bid=%.5f ask=%.5f mid=%.5f last=%.5f lat=%.2fms bf=%v%s\n",
+			fmt.Printf("[#%06d] %s src=%s tenor=%s seq=%d bid=%.5f ask=%.5f avail=%.0f/%.0f mid=%.5f last=%.5f lat=%.2fms bf=%v%s\n",
 				recv, q.GetSym(), q.GetSource(), q.GetTenor(), q.GetSeq(), q.GetBid(), q.GetAsk(),
-				q.GetMid(), q.GetLast(), latencyMs, q.GetIsBackfill(), gap)
+				q.GetBidSize(), q.GetAskSize(), q.GetMid(), q.GetLast(), latencyMs, q.GetIsBackfill(), gap)
 		}
 		if *slowSleep > 0 {
 			time.Sleep(*slowSleep)

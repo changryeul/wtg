@@ -18,6 +18,7 @@ const (
 	CategoryBroker  Category = "broker"  // 중계사(ECN) — SMB/KMB/EBS/CMB
 	CategoryBank    Category = "bank"    // 은행 — SHB/NHB
 	CategoryForeign Category = "foreign" // 외국중계사 — JPM/DUH
+	CategoryNDF     Category = "ndf"     // NDF(차액결제선물환) — JPN/DUN
 )
 
 // LP — 카탈로그 1건. 멀티캐스트는 group(IP)로 LP 를 구분(그룹-per-LP), port 는 공통 가능.

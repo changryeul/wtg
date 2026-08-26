@@ -146,13 +146,18 @@ func priceFor(lpCode, sym string, symIdx, tick int) (bid, ask, bidSz, askSz floa
 	if !okb {
 		b = 100.0 + float64(symIdx)*10
 	}
-	// LP 오프셋: 코드 바이트 합 % 5 → 0..4 pip
+	// LP 오프셋: 코드별로 distinct 하도록 위치가중 해시(31배수 FNV류) % 17 → 0..16 pip.
+	// 단순 바이트 합은 NHB/SHB/JPM 처럼 서로 다른 코드가 같은 버킷에 충돌해 값이
+	// 겹칠 수 있어(실 LP 는 각자 실가격), 화면별 구분이 흐려짐 — 이를 방지.
 	var h int
 	for i := 0; i < len(lpCode); i++ {
-		h += int(lpCode[i])
+		h = h*31 + int(lpCode[i])
+	}
+	if h < 0 {
+		h = -h
 	}
 	pip := b * 0.00005 // 0.5bp
-	off := float64(h%5) * pip
+	off := float64(h%17) * pip
 	drift := float64(tick%10) * pip
 	spread := b * 0.0002 // 2bp
 	bid = round4(b + off + drift - spread/2)

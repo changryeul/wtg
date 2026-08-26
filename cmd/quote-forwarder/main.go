@@ -143,11 +143,15 @@ const rejectSampleInterval = 60 * time.Second
 // shouldLogRejectSample — (feed, reason) key 에 대해 마지막 로그 이후
 // rejectSampleInterval 이상 지났으면 true + 시각 갱신. concurrent-safe.
 func shouldLogRejectSample(key string, now time.Time) bool {
-	actual, loaded := rejectSampleGate.LoadOrStore(key, &atomic.Int64{})
+	// gate 값을 now 로 미리 채운 뒤 publish — LoadOrStore 가 zero-value(0)를 심으면
+	// 승자가 now 를 store 하기 전 틈에 다른 goroutine 이 0(=아주 오래 전)을 읽고 CAS 로
+	// 두 번째 true 를 반환하는 경쟁이 생긴다 (flaky). 초기값=now 로 그 틈 제거.
+	fresh := &atomic.Int64{}
+	fresh.Store(now.UnixNano())
+	actual, loaded := rejectSampleGate.LoadOrStore(key, fresh)
 	p := actual.(*atomic.Int64)
 	if !loaded {
-		// 첫 등장 — 즉시 로그 + 시각 기록.
-		p.Store(now.UnixNano())
+		// 첫 등장 — 즉시 로그 (fresh 에 이미 now 기록됨).
 		return true
 	}
 	last := p.Load()

@@ -292,3 +292,31 @@ func TestCustomerRegManager_SourceUnionRefcount(t *testing.T) {
 		t.Error("모든 연결 닫힌 후에도 U1 등록 남음")
 	}
 }
+
+// per-source(LP별) 구독자는 BEST profile 브로드캐스트를 받지 않는다 (자기 LP만).
+func TestSendByProfileV_ExcludesPerSourceSubs(t *testing.T) {
+	r := NewRegistry(discardLogger())
+	best := &Subscriber{ // 원천 미선택 → profile BEST 수신
+		id: subIDSeq.Add(1), profileKey: "WEB.HQ.VIP", send: make(chan []byte, 4),
+		closeC: make(chan struct{}), logger: discardLogger(),
+	}
+	lp := &Subscriber{ // SHB 선택 → profile BEST 제외
+		id: subIDSeq.Add(1), profileKey: "WEB.HQ.VIP", sources: map[string]struct{}{"SHB": {}},
+		send: make(chan []byte, 4), closeC: make(chan struct{}), logger: discardLogger(),
+	}
+	r.Add(best)
+	r.Add(lp)
+
+	sent, _ := r.SendByProfileV("WEB.HQ.VIP", "USD/KRW", []byte("V1"), nil)
+	if sent != 1 {
+		t.Fatalf("profile BEST sent=%d, want 1 (best 만, LP화면 제외)", sent)
+	}
+	if got := string(<-best.send); got != "V1" {
+		t.Errorf("best 수신 %q, want V1", got)
+	}
+	select {
+	case p := <-lp.send:
+		t.Errorf("LP화면이 BEST profile quote 수신: %q", p)
+	default:
+	}
+}

@@ -501,6 +501,11 @@ func (r *Registry) SendByProfile(profileKey, pair string, p []byte) (sent, dropp
 		if s.profileKey != profileKey {
 			continue
 		}
+		// per-source(LP별) 화면은 BEST(source="") profile 브로드캐스트 제외 —
+		// 자기 LP quote(customer 경로)만 받는다.
+		if !s.MatchesSource("") {
+			continue
+		}
 		if pair != "" && !s.MatchesPair(pair) {
 			continue
 		}
@@ -572,6 +577,10 @@ func (r *Registry) SendByProfileV(profileKey, pair string, v1, v2 []byte) (sent,
 	snapshot := make([]*Subscriber, 0, len(r.subs))
 	for _, s := range r.subs {
 		if s.profileKey != profileKey {
+			continue
+		}
+		// per-source(LP별) 화면은 BEST(source="") profile 브로드캐스트 제외.
+		if !s.MatchesSource("") {
 			continue
 		}
 		if pair != "" && !s.MatchesPair(pair) {

@@ -26,6 +26,7 @@ import (
 	"github.com/winwaysystems/wtg/internal/api/middleware"
 	"github.com/winwaysystems/wtg/pkg/auth"
 	"github.com/winwaysystems/wtg/pkg/instrument"
+	"github.com/winwaysystems/wtg/pkg/lpcatalog"
 	"github.com/winwaysystems/wtg/pkg/metrics"
 	"github.com/winwaysystems/wtg/pkg/netutil"
 	"github.com/winwaysystems/wtg/pkg/policy"
@@ -69,6 +70,12 @@ type Server struct {
 	catalogEtcdCli *clientv3.Client
 	krxUpstream    *grpc.ClientConn
 	totalKrxRecv   atomic.Uint64
+
+	// lpCat — FX LP 카탈로그 (client 가 ?src= 로 고를 수 있는 LP 목록의 근거).
+	// nil 이면 /v1/sources 가 비활성(빈 목록). etcd(prefix) 우선, 없으면 파일.
+	lpCat     *lpcatalog.Catalog
+	lpWatcher *lpcatalog.EtcdWatcher
+	lpEtcdCli *clientv3.Client
 
 	// customerPairs — 고객별 ws 구독 허용 pair allowlist. nil 이면 글로벌
 	// 정책만 (backward compat). etcd watch 로 mci-admin 의 변경 즉시 반영.
@@ -196,6 +203,10 @@ func (s *Server) Start(ctx context.Context) error {
 	// FX 경로는 계속 (카탈로그 비활성 = FX 전용 기존 동작).
 	if err := s.startCatalog(ctx); err != nil {
 		s.logger.Warn("Instrument 카탈로그 로드 실패 — 카탈로그 비활성", slog.Any("error", err))
+	}
+	// FX LP 카탈로그 로드 (client /v1/sources 노출용). 실패해도 계속.
+	if err := s.startLPCatalog(ctx); err != nil {
+		s.logger.Warn("LP 카탈로그 로드 실패 — /v1/sources 비활성", slog.Any("error", err))
 	}
 	// Phase 2 — KRX 상류 fan-in (통합 소켓). 빈값이면 비활성.
 	if s.cfg.KrxUpstreamGRPC != "" {
@@ -802,6 +813,27 @@ func (s *Server) BuildHandler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
+	// GET /v1/sources — client 가 ?src= 로 고를 수 있는 활성 LP 목록.
+	// 내부 인프라(group/port)는 노출하지 않고 code/category 만 (LP 선택 UI 용).
+	mux.HandleFunc("GET /v1/sources", func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.DevMode {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		type lpView struct {
+			Code     string `json:"code"`     // ?src= 에 넣을 값
+			Category string `json:"category"` // broker|bank|foreign (UI 그룹핑용)
+		}
+		views := []lpView{}
+		if s.lpCat != nil {
+			for _, lp := range s.lpCat.ActiveFeeds() {
+				views = append(views, lpView{Code: lp.Code, Category: string(lp.Category)})
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"count":   len(views),
+			"sources": views,
+		})
+	})
 	mux.Handle("GET /metrics", s.metrics.Handler())
 
 	// DevMode 한정 pprof — burst PoC 진단용. 운영 비활성.
@@ -1322,6 +1354,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.catalogEtcdCli != nil {
 		_ = s.catalogEtcdCli.Close()
+	}
+	if s.lpWatcher != nil {
+		_ = s.lpWatcher.Close()
+	}
+	if s.lpEtcdCli != nil {
+		_ = s.lpEtcdCli.Close()
 	}
 	if s.krxUpstream != nil {
 		if err := s.krxUpstream.Close(); err != nil && first == nil {

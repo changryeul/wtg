@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/winwaysystems/wtg/pkg/instrument"
+	"github.com/winwaysystems/wtg/pkg/lpcatalog"
 	"github.com/winwaysystems/wtg/pkg/policy"
 	wtgpb "github.com/winwaysystems/wtg/pkg/wtgpb/v1"
 )
@@ -63,6 +64,51 @@ func (s *Server) startCatalog(ctx context.Context) error {
 		s.catalog = cat
 		s.logger.Info("Instrument 카탈로그 파일 로드",
 			slog.String("file", s.cfg.InstrumentsFile), slog.Int("count", cat.Size()))
+	}
+	return nil
+}
+
+// startLPCatalog — FX LP 카탈로그 로드 (client /v1/sources 노출용). etcd(prefix)
+// 우선, 없으면 파일. 둘 다 비면 no-op (/v1/sources 빈 목록). mci-price 와 동일 config.
+func (s *Server) startLPCatalog(ctx context.Context) error {
+	if s.lpCat != nil { // 이미 주입(테스트) 시 존중
+		return nil
+	}
+	// etcd 모드.
+	if s.cfg.EtcdEndpoints != "" && s.cfg.LPEtcdPrefix != "" {
+		eps := policy.SplitEndpoints(s.cfg.EtcdEndpoints)
+		if len(eps) > 0 {
+			cli, err := clientv3.New(clientv3.Config{Endpoints: eps, DialTimeout: 5 * time.Second})
+			if err != nil {
+				return fmt.Errorf("lp catalog etcd dial: %w", err)
+			}
+			cat := lpcatalog.NewCatalog()
+			w, err := lpcatalog.NewEtcdWatcher(ctx, lpcatalog.EtcdWatcherOptions{
+				Client: cli, Prefix: s.cfg.LPEtcdPrefix, C: cat, Logger: s.logger,
+			})
+			if err != nil {
+				_ = cli.Close()
+				return fmt.Errorf("lp catalog watcher: %w", err)
+			}
+			s.lpCat = cat
+			s.lpWatcher = w
+			s.lpEtcdCli = cli
+			s.logger.Info("LP 카탈로그 etcd watcher 활성 (/v1/sources)",
+				slog.String("prefix", s.cfg.LPEtcdPrefix), slog.Int("count", cat.Size()))
+			return nil
+		}
+	}
+	// 파일 모드.
+	if s.cfg.LPFile != "" {
+		items, err := lpcatalog.LoadFile(s.cfg.LPFile)
+		if err != nil {
+			return err
+		}
+		cat := lpcatalog.NewCatalog()
+		cat.Replace(items)
+		s.lpCat = cat
+		s.logger.Info("LP 카탈로그 파일 로드 (/v1/sources)",
+			slog.String("file", s.cfg.LPFile), slog.Int("count", cat.Size()))
 	}
 	return nil
 }

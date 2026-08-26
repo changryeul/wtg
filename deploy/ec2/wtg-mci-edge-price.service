@@ -21,6 +21,7 @@ ExecStart=/home/winway/common/wtg/bin/mci-edge-price \
     --customer-stream \
     --krx-upstream=127.0.0.1:50053 \
     --instruments-file=/home/winway/common/wtg/etc/instruments.json \
+    --lp-file=/home/winway/common/wtg/etc/lp.json \
     --jwt-pub=/home/winway/common/wtg/etc/jwt-public.pem
 
 Restart=on-failure

@@ -288,6 +288,11 @@ message CustomerQuote {
   // BidSize/AskSize — top-of-book 가용수량(avail). 마진 무관 passthrough (호가에 동반).
   double bid_size = 15;
   double ask_size = 16;
+
+  // source — per-source(LP별) quote 인 경우의 원천(SMB/KMB/SHB…). 빈값이면
+  // BEST(다중시장 합성) quote. 채워지면 해당 LP raw 호가에 profile 마진 적용가 —
+  // FX LP별 주문화면이 src 필터로 자기 LP quote 만 수신. docs/order-architecture.md §5a.
+  string source = 17;
 }
 
 // CustomerRegistration — RegisterCustomer stream 의 단위 메시지. edge 가 ws
@@ -306,6 +311,12 @@ message CustomerRegistration {
   // Profile key (REGISTER 시 필수). 예: "WEB.BRANCH.VIP".
   // mci-price 가 이 값을 session.Profile 로 역파싱해 CustomerRegistry 에 저장.
   string profile_key = 3;
+
+  // sources — 고객이 받고자 하는 LP 원천(SMB/KMB/SHB…). 비어있으면 BEST(다중시장
+  // 합성) quote 만 수신(기존 동작). 채워지면 해당 원천의 raw 호가에 profile 마진을
+  // 적용한 per-source CustomerQuote(source 태그)를 추가 수신 — FX LP별 주문화면용.
+  // docs/order-architecture.md §5a.
+  repeated string sources = 4;
 }
 
 // CustomerAck — RegisterCustomer 의 server → client 응답.

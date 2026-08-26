@@ -91,6 +91,11 @@ type CustomerQuote struct {
 	AskSize      float64 // top-of-book 가용수량(avail)
 	TableVersion int64   // 적용된 PricingTable.Version
 
+	// Source — per-source(LP별) quote 인 경우의 원천(SMB/KMB/SHB…). 빈값이면
+	// BEST(다중시장 합성) quote. 마진은 source 무관하게 동일 profile 표를 적용하고
+	// 이 필드로 어느 LP raw 호가에 적용됐는지만 태깅. docs/order-architecture.md §5a.
+	Source string
+
 	// QuoteID — FIX 4.4 tag 117 호환 식별자. PricingConsumer 가 발행 직전에
 	// Generator 로 부착. 빈값이면 quoteid 미사용 (dev / 단위 테스트 경로).
 	QuoteID string

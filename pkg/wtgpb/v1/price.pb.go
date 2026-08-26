@@ -909,8 +909,12 @@ type CustomerQuote struct {
 	// SubscribeCustomerQuote 경로에서 customer 별 fan-out.
 	CustomerId string `protobuf:"bytes,14,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
 	// BidSize/AskSize — top-of-book 가용수량(avail). 마진 무관 passthrough (호가에 동반).
-	BidSize       float64 `protobuf:"fixed64,15,opt,name=bid_size,json=bidSize,proto3" json:"bid_size,omitempty"`
-	AskSize       float64 `protobuf:"fixed64,16,opt,name=ask_size,json=askSize,proto3" json:"ask_size,omitempty"`
+	BidSize float64 `protobuf:"fixed64,15,opt,name=bid_size,json=bidSize,proto3" json:"bid_size,omitempty"`
+	AskSize float64 `protobuf:"fixed64,16,opt,name=ask_size,json=askSize,proto3" json:"ask_size,omitempty"`
+	// source — per-source(LP별) quote 인 경우의 원천(SMB/KMB/SHB…). 빈값이면
+	// BEST(다중시장 합성) quote. 채워지면 해당 LP raw 호가에 profile 마진 적용가 —
+	// FX LP별 주문화면이 src 필터로 자기 LP quote 만 수신. docs/order-architecture.md §5a.
+	Source        string `protobuf:"bytes,17,opt,name=source,proto3" json:"source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1057,6 +1061,13 @@ func (x *CustomerQuote) GetAskSize() float64 {
 	return 0
 }
 
+func (x *CustomerQuote) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
 // CustomerRegistration — RegisterCustomer stream 의 단위 메시지. edge 가 ws
 // 클라이언트의 customer 연결/종료마다 1 건씩 send.
 type CustomerRegistration struct {
@@ -1066,7 +1077,12 @@ type CustomerRegistration struct {
 	CustomerId string `protobuf:"bytes,2,opt,name=customer_id,json=customerId,proto3" json:"customer_id,omitempty"`
 	// Profile key (REGISTER 시 필수). 예: "WEB.BRANCH.VIP".
 	// mci-price 가 이 값을 session.Profile 로 역파싱해 CustomerRegistry 에 저장.
-	ProfileKey    string `protobuf:"bytes,3,opt,name=profile_key,json=profileKey,proto3" json:"profile_key,omitempty"`
+	ProfileKey string `protobuf:"bytes,3,opt,name=profile_key,json=profileKey,proto3" json:"profile_key,omitempty"`
+	// sources — 고객이 받고자 하는 LP 원천(SMB/KMB/SHB…). 비어있으면 BEST(다중시장
+	// 합성) quote 만 수신(기존 동작). 채워지면 해당 원천의 raw 호가에 profile 마진을
+	// 적용한 per-source CustomerQuote(source 태그)를 추가 수신 — FX LP별 주문화면용.
+	// docs/order-architecture.md §5a.
+	Sources       []string `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1120,6 +1136,13 @@ func (x *CustomerRegistration) GetProfileKey() string {
 		return x.ProfileKey
 	}
 	return ""
+}
+
+func (x *CustomerRegistration) GetSources() []string {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
 }
 
 // CustomerAck — RegisterCustomer 의 server → client 응답.
@@ -1443,7 +1466,7 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\tclose_bid\x18\v \x01(\x01R\bcloseBid\x12\x1b\n" +
 	"\tclose_ask\x18\f \x01(\x01R\bcloseAsk\x12\x1d\n" +
 	"\n" +
-	"tick_count\x18\r \x01(\x05R\ttickCount\"\xbd\x03\n" +
+	"tick_count\x18\r \x01(\x05R\ttickCount\"\xd5\x03\n" +
 	"\rCustomerQuote\x12\x12\n" +
 	"\x04pair\x18\x01 \x01(\tR\x04pair\x12\x18\n" +
 	"\achannel\x18\x02 \x01(\tR\achannel\x12\x12\n" +
@@ -1463,13 +1486,15 @@ const file_wtg_v1_price_proto_rawDesc = "" +
 	"\vcustomer_id\x18\x0e \x01(\tR\n" +
 	"customerId\x12\x19\n" +
 	"\bbid_size\x18\x0f \x01(\x01R\abidSize\x12\x19\n" +
-	"\bask_size\x18\x10 \x01(\x01R\aaskSize\"\xc7\x01\n" +
+	"\bask_size\x18\x10 \x01(\x01R\aaskSize\x12\x16\n" +
+	"\x06source\x18\x11 \x01(\tR\x06source\"\xe1\x01\n" +
 	"\x14CustomerRegistration\x12/\n" +
 	"\x02op\x18\x01 \x01(\x0e2\x1f.wtg.v1.CustomerRegistration.OpR\x02op\x12\x1f\n" +
 	"\vcustomer_id\x18\x02 \x01(\tR\n" +
 	"customerId\x12\x1f\n" +
 	"\vprofile_key\x18\x03 \x01(\tR\n" +
-	"profileKey\"<\n" +
+	"profileKey\x12\x18\n" +
+	"\asources\x18\x04 \x03(\tR\asources\"<\n" +
 	"\x02Op\x12\x12\n" +
 	"\x0eOP_UNSPECIFIED\x10\x00\x12\x0f\n" +
 	"\vOP_REGISTER\x10\x01\x12\x11\n" +

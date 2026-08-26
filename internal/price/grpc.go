@@ -451,7 +451,8 @@ func (g *GRPCServer) RegisterCustomer(stream wtgpb.PriceService_RegisterCustomer
 				_ = stream.Send(&wtgpb.CustomerAck{CustomerId: cid, Ok: false, Error: "invalid profile_key: " + perr.Error()})
 				continue
 			}
-			g.customerRegistry.Register(cid, profile)
+			// sources 지정 시 per-source(LP별) 마진 quote 도 함께 수신 (FX LP별 화면).
+			g.customerRegistry.RegisterWithSources(cid, profile, req.GetSources())
 			owned[cid] = struct{}{}
 			if err := stream.Send(&wtgpb.CustomerAck{CustomerId: cid, Ok: true}); err != nil {
 				return err
@@ -834,6 +835,7 @@ func customerQuoteToProto(profile session.Profile, cq pricing.CustomerQuote) *wt
 		AskSize:      cq.AskSize,
 		TableVersion: cq.TableVersion,
 		QuoteId:      cq.QuoteID,
+		Source:       cq.Source, // per-source(LP별) quote 면 원천, BEST 면 빈값
 	}
 	if !cq.ValidUntil.IsZero() {
 		pb.ValidUntilUnixNano = cq.ValidUntil.UnixNano()

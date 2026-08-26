@@ -504,3 +504,125 @@ func (s *slowPublisher) PublishQuote(profile session.Profile, cq pricing.Custome
 	time.Sleep(s.delay)
 	return nil
 }
+
+// fakeCustomerQuotePublisher — customer fan-out 호출 캡처 (per-source 테스트용).
+type fakeCustomerQuotePublisher struct {
+	mu    sync.Mutex
+	calls []custPublishCall
+}
+
+type custPublishCall struct {
+	CustomerID string
+	Profile    session.Profile
+	CQ         pricing.CustomerQuote
+}
+
+func (f *fakeCustomerQuotePublisher) PublishCustomerQuote(customerID string, profile session.Profile, cq pricing.CustomerQuote) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, custPublishCall{customerID, profile, cq})
+	return nil
+}
+
+func (f *fakeCustomerQuotePublisher) snapshot() []custPublishCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]custPublishCall, len(f.calls))
+	copy(out, f.calls)
+	return out
+}
+
+// mkRawSourceTick — Source 태그 + avail 포함 raw per-source tick.
+func mkRawSourceTick(sym, src string, bid, ask, bidSz, askSz float64, ts time.Time) *Tick {
+	body, _ := quote.EncodeJSONEnvelope(quote.JSONEnvelope{
+		Sym: sym, Bid: bid, Ask: ask, Src: src, TS: ts, BidSize: bidSz, AskSize: askSz,
+	})
+	return &Tick{Symbol: sym, Source: src, Body: body, Received: ts}
+}
+
+// OnRawSourceTick 은 지정 source 를 구독한 customer 에게만 마진 적용가(source 태그)를
+// fan-out 한다. BEST-only customer 는 per-source tick 을 받지 않는다.
+func TestPricingConsumer_PerSourceCustomerFanout(t *testing.T) {
+	pub := &fakeQuotePublisher{}
+	custPub := &fakeCustomerQuotePublisher{}
+	reg := NewCustomerRegistry()
+
+	syms := quote.NewSymbolMap()
+	syms.Replace([]quote.SymbolEntry{{Symbol: "USDKRW", Pair: "USD/KRW", Active: true}})
+	tbl := &pricing.PricingTable{
+		Version: 3,
+		HQMargin: map[pricing.HQKey]pricing.Margin{
+			{Pair: "USD/KRW", Tier: session.TierVIP}: {BidAmount: 0.02, AskAmount: 0.02},
+		},
+	}
+	store := pricing.NewStore()
+	store.Replace(tbl)
+
+	pc := NewPricingConsumer(PricingConsumerOptions{
+		Store:            store,
+		Symbols:          syms,
+		Decoder:          JSONCookerDecoder(),
+		Publisher:        pub,
+		Profiles:         &StaticProfileSource{Profiles: []session.Profile{{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierVIP}}},
+		CustomerRegistry: reg,
+		CustomerPub:      custPub,
+	})
+
+	vip := session.Profile{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierVIP}
+	reg.RegisterWithSources("cust-smb", vip, []string{"SMB"}) // SMB 원천 구독
+	reg.Register("cust-best", vip)                            // BEST only (per-source 미수신)
+
+	ts := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+	// SMB raw tick — SMB 구독자만 받아야.
+	pc.OnRawSourceTick(mkRawSourceTick("USDKRW", "SMB", 1380.00, 1380.10, 3_000_000, 2_000_000, ts))
+	// KMB raw tick — 아무도 구독 안 함 → fan-out 0.
+	pc.OnRawSourceTick(mkRawSourceTick("USDKRW", "KMB", 1381.00, 1381.10, 1_000_000, 1_000_000, ts))
+
+	calls := custPub.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("per-source customer publish = %d, want 1 (SMB 구독자만)", len(calls))
+	}
+	c := calls[0]
+	if c.CustomerID != "cust-smb" {
+		t.Errorf("customer=%q, want cust-smb", c.CustomerID)
+	}
+	if c.CQ.Source != "SMB" {
+		t.Errorf("source=%q, want SMB", c.CQ.Source)
+	}
+	// VIP 마진 0.02 적용: bid 1380.00-0.02, ask 1380.10+0.02.
+	if !floatNear(c.CQ.Bid, 1379.98) || !floatNear(c.CQ.Ask, 1380.12) {
+		t.Errorf("마진 적용가 bid=%v ask=%v, want 1379.98/1380.12", c.CQ.Bid, c.CQ.Ask)
+	}
+	if c.CQ.BidSize != 3_000_000 || c.CQ.AskSize != 2_000_000 {
+		t.Errorf("avail=%v/%v, want 3000000/2000000", c.CQ.BidSize, c.CQ.AskSize)
+	}
+}
+
+// per-source 구독자 0 이면 OnRawSourceTick 은 fast-path return (fan-out 없음).
+func TestPricingConsumer_PerSourceGatedWhenNoSubscribers(t *testing.T) {
+	custPub := &fakeCustomerQuotePublisher{}
+	reg := NewCustomerRegistry()
+	reg.Register("cust-best", session.Profile{Channel: session.ChannelWeb, Site: session.SiteHQ, Tier: session.TierVIP}) // BEST only
+
+	syms := quote.NewSymbolMap()
+	syms.Replace([]quote.SymbolEntry{{Symbol: "USDKRW", Pair: "USD/KRW", Active: true}})
+	store := pricing.NewStore()
+	store.Replace(&pricing.PricingTable{Version: 1})
+
+	pc := NewPricingConsumer(PricingConsumerOptions{
+		Store:            store,
+		Symbols:          syms,
+		Decoder:          JSONCookerDecoder(),
+		Publisher:        &fakeQuotePublisher{},
+		Profiles:         &StaticProfileSource{Profiles: nil},
+		CustomerRegistry: reg,
+		CustomerPub:      custPub,
+	})
+
+	ts := time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC)
+	pc.OnRawSourceTick(mkRawSourceTick("USDKRW", "SMB", 1380.00, 1380.10, 0, 0, ts))
+
+	if n := len(custPub.snapshot()); n != 0 {
+		t.Fatalf("source 구독자 0 인데 fan-out %d 건 (gate 실패)", n)
+	}
+}

@@ -315,6 +315,45 @@ func (c *PricingConsumer) processTick(t *Tick) {
 	}
 }
 
+// OnRawSourceTick — raw per-source tick(Source=SMB/KMB…) 을 받아, 그 원천을 구독한
+// customer 에게만 profile 마진 적용가(source 태그)를 fan-out 한다 (FX LP별 주문화면).
+//
+// AddRawConsumer 경로로 등록 — BestConsumer 흡수 *이전* 의 원천별 호가를 본다.
+// gating: customer fan-out 미구성이거나 source 구독 customer 0 이면 즉시 return
+// (fast path — BEST 전용 운영에 회귀 없음). BEST/CROSS 합성 tick 은 skip.
+func (c *PricingConsumer) OnRawSourceTick(t *Tick) {
+	if t == nil || c.customerRegistry == nil || c.customerPub == nil {
+		return
+	}
+	if c.customerRegistry.SourceSubscriberCount() == 0 {
+		return
+	}
+	if isSynth(t.Source) || t.Source == "" {
+		return // BEST/CROSS 합성은 BEST 경로가 담당
+	}
+	pair, active, found := c.symbols.Lookup(t.Symbol)
+	if !found || !active {
+		return
+	}
+	bid, ask, bidSize, askSize, ok := c.decoder(t.Body)
+	if !ok {
+		return
+	}
+	raw := quote.Quote{Pair: pair, Bid: bid, Ask: ask, TS: t.Received, BidSize: bidSize, AskSize: askSize}
+	tbl := c.store.Load()
+	c.customerRegistry.RangeForSource(t.Source, func(customerID string, prof session.Profile) bool {
+		ccq := tbl.ApplyForCustomer(raw, prof, c.tenor, raw.TS, customerID)
+		ccq.Source = t.Source // per-source 태그 — edge 가 src 필터로 라우팅
+		c.attachQuoteID(&ccq, prof)
+		if err := c.customerPub.PublishCustomerQuote(customerID, prof, ccq); err != nil {
+			c.customerPublishErrors.Add(1)
+			return true
+		}
+		c.customerQuotesPublished.Add(1)
+		return true
+	})
+}
+
 // attachQuoteID — Generator + Registry 가 활성이면 QuoteID 발급 + ValidUntil
 // 부착 + Registry.Put. Registry.Put 실패는 publish 자체를 막지 않음 (감사 추적
 // best-effort) — 운영에서 quote_register_errors 메트릭으로 모니터링.

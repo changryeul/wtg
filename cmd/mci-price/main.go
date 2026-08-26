@@ -410,6 +410,9 @@ func main() {
 		etcdTblWatch = tblW
 		etcdProfileSrc = profSrc
 		srv.AddConsumer(price.TickConsumerFunc(pc.OnTick))
+		// per-source(LP별) 마진 quote — raw 원천 tick(SMB/KMB…) 을 BestConsumer 흡수
+		// 이전에 받아, 그 source 를 구독한 customer 에게만 마진 적용가 fan-out (gated).
+		srv.AddRawConsumer(price.TickConsumerFunc(pc.OnRawSourceTick))
 		// ProfileSource 비어있음 = PricingConsumer 가 fan-out 대상 0 → 모든 quote silent drop.
 		// SymbolMap WARN 과 같은 silent 함정. 운영 alert path 에 잡히도록 WARN.
 		if len(profSrc.ActiveProfiles()) == 0 {
@@ -434,6 +437,7 @@ func main() {
 		}
 		pc = pcInst
 		srv.AddConsumer(price.TickConsumerFunc(pc.OnTick))
+		srv.AddRawConsumer(price.TickConsumerFunc(pc.OnRawSourceTick))
 	default:
 		logger.Info("PricingConsumer 비활성 (etcd / 정적 파일 모두 미설정)")
 	}

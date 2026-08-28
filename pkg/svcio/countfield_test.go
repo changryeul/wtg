@@ -71,3 +71,39 @@ func TestDeclaredCount_NotImmediatelyBefore(t *testing.T) {
 		t.Fatalf("orec %d행, want 2 (위치추측이면 filler=XYZ→0행)", len(rows))
 	}
 }
+
+// 익명 nested struct 의 여는 { 가 다음 줄에 있어도 grid(orec)로 인식돼야 한다.
+// (안 그러면 부모에 평탄화 → orec 배열 소멸 → 조회 1건, 에러 없음.)
+func TestParse_StructBraceOnNextLine(t *testing.T) {
+	// grid01_cnt + 다음 줄 { 형태의 익명 struct orec[1] (가변).
+	hdr := `
+typedef struct {
+	char grid01_cnt[4];
+	struct
+	{
+		char a[2];
+	} orec[1];
+} T9999S99_O;
+`
+	spec, err := Parse(hdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Output 에 orec 가 nested struct(children 보유)로 잡혀야 — 평탄화되면 실패.
+	var orec *Field
+	for i := range spec.Output {
+		if spec.Output[i].Name == "orec" {
+			orec = &spec.Output[i]
+		}
+	}
+	if orec == nil {
+		t.Fatalf("orec 가 nested struct 로 인식 안 됨 (평탄화됨) — fields=%+v", spec.Output)
+	}
+	if len(orec.Children) == 0 {
+		t.Errorf("orec.Children 비어있음 — struct 본문 파싱 실패")
+	}
+	// grid01_cnt(count) + orec 뒤따르는 패턴 → reclassify 로 가변(Repeat=-1) 이어야.
+	if orec.Repeat != -1 {
+		t.Errorf("orec.Repeat=%d, want -1 (가변 grid)", orec.Repeat)
+	}
+}

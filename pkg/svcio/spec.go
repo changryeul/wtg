@@ -119,6 +119,11 @@ func ParseFile(path string) (*SvcSpec, error) {
 func Parse(text string) (*SvcSpec, error) {
 	spec := &SvcSpec{Records: map[string][]Field{}}
 
+	// 익명 nested struct 의 `struct` 와 여는 `{` 가 줄바뀜된 헤더를 정규화 — 안 그러면
+	// 라인 단위 감지(reInlineStructOpen)가 놓쳐 grid 가 부모에 평탄화되고 orec 배열이
+	// 사라진다(조회 1건, 에러 없음). 이름있는 struct(`struct TAG {`)는 매치 안 됨.
+	text = reAnonStructBraceJoin.ReplaceAllString(text, "struct {")
+
 	// "Program Name :" 라인. trailing `*`/공백 정리.
 	if m := reProgramName.FindStringSubmatch(text); len(m) > 1 {
 		spec.Name = cleanProgramName(m[1])
@@ -548,6 +553,12 @@ var (
 
 	// 인라인 nested 의 시작 — `struct {`.
 	reInlineStructOpen = regexp.MustCompile(`^\s*struct\s*\{`)
+
+	// 익명 struct 의 여는 중괄호가 다음 줄인 경우(`struct\n{`) 를 `struct {` 로 접합
+	// (Parse 초입 정규화). reInlineStructOpen 감지가 라인 단위라, 안 접합하면 grid 가
+	// 부모에 평평하게 섞여 orec 배열이 사라짐(조회 1건·에러 로그 없음). 이름있는
+	// struct(`struct TAG {`)는 태그가 사이에 있어 매치 안 됨 — 익명만 접합.
+	reAnonStructBraceJoin = regexp.MustCompile(`struct\s*\{`)
 
 	// 인라인 nested 의 종료 — `} NAME[N];` / `} NAME[];` / `} NAME;`.
 	//   group 1 = name

@@ -381,6 +381,17 @@ func (s *Server) Start(ctx context.Context) error {
 				slog.String("dir", dir), slog.String("header", "COMHDR"+suffix),
 				slog.String("comhdr", comhdr))
 		}
+		// 선언된 count 필드(원본 클라 Request XML sizefield) — LoadDirs *이전* 에
+		// 로드해야 spec 빌드 시 적용된다. 위치추측 대신 이름 선언으로 반복부 건수 결정.
+		if s.cfg.SvcCountFieldsFile != "" {
+			if n, err := svcReg.LoadCountFields(s.cfg.SvcCountFieldsFile); err != nil {
+				s.logger.Warn("svcio count-fields 로드 실패 — 위치추측 fallback",
+					slog.String("path", s.cfg.SvcCountFieldsFile), slog.Any("err", err))
+			} else {
+				s.logger.Info("svcio count-fields 로드 — 반복부 건수 이름선언 우선",
+					slog.Int("services", n))
+			}
+		}
 		if loaded, failed, err := svcReg.LoadDirs(s.cfg.SvcIncDir, s.logger); err != nil {
 			s.logger.Warn("svcio 헤더 인덱싱 실패", slog.Any("err", err))
 		} else {

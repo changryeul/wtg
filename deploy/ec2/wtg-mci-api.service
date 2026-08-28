@@ -36,6 +36,7 @@ ExecStart=/home/winway/common/wtg/bin/mci-api \
     --jwt-key=/home/winway/common/wtg/etc/jwt-private.pem \
     --svc-common-header=/home/winway/projects/nh/win/src/inc/com/comhdr.h \
     --svc-inc-dir=/home/winway/projects/nh/win/src/inc/trn,/home/winway/projects/yuanta/win/src/inc/trn \
+    --svc-count-fields=/home/winway/common/wtg/etc/svc-count-fields.json \
     --login-mode=chain \
     --login-skip-cert \
     --login-validate

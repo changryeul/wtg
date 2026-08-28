@@ -56,7 +56,11 @@ type Config struct {
 	// 채워지면 /v1/tx·/v1/login 의 data(JSON object) 를 [COMHDR][Input]
 	// 고정폭 전문으로 자동 조립하고 응답도 필드별 JSON 으로 파싱한다.
 	// mci-admin 의 --svc-inc-dir / --svc-common-header 와 동일 형식.
-	SvcIncDir           string
+	SvcIncDir string
+	// SvcCountFieldsFile — 서비스별 반복부(grid) 건수 필드 선언 JSON (원본 클라
+	// Request XML 의 sizefield 추출본, 예 etc/svc-count-fields.json). 지정 시
+	// 위치추측 대신 선언된 필드명으로 건수 결정 — rec/rec1/nrec1 등 정확 처리.
+	SvcCountFieldsFile  string
 	SvcCommonHeaderFile string
 
 	// LoginMode — /v1/login 동작. "legacy"(기본, 빈값 동일) = 단일 LOGON +
@@ -331,6 +335,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&cfg.JWTKeyFile, "jwt-key", cfg.JWTKeyFile, "RS256 JWT 발급용 RSA private key PEM (비면 session_id Bearer 만)")
 	fs.StringVar(&cfg.SvcIncDir, "svc-inc-dir", cfg.SvcIncDir, "매매 svc 헤더 디렉터리 (콤마 구분) — data JSON object 자동 전문 조립")
 	fs.StringVar(&cfg.SvcCommonHeaderFile, "svc-common-header", cfg.SvcCommonHeaderFile, "공통 transaction 헤더 파일 (comhdr.h)")
+	fs.StringVar(&cfg.SvcCountFieldsFile, "svc-count-fields", cfg.SvcCountFieldsFile, "서비스별 반복부 건수 필드 선언 JSON (원본 클라 Request XML sizefield 추출본) — 위치추측 대신 이름선언으로 건수 결정")
 	fs.StringVar(&cfg.LoginMode, "login-mode", cfg.LoginMode, "로그인 모드: legacy(기본) | chain (엔진 인증 사슬 W1101S02→W1130A02). chain 은 --svc-inc-dir 필수")
 	fs.StringVar(&cfg.LoginCertAlias, "login-cert-alias", cfg.LoginCertAlias, "chain ① 인증서 인증 alias (기본 W1101S02)")
 	fs.StringVar(&cfg.LoginSessionAlias, "login-session-alias", cfg.LoginSessionAlias, "chain ③ 세션개설 alias (기본 W1130A02)")

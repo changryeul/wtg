@@ -152,8 +152,16 @@ func readFields(buf []byte, off int, fields []Field, out map[string]interface{})
 			// 반복 횟수 결정.
 			rep := f.Repeat
 			if rep == -1 {
-				// 가변 — 직전 *_cnt 류 필드의 ASCII int.
-				n, _ := strconv.Atoi(strings.TrimSpace(lastCntStr))
+				// 건수 결정: 선언된 count 필드(CountField, Request XML sizefield)가
+				// 있으면 그 필드의 이미-파싱된 값으로 (위치추측 X). 없으면 직전
+				// 필드값(lastCntStr) 위치추측 fallback.
+				cntStr := lastCntStr
+				if f.CountField != "" {
+					if v, ok := out[f.CountField].(string); ok {
+						cntStr = v
+					}
+				}
+				n, _ := strconv.Atoi(strings.TrimSpace(cntStr))
 				if n < 0 {
 					n = 0
 				}

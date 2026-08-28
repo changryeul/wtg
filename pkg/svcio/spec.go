@@ -76,6 +76,12 @@ type Field struct {
 	Repeat   int     `json:"repeat,omitempty"`   // grid 1행 (orec[1]) → 1. orec[] (가변) → -1. 그 외 0
 	Comment  string  `json:"comment,omitempty"`  // 한글 주석 (CP949 → UTF-8)
 	Children []Field `json:"children,omitempty"` // nested struct field
+
+	// CountField — 이 가변 grid(Repeat=-1)의 건수를 담은 필드명. 원본 클라의 Request
+	// XML `<record name="Occurs" sizetype="1" sizefield="...">` 선언에서 유래
+	// (applyDeclaredCount 가 설정). 비어있으면 디코드가 "직전 필드" 위치추측으로 fallback.
+	// 위치추측(isCountFieldName)이 놓치는 rec/rec1/nrec1 등을 정확히 잡는다.
+	CountField string `json:"count_field,omitempty"`
 }
 
 // ParseFile — 헤더 파일을 읽어 SvcSpec 으로 변환.
@@ -188,6 +194,41 @@ func reclassifyTrailingArrays(fields []Field) {
 			reclassifyTrailingArrays(fields[i].Children)
 		}
 	}
+}
+
+// applyDeclaredCount — 원본 클라 Request XML 이 선언한 count 필드명(sizefield)을
+// 근거로 가변 grid 를 정확히 지정한다. 위치추측(reclassifyTrailingArrays)과 달리
+// "이름이 count-like 인가"를 묻지 않고, 선언된 필드명 바로 뒤의 nested struct 를
+// 가변(Repeat=-1)으로 표시 + CountField 에 그 필드명을 기록 → 디코드가 위치가 아니라
+// 이름으로 건수를 읽는다. countField 를 찾아 적용하면 true. 재귀(nested grid).
+func applyDeclaredCount(fields []Field, countField string) bool {
+	// nested 먼저 — 안쪽 grid 의 count 선언일 수 있음.
+	for i := range fields {
+		if len(fields[i].Children) > 0 {
+			if applyDeclaredCount(fields[i].Children, countField) {
+				return true
+			}
+		}
+	}
+	// 이 레벨에서 countField 필드 위치를 찾고, 그 뒤 첫 nested struct 를 가변으로.
+	idx := -1
+	for i := range fields {
+		if strings.EqualFold(strings.TrimSpace(fields[i].Name), countField) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	for j := idx + 1; j < len(fields); j++ {
+		if len(fields[j].Children) > 0 {
+			fields[j].Repeat = -1
+			fields[j].CountField = fields[idx].Name // 실제 헤더 필드명(대소문자 보존)
+			return true
+		}
+	}
+	return false
 }
 
 // isCountFieldName — record-count field 작명 컨벤션 인식.

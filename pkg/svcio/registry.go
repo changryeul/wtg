@@ -1,6 +1,7 @@
 package svcio
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -22,6 +23,11 @@ type Registry struct {
 	// LoadDir 시 디렉터리 path 가 어느 prefix 에 매칭되는지 검사하고, spec 의
 	// HeaderType 이 비어 있으면 이 default 로 채운다 (svc 별 override 가능).
 	dirHeaderDefaults map[string]string
+
+	// countFields — service code → 선언된 count 필드명 목록 (원본 클라 Request XML
+	// 의 sizefield). LoadCountFields 로 로드. spec 빌드 시 applyDeclaredCount 로
+	// 가변 grid 를 정확히 지정 → 디코드가 위치추측 대신 선언된 이름으로 건수 읽음.
+	countFields map[string][]string
 }
 
 // SvcSummary — 목록 화면용 가벼운 표현.
@@ -51,6 +57,49 @@ func NewRegistry() *Registry {
 		specs:             map[string]*SvcSpec{},
 		headers:           map[string][]Field{},
 		dirHeaderDefaults: map[string]string{},
+		countFields:       map[string][]string{},
+	}
+}
+
+// LoadCountFields — service→count 필드 선언 JSON 로드 (원본 클라 Request XML 에서
+// 추출한 etc/svc-count-fields.json). 값은 문자열 또는 문자열 배열(다중 grid) 모두 허용.
+// LoadDir *이전* 에 호출해야 spec 빌드 시 반영된다. 반환: 로드된 service 수.
+func (r *Registry) LoadCountFields(path string) (int, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return 0, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for svc, rv := range m {
+		var one string
+		if err := json.Unmarshal(rv, &one); err == nil {
+			r.countFields[svc] = []string{one}
+			continue
+		}
+		var many []string
+		if err := json.Unmarshal(rv, &many); err == nil {
+			r.countFields[svc] = many
+		}
+	}
+	return len(r.countFields), nil
+}
+
+// applyDeclaredCounts — spec 에 선언된 count 필드를 적용 (Output 우선, 없으면 Input).
+// LoadDir 가 spec 저장 직전에 호출. countFields 미등록이면 no-op (휴리스틱 fallback).
+func (r *Registry) applyDeclaredCounts(spec *SvcSpec) {
+	names := r.countFields[spec.Code]
+	for _, cf := range names {
+		if cf == "" {
+			continue
+		}
+		if !applyDeclaredCount(spec.Output, cf) {
+			applyDeclaredCount(spec.Input, cf)
+		}
 	}
 }
 
@@ -270,6 +319,8 @@ func (r *Registry) LoadDir(dir string, logger *slog.Logger) (int, int, error) {
 				spec.HeaderFields = fields
 			}
 		}
+		// 선언된 count 필드(Request XML sizefield) 적용 — 위치추측보다 우선.
+		r.applyDeclaredCounts(spec)
 		r.specs[spec.Code] = spec
 		loaded++
 	}

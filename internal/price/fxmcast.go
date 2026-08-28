@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -99,8 +100,12 @@ func (r *FXMcastReceiver) readLoop(ctx context.Context, conn *net.UDPConn, lpCod
 			r.rejected.Add(1)
 			continue
 		}
+		// 심볼 정규화 — OMS FIX 는 55=USD/KRW(슬래시), SymbolMap 외부명은 USDKRW.
+		// 슬래시를 제거해 BEST·마진·client 전 구간이 SymbolMap 키와 일치하도록.
+		// (안 하면 BEST 는 되나 PricingConsumer.Lookup 실패로 마진 quote drop → client 0)
+		sym := normalizeFXSymbol(s.Sym)
 		env := quote.JSONEnvelope{
-			Sym: s.Sym, Bid: s.Bid, Ask: s.Ask,
+			Sym: sym, Bid: s.Bid, Ask: s.Ask,
 			Src:  lpCode, // group→LP 태깅 (per-source)
 			TS:   time.Now().UTC(),
 			Last: s.Last, LastQty: s.LastQty,
@@ -114,6 +119,17 @@ func (r *FXMcastReceiver) readLoop(ctx context.Context, conn *net.UDPConn, lpCod
 		r.srv.IngestEnvelopes(body, &Tick{Received: time.Now()})
 		r.received.Add(1)
 	}
+}
+
+// normalizeFXSymbol — FX 심볼을 SymbolMap 외부명(concat)으로 정규화. OMS/LP FIX 는
+// 55 를 "USD/KRW" 슬래시 표기로 보내지만 SymbolMap 은 "USDKRW". 구분자('/', 공백,
+// '_')를 제거해 일치시킨다. 이미 concat 이면 무변경(idempotent).
+func normalizeFXSymbol(sym string) string {
+	if !strings.ContainsAny(sym, "/ _") {
+		return sym
+	}
+	r := strings.NewReplacer("/", "", " ", "", "_", "")
+	return r.Replace(sym)
 }
 
 // Close — 모든 conn 종료 (idempotent).
